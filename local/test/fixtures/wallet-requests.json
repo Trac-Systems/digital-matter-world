@@ -1,0 +1,61 @@
+{
+  "sourceRevision": "9c549de160a2f0594b3b91f86b06aa4cff84cf0b",
+  "description": "Request shapes transcribed from the wallet request classes; placeholders are replaced with disposable regtest values.",
+  "bitcoin": [
+    { "method": "GET", "path": "/api/v1/fees/recommended" },
+    { "method": "GET", "path": "/address/{address}/utxo" },
+    { "method": "GET", "path": "/tx/{txid}/hex" },
+    { "method": "GET", "path": "/api/address/{address}/txs" },
+    { "method": "POST", "path": "/tx", "contentType": "text/plain", "body": "{rawTx}" }
+  ],
+  "ordinal": [
+    { "method": "GET", "path": "/v1/indexer/address/{address}/balance" },
+    { "method": "GET", "path": "/v1/indexer/address/{address}/utxo-data?cursor=0&size=100" },
+    { "method": "GET", "path": "/v1/indexer/address/{address}/inscription-utxo-data?cursor=0&size=100" },
+    { "method": "GET", "path": "/v1/indexer/inscription/info/{inscription}" },
+    { "method": "GET", "path": "/v1/indexer/address/{address}/runes/balance-list?cursor=0&size=100" },
+    { "method": "GET", "path": "/v1/indexer/address/{address}/runes/1:0/utxo?cursor=0&size=100" },
+    { "method": "GET", "path": "/inscription/{inscription}" },
+    { "method": "GET", "path": "/content/{inscription}" },
+    { "method": "GET", "path": "/preview/{inscription}" }
+  ],
+  "tap": [
+    { "method": "GET", "path": "/getDeployment/{ticker}" },
+    { "method": "GET", "path": "/getAccountTokensBalance/{address}?offset=0&max=25" },
+    { "method": "GET", "path": "/getLockedBalance/{address}/{ticker}" },
+    { "method": "GET", "path": "/getObligationLockedBalance/a/{address}/{ticker}" },
+    { "method": "GET", "path": "/getAccountLocksLength/{address}" },
+    { "method": "GET", "path": "/getAccountLocks/{address}?offset=0&max=25" },
+    { "method": "GET", "path": "/getAccountTransferListLength/{address}/{ticker}" },
+    { "method": "GET", "path": "/getAccountTransferList/{address}/{ticker}?offset=0&max=25" },
+    { "method": "GET", "path": "/getAccountMintListLength/{address}/{ticker}" },
+    { "method": "GET", "path": "/getAccountMintList/{address}/{ticker}?offset=0&max=50" },
+    { "method": "GET", "path": "/getDmtMintWalletHistoricListLength/{address}" },
+    { "method": "GET", "path": "/getDmtMintWalletHistoricList/{address}?offset=0&max=50" },
+    { "method": "GET", "path": "/getAccountAuthListLength/{address}" },
+    { "method": "GET", "path": "/getAccountAuthList/{address}?offset=0&max=500" },
+    { "method": "GET", "path": "/getAuthCancelled/{authority}" },
+    { "method": "GET", "path": "/getMintTokensLeft/{ticker}" }
+  ],
+  "textOrder": { "feeRate": 1, "postage": 546, "connectedAddress": "{address}", "rebar": false, "data": [{ "text": "local inscription", "receiver": "{address}" }], "orderType": "TEXT" },
+  "transferOrder": { "feeRate": 1, "postage": 546, "connectedAddress": "{address}", "receiver": "{recipient}", "ticker": "{ticker}", "amount": "1", "rebar": false },
+  "inscriberReads": [
+    { "method": "GET", "path": "/v1/inscribe/order/readyToTap/{address}?orderType=TEXT" },
+    { "method": "GET", "path": "/v1/inscribe/order/authority/{address}" },
+    { "method": "GET", "path": "/v1/inscribe/order/cancelAuthority/{authority}" },
+    { "method": "GET", "path": "/v1/inscribe/order/unats/{ticker}" }
+  ],
+  "trac": [
+    { "method": "GET", "path": "/fee" },
+    { "method": "GET", "path": "/txv" },
+    { "method": "GET", "path": "/balance/local-test-address" },
+    { "method": "GET", "path": "/api/transactions?address=local-test-address&offset=0&max=20" },
+    { "method": "POST", "path": "/broadcast-transaction", "body": { "payload": "bG9jYWwtdGVzdA==" }, "status": 501 }
+  ],
+  "prices": [
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/v1/token-prices/TAP" },
+    { "method": "GET", "path": "/v1/token-prices/DMT-NAT" },
+    { "method": "GET", "path": "/v1/token-prices/TRAC" }
+  ]
+}

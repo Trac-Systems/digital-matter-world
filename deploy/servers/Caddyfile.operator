@@ -1,0 +1,12 @@
+{$DMW_SIGNER_DOMAIN} {
+    request_body {
+        max_size 4MB
+    }
+    reverse_proxy 127.0.0.1:58800
+}
+{$DMW_SIDECAR_DOMAIN} {
+    request_body {
+        max_size 4MB
+    }
+    reverse_proxy 127.0.0.1:58700
+}

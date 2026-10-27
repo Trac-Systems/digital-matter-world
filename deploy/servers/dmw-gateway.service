@@ -1,0 +1,24 @@
+[Unit]
+Description=Digital Matter World gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dmw
+Group=dmw
+WorkingDirectory=/opt/dmw/current
+EnvironmentFile=/etc/dmw/gateway.env
+ExecStart=/usr/bin/node /opt/dmw/current/service/run.mjs /var/lib/dmw/gateway/runtime.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/dmw/gateway
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+{
+  "node": "23.11.0",
+  "bitcoinCore": "29.0.0",
+  "foundry": "1.7.1",
+  "foundryCommit": "4072e48705af9d93e3c0f6e29e93b5e9a40caed8",
+  "rust": "1.89.0",
+  "python": "3.11.15",
+  "solidity": "0.8.26",
+  "solidityDarwinArm64Sha256": "0ff016aef2396b12d1fc65429d8ea6cf53c2ee4b041bb8925644615ee1c30ab9",
+  "ordTap": "b8f6ea35cf6b9d405d4db7c58555e3c8ab33e8cd",
+  "ordCargoLockSha256": "ebddf2fab9a87df968fbe020a776cbb0cdbe990f9464472730f742aa3993f2c7",
+  "wallet": "9c549de160a2f0594b3b91f86b06aa4cff84cf0b",
+  "v8Node": "20.10.0",
+  "v8NodeSourceSha256": "32eb256eebd8cacd5574e6631e54b42be7ec8ebe25ad47a8ca685403bad15535",
+  "re2": "2024-06-01",
+  "openzeppelinContracts": "5.4.0",
+  "nobleCurves": "1.9.7"
+}

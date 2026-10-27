@@ -1,0 +1,191 @@
+{
+  "description": "Synthetic, recorded production-shaped responses. No live mainnet service was contacted.",
+  "bitcoin": {
+    "chain": "main",
+    "blocks": 2022,
+    "bestblockhash": "0000000026024cd1f3a914b4d034e6cbbea6d0262569c04abe39a3f4a03d5aa6",
+    "initialblockdownload": false
+  },
+  "genesis": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+  "ethereum": {
+    "chainId": "0x1",
+    "balance": "0xde0b6b3a7640000",
+    "gasPrice": "0x3b9aca00"
+  },
+  "msb": {
+    "networkId": "918",
+    "bootstrap": "5555555555555555555555555555555555555555555555555555555555555555",
+    "balanceAtoms": "100000000000000000000",
+    "feeAtoms": "30000000000000000"
+  },
+  "provenance": "Historical Bitcoin headers read from two existing local mainnet archives, byte-for-byte equal through height 2022. Ethereum/MSB funding values are synthetic; this fixture is not a live admission record.",
+  "headers": {
+    "0": {
+      "raw": "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c",
+      "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+      "time": 1231006505,
+      "bits": 486604799,
+      "height": 0,
+      "chainwork": "100010001"
+    },
+    "2006": {
+      "raw": "0100000085aedcd5a2f8b6ae72b57ffd77a3058a5b34f06970a0c65bea39645c00000000ada15f8a2dd66cc9ef30394554c5ac7cbdfbeb580108f71433860a04bc51472e81e07e49ffff001d2750f0b3",
+      "hash": "00000000bbfbcbca844093b288adfa9b76a96d75387eb3829c484f497f6665cc",
+      "time": 1233051777,
+      "bits": 486604799,
+      "height": 2006,
+      "chainwork": "7d707d707d7"
+    },
+    "2007": {
+      "raw": "01000000cc65667f494f489c82b37e38756da9769bfaad88b2934084cacbfbbb00000000534a15012974b6c177ae6558cbe6ce24d6663ec0dfeff7596b75469c49388a1ea5e27e49ffff001d1e6ae2f8",
+      "hash": "000000009f28459d210f6ca4f8ce9b5c588914d723f328af19fa0629d688e3f3",
+      "time": 1233052325,
+      "bits": 486604799,
+      "height": 2007,
+      "chainwork": "7d807d807d8"
+    },
+    "2008": {
+      "raw": "01000000f3e388d62906fa19af28f323d71489585c9bcef8a46c0f219d45289f000000009602a72be34a2eb2545af3d9b3a891e4e65f97ac3192c191dc848084669200b388e77e49ffff001d048fc9db",
+      "hash": "00000000111d22d3255f989748fe17ec4b07a4cc1146193a75c7d3b93c42d492",
+      "time": 1233053576,
+      "bits": 486604799,
+      "height": 2008,
+      "chainwork": "7d907d907d9"
+    },
+    "2009": {
+      "raw": "0100000092d4423cb9d3c7753a194611cca4074bec17fe4897985f25d3221d110000000082971b255a55141c921b9f79e30e7dad8261c39872a77d771f4790ef9a44ac84aaed7e49ffff001d1904c134",
+      "hash": "00000000d0b593345df9b9284d9144baec9916d5b114921260aafb6aafa0294f",
+      "time": 1233055146,
+      "bits": 486604799,
+      "height": 2009,
+      "chainwork": "7da07da07da"
+    },
+    "2010": {
+      "raw": "010000004f29a0af6afbaa60129214b1d51699ecba44914d28b9f95d3493b5d00000000096003a966e3859a6b3a7dc7c23bc4fe5424953eb289951c8e89d2870863cf31646f27e49ffff001d3309fc07",
+      "hash": "00000000612cddac3513ac8a59168132e07dcf56690f6da51b76663a9182df2b",
+      "time": 1233056326,
+      "bits": 486604799,
+      "height": 2010,
+      "chainwork": "7db07db07db"
+    },
+    "2011": {
+      "raw": "010000002bdf82913a66761ba56d0f6956cf7de0328116598aac1335acdd2c61000000000ba8937b556454bcc9f5e209059cd1142ad7781a23c614ea1183661ec06ca41d68f57e49ffff001d195a72a0",
+      "hash": "00000000cf34e5fe574c558f4bfda1faf6a3994e5920189fe67694c6090b631e",
+      "time": 1233057128,
+      "bits": 486604799,
+      "height": 2011,
+      "chainwork": "7dc07dc07dc"
+    },
+    "2012": {
+      "raw": "010000001e630b09c69476e69f1820594e99a3f6faa1fd4b8f554c57fee534cf0000000015243d994b1c93934e8f049543f4daee5f3c8cffce20b58dbb4530109873945111fb7e49ffff001d1b6b3dc7",
+      "hash": "0000000025f4f27b04b74b93fc17d7b9ebe636a63a8062656d4309fa934950b4",
+      "time": 1233058577,
+      "bits": 486604799,
+      "height": 2012,
+      "chainwork": "7dd07dd07dd"
+    },
+    "2013": {
+      "raw": "01000000b4504993fa09436d6562803aa636e6ebb9d717fc934bb7047bf2f425000000002416b927094d634f45fb5feaa1abeea6816fced1b4311505ad91da7de735d24ef1007f49ffff001d31a4bcf8",
+      "hash": "00000000c2f7e30799c3d0ded26fa0b94cb09924eefb4340bfffa07ab0d86182",
+      "time": 1233060081,
+      "bits": 486604799,
+      "height": 2013,
+      "chainwork": "7de07de07de"
+    },
+    "2014": {
+      "raw": "010000008261d8b07aa0ffbf4043fbee2499b04cb9a06fd2ded0c39907e3f7c200000000b496cbc6d52777991345b8c72e46d803140bb030a870995036773567fe149f71ea067f49ffff001d2cfb7680",
+      "hash": "000000004be8da201f34d6c8d2a0387cd5cde7e94f3e692ad0c307e7cd0955e2",
+      "time": 1233061610,
+      "bits": 486604799,
+      "height": 2014,
+      "chainwork": "7df07df07df"
+    },
+    "2015": {
+      "raw": "01000000e25509cde707c3d02a693e4fe9e7cdd57c38a0d2c8d6341f20dae84b000000000c113df1185e162ee92d031fe21d1400ff7d705a3e9b9c860eea855313cd8ca26c087f49ffff001d30b73231",
+      "hash": "00000000693067b0e6b440bc51450b9f3850561b07f6d3c021c54fbd6abb9763",
+      "time": 1233061996,
+      "bits": 486604799,
+      "height": 2015,
+      "chainwork": "7e007e007e0"
+    },
+    "2016": {
+      "raw": "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f",
+      "hash": "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef",
+      "time": 1233063531,
+      "bits": 486604799,
+      "height": 2016,
+      "chainwork": "7e107e107e1"
+    },
+    "2017": {
+      "raw": "01000000efdd7b6c4ce1dcbb370690558d7a556e431c3011f2546c896a2141a100000000d65bbd7472491e067d4562f38fc5420bdcd1335b4cb0cf1e90aefe828fef88cbcd137f49ffff001d34a93051",
+      "hash": "00000000a30d73bbfe167ace49a48042099ea64bab675611e29545a7abe06dee",
+      "time": 1233064909,
+      "bits": 486604799,
+      "height": 2017,
+      "chainwork": "7e207e207e2"
+    },
+    "2018": {
+      "raw": "01000000ee6de0aba74595e2115667ab4ba69e094280a449ce7a16febb730da300000000981b2f6f3b1eb1928355d519ee6fdcaef5974a92f6d48b9f6d9a9ce27f84364ff1177f49ffff001d14cbe157",
+      "hash": "00000000f42278032e65a8fc09a41fbbd1779421d166e59c205a37b6fdad1340",
+      "time": 1233065969,
+      "bits": 486604799,
+      "height": 2018,
+      "chainwork": "7e307e307e3"
+    },
+    "2019": {
+      "raw": "010000004013adfdb6375a209ce566d1219477d1bb1fa409fca8652e037822f400000000638de603de0f413ecb78fe8e568410a891c52a322111ce31e092f49dd27398afc01c7f49ffff001d289a840b",
+      "hash": "00000000fa26cfce2cdce6a5df7491f71cdfc8e75c61b6e26ecdd361ff052763",
+      "time": 1233067200,
+      "bits": 486604799,
+      "height": 2019,
+      "chainwork": "7e407e407e4"
+    },
+    "2020": {
+      "raw": "01000000632705ff61d3cd6ee2b6615ce7c8df1cf79174dfa5e6dc2ccecf26fa000000004256811a2b75046bdf168cd22bfa3bff7312f3b135b69638ce7c8293c99d363c781f7f49ffff001d3a8f2d56",
+      "hash": "00000000a2090ecd638c98afa5785d69eb9c84fbc1201f259f729a28190791d3",
+      "time": 1233067896,
+      "bits": 486604799,
+      "height": 2020,
+      "chainwork": "7e507e507e5"
+    },
+    "2021": {
+      "raw": "01000000d3910719289a729f251f20c1fb849ceb695d78a5af988c63cd0e09a2000000002468504982c6dcb1fa2e231fed72a02ce099c011a1248b0556328e246bb77ca3b4257f49ffff001d0844cb68",
+      "hash": "00000000cda6b0e6ebcfe7d45ad2d977f1b264f3fec58b41ecf53dba795b0d87",
+      "time": 1233069492,
+      "bits": 486604799,
+      "height": 2021,
+      "chainwork": "7e607e607e6"
+    },
+    "2022": {
+      "raw": "01000000870d5b79ba3df5ec418bc5fef364b2f177d9d25ad4e7cfebe6b0a6cd00000000226553e164b2a019f292a6f7afd32c4045b0122ee06cc7b3131e990e0d962e72f1297f49ffff001d17d95719",
+      "hash": "0000000026024cd1f3a914b4d034e6cbbea6d0262569c04abe39a3f4a03d5aa6",
+      "time": 1233070577,
+      "bits": 486604799,
+      "height": 2022,
+      "chainwork": "7e707e707e7"
+    }
+  },
+  "checkpoint": {
+    "raw": "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f",
+    "checkpoint": {
+      "height": 2016,
+      "hash": "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef",
+      "bits": 486604799,
+      "time": 1233063531,
+      "chainwork": "8663081224161",
+      "times": [
+        1233051777,
+        1233052325,
+        1233053576,
+        1233055146,
+        1233056326,
+        1233057128,
+        1233058577,
+        1233060081,
+        1233061610,
+        1233061996,
+        1233063531
+      ]
+    }
+  }
+}

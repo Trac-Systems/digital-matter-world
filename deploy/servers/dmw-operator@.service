@@ -1,0 +1,23 @@
+[Unit]
+Description=Digital Matter World operator %i signer
+After=network-online.target dmw-sidecar@%i.service
+Requires=dmw-sidecar@%i.service
+
+[Service]
+User=dmw-%i
+Group=dmw-%i
+WorkingDirectory=/opt/dmw/current
+ExecStart=/usr/bin/node /opt/dmw/current/committee/signer/service.mjs /var/lib/dmw/%i/signer.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/dmw/%i
+LimitNOFILE=32768
+
+[Install]
+WantedBy=multi-user.target

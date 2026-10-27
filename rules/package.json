@@ -1,0 +1,16 @@
+{
+  "name": "@digital-matter-world/rules",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.js", "./node": "./scripts/headers-io.mjs" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:history": "node --test test/history.test.mjs",
+    "test:browser": "node --experimental-vm-modules --test test/browser.test.mjs",
+    "bench": "node scripts/benchmark.mjs",
+    "simulate": "node scripts/simulate.mjs"
+  },
+  "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0", "@scure/btc-signer": "1.8.1" },
+  "engines": { "node": ">=23.11.0" }
+}

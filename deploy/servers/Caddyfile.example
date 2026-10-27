@@ -1,0 +1,33 @@
+# Copy to each appropriate host; supply real DNS names through its environment.
+{$DMW_GATEWAY_DOMAIN} {
+    route {
+        @private path /operator /operator.js /operator/* /internal /internal/*
+        respond @private 404
+        handle /health {
+            reverse_proxy 127.0.0.1:58910
+        }
+        handle {
+            reverse_proxy 127.0.0.1:58910
+        }
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+}
+
+# The signer checks its own bearer credential on every request. Sidecar /peer
+# messages additionally require pinned Ed25519 signatures and X25519 encryption.
+{$DMW_SIGNER_DOMAIN} {
+    request_body {
+        max_size 4MB
+    }
+    reverse_proxy 127.0.0.1:58800
+}
+{$DMW_SIDECAR_DOMAIN} {
+    request_body {
+        max_size 4MB
+    }
+    reverse_proxy 127.0.0.1:58700
+}

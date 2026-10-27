@@ -1,0 +1,348 @@
+{
+  "title": "Production adapter configuration, version 1",
+  "type": "object",
+  "required": [
+    "version",
+    "mode",
+    "network",
+    "data",
+    "committee",
+    "prod"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "mode": {
+      "const": "prod"
+    },
+    "network": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._:-]{1,96}$"
+    },
+    "data": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "gatewayKey": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "committee": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "peer"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._:-]{1,96}$"
+          },
+          "peer": {
+            "type": "object",
+            "required": [
+              "id",
+              "identity"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9._:-]{1,96}$"
+              },
+              "identity": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "prod": {
+      "type": "object",
+      "required": [
+        "contexts",
+        "readerData",
+        "registry",
+        "deployment",
+        "startTip",
+        "maxHeadersPerView",
+        "bitcoin",
+        "tap",
+        "ethereum",
+        "trac"
+      ],
+      "properties": {
+        "contexts": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "readerData": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "registry": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "deployment": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "headersFile": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "committeeRotation": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "startTip": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000000
+        },
+        "maxHeadersPerView": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "http": {
+          "type": "object",
+          "properties": {
+            "requestsPerSecond": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60000
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "backoffMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "maxQueue": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            }
+          }
+        },
+        "bitcoin": {
+          "type": "object",
+          "required": [
+            "kind",
+            "urlFile"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "ord"
+            },
+            "urlFile": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        },
+        "tap": {
+          "type": "object",
+          "required": [
+            "endpoints",
+            "agreement"
+          ],
+          "properties": {
+            "endpoints": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "urlFile"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "urlFile": {
+                    "type": "string",
+                    "pattern": "^/"
+                  }
+                }
+              }
+            },
+            "agreement": {
+              "const": 1
+            }
+          }
+        },
+        "ethereum": {
+          "allOf": [
+            {
+              "type": "object",
+              "required": [
+                "urlFile"
+              ],
+              "properties": {
+                "urlFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "tokenFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "authFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "chainId",
+                "address",
+                "token",
+                "fromBlock",
+                "confirmations",
+                "maxLogRange",
+                "maxLogPages"
+              ],
+              "properties": {
+                "chainId": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "address": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]{40}$"
+                },
+                "token": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]{40}$"
+                },
+                "fromBlock": {
+                  "type": "string",
+                  "pattern": "^0x(?:0|[1-9a-f][0-9a-f]*)$"
+                },
+                "confirmations": {
+                  "const": 1
+                },
+                "maxLogRange": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000
+                },
+                "maxLogPages": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000
+                }
+              }
+            }
+          ]
+        },
+        "trac": {
+          "type": "object",
+          "required": [
+            "bootstrap",
+            "msbBootstrap",
+            "networkId",
+            "runtimeConfig"
+          ],
+          "properties": {
+            "bootstrap": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "msbBootstrap": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "networkId": {
+              "type": [
+                "integer",
+                "string"
+              ]
+            },
+            "runtimeConfig": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "runtimeModule": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Required for committee readers; forbidden on the gateway. Enforced by validateConfig.",
+          "required": [
+            "endpoint",
+            "directory",
+            "member",
+            "network",
+            "epoch"
+          ],
+          "properties": {
+            "endpoint": {
+              "type": "object",
+              "required": [
+                "urlFile"
+              ],
+              "properties": {
+                "urlFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "tokenFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "authFile": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              }
+            },
+            "directory": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "member": {
+              "type": "string"
+            },
+            "network": {
+              "type": "string"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
+      }
+    },
+    "claimsPerWindow": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    }
+  }
+}

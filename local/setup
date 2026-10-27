@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+local_dir=$(cd "$(dirname "$0")" && pwd)
+build=${DMW_BUILD_ROOT:-"$(cd "$(dirname "$0")/../.." && pwd)/build"}
+source ~/.nvm/nvm.sh
+nvm use 23.11.0
+export npm_config_userconfig=/dev/null
+export npm_config_cache="$build/npm-cache"
+df -h /
+free_kb=$(df -k / | awk 'NR==2 {print $4}')
+if (( free_kb < 104857600 )); then echo 'Less than 100 GiB free; stopping.' >&2; exit 1; fi
+npm ci --prefix "$local_dir" --ignore-scripts --no-audit --no-fund
+npm ci --prefix "$local_dir/../eth" --ignore-scripts --no-audit --no-fund
+mkdir -p "$build/bin"
+if [[ ! -x "$build/bin/solc-0.8.26" ]]; then
+  cp "$HOME/.svm/0.8.26/solc-0.8.26" "$build/bin/solc-0.8.26"
+fi
+node --input-type=module - "$build/bin/solc-0.8.26" "$local_dir/versions.json" <<'JS'
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+const [compiler, versionsFile] = process.argv.slice(2);
+const versions = JSON.parse(readFileSync(versionsFile));
+if (createHash('sha256').update(readFileSync(compiler)).digest('hex') !== versions.solidityDarwinArm64Sha256) throw new Error('Solidity compiler checksum mismatch');
+JS
+if [[ ! -x "$build/target/release/ord" ]]; then "$local_dir/build-ord"; fi
+"$local_dir/../eth/foundry" build --offline

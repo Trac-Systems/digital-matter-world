@@ -1,0 +1,21 @@
+{
+  "name": "@digital-matter-world/committee",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "23.11.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:tss": "node test/tss-integration.mjs",
+    "test:services": "node test/service-integration.mjs",
+    "test:evm": "node test/evm-integration.mjs",
+    "up": "node run.mjs up",
+    "down": "node run.mjs down"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0"
+  }
+}

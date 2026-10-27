@@ -1,0 +1,767 @@
+{
+  "format": "dmw-mainnet-inputs-v1",
+  "target": {
+    "schemaVersion": 1,
+    "mode": "mainnet",
+    "network": "dmw-mainnet",
+    "paths": {
+      "output": "/var/lib/dmw/gateway/launch",
+      "costsFile": "/etc/dmw/private/costs.json",
+      "costsSHA256": null
+    },
+    "bitcoin": {
+      "chain": "main",
+      "rpc": {
+        "urlFile": "/etc/dmw/private/bitcoin.url",
+        "tokenFile": null,
+        "authFile": "/etc/dmw/private/bitcoin.auth"
+      },
+      "witnessRpc": {
+        "urlFile": null,
+        "authFile": null,
+        "tokenFile": null
+      },
+      "fundingAddress": null,
+      "treasuryAddress": null,
+      "authorityInscription": null,
+      "checkpointHeight": 0,
+      "checkpointFile": "/etc/dmw/private/checkpoint.json",
+      "feeRate": 0,
+      "estimateFeeRate": 0,
+      "postage": 10000,
+      "authorityHolderAddress": null,
+      "payerAddress": null,
+      "receiverAddress": null
+    },
+    "indexer": {
+      "endpoint": {
+        "urlFile": "/etc/dmw/private/tap-primary.url",
+        "tokenFile": null,
+        "authFile": null
+      },
+      "independentEndpoint": {
+        "urlFile": null,
+        "authFile": null,
+        "tokenFile": null
+      }
+    },
+    "ethereum": {
+      "rpc": {
+        "urlFile": "/etc/dmw/private/ethereum.url",
+        "tokenFile": null,
+        "authFile": null
+      },
+      "chainId": "1",
+      "referenceToken": "0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454",
+      "tokenAddress": "0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454",
+      "escrowAddress": null,
+      "adminAddress": null,
+      "treasuryAddress": null,
+      "payerAddress": null,
+      "signing": "files",
+      "adminKeyFile": "/etc/dmw/private/ethereum-admin.hex",
+      "estimateGasPriceGwei": null,
+      "sourceVerificationFile": "/etc/dmw/private/escrow-verification.json",
+      "tokenVerificationFile": "/etc/dmw/private/token-verification.json"
+    },
+    "trac": {
+      "endpoint": {
+        "urlFile": null,
+        "authFile": null,
+        "tokenFile": null
+      },
+      "networkId": "918",
+      "bootstrap": null,
+      "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+      "adminPublicKey": null,
+      "hostAdminPublicKey": null,
+      "writerPublicKey": null,
+      "adminKeyFile": "/etc/dmw/private/trac-admin.hex",
+      "hostKeyFile": "/etc/dmw/private/trac-host.json",
+      "writerKeyFile": "/etc/dmw/private/trac-writer.json",
+      "runtimeConfigFile": "/var/lib/dmw/gateway/trac/writer-runtime.json",
+      "balance": {
+        "storeDirectory": null,
+        "viewKey": null,
+        "hostAddress": null,
+        "writerAddress": null,
+        "endpoint": {
+          "urlFile": null,
+          "authFile": null,
+          "tokenFile": null
+        }
+      }
+    },
+    "committee": {
+      "threshold": 3,
+      "epoch": 1,
+      "publicKey": null,
+      "members": [
+        {
+          "id": "operator1",
+          "identity": null,
+          "encryption": null,
+          "server": "gateway.example.invalid",
+          "signer": {
+            "urlFile": "/etc/dmw/private/operator1-signer.url",
+            "tokenFile": "/etc/dmw/private/operator1-signer.token",
+            "authFile": null
+          },
+          "sidecar": {
+            "urlFile": "/etc/dmw/private/operator1-sidecar.url",
+            "tokenFile": "/etc/dmw/private/operator1-sidecar.token",
+            "authFile": null
+          },
+          "credentialsFile": "/var/lib/dmw/operator1/signer-credentials.json",
+          "sidecarCredentialsFile": "/var/lib/dmw/operator1/credentials.json",
+          "shareFile": "/var/lib/dmw/operator1/share.enc"
+        },
+        {
+          "id": "operator2",
+          "identity": null,
+          "encryption": null,
+          "server": "gateway.example.invalid",
+          "signer": {
+            "urlFile": "/etc/dmw/private/operator2-signer.url",
+            "tokenFile": "/etc/dmw/private/operator2-signer.token",
+            "authFile": null
+          },
+          "sidecar": {
+            "urlFile": "/etc/dmw/private/operator2-sidecar.url",
+            "tokenFile": "/etc/dmw/private/operator2-sidecar.token",
+            "authFile": null
+          },
+          "credentialsFile": "/var/lib/dmw/operator2/signer-credentials.json",
+          "sidecarCredentialsFile": "/var/lib/dmw/operator2/credentials.json",
+          "shareFile": "/var/lib/dmw/operator2/share.enc"
+        },
+        {
+          "id": "operator3",
+          "identity": null,
+          "encryption": null,
+          "server": "gateway.example.invalid",
+          "signer": {
+            "urlFile": "/etc/dmw/private/operator3-signer.url",
+            "tokenFile": "/etc/dmw/private/operator3-signer.token",
+            "authFile": null
+          },
+          "sidecar": {
+            "urlFile": "/etc/dmw/private/operator3-sidecar.url",
+            "tokenFile": "/etc/dmw/private/operator3-sidecar.token",
+            "authFile": null
+          },
+          "credentialsFile": "/var/lib/dmw/operator3/signer-credentials.json",
+          "sidecarCredentialsFile": "/var/lib/dmw/operator3/credentials.json",
+          "shareFile": "/var/lib/dmw/operator3/share.enc"
+        },
+        {
+          "id": "operator4",
+          "identity": null,
+          "encryption": null,
+          "server": "gateway.example.invalid",
+          "signer": {
+            "urlFile": "/etc/dmw/private/operator4-signer.url",
+            "tokenFile": "/etc/dmw/private/operator4-signer.token",
+            "authFile": null
+          },
+          "sidecar": {
+            "urlFile": "/etc/dmw/private/operator4-sidecar.url",
+            "tokenFile": "/etc/dmw/private/operator4-sidecar.token",
+            "authFile": null
+          },
+          "credentialsFile": "/var/lib/dmw/operator4/signer-credentials.json",
+          "sidecarCredentialsFile": "/var/lib/dmw/operator4/credentials.json",
+          "shareFile": "/var/lib/dmw/operator4/share.enc"
+        },
+        {
+          "id": "operator5",
+          "identity": null,
+          "encryption": null,
+          "server": "gateway.example.invalid",
+          "signer": {
+            "urlFile": "/etc/dmw/private/operator5-signer.url",
+            "tokenFile": "/etc/dmw/private/operator5-signer.token",
+            "authFile": null
+          },
+          "sidecar": {
+            "urlFile": "/etc/dmw/private/operator5-sidecar.url",
+            "tokenFile": "/etc/dmw/private/operator5-sidecar.token",
+            "authFile": null
+          },
+          "credentialsFile": "/var/lib/dmw/operator5/signer-credentials.json",
+          "sidecarCredentialsFile": "/var/lib/dmw/operator5/credentials.json",
+          "shareFile": "/var/lib/dmw/operator5/share.enc"
+        }
+      ]
+    },
+    "gateway": {
+      "endpoint": {
+        "urlFile": "/etc/dmw/private/gateway.url",
+        "tokenFile": null,
+        "authFile": null
+      },
+      "keyFile": "/etc/dmw/private/gateway.hex",
+      "configFile": "/var/lib/dmw/gateway/runtime.json",
+      "registryFile": "/var/lib/dmw/gateway/registry.json"
+    },
+    "servers": {
+      "gateway": "gateway.example.invalid",
+      "bitcoinIndexer": "single-owner-source",
+      "trac": "gateway.example.invalid",
+      "sshKeyFile": null,
+      "backupDirectory": "/var/backups/dmw"
+    },
+    "release": {
+      "webDomain": "gateway.example.invalid",
+      "gatewayDomain": "gateway.example.invalid",
+      "repository": null,
+      "revision": null,
+      "publicManifestFile": "/var/lib/dmw/gateway/launch/kit-public.json"
+    },
+    "funding": {
+      "bitcoinSats": "6000000",
+      "bitcoinReserveSats": "1000000",
+      "ethereumAdminWei": "20000000000000000",
+      "tnkHostAtoms": "30000000000000000",
+      "tnkWriterAtoms": "30000000000000000"
+    },
+    "local": {
+      "walletGatewayPort": 55999,
+      "sidecarPort": 58700,
+      "signerPort": 58800,
+      "smoke": {
+        "baseFeeAtoms": "100"
+      },
+      "playground": {
+        "dataDirectory": null,
+        "historyHeight": 2048,
+        "ports": {
+          "control": 59000,
+          "bitcoin": 18443,
+          "ord": 55888,
+          "wallet": 55999,
+          "ethereum": 58545,
+          "trac": 58900,
+          "gateway": 58910,
+          "dht": 58920,
+          "tss": [
+            58700,
+            58701,
+            58702,
+            58703,
+            58704
+          ],
+          "signers": [
+            58800,
+            58801,
+            58802,
+            58803,
+            58804
+          ]
+        },
+        "automine": 1,
+        "bots": 12
+      }
+    },
+    "runtime": {
+      "data": "/var/lib/dmw/gateway/data",
+      "contexts": "/var/lib/dmw/gateway/contexts",
+      "readerData": "/var/lib/dmw/gateway/reader-data",
+      "manifestFile": null,
+      "deploymentFile": "/var/lib/dmw/gateway/deployment.json",
+      "headersFile": "/var/lib/dmw/gateway/headers.bin",
+      "listenHost": "127.0.0.1",
+      "listenPort": 58910,
+      "startTip": 0,
+      "signerReads": [
+        "/var/lib/dmw/operator1/reader-input.json",
+        "/var/lib/dmw/operator2/reader-input.json",
+        "/var/lib/dmw/operator3/reader-input.json",
+        "/var/lib/dmw/operator4/reader-input.json",
+        "/var/lib/dmw/operator5/reader-input.json"
+      ],
+      "ownerInscriptionsFile": "/etc/dmw/private/owner-inscriptions.json"
+    },
+    "policy": {
+      "baseFeeAtoms": "22600000000000000000",
+      "confirmations": 1,
+      "ethereumConfirmations": 1,
+      "ethereumFromBlock": "0x0",
+      "ethereumMaxLogRange": 2000,
+      "ethereumMaxLogPages": 100,
+      "ethereumMaxGas": 3000000,
+      "ethereumMaxGasPriceWei": "100000000000",
+      "maxHeadersPerView": 10000,
+      "pollMs": 1000,
+      "puzzleBits": 12,
+      "authorityEpoch": 0
+    },
+    "public": {
+      "gateway": "https://gateway.example.invalid",
+      "headerSource": "https://gateway.example.invalid",
+      "paymentOrigin": "https://gateway.example.invalid",
+      "gatewayKey": null,
+      "tracRuntimeModule": "/opt/dmw/current/service/prod/runtime.mjs",
+      "tracRuntimeConfigFile": null
+    }
+  },
+  "files": {
+    "tracRuntime": {
+      "mode": "prod",
+      "directory": "/var/lib/dmw/gateway/trac/writer",
+      "hostDirectory": "/var/lib/dmw/gateway/trac/host",
+      "fundingDirectory": "/var/lib/dmw/gateway/trac/funding",
+      "msbWallet": "/etc/dmw/private/trac-msb-observer.json",
+      "peerWallet": "/etc/dmw/private/trac-writer.json",
+      "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+      "msbChannel": "0000trac0network0msb0mainnet0000",
+      "peerChannel": "0000trac0network0peer0mainnet0000",
+      "dhtBootstrap": [
+        "116.202.214.149:10001",
+        "157.180.12.214:10001",
+        "node1.hyperdht.org:49737",
+        "node2.hyperdht.org:49737",
+        "node3.hyperdht.org:49737"
+      ],
+      "validators": "auto"
+    },
+    "operatorReads": [
+      {
+        "readerId": "operator1",
+        "network": "dmw-mainnet",
+        "epoch": 1,
+        "listen": "127.0.0.1:58800",
+        "sidecarListen": "127.0.0.1:58700",
+        "evidenceDirectory": "/var/lib/dmw/operator1/evidence",
+        "contexts": "/var/lib/dmw/operator1/contexts",
+        "readerData": "/var/lib/dmw/operator1/reader-data",
+        "headersFile": "/var/lib/dmw/operator1/headers.bin",
+        "bitcoin": {
+          "urlFile": "/var/lib/dmw/operator1/endpoints/bitcoin.url",
+          "tokenFile": null,
+          "authFile": "/var/lib/dmw/operator1/endpoints/bitcoin.auth"
+        },
+        "ethereum": {
+          "urlFile": "/var/lib/dmw/operator1/endpoints/ethereum.url",
+          "tokenFile": null,
+          "authFile": null
+        },
+        "tap": {
+          "endpoints": [
+            {
+              "urlFile": "/var/lib/dmw/operator1/endpoints/tap-primary.url",
+              "tokenFile": null,
+              "authFile": null
+            }
+          ]
+        },
+        "trac": {
+          "runtimeConfig": "/var/lib/dmw/operator1/trac-runtime.json"
+        },
+        "evidence": {
+          "urlFile": "/var/lib/dmw/operator1/endpoints/gateway-evidence.url",
+          "tokenFile": null,
+          "authFile": null
+        }
+      },
+      {
+        "readerId": "operator2",
+        "network": "dmw-mainnet",
+        "epoch": 1,
+        "listen": "127.0.0.1:58801",
+        "sidecarListen": "127.0.0.1:58701",
+        "evidenceDirectory": "/var/lib/dmw/operator2/evidence",
+        "contexts": "/var/lib/dmw/operator2/contexts",
+        "readerData": "/var/lib/dmw/operator2/reader-data",
+        "headersFile": "/var/lib/dmw/operator2/headers.bin",
+        "bitcoin": {
+          "urlFile": "/var/lib/dmw/operator2/endpoints/bitcoin.url",
+          "tokenFile": null,
+          "authFile": "/var/lib/dmw/operator2/endpoints/bitcoin.auth"
+        },
+        "ethereum": {
+          "urlFile": "/var/lib/dmw/operator2/endpoints/ethereum.url",
+          "tokenFile": null,
+          "authFile": null
+        },
+        "tap": {
+          "endpoints": [
+            {
+              "urlFile": "/var/lib/dmw/operator2/endpoints/tap-primary.url",
+              "tokenFile": null,
+              "authFile": null
+            }
+          ]
+        },
+        "trac": {
+          "runtimeConfig": "/var/lib/dmw/operator2/trac-runtime.json"
+        },
+        "evidence": {
+          "urlFile": "/var/lib/dmw/operator2/endpoints/gateway-evidence.url",
+          "tokenFile": null,
+          "authFile": null
+        }
+      },
+      {
+        "readerId": "operator3",
+        "network": "dmw-mainnet",
+        "epoch": 1,
+        "listen": "127.0.0.1:58802",
+        "sidecarListen": "127.0.0.1:58702",
+        "evidenceDirectory": "/var/lib/dmw/operator3/evidence",
+        "contexts": "/var/lib/dmw/operator3/contexts",
+        "readerData": "/var/lib/dmw/operator3/reader-data",
+        "headersFile": "/var/lib/dmw/operator3/headers.bin",
+        "bitcoin": {
+          "urlFile": "/var/lib/dmw/operator3/endpoints/bitcoin.url",
+          "tokenFile": null,
+          "authFile": "/var/lib/dmw/operator3/endpoints/bitcoin.auth"
+        },
+        "ethereum": {
+          "urlFile": "/var/lib/dmw/operator3/endpoints/ethereum.url",
+          "tokenFile": null,
+          "authFile": null
+        },
+        "tap": {
+          "endpoints": [
+            {
+              "urlFile": "/var/lib/dmw/operator3/endpoints/tap-primary.url",
+              "tokenFile": null,
+              "authFile": null
+            }
+          ]
+        },
+        "trac": {
+          "runtimeConfig": "/var/lib/dmw/operator3/trac-runtime.json"
+        },
+        "evidence": {
+          "urlFile": "/var/lib/dmw/operator3/endpoints/gateway-evidence.url",
+          "tokenFile": null,
+          "authFile": null
+        }
+      },
+      {
+        "readerId": "operator4",
+        "network": "dmw-mainnet",
+        "epoch": 1,
+        "listen": "127.0.0.1:58803",
+        "sidecarListen": "127.0.0.1:58703",
+        "evidenceDirectory": "/var/lib/dmw/operator4/evidence",
+        "contexts": "/var/lib/dmw/operator4/contexts",
+        "readerData": "/var/lib/dmw/operator4/reader-data",
+        "headersFile": "/var/lib/dmw/operator4/headers.bin",
+        "bitcoin": {
+          "urlFile": "/var/lib/dmw/operator4/endpoints/bitcoin.url",
+          "tokenFile": null,
+          "authFile": "/var/lib/dmw/operator4/endpoints/bitcoin.auth"
+        },
+        "ethereum": {
+          "urlFile": "/var/lib/dmw/operator4/endpoints/ethereum.url",
+          "tokenFile": null,
+          "authFile": null
+        },
+        "tap": {
+          "endpoints": [
+            {
+              "urlFile": "/var/lib/dmw/operator4/endpoints/tap-primary.url",
+              "tokenFile": null,
+              "authFile": null
+            }
+          ]
+        },
+        "trac": {
+          "runtimeConfig": "/var/lib/dmw/operator4/trac-runtime.json"
+        },
+        "evidence": {
+          "urlFile": "/var/lib/dmw/operator4/endpoints/gateway-evidence.url",
+          "tokenFile": null,
+          "authFile": null
+        }
+      },
+      {
+        "readerId": "operator5",
+        "network": "dmw-mainnet",
+        "epoch": 1,
+        "listen": "127.0.0.1:58804",
+        "sidecarListen": "127.0.0.1:58704",
+        "evidenceDirectory": "/var/lib/dmw/operator5/evidence",
+        "contexts": "/var/lib/dmw/operator5/contexts",
+        "readerData": "/var/lib/dmw/operator5/reader-data",
+        "headersFile": "/var/lib/dmw/operator5/headers.bin",
+        "bitcoin": {
+          "urlFile": "/var/lib/dmw/operator5/endpoints/bitcoin.url",
+          "tokenFile": null,
+          "authFile": "/var/lib/dmw/operator5/endpoints/bitcoin.auth"
+        },
+        "ethereum": {
+          "urlFile": "/var/lib/dmw/operator5/endpoints/ethereum.url",
+          "tokenFile": null,
+          "authFile": null
+        },
+        "tap": {
+          "endpoints": [
+            {
+              "urlFile": "/var/lib/dmw/operator5/endpoints/tap-primary.url",
+              "tokenFile": null,
+              "authFile": null
+            }
+          ]
+        },
+        "trac": {
+          "runtimeConfig": "/var/lib/dmw/operator5/trac-runtime.json"
+        },
+        "evidence": {
+          "urlFile": "/var/lib/dmw/operator5/endpoints/gateway-evidence.url",
+          "tokenFile": null,
+          "authFile": null
+        }
+      }
+    ],
+    "tokenVerification": {
+      "chainId": "1",
+      "address": "0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454",
+      "artifactFile": "/var/lib/dmw/gateway/launch/verification/token-artifact.json",
+      "inputFile": "/var/lib/dmw/gateway/launch/verification/token-input.json",
+      "artifactURL": "https://gateway.example.invalid/verification/token-artifact.json",
+      "inputURL": "https://gateway.example.invalid/verification/token-input.json",
+      "artifactSHA256": null,
+      "inputSHA256": null,
+      "runtimeSHA256": null,
+      "implementation": "0x8a2042b4e010b715f8e2a5a8baf0d52ac6edae8b",
+      "proxyKind": "eip1167"
+    },
+    "escrowVerification": {
+      "chainId": "1",
+      "address": null,
+      "artifactFile": "/var/lib/dmw/gateway/launch/verification/escrow-artifact.json",
+      "inputFile": "/var/lib/dmw/gateway/launch/verification/escrow-input.json",
+      "artifactURL": "https://gateway.example.invalid/verification/escrow-artifact.json",
+      "inputURL": "https://gateway.example.invalid/verification/escrow-input.json",
+      "artifactSHA256": null,
+      "inputSHA256": null,
+      "runtimeSHA256": null
+    },
+    "operatorTrac": [
+      {
+        "mode": "prod",
+        "directory": "/var/lib/dmw/operator1/trac",
+        "msbWallet": "/var/lib/dmw/operator1/keys/msb-wallet.json",
+        "peerWallet": "/var/lib/dmw/operator1/keys/trac-reader.json",
+        "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+        "msbChannel": "0000trac0network0msb0mainnet0000",
+        "peerChannel": "0000trac0network0peer0mainnet0000",
+        "dhtBootstrap": [
+          "116.202.214.149:10001",
+          "157.180.12.214:10001",
+          "node1.hyperdht.org:49737",
+          "node2.hyperdht.org:49737",
+          "node3.hyperdht.org:49737"
+        ],
+        "validators": "auto"
+      },
+      {
+        "mode": "prod",
+        "directory": "/var/lib/dmw/operator2/trac",
+        "msbWallet": "/var/lib/dmw/operator2/keys/msb-wallet.json",
+        "peerWallet": "/var/lib/dmw/operator2/keys/trac-reader.json",
+        "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+        "msbChannel": "0000trac0network0msb0mainnet0000",
+        "peerChannel": "0000trac0network0peer0mainnet0000",
+        "dhtBootstrap": [
+          "116.202.214.149:10001",
+          "157.180.12.214:10001",
+          "node1.hyperdht.org:49737",
+          "node2.hyperdht.org:49737",
+          "node3.hyperdht.org:49737"
+        ],
+        "validators": "auto"
+      },
+      {
+        "mode": "prod",
+        "directory": "/var/lib/dmw/operator3/trac",
+        "msbWallet": "/var/lib/dmw/operator3/keys/msb-wallet.json",
+        "peerWallet": "/var/lib/dmw/operator3/keys/trac-reader.json",
+        "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+        "msbChannel": "0000trac0network0msb0mainnet0000",
+        "peerChannel": "0000trac0network0peer0mainnet0000",
+        "dhtBootstrap": [
+          "116.202.214.149:10001",
+          "157.180.12.214:10001",
+          "node1.hyperdht.org:49737",
+          "node2.hyperdht.org:49737",
+          "node3.hyperdht.org:49737"
+        ],
+        "validators": "auto"
+      },
+      {
+        "mode": "prod",
+        "directory": "/var/lib/dmw/operator4/trac",
+        "msbWallet": "/var/lib/dmw/operator4/keys/msb-wallet.json",
+        "peerWallet": "/var/lib/dmw/operator4/keys/trac-reader.json",
+        "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+        "msbChannel": "0000trac0network0msb0mainnet0000",
+        "peerChannel": "0000trac0network0peer0mainnet0000",
+        "dhtBootstrap": [
+          "116.202.214.149:10001",
+          "157.180.12.214:10001",
+          "node1.hyperdht.org:49737",
+          "node2.hyperdht.org:49737",
+          "node3.hyperdht.org:49737"
+        ],
+        "validators": "auto"
+      },
+      {
+        "mode": "prod",
+        "directory": "/var/lib/dmw/operator5/trac",
+        "msbWallet": "/var/lib/dmw/operator5/keys/msb-wallet.json",
+        "peerWallet": "/var/lib/dmw/operator5/keys/trac-reader.json",
+        "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+        "msbChannel": "0000trac0network0msb0mainnet0000",
+        "peerChannel": "0000trac0network0peer0mainnet0000",
+        "dhtBootstrap": [
+          "116.202.214.149:10001",
+          "157.180.12.214:10001",
+          "node1.hyperdht.org:49737",
+          "node2.hyperdht.org:49737",
+          "node3.hyperdht.org:49737"
+        ],
+        "validators": "auto"
+      }
+    ],
+    "roleAddressesFile": "/etc/dmw/private/roles-public.json",
+    "headerSource": {
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 58912
+      },
+      "bitcoin": {
+        "urlFile": "/etc/dmw/private/bitcoin.url",
+        "tokenFile": null,
+        "authFile": "/etc/dmw/private/bitcoin.auth"
+      }
+    }
+  },
+  "operations": {
+    "hosts": {
+      "gateway": {
+        "hostname": "gateway.example.invalid",
+        "ipv4": null,
+        "ipv6": null,
+        "internalURL": "http://127.0.0.1:58910"
+      },
+      "operators": [
+        {
+          "id": "operator1",
+          "hostname": "gateway.example.invalid",
+          "unixUser": "dmw-operator1",
+          "signerURL": "http://127.0.0.1:58800",
+          "sidecarURL": "http://127.0.0.1:58700"
+        },
+        {
+          "id": "operator2",
+          "hostname": "gateway.example.invalid",
+          "unixUser": "dmw-operator2",
+          "signerURL": "http://127.0.0.1:58801",
+          "sidecarURL": "http://127.0.0.1:58701"
+        },
+        {
+          "id": "operator3",
+          "hostname": "gateway.example.invalid",
+          "unixUser": "dmw-operator3",
+          "signerURL": "http://127.0.0.1:58802",
+          "sidecarURL": "http://127.0.0.1:58702"
+        },
+        {
+          "id": "operator4",
+          "hostname": "gateway.example.invalid",
+          "unixUser": "dmw-operator4",
+          "signerURL": "http://127.0.0.1:58803",
+          "sidecarURL": "http://127.0.0.1:58703"
+        },
+        {
+          "id": "operator5",
+          "hostname": "gateway.example.invalid",
+          "unixUser": "dmw-operator5",
+          "signerURL": "http://127.0.0.1:58804",
+          "sidecarURL": "http://127.0.0.1:58704"
+        }
+      ],
+      "backupLocation": "/var/backups/dmw",
+      "indexers": 1,
+      "indexerIsAdmin": true
+    },
+    "ruleConstants": {
+      "baseFeeTAP": "22.6",
+      "tapDecimals": 18,
+      "committeeRequired": 3,
+      "committeeMembers": 5,
+      "initialPatterns": 0,
+      "finderExclusiveCountedBlocks": 1008,
+      "pendingCountedBlocks": 432,
+      "adminDelayCountedBlocks": 432,
+      "pauseMaxCountedBlocks": 144,
+      "pauseCooldownCountedBlocks": 144,
+      "lockMinCountedBlocks": 6,
+      "lockMaxCountedBlocks": 2016,
+      "mintTierMultipliers": [
+        1,
+        3,
+        10,
+        30,
+        100
+      ],
+      "bitmapLinkMultiplier": 20,
+      "mintSplitPercent": {
+        "finder": 30,
+        "landowner": 15,
+        "burn": 20,
+        "treasury": 35
+      },
+      "linkSplitPercent": {
+        "burn": 50,
+        "treasury": 50
+      },
+      "compoundSplitPercent": {
+        "firstMaker": 30,
+        "burn": 35,
+        "treasury": 35
+      },
+      "treasuryCommissionPercent": {
+        "discoverer": 5
+      },
+      "contractSettings": {
+        "batch_bytes": 98304,
+        "batch_ops": 512,
+        "batch_assets": 4096,
+        "batch_kv": 16,
+        "pending_blocks": 432,
+        "lock_min": 6,
+        "lock_max": 2016
+      },
+      "maximumBatchHorizon": 36,
+      "claimsPerWindow": 100,
+      "maxClaimsPerWindow": 1000
+    },
+    "ceremony": {
+      "session": null,
+      "timeoutSeconds": 900,
+      "decisionDirectory": "/var/lib/dmw/gateway/ceremony"
+    },
+    "layout": "single-host",
+    "owner": {
+      "serverIP": "",
+      "sshAccess": "",
+      "dnsPointed": false,
+      "bitcoinTapFilesInstalled": false,
+      "ethereumFilesInstalled": false,
+      "roleFilesInstalled": false
+    }
+  },
+  "notes": {
+    "example": "Illustrative single-host configuration for a new installation. Domains, paths and listener ports are examples, not information about the public service. Replace them for your environment.",
+    "privateInputs": "Install credentials and provider connection files outside the checkout. Never commit completed worksheets.",
+    "nullValues": "Null marks an unused or unresolved slot. loadTarget normalizes null strings; preparation and admission still require complete, validated inputs.",
+    "funding": "Choose current fee estimates, cost digests and funding budgets before execution. Players fund their own payments and inscriptions.",
+    "publicPins": "Public Trac network constants and the TAP token address identify the supported network. Generate and review the deployment-specific identities separately."
+  }
+}

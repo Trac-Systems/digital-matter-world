@@ -1,0 +1,305 @@
+{
+  "schemaVersion": 1,
+  "mode": "mainnet",
+  "network": "",
+  "paths": {
+    "output": "",
+    "costsFile": "",
+    "costsSHA256": ""
+  },
+  "bitcoin": {
+    "chain": "main",
+    "rpc": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "witnessRpc": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "fundingAddress": "",
+    "treasuryAddress": "",
+    "authorityInscription": "",
+    "checkpointHeight": 0,
+    "checkpointFile": "",
+    "feeRate": 0,
+    "estimateFeeRate": 0,
+    "postage": 0,
+    "authorityHolderAddress": "",
+    "payerAddress": "",
+    "receiverAddress": ""
+  },
+  "indexer": {
+    "endpoint": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "independentEndpoint": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    }
+  },
+  "ethereum": {
+    "rpc": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "chainId": "1",
+    "referenceToken": "",
+    "tokenAddress": "",
+    "escrowAddress": "",
+    "adminAddress": "",
+    "treasuryAddress": "",
+    "payerAddress": "",
+    "signing": "files",
+    "adminKeyFile": "",
+    "estimateGasPriceGwei": "",
+    "sourceVerificationFile": "",
+    "tokenVerificationFile": ""
+  },
+  "trac": {
+    "endpoint": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "networkId": "",
+    "bootstrap": "",
+    "msbBootstrap": "",
+    "adminPublicKey": "",
+    "hostAdminPublicKey": "",
+    "writerPublicKey": "",
+    "adminKeyFile": "",
+    "hostKeyFile": "",
+    "writerKeyFile": "",
+    "runtimeConfigFile": "",
+    "balance": {
+      "storeDirectory": "",
+      "viewKey": "",
+      "hostAddress": "",
+      "writerAddress": "",
+      "endpoint": {
+        "urlFile": "",
+        "tokenFile": "",
+        "authFile": ""
+      }
+    }
+  },
+  "committee": {
+    "threshold": 3,
+    "epoch": 1,
+    "publicKey": "",
+    "members": [
+      {
+        "id": "",
+        "identity": "",
+        "encryption": "",
+        "server": "",
+        "signer": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "sidecar": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "credentialsFile": "",
+        "sidecarCredentialsFile": "",
+        "shareFile": ""
+      },
+      {
+        "id": "",
+        "identity": "",
+        "encryption": "",
+        "server": "",
+        "signer": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "sidecar": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "credentialsFile": "",
+        "sidecarCredentialsFile": "",
+        "shareFile": ""
+      },
+      {
+        "id": "",
+        "identity": "",
+        "encryption": "",
+        "server": "",
+        "signer": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "sidecar": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "credentialsFile": "",
+        "sidecarCredentialsFile": "",
+        "shareFile": ""
+      },
+      {
+        "id": "",
+        "identity": "",
+        "encryption": "",
+        "server": "",
+        "signer": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "sidecar": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "credentialsFile": "",
+        "sidecarCredentialsFile": "",
+        "shareFile": ""
+      },
+      {
+        "id": "",
+        "identity": "",
+        "encryption": "",
+        "server": "",
+        "signer": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "sidecar": {
+          "urlFile": "",
+          "tokenFile": "",
+          "authFile": ""
+        },
+        "credentialsFile": "",
+        "sidecarCredentialsFile": "",
+        "shareFile": ""
+      }
+    ]
+  },
+  "gateway": {
+    "endpoint": {
+      "urlFile": "",
+      "tokenFile": "",
+      "authFile": ""
+    },
+    "keyFile": "",
+    "configFile": "",
+    "registryFile": ""
+  },
+  "servers": {
+    "gateway": "",
+    "bitcoinIndexer": "",
+    "trac": "",
+    "sshKeyFile": "",
+    "backupDirectory": ""
+  },
+  "release": {
+    "webDomain": "",
+    "gatewayDomain": "",
+    "repository": "",
+    "revision": "",
+    "publicManifestFile": ""
+  },
+  "funding": {
+    "bitcoinSats": "",
+    "bitcoinReserveSats": "",
+    "ethereumAdminWei": "",
+    "tnkHostAtoms": "",
+    "tnkWriterAtoms": ""
+  },
+  "local": {
+    "walletGatewayPort": 0,
+    "sidecarPort": 0,
+    "signerPort": 0,
+    "smoke": {
+      "baseFeeAtoms": ""
+    },
+    "playground": {
+      "dataDirectory": "",
+      "historyHeight": 2048,
+      "ports": {
+        "control": 59000,
+        "bitcoin": 18443,
+        "ord": 55888,
+        "wallet": 55999,
+        "ethereum": 58545,
+        "trac": 58900,
+        "gateway": 58910,
+        "dht": 58920,
+        "tss": [
+          58700,
+          58701,
+          58702,
+          58703,
+          58704
+        ],
+        "signers": [
+          58800,
+          58801,
+          58802,
+          58803,
+          58804
+        ]
+      },
+      "automine": 1,
+      "bots": 12
+    }
+  },
+  "runtime": {
+    "data": "",
+    "contexts": "",
+    "readerData": "",
+    "manifestFile": "",
+    "deploymentFile": "",
+    "headersFile": "",
+    "listenHost": "",
+    "listenPort": 58910,
+    "startTip": 2049,
+    "signerReads": [
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "ownerInscriptionsFile": "/absolute/private/owner-inscriptions.json"
+  },
+  "policy": {
+    "baseFeeAtoms": "22600000000000000000",
+    "confirmations": 1,
+    "ethereumConfirmations": 1,
+    "ethereumFromBlock": "0x0",
+    "ethereumMaxLogRange": 2000,
+    "ethereumMaxLogPages": 100,
+    "ethereumMaxGas": 3000000,
+    "ethereumMaxGasPriceWei": "100000000000",
+    "maxHeadersPerView": 10000,
+    "pollMs": 1000,
+    "puzzleBits": 12,
+    "authorityEpoch": 0
+  },
+  "public": {
+    "gateway": "",
+    "headerSource": "",
+    "paymentOrigin": "",
+    "gatewayKey": "",
+    "tracRuntimeModule": "",
+    "tracRuntimeConfigFile": ""
+  }
+}

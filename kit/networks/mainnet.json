@@ -1,0 +1,87 @@
+{
+  "bitcoinNetwork": "mainnet",
+  "gateway": "https://dmtworld.much.fun",
+  "gatewayKey": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+  "headerSource": "https://dmtworld.much.fun",
+  "mode": "mainnet",
+  "network": "dmw-mainnet",
+  "paymentOrigin": "https://dmtworld.much.fun",
+  "powLimitBits": 486604799,
+  "puzzleBits": 12,
+  "receiptSigners": [
+    {
+      "id": "operator1",
+      "identity": "8ae28e09badb67a0903f77054f9e2267eecc8925f9d591da497c7bd68d23c2cc"
+    },
+    {
+      "id": "operator2",
+      "identity": "79651ec97caf6ad6e6a63af0e20b012dc0bbc24fb410318e586d15e406ac3ed5"
+    },
+    {
+      "id": "operator3",
+      "identity": "4ed5280aeaef17a2d6b85cf0c4e07a76c880a992cc6630c77f5056f5812e251d"
+    },
+    {
+      "id": "operator4",
+      "identity": "635da5ed7316f53ec26db69972e1e02fd8df69c098eed16b948b5bf156585309"
+    },
+    {
+      "id": "operator5",
+      "identity": "ceaf32610d748ccdd619c64c7b23a4d47814fde07ee5c1aff1cfdebb51b9b72e"
+    }
+  ],
+  "trac": {
+    "adminPublicKey": "12cdb5924412d67fc20dd7e765bf5ab4ee4df8f822585220fdba93615923a097",
+    "bootstrap": "f163aa4ba5a0ed1bcdaae2a624bb90aff89ead21bc2b4f9446d794b798823ce7",
+    "committeePublicKey": "03ad8df5e1c8bdb1de2f9a009af545e7ad2e1797c7c0548a9cd8bb5ab9123c1829",
+    "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
+    "networkId": "918"
+  },
+  "version": 1,
+  "runtime": {
+    "msbChannel": "0000trac0network0msb0mainnet0000",
+    "peerChannel": "0000trac0network0peer0mainnet0000",
+    "dhtBootstrap": [
+      "116.202.214.149:10001",
+      "157.180.12.214:10001",
+      "node1.hyperdht.org:49737",
+      "node2.hyperdht.org:49737",
+      "node3.hyperdht.org:49737"
+    ],
+    "deployment": {
+      "admin": "12cdb5924412d67fc20dd7e765bf5ab4ee4df8f822585220fdba93615923a097",
+      "beacon": {
+        "checkpoint": {
+          "bits": 386007187,
+          "chainwork": "104008043792588949792103951226",
+          "hash": "00000000000000000000c185f0906690a08d62d6fe842682a888d5560217e467",
+          "height": 971712,
+          "time": 1792154251,
+          "times": [
+            1792149817,
+            1792150186,
+            1792150043,
+            1792151359,
+            1792151897,
+            1792152382,
+            1792152462,
+            1792152801,
+            1792153562,
+            1792153758,
+            1792154251
+          ]
+        },
+        "params": {
+          "branchDepth": 12,
+          "confirmations": 1,
+          "interval": 2016,
+          "powLimitBits": 486604799,
+          "retarget": true,
+          "timespan": 1209600
+        }
+      },
+      "committee": "03ad8df5e1c8bdb1de2f9a009af545e7ad2e1797c7c0548a9cd8bb5ab9123c1829",
+      "network": "dmw-mainnet"
+    }
+  }
+}

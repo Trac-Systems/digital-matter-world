@@ -1,0 +1,16 @@
+{
+  "name": "dmw-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "23.11.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@scure/btc-signer": "1.8.1"
+  }
+}

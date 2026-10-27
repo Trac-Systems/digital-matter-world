@@ -1,0 +1,27 @@
+{$DMW_GATEWAY_DOMAIN} {
+    route {
+        @private path /operator /operator.js /operator/* /internal /internal/*
+        respond @private 404
+        import /etc/dmw/admission.caddy
+        @headers path /api/blocks/tip/height /api/block-height/* /api/block/*/header /api/blocks/*
+        handle @headers {
+            reverse_proxy 127.0.0.1:58912
+        }
+        handle /verification/* {
+            root * /srv/dmw/public
+            file_server
+        }
+        handle /agent-kit.json {
+            root * /srv/dmw/public
+            file_server
+        }
+        handle {
+            reverse_proxy 127.0.0.1:58910
+        }
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+}

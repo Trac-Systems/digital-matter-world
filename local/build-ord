@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+build=${DMW_BUILD_ROOT:-"$(cd "$(dirname "$0")/../.." && pwd)/build"}
+source_dir="$build/ord-tap"
+node_source="$build/target/node-v20.10.0"
+artifact="$build/target/node20-v8/aarch64-apple-darwin"
+export CARGO_TARGET_DIR="$build/target"
+export CARGO_HOME="$build/cargo-home"
+export TAP_NODE20_V8_ARTIFACT_DIR="$artifact"
+export TMPDIR="$build/tmp"
+mkdir -p "$TMPDIR" "$build/downloads" "$build/target"
+df -h /
+free_kb=$(df -k / | awk 'NR==2 {print $4}')
+if (( free_kb < 104857600 )); then echo 'Less than 100 GiB free; stopping.' >&2; exit 1; fi
+if [[ $(git -C "$source_dir" rev-parse HEAD) != b8f6ea35cf6b9d405d4db7c58555e3c8ab33e8cd ]]; then echo 'Unexpected ord-tap revision' >&2; exit 1; fi
+if [[ ! -f "$artifact/SHA256SUMS" ]]; then
+  cd "$build/downloads"
+  curl --fail --location --retry 3 -o node-v20.10.0.tar.xz https://nodejs.org/dist/v20.10.0/node-v20.10.0.tar.xz
+  curl --fail --location --retry 3 -o node-v20.10.0-SHASUMS256.txt https://nodejs.org/dist/v20.10.0/SHASUMS256.txt
+  awk '$2 == "node-v20.10.0.tar.xz" {print}' node-v20.10.0-SHASUMS256.txt | shasum -a 256 -c -
+  test "$(shasum -a 256 node-v20.10.0.tar.xz | awk '{print $1}')" = 32eb256eebd8cacd5574e6631e54b42be7ec8ebe25ad47a8ca685403bad15535
+  if [[ ! -d "$node_source" ]]; then tar -xJf node-v20.10.0.tar.xz -C "$build/target"; fi
+  python3.11 - "$node_source" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]) / 'deps/v8/third_party/zlib/zutil.h'
+p.write_text(p.read_text().replace('#if defined(MACOS) || defined(TARGET_OS_MAC)', '#if defined(MACOS)'))
+PY
+  cd "$node_source"
+  python3.11 configure.py --enable-static --without-npm --without-corepack --without-inspector --ninja
+  ninja -j 8 -C out/Release v8_snapshot v8_initializers v8_init v8_compiler v8_turboshaft v8_base_without_compiler v8_libplatform v8_libbase v8_zlib v8_libsampler icui18n icuucx icudata
+  bash "$source_dir/crates/tap_node20_v8_regexp/tools/package-node20-v8-artifact.sh" "$node_source" aarch64-apple-darwin "$build/target/node20-v8"
+fi
+cd "$artifact"
+shasum -a 256 -c SHA256SUMS
+cd "$source_dir"
+RUSTFLAGS='-C target-cpu=native' cargo build --locked --release -j 8

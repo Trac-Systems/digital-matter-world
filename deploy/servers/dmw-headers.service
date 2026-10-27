@@ -1,0 +1,22 @@
+[Unit]
+Description=Digital Matter World public Bitcoin header reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dmw
+Group=dmw
+WorkingDirectory=/opt/dmw/current
+ExecStart=/usr/bin/node /opt/dmw/current/deploy/header-source.mjs /var/lib/dmw/gateway/header-source.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

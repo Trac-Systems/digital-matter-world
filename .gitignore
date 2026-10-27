@@ -1,0 +1,12 @@
+# Generated data and private configuration
+/.*/
+/playground/.*/
+/deploy/targets/*.local.json
+node_modules/
+target/
+.data/
+*.log
+.env
+.env.*
+secrets/
+.DS_Store

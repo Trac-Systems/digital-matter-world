@@ -1,0 +1,898 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DMW launch target v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "mode",
+    "network",
+    "paths",
+    "bitcoin",
+    "indexer",
+    "ethereum",
+    "trac",
+    "committee",
+    "gateway",
+    "servers",
+    "release",
+    "funding",
+    "local",
+    "runtime",
+    "policy",
+    "public"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "regtest",
+        "mainnet"
+      ]
+    },
+    "network": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "output",
+        "costsFile",
+        "costsSHA256"
+      ],
+      "properties": {
+        "output": {
+          "type": "string"
+        },
+        "costsFile": {
+          "type": "string"
+        },
+        "costsSHA256": {
+          "type": "string"
+        }
+      }
+    },
+    "bitcoin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chain",
+        "rpc",
+        "witnessRpc",
+        "fundingAddress",
+        "treasuryAddress",
+        "authorityInscription",
+        "checkpointHeight",
+        "checkpointFile",
+        "feeRate",
+        "estimateFeeRate",
+        "postage",
+        "authorityHolderAddress",
+        "payerAddress",
+        "receiverAddress"
+      ],
+      "properties": {
+        "chain": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "witnessRpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "fundingAddress": {
+          "type": "string"
+        },
+        "treasuryAddress": {
+          "type": "string"
+        },
+        "authorityInscription": {
+          "type": "string"
+        },
+        "checkpointHeight": {
+          "type": "integer"
+        },
+        "checkpointFile": {
+          "type": "string"
+        },
+        "feeRate": {
+          "type": "integer"
+        },
+        "estimateFeeRate": {
+          "type": "integer"
+        },
+        "postage": {
+          "type": "integer"
+        },
+        "authorityHolderAddress": {
+          "type": "string"
+        },
+        "payerAddress": {
+          "type": "string"
+        },
+        "receiverAddress": {
+          "type": "string"
+        }
+      }
+    },
+    "indexer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "independentEndpoint"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "independentEndpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "ethereum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rpc",
+        "chainId",
+        "referenceToken",
+        "tokenAddress",
+        "escrowAddress",
+        "adminAddress",
+        "treasuryAddress",
+        "payerAddress",
+        "signing",
+        "adminKeyFile",
+        "estimateGasPriceGwei",
+        "sourceVerificationFile",
+        "tokenVerificationFile"
+      ],
+      "properties": {
+        "rpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "chainId": {
+          "type": "string"
+        },
+        "referenceToken": {
+          "type": "string"
+        },
+        "tokenAddress": {
+          "type": "string"
+        },
+        "escrowAddress": {
+          "type": "string"
+        },
+        "adminAddress": {
+          "type": "string"
+        },
+        "treasuryAddress": {
+          "type": "string"
+        },
+        "payerAddress": {
+          "type": "string"
+        },
+        "signing": {
+          "type": "string",
+          "enum": [
+            "unlocked-local",
+            "files"
+          ]
+        },
+        "adminKeyFile": {
+          "type": "string"
+        },
+        "estimateGasPriceGwei": {
+          "type": "string"
+        },
+        "sourceVerificationFile": {
+          "type": "string"
+        },
+        "tokenVerificationFile": {
+          "type": "string"
+        }
+      }
+    },
+    "trac": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "networkId",
+        "bootstrap",
+        "msbBootstrap",
+        "adminPublicKey",
+        "hostAdminPublicKey",
+        "writerPublicKey",
+        "adminKeyFile",
+        "hostKeyFile",
+        "writerKeyFile",
+        "runtimeConfigFile",
+        "balance"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "bootstrap": {
+          "type": "string"
+        },
+        "msbBootstrap": {
+          "type": "string"
+        },
+        "adminPublicKey": {
+          "type": "string"
+        },
+        "hostAdminPublicKey": {
+          "type": "string"
+        },
+        "writerPublicKey": {
+          "type": "string"
+        },
+        "adminKeyFile": {
+          "type": "string"
+        },
+        "hostKeyFile": {
+          "type": "string"
+        },
+        "writerKeyFile": {
+          "type": "string"
+        },
+        "runtimeConfigFile": {
+          "type": "string"
+        },
+        "balance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "storeDirectory",
+            "viewKey",
+            "hostAddress",
+            "writerAddress",
+            "endpoint"
+          ],
+          "properties": {
+            "storeDirectory": {
+              "type": "string"
+            },
+            "viewKey": {
+              "type": "string"
+            },
+            "hostAddress": {
+              "type": "string"
+            },
+            "writerAddress": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "urlFile",
+                "tokenFile",
+                "authFile"
+              ],
+              "properties": {
+                "urlFile": {
+                  "type": "string"
+                },
+                "tokenFile": {
+                  "type": "string"
+                },
+                "authFile": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "committee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threshold",
+        "epoch",
+        "publicKey",
+        "members"
+      ],
+      "properties": {
+        "threshold": {
+          "type": "integer"
+        },
+        "epoch": {
+          "type": "integer"
+        },
+        "publicKey": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "identity",
+              "encryption",
+              "server",
+              "signer",
+              "sidecar",
+              "credentialsFile",
+              "sidecarCredentialsFile",
+              "shareFile"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "identity": {
+                "type": "string"
+              },
+              "encryption": {
+                "type": "string"
+              },
+              "server": {
+                "type": "string"
+              },
+              "signer": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "urlFile",
+                  "tokenFile",
+                  "authFile"
+                ],
+                "properties": {
+                  "urlFile": {
+                    "type": "string"
+                  },
+                  "tokenFile": {
+                    "type": "string"
+                  },
+                  "authFile": {
+                    "type": "string"
+                  }
+                }
+              },
+              "sidecar": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "urlFile",
+                  "tokenFile",
+                  "authFile"
+                ],
+                "properties": {
+                  "urlFile": {
+                    "type": "string"
+                  },
+                  "tokenFile": {
+                    "type": "string"
+                  },
+                  "authFile": {
+                    "type": "string"
+                  }
+                }
+              },
+              "credentialsFile": {
+                "type": "string"
+              },
+              "sidecarCredentialsFile": {
+                "type": "string"
+              },
+              "shareFile": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "keyFile",
+        "configFile",
+        "registryFile"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "urlFile",
+            "tokenFile",
+            "authFile"
+          ],
+          "properties": {
+            "urlFile": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "authFile": {
+              "type": "string"
+            }
+          }
+        },
+        "keyFile": {
+          "type": "string"
+        },
+        "configFile": {
+          "type": "string"
+        },
+        "registryFile": {
+          "type": "string"
+        }
+      }
+    },
+    "servers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gateway",
+        "bitcoinIndexer",
+        "trac",
+        "sshKeyFile",
+        "backupDirectory"
+      ],
+      "properties": {
+        "gateway": {
+          "type": "string"
+        },
+        "bitcoinIndexer": {
+          "type": "string"
+        },
+        "trac": {
+          "type": "string"
+        },
+        "sshKeyFile": {
+          "type": "string"
+        },
+        "backupDirectory": {
+          "type": "string"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "webDomain",
+        "gatewayDomain",
+        "repository",
+        "revision",
+        "publicManifestFile"
+      ],
+      "properties": {
+        "webDomain": {
+          "type": "string"
+        },
+        "gatewayDomain": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "publicManifestFile": {
+          "type": "string"
+        }
+      }
+    },
+    "funding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bitcoinSats",
+        "bitcoinReserveSats",
+        "ethereumAdminWei",
+        "tnkHostAtoms",
+        "tnkWriterAtoms"
+      ],
+      "properties": {
+        "bitcoinSats": {
+          "type": "string"
+        },
+        "bitcoinReserveSats": {
+          "type": "string"
+        },
+        "ethereumAdminWei": {
+          "type": "string"
+        },
+        "tnkHostAtoms": {
+          "type": "string"
+        },
+        "tnkWriterAtoms": {
+          "type": "string"
+        }
+      }
+    },
+    "local": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "walletGatewayPort",
+        "sidecarPort",
+        "signerPort",
+        "smoke",
+        "playground"
+      ],
+      "properties": {
+        "walletGatewayPort": {
+          "type": "integer"
+        },
+        "sidecarPort": {
+          "type": "integer"
+        },
+        "signerPort": {
+          "type": "integer"
+        },
+        "smoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseFeeAtoms"
+          ],
+          "properties": {
+            "baseFeeAtoms": {
+              "type": "string"
+            }
+          }
+        },
+        "playground": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dataDirectory",
+            "historyHeight",
+            "ports",
+            "automine",
+            "bots"
+          ],
+          "properties": {
+            "dataDirectory": {
+              "type": "string"
+            },
+            "historyHeight": {
+              "type": "integer"
+            },
+            "ports": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "control",
+                "bitcoin",
+                "ord",
+                "wallet",
+                "ethereum",
+                "trac",
+                "gateway",
+                "dht",
+                "tss",
+                "signers"
+              ],
+              "properties": {
+                "control": {
+                  "type": "integer"
+                },
+                "bitcoin": {
+                  "type": "integer"
+                },
+                "ord": {
+                  "type": "integer"
+                },
+                "wallet": {
+                  "type": "integer"
+                },
+                "ethereum": {
+                  "type": "integer"
+                },
+                "trac": {
+                  "type": "integer"
+                },
+                "gateway": {
+                  "type": "integer"
+                },
+                "dht": {
+                  "type": "integer"
+                },
+                "tss": {
+                  "type": "array",
+                  "minItems": 5,
+                  "maxItems": 5,
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "signers": {
+                  "type": "array",
+                  "minItems": 5,
+                  "maxItems": 5,
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "automine": {
+              "type": "integer"
+            },
+            "bots": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "contexts",
+        "readerData",
+        "manifestFile",
+        "deploymentFile",
+        "headersFile",
+        "listenHost",
+        "listenPort",
+        "startTip",
+        "signerReads",
+        "ownerInscriptionsFile"
+      ],
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "contexts": {
+          "type": "string"
+        },
+        "readerData": {
+          "type": "string"
+        },
+        "manifestFile": {
+          "type": "string"
+        },
+        "deploymentFile": {
+          "type": "string"
+        },
+        "headersFile": {
+          "type": "string"
+        },
+        "listenHost": {
+          "type": "string"
+        },
+        "listenPort": {
+          "type": "integer"
+        },
+        "startTip": {
+          "type": "integer"
+        },
+        "signerReads": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "string"
+          }
+        },
+        "ownerInscriptionsFile": {
+          "type": "string"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseFeeAtoms",
+        "confirmations",
+        "ethereumConfirmations",
+        "ethereumFromBlock",
+        "ethereumMaxLogRange",
+        "ethereumMaxLogPages",
+        "ethereumMaxGas",
+        "ethereumMaxGasPriceWei",
+        "maxHeadersPerView",
+        "pollMs",
+        "puzzleBits",
+        "authorityEpoch"
+      ],
+      "properties": {
+        "baseFeeAtoms": {
+          "type": "string"
+        },
+        "confirmations": {
+          "type": "integer",
+          "const": 1
+        },
+        "ethereumConfirmations": {
+          "type": "integer",
+          "const": 1
+        },
+        "ethereumFromBlock": {
+          "type": "string"
+        },
+        "ethereumMaxLogRange": {
+          "type": "integer"
+        },
+        "ethereumMaxLogPages": {
+          "type": "integer"
+        },
+        "ethereumMaxGas": {
+          "type": "integer"
+        },
+        "ethereumMaxGasPriceWei": {
+          "type": "string"
+        },
+        "maxHeadersPerView": {
+          "type": "integer"
+        },
+        "pollMs": {
+          "type": "integer"
+        },
+        "puzzleBits": {
+          "type": "integer"
+        },
+        "authorityEpoch": {
+          "type": "integer"
+        }
+      }
+    },
+    "public": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gateway",
+        "headerSource",
+        "paymentOrigin",
+        "gatewayKey",
+        "tracRuntimeModule",
+        "tracRuntimeConfigFile"
+      ],
+      "properties": {
+        "gateway": {
+          "type": "string"
+        },
+        "headerSource": {
+          "type": "string"
+        },
+        "paymentOrigin": {
+          "type": "string"
+        },
+        "gatewayKey": {
+          "type": "string"
+        },
+        "tracRuntimeModule": {
+          "type": "string"
+        },
+        "tracRuntimeConfigFile": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+# Keep reads, signed evidence and payment notices for existing requests available.
+@newWrites {
+    method POST PUT PATCH DELETE
+    not path /operator-evidence /mint/payment /link/payment
+}
+respond @newWrites "Launch admission is closed." 503

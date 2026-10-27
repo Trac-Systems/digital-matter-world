@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { current, bitcoin, receiveAddress, ordJson, mine, save } from './common.mjs';
+import { inscribe, sendInscription } from './inscriber.mjs';
+import { authority, mintPermit, redeem, testKey, sha256 } from './protocol.mjs';
+
+export async function prove(manifest, log = () => {}) {
+  const key = testKey();
+  const alice = await receiveAddress(manifest);
+  const bob = await receiveAddress(manifest);
+  const tick = 'dmw' + randomBytes(5).toString('hex'), ticker = 'dmt-' + tick;
+  const tap = async path => (await ordJson(manifest, '/r/tap/' + path)).result;
+  const balance = async address => BigInt(await tap(`getBalance/${address}/${ticker}`) || 0);
+  const write = async (payload, receiver = alice) => {
+    const result = await inscribe(manifest, [{ text: payload, receiver }]); await mine(manifest); return result.inscriptions[0].id;
+  };
+  const activate = async (payload, receiver = alice) => {
+    const id = await write(payload, receiver); await sendInscription(manifest, id, receiver); await mine(manifest); return id;
+  };
+  log('Creating element and privilege authority');
+  const existing = (await tap('getDmtElementsList')).find(e => e.pat === '[0-9]' && e.fld === 4);
+  const entries = [{ text: authority(key, { privilege: true }), receiver: alice }];
+  if (!existing) entries.push({ text: `${tick}.[0-9].4.element`, receiver: alice });
+  const batch = await inscribe(manifest, entries); await mine(manifest);
+  const privilege = batch.inscriptions[0].id, element = existing?.ins || batch.inscriptions[1].id;
+  await sendInscription(manifest, privilege, alice); await mine(manifest);
+  assert((await tap('getPrivilegeAuthList')).some(a => a.ins === privilege), 'privilege authority activates after self-transfer');
+  assert((await tap('getDmtElementsList')).some(e => e.ins === element), 'DMT element indexed');
+  const deployment = await write({ p: 'tap', op: 'dmt-deploy', tick, elem: element, dt: 'n', prv: privilege });
+  assert.equal((await tap(`getDeployment/${ticker}`)).prv, privilege);
+  log('Checking address-bound mint and replay rejection');
+  const wrongReceiver = await write(mintPermit({ tick, blk: 99, dep: deployment, address: alice }, key), bob);
+  assert.equal(await balance(bob), 0n, 'permit cannot mint to a different receiver');
+  const unsigned = await write({ p: 'tap', op: 'dmt-mint', tick, blk: '98', dep: deployment });
+  assert.equal(await balance(alice), 0n, 'privileged deployment rejects missing signature');
+  const payload = mintPermit({ tick, blk: 100, dep: deployment, address: alice }, key);
+  const mint = await write(payload);
+  assert.equal(await balance(alice), 3n, 'V8 counts three digits in block 100');
+  const holder = await tap(`getDmtMintHolderByBlock/${ticker}/100`);
+  assert(holder, 'mint holder indexed');
+  const duplicate = await write(mintPermit({ tick, blk: 100, dep: deployment, address: alice }, key));
+  const replay = await write(payload);
+  const changedBlock = await write({ ...payload, blk: '101' });
+  assert.equal(await balance(alice), 3n, 'duplicate block and signature replay do not increase supply');
+  assert.deepEqual(await tap(`getDmtMintHolderByBlock/${ticker}/100`), holder);
+  const compact = BigInt(payload.prv.sig.r).toString(16).padStart(64, '0') + BigInt(payload.prv.sig.s).toString(16).padStart(64, '0');
+  assert.equal(await tap(`getPrivilegeAuthCompactHexExists/${compact}`), true, 'signature marked consumed');
+  const mintRecords = await tap(`getTickerMintList/${ticker}`);
+  assert.equal(mintRecords.filter(r => !r.fail).length, 1, 'exactly one valid mint');
+  log('Executing transfer, HTLC claim and refund');
+  const transfer = await write({ p: 'tap', op: 'token-transfer', tick: ticker, amt: '1' });
+  await sendInscription(manifest, transfer, bob); await mine(manifest);
+  assert.equal(await balance(alice), 2n); assert.equal(await balance(bob), 1n);
+  const tokenAuthority = await activate(authority(key));
+  assert((await tap(`getAccountAuthList/${alice}`)).some(a => a.ins === tokenAuthority));
+  const preimage = 'dmw-local-htlc';
+  const lockAction = expiry => ({ op: 'lock', kind: 'htlc', tick: ticker, amt: '1', claim: bob, refund: alice, condition: { type: 'hashlock', hash: sha256(preimage) }, refund_after: String(expiry) });
+  const lockInscription = await write(redeem(tokenAuthority, [lockAction((await bitcoin(manifest, 'getblockcount')) + 30)], key));
+  const lock = `${lockInscription}:0`;
+  assert(await tap(`getLock/${lock}`), 'HTLC exists');
+  assert.equal(await tap(`getLockedBalance/${alice}/${ticker}`), '1');
+  const badClaim = await write(redeem(tokenAuthority, [{ op: 'claim', lock, preimage: 'wrong' }], key));
+  assert.equal(await tap(`getLockConsume/${lock}`), null, 'wrong preimage refused');
+  const claim = await write(redeem(tokenAuthority, [{ op: 'claim', lock, preimage }], key));
+  assert(await tap(`getLockConsume/${lock}`), 'HTLC consumed');
+  assert.equal(await balance(bob), 2n);
+  assert.equal(await tap(`getLockedBalance/${alice}/${ticker}`), '0');
+  const expiry = (await bitcoin(manifest, 'getblockcount')) + 5;
+  const refundInscription = await write(redeem(tokenAuthority, [lockAction(expiry)], key));
+  const refundLock = `${refundInscription}:0`;
+  const earlyRefund = await write(redeem(tokenAuthority, [{ op: 'refund', lock: refundLock }], key));
+  assert.equal(await tap(`getLockConsume/${refundLock}`), null, 'early refund refused');
+  await mine(manifest, expiry - await bitcoin(manifest, 'getblockcount'));
+  const refund = await write(redeem(tokenAuthority, [{ op: 'refund', lock: refundLock }], key));
+  assert(await tap(`getLockConsume/${refundLock}`), 'expired HTLC refunded');
+  assert.equal(await tap(`getLockedBalance/${alice}/${ticker}`), '0');
+  assert.equal(await balance(alice) + await balance(bob), 3n, 'transfer and locks conserve minted supply');
+  log('Executing authority-gated escrow settlement');
+  const escrowInscription = await write(redeem(tokenAuthority, [{ op: 'lock', kind: 'escrow', tick: ticker, amt: '1', claim: bob, refund: alice, refund_after: String((await bitcoin(manifest, 'getblockcount')) + 30), condition: { type: 'authority', auth: tokenAuthority }, data: { dom: 'dmw-local', ref: mint, payer: alice, payee: bob } }], key));
+  const escrowLock = `${escrowInscription}:0`;
+  assert.equal((await tap(`getLock/${escrowLock}`))?.kind, 'escrow');
+  const escrowClaim = await write(redeem(tokenAuthority, [{ op: 'claim', lock: escrowLock }], key));
+  assert(await tap(`getLockConsume/${escrowLock}`));
+  assert.equal(await balance(alice), 0n); assert.equal(await balance(bob), 3n);
+  log('Batching eight independently permitted DMT mints in one reveal');
+  const mintEntries = Array.from({ length: 8 }, (_, i) => {
+    const receiver = i % 2 ? bob : alice;
+    return { text: mintPermit({ tick, blk: 102 + i, dep: deployment, address: receiver }, key), receiver };
+  });
+  const mintBatch = await inscribe(manifest, mintEntries); await mine(manifest);
+  assert.equal(mintBatch.inscriptions.length, 8);
+  for (const [i, entry] of mintEntries.entries()) {
+    const record = await tap(`getDmtMintHolderByBlock/${ticker}/${102 + i}`);
+    assert.equal(record.ins, mintBatch.inscriptions[i].id);
+    assert.equal((await ordJson(manifest, `/inscription/${record.ins}`)).address, entry.receiver);
+  }
+  assert.equal(await balance(alice), 12n); assert.equal(await balance(bob), 15n);
+  assert.equal((await tap(`getTickerMintList/${ticker}`)).filter(r => !r.fail).length, 9);
+  const proof = { ticker, alice, bob, element, privilege, deployment, mint, wrongReceiver, unsigned, duplicate, replay, changedBlock, transfer, tokenAuthority, lock, badClaim, claim, refundLock, earlyRefund, refund, escrowLock, escrowClaim, batch: { commit: batch.commit, reveal: batch.reveal, count: batch.inscriptions.length }, mintBatch: { commit: mintBatch.commit, reveal: mintBatch.reveal, count: mintBatch.inscriptions.length, inscriptions: mintBatch.inscriptions.map(i => i.id), blocks: mintEntries.map(e => e.text.blk) }, balances: { alice: String(await balance(alice)), bob: String(await balance(bob)) }, checks: 'mint, recipient binding, signature replay, unique block, transfer, HTLC claim, early refund rejection, expired refund, escrow settlement, eight batched mints' };
+  await save(`${manifest.root}/proof.json`, proof);
+  return proof;
+}
+if (process.argv[1] === fileURLToPath(import.meta.url)) prove(await current(), console.log).then(result => console.log(JSON.stringify(result, null, 2))).catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public TAP contract address"
+regexes = ['''0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454''']
+
+[[allowlists]]
+description = "Pinned Ed25519 gateway verification public key"
+condition = "AND"
+paths = ['''^kit/networks/mainnet\.json$''']
+regexTarget = "match"
+regexes = ['''gatewayKey": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870"''']

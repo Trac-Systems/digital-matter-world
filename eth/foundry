@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source_root=$(cd "$(dirname "$0")/.." && pwd)
+build_root=${DMW_BUILD_ROOT:-"$(dirname "$source_root")/build"}
+export FOUNDRY_OUT=${FOUNDRY_OUT:-"$build_root/target/eth-out"}
+export FOUNDRY_CACHE_PATH=${FOUNDRY_CACHE_PATH:-"$build_root/target/eth-cache"}
+export FOUNDRY_BROADCAST=${FOUNDRY_BROADCAST:-"$build_root/target/eth-broadcast"}
+export FOUNDRY_SOLC=${FOUNDRY_SOLC:-"$build_root/bin/solc-0.8.26"}
+exec forge "$@" --root "$source_root/eth"
