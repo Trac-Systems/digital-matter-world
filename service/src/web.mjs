@@ -3,7 +3,7 @@ import { check } from './util.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
 const root = new URL('../public/web/', import.meta.url);
 const consoleRoot = new URL('../../playground/console/', import.meta.url), tracAddress = new URL('../../rules/src/trac-address.js', import.meta.url);
-const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'money.js'].map(name => ['/web/' + name, new URL(name, root)]));
+const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'connect.js', 'money.js'].map(name => ['/web/' + name, new URL(name, root)]));
 assets.set('/web/amount-format.js', new URL('js/amount-format.js', consoleRoot));
 assets.set('/web/trac-address.js', tracAddress);
 assets.set('/kit/lib/tap-wallet-actions.mjs', new URL('../../kit/lib/tap-wallet-actions.mjs', import.meta.url));

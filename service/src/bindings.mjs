@@ -1,9 +1,10 @@
 import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
-import { bindingId, bindingKey, verifyAgentBinding, verifyWalletBinding, verifyBinding } from '../../rules/src/payout-bindings.mjs';
+import { bindingId, bindingKey, verifyAgentBinding, verifyWalletBinding, verifyBinding, payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { check, serial } from './util.mjs';
 import { pageRows } from './paging.mjs';
 
 const nonceKey = nonce => nonce.padStart(20, '0');
+const WALLET_PLAYERS = 16;
 export class Bindings {
   constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now }) {
     Object.assign(this, { store, network, bitcoinNetwork, members, committee, rosterHistory, now }); this.gate = serial();
@@ -43,6 +44,24 @@ export class Bindings {
       const page = this.store.list('payoutCurrent', { after, limit: 256 });
       for (const r of page) if (r.id.endsWith('/tap')) { const p = this.current(r.id.slice(0, -4), 'tap'); if (p?.request.address === address) rows.push(p.request.agent); }
       if (page.length < 256) return rows;
+      after = page.at(-1).id;
+    }
+  }
+  // Players whose current, verified payout binding names this wallet. Raw rows are
+  // filtered by address first, so only matching certificates are verified.
+  wallets(input) {
+    const ethereum = /^0x[0-9a-fA-F]{40}$/.test(input ?? ''), address = ethereum ? input.toLowerCase() : input;
+    try { payoutAddress(ethereum ? 'ethereum' : 'tap', address, this.bitcoinNetwork); } catch { check(false, 'wallet_address'); }
+    const players = []; let after = '', more = false;
+    for (;;) {
+      const page = this.store.list('payoutCurrent', { after, limit: 256 });
+      for (const r of page) {
+        if (this.store.get('payoutBindings', r.value)?.request?.address !== address) continue;
+        const rail = r.id.slice(65), proof = this.current(r.id.slice(0, 64), rail); if (proof?.request.address !== address) continue;
+        if (players.length === WALLET_PLAYERS) { more = true; break; }
+        players.push({ agent: proof.request.agent, rail, binding: proof.id, acceptedAt: proof.acceptedAt });
+      }
+      if (more || page.length < 256) return { address, rail: ethereum ? 'ethereum' : 'tap', players, more };
       after = page.at(-1).id;
     }
   }

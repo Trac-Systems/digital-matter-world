@@ -75,6 +75,8 @@ function steps(list, at) {
 }
 
 // Every mint entry point uses the same player-funded payment and inscription flow.
+// The console acts as its session's player; only the public pages connect a person's wallets.
+export const wallet = null;
 export async function mintFlow(options = {}) {
   return (await import('./inscribe/flow.js')).playerMintFlow(options);
 }

@@ -4,4 +4,5 @@ const open = (path, q) => { location.assign(path + (q ? '?' + new URLSearchParam
 export const mintFlow = ({ asset, block }) => open('/mint', { asset, ...(block === undefined || block === null ? {} : { block }) });
 export const compoundMintFlow = asset => open('/mint', { asset });
 export const linkFlow = height => open('/link', { block: height });
+export { wallet } from '../../connect.js';
 export function run() { return Promise.reject(new Error('read_only')); }

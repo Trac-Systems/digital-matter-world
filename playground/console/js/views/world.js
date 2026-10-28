@@ -2,7 +2,7 @@ import { h, clear, table, kv, pill, hashEl, fmtInt, inspectBtn, tipIcon, cell, c
 import { get, bus, store, site } from '../api.js';
 import { heightToPlot, plotToHeight } from '../spiral.js';
 import { mineral, assetName, mintRule, fieldName, who, isMe, title } from '../words.js';
-import { mintFlow, linkFlow, run } from '../flows.js';
+import { mintFlow, linkFlow, run, wallet } from '../flows.js';
 import { pagedTable } from '../paged.js';
 
 const C = {
@@ -306,14 +306,24 @@ export function mount(root, params) {
     // Who may mint now.
     // Each list in the panel is paged by the server; only its current page is rendered.
     const H = b.height, small = { limit: 8 };
-    out.push(h('div.section-label', {}, 'Who may mint it now'));
-    out.push(pagedTable({ ...small, path: `/blocks/${H}/mintRights`, key: 'mintRights', sorts: [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
-      empty: 'No mintable finds in this view.',
+    // Public pages: the rows are read for the connected wallet's player, and a person without a wallet is offered one.
+    const me = wallet?.player(), mayMint = r => r.allowed || r.rightAllowed && r.reason === 'asset_unregistered' && BigInt(r.balance ?? '0') >= BigInt(r.amount);
+    const offerWallet = wallet && !wallet.connected() && (b.mintRights ?? []).some(r => !r.minted);
+    out.push(h('div.section-label', offerWallet ? { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } } : {}, 'Who may mint it now',
+      offerWallet ? h('button.btn.sm', { style: { textTransform: 'none', letterSpacing: 'normal' }, onclick: () => wallet.open() }, 'Connect wallet to mint') : null));
+    // The mint ladder (rules/src/mint-rights.js): finder window, then the earlier-linked Bitmap holder, then anyone.
+    out.push(h('div.small.muted', { style: { padding: '0 14px 8px' } },
+      'Only a settled find can be minted. First the finder, for 1,008 blocks (about a week) after the find; then the Bitmap holder, if the Bitmap was linked before the find; otherwise anyone holding enough units. Each pattern in a block is minted once.'));
+    out.push(pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
+      empty: 'Nothing to mint here yet: no agent has a settled find in this block.',
       columns: [
         { key: 'asset', label: 'Pattern', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
         { key: 'amount', label: 'Units', num: true },
-        { key: 'rule', label: 'May mint', render: r => { const rule = mintRule(site.public ? { ...r, allowed: false } : r, counted); return h('span', {}, pill(rule.label, rule.kind), tipIcon(rule.text)); } },
-        { key: 'act', label: '', render: r => (r.allowed || r.rightAllowed || site.public) && !r.minted && !r.pending ? h('button.btn.sm.primary', { onclick: () => mintFlow({ asset: r.asset, block: H, amount: r.amount }) }, 'Mint On-Chain') : null },
+        { key: 'rule', label: 'May mint', render: r => {
+          if (me && mayMint(r)) { const rule = mintRule(r, counted); return h('span', {}, pill('You may mint', 'good'), tipIcon(`${rule.label}. ${rule.text}`)); }
+          const rule = mintRule(site.public && !me ? { ...r, allowed: false } : r, counted); return h('span', {}, pill(rule.label, rule.kind), tipIcon(rule.text));
+        } },
+        { key: 'act', label: '', render: r => (r.allowed || r.rightAllowed || site.public) && !r.minted && !r.pending ? h(`button.btn.sm${!wallet || me && mayMint(r) ? '.primary' : ''}`, { onclick: () => mintFlow({ asset: r.asset, block: H, amount: r.amount }) }, 'Mint On-Chain') : null },
       ] }).el);
 
     out.push(h('div.section-label', {}, 'Patterns in this block'));
@@ -388,7 +398,8 @@ export function mount(root, params) {
 
 
   loadAll();
-  const cleanup = () => { alive = false; ro.disconnect(); offBlock(); offDraw(); offJob(); offPay(); offClaim(); offFind(); offHeaderFind(); cancelAnimationFrame(raf); };
+  const offWallet = wallet?.on(() => drawSide()) ?? (() => {});
+  const cleanup = () => { alive = false; offWallet(); ro.disconnect(); offBlock(); offDraw(); offJob(); offPay(); offClaim(); offFind(); offHeaderFind(); cancelAnimationFrame(raf); };
   cleanup.update = p => { if (p.b !== undefined && Number(p.b) !== selected) select(Number(p.b), true); };
   return cleanup;
 }

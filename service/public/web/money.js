@@ -1,12 +1,14 @@
 import { api } from './data.js';
 import { walletError } from './console/js/wallet-errors.js';
 import { mount as mintPage } from './console/js/inscribe/public.js';
-import { presentation } from './console/js/api.js';
-import { h, clear, panel, kv, pill, hashEl, fmtInt, tabs, field, input, select, table, inspectBtn as rawInspectBtn } from './console/js/dom.js';
-import { splitTable, btc } from './console/js/money.js';
-import { assetName, mineral } from './console/js/words.js';
+import { presentation, get, store } from './console/js/api.js';
+import { pagedTable } from './console/js/paged.js';
+import { h, clear, panel, kv, pill, hashEl, fmtInt, tabs, table, confirmModal, copy, inspectBtn as rawInspectBtn } from './console/js/dom.js';
+import { splitTable, btc, tap, feePrice } from './console/js/money.js';
+import { assetName, mineral, mintRule } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
 import { tapAccount, ethAccount, receipt, orderResult, authority, requireTapActions, WalletJournal, wait, hex, sha256, unhex, fail } from './wallets.js';
+import { wallet, walletSummary, connectButtons, copyBlock, PURPOSE } from './connect.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -21,6 +23,7 @@ export function moneyPage(root, { type, id }, navigate) {
   const navigation = h('section.panel', { style: { marginBottom: '16px' } }, tabs(PAGES, t => {
     if (t !== type) navigate('/' + t);
   }, type));
+  if (type === 'mint' && !id) return mintHome(root, navigation);
   if (type === 'mint') {
     const cleanup = mintPage(root, { id });
     root.querySelector('.page-head').after(navigation);
@@ -32,7 +35,7 @@ export function moneyPage(root, { type, id }, navigate) {
     navigation,
     h('div.grid.cols-main', {}, app, side)));
   // Mount returns a disposer immediately; pending reads belong to this view only.
-  let stopped = false;
+  let stopped = false, offWallet = () => {};
   async function load() {
     let target;
     try { target = await api('/web-api/target'); }
@@ -43,13 +46,13 @@ export function moneyPage(root, { type, id }, navigate) {
       target.ethereum ? ['Escrow contract', hashEl(target.ethereum.escrow)] : null,
     ]), { flush: true }));
     try {
-      if (!id) return await introduction(app, type, target);
+      if (!id) { offWallet = introduction(app, type); return; }
       if (type === 'bind-payout') return await binding(app, id, target);
       await request(app, type, id, target);
     } catch (e) { if (!stopped) app.append(h('div.note.bad', { role: 'alert' }, `Unable to load: ${walletError(e)}. `, h('a', { href: location.pathname + location.search }, 'Retry'))); }
   }
   void load();
-  return () => { stopped = true; };
+  return () => { stopped = true; offWallet(); };
 }
 async function request(app, type, id, target) {
   const journal = new WalletJournal(`${target.network}/${type}/${id}`);
@@ -243,7 +246,7 @@ async function binding(app, id, target) {
   const button = h('button.btn.primary.binding-action', { type: 'button' }, 'Sign with wallet and bind');
   const review = h('section.panel', {}, h('header', {}, h('h2', {}, 'Review payout binding'), h('div.grow'), inspectBtn('Binding request', pending)),
     kv([['Agent', hashEl(r.agent)], ['Rail', r.rail === 'ethereum' ? 'Ethereum' : 'TAP'], ['Wallet', hashEl(r.address)], ['Expires', h('span.mono', {}, new Date(r.expiry).toLocaleString())]]),
-    h('div.body', {}, h('div.stack', { style: { gap: '10px' } }, h('p.small.muted', { style: { margin: 0 } }, 'Both your agent and your payout wallet sign this request. Replacements apply to future quotes.'), status, h('div.row', {}, button))));
+    h('div.body', {}, h('div.stack', { style: { gap: '10px' } }, h('p.small.muted', { style: { margin: 0 } }, 'Linking connects this wallet to your agent’s player, so its earnings reach you and you can mint its finds. Your agent started this link; you confirm it by signing with the wallet shown. A new link replaces the old one for future quotes.'), status, h('div.row', {}, button))));
   app.append(review);
   function draw() { button.disabled = pending.state === 'accepted' || pending.request.expiry <= Date.now(); status.textContent = pending.state === 'accepted' ? 'Payout wallet bound.' : pending.request.expiry <= Date.now() ? 'Request expired. Ask your agent for a new binding link.' : 'Review the agent and wallet address before signing.'; }
   button.onclick = async () => {
@@ -256,48 +259,97 @@ async function binding(app, id, target) {
       if (pending.request.rail === 'tap') { const { tap } = await tapAccount(target, pending.request.address); walletSignature = await tap.signMessage(pending.message, 'bip322-simple'); }
       else { const { eth, address } = await ethAccount(target, pending.request.address); walletSignature = await eth.request({ method: 'personal_sign', params: ['0x' + hex(new TextEncoder().encode(pending.message)), address] }); }
       const accepted = await api('/payout-bindings/complete', { id, walletSignature });
-      pending.state = 'accepted'; draw();
+      pending.state = 'accepted'; draw(); void wallet.refresh();
       app.append(panel('Accepted binding receipt', kv([['Binding', hashEl(accepted.id ?? id)], ['Accepted', accepted.acceptedAt ? h('span.mono', {}, new Date(accepted.acceptedAt).toLocaleString()) : null], ['Wallet', hashEl(accepted.request?.address)]]), { flush: true, actions: inspectBtn('Accepted binding', accepted) }));
     } catch (e) { status.textContent = e.code === 4001 ? 'Signature cancelled. You can retry.' : walletError(e); button.disabled = false; }
   }; draw();
 }
-async function introduction(app, type, target) {
-  const status = note({ class: 'wallet-status' }), wallets = h('div');
-  const controls = h('div.row.wallet-connect');
-  const connected = [];
-  for (const rail of type === 'link' ? ['tap'] : ['tap', 'ethereum']) {
-    const b = h('button.btn', { type: 'button' }, rail === 'tap' ? 'Connect TAP wallet' : 'Connect MetaMask');
-    b.onclick = async () => { b.disabled = true; try { const found = await (rail === 'tap' ? tapAccount(target) : ethAccount(target)); connected.push([rail === 'tap' ? 'TAP wallet' : 'MetaMask', hashEl(found.address)]); clear(wallets, kv(connected)); status.textContent = 'Connected. Your agent uses this wallet address when creating the signed request.'; } catch (e) { status.textContent = e.code === 4001 ? 'Connection cancelled.' : walletError(e); } finally { b.disabled = false; } }; controls.append(b);
+// Link Bitmap and Payout wallets without a request link: what the wallet does here, using the header's connection.
+function introduction(app, type) {
+  const body = h('div.stack', { style: { gap: '10px' } }), status = note();
+  app.append(h('section.panel', {}, h('header', {}, h('h2', {}, type === 'link' ? 'Your TAP Wallet here' : 'Your payout wallets')), h('div.body', {}, body)));
+  const draw = () => clear(body, type === 'link' ? [
+    h('p', { style: { margin: 0 } }, 'Linking a Bitmap earns you the Bitmap holder share whenever a pattern in that block is minted, and, if linked before a find, the mint right after the finder window. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
+    !wallet.tap && wallet.ethereum ? h('p.small.muted', { style: { margin: 0 } }, 'MetaMask cannot do this: Bitmaps live on Bitcoin, so this needs TAP Wallet.') : null,
+    walletSummary('tap'), connectButtons(['tap'], status), status,
+    h('p.small.muted', { style: { margin: 0 } }, 'Your agent starts the link. Open the link request it gives you to review the price and pay.'),
+  ] : [
+    h('p', { style: { margin: 0 } }, 'Linking connects your wallet to your agent’s player, so your agent’s earnings reach you and you can mint its finds. Your agent starts the link, then you confirm it by signing with your wallet on the link it gives you.'),
+    h('div.small.muted', {}, h('strong', {}, 'TAP Wallet: '), PURPOSE.tap), h('div.small.muted', {}, h('strong', {}, 'MetaMask: '), PURPOSE.ethereum),
+    walletSummary('tap'), walletSummary('ethereum'), connectButtons(undefined, status), status,
+  ]);
+  draw();
+  return wallet.on(draw);
+}
+
+// Mint On-Chain without a request link: the connected player's finds, or what is missing and the three steps.
+function mintHome(root, navigation) {
+  const params = new URLSearchParams(location.search), asset = params.get('asset'), block = /^\d+$/.test(params.get('block') ?? '') ? Number(params.get('block')) : null;
+  const chosen = /^[a-z0-9]{1,24}$/.test(asset ?? '') && block !== null ? { asset, block } : null;
+  const app = h('div.stack'), side = h('div.stack');
+  root.append(h('div.page', {},
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Mint On-Chain'), h('p', {}, 'Turn your agent’s finds into TAP tokens on Bitcoin. Mining, claims and crafting are free; only minting costs a fee.'))),
+    navigation, h('div.grid.cols-main', {}, app, side)));
+  const policy = store.status?.feePolicy;
+  side.append(panel('How minting works', h('ol.steps-list', {},
+    h('li', {}, 'Your agent finds a pattern in a block and the find settles.'),
+    h('li', {}, 'You link your wallet to your agent’s player: your agent starts it, you sign.'),
+    h('li', {}, 'You mint here: your agent creates the payment request, you pay and inscribe with your wallet.'))),
+    policy?.baseFee ? panel('Prices', [kv([['Base price', h('span.mono', {}, tap(policy.baseFee, policy.unit))]]),
+      h('p.small.muted', { style: { margin: '0 14px 12px' } }, policy.feeSettings ? `A find costs the base price times its tier: ${Array.from({ length: 5 }, (_, i) => `tier ${i + 1}: ${feePrice(policy, 'find', i + 1)}`).join(', ')}. ` : '', 'The request shows the exact price before you pay.')], { flush: true }) : null);
+  const status = note();
+  const ask = (r, w) => `Mint ${r.asset} (${assetName(r.asset)}) from block ${r.block} on-chain and give me the payment link.\n${w === wallet.ethereum ? 'MetaMask' : 'TAP wallet'}: ${w.address}`;
+  const mintButton = (r, primary) => h(`button.btn.sm${primary ? '.primary' : ''}`, { type: 'button', onclick: async () => {
+    const w = wallet.tap ?? wallet.ethereum, text = ask(r, w);
+    if (await confirmModal({ title: `Mint ${assetName(r.asset)} from block ${fmtInt(r.block)}`, lead: 'Your agent reserves the units and creates the payment request. Send it this message, then open the link it gives you to pay and inscribe.', extra: copyBlock(text), confirm: 'Copy message' })) copy(text);
+  } }, 'Mint On-Chain');
+  const rights = player => pagedTable({ path: `/mint-rights?owner=${player.agent}`, key: 'mintRights', limit: 10, sorts: [['block:desc', 'Newest block'], ['block:asc', 'Oldest block']],
+    filters: [{ name: 'allowed', label: 'Show', value: 'true', options: [['true', 'Ready for you'], ['', 'All settled finds']] }],
+    empty: 'Nothing here. Switch to All settled finds to see why.',
+    columns: [
+      { key: 'asset', label: 'Matter', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
+      { key: 'block', label: 'Block', num: true, render: r => r.block === null ? h('span.faint', {}, 'compound') : blockLink(r.block) },
+      { key: 'amount', label: 'Units', num: true },
+      { key: 'rule', label: 'May mint', render: r => { const rule = mintRule(r, store.status?.counted); return h('span', {}, pill(r.allowed ? 'You may mint' : rule.label, r.allowed ? 'good' : rule.kind, rule.text)); } },
+      { key: 'act', label: '', render: r => r.allowed && r.block !== null ? mintButton(r, true) : null },
+    ] }).el;
+  // Why nothing is ready, from the player's first page of settled finds.
+  async function reason(player, out) {
+    let rows;
+    try { rows = (await get(`/mint-rights?owner=${player.agent}&allowed=true&limit=1`)).total ? null : (await get(`/mint-rights?owner=${player.agent}&limit=50`)).mintRights ?? []; }
+    catch { return; }
+    if (!rows) return;
+    const own = rows.filter(r => r.finder === player.agent);
+    clear(out, h('div.note', {}, !rows.length ? 'No settled find yet. When your agent wins a find and it settles, it shows up here.'
+      : rows.some(r => r.whoMayMint === 'finder' && r.finder !== player.agent) && !own.length ? 'The finds so far are still in another agent’s finder window: only the finder may mint for 1,008 blocks (about a week) after the find.'
+      : own.some(r => r.reason === 'insufficient_balance') ? 'Your player does not hold enough units for its finds right now.'
+      : own.some(r => r.minted || r.pending) ? 'Your agent’s finds are already minted or have a mint in progress.'
+      : 'Nothing is ready for your player right now. Switch to All settled finds to see each find’s rule.'));
   }
-  app.append(h('section.panel', {}, h('header', {}, h('h2', {}, 'Connected wallets')),
-    h('div.body', {}, h('div.stack', { style: { gap: '10px' } }, h('p', { style: { margin: 0 } }, type === 'bind-payout' ? 'Open the payout-binding link issued by your agent. The link identifies a signed request; your wallet completes it here.' : 'Open the payment link issued by your agent to approve its signed request. The agent authorizes the matter or plot; your connected wallet approves the payment.'), controls, status)),
-    h('div.flush', {}, wallets)));
-  if (type !== 'mint') return;
-  const params = new URLSearchParams(location.search), output = h('div');
-  const form = h('form.form.mint-quote', {},
-    field('Asset', input({ name: 'asset', required: true, pattern: '[a-z0-9]{1,24}', value: params.get('asset') ?? '', class: 'mono' })),
-    h('div.two', {},
-      field('Block (patterns only)', input({ name: 'block', type: 'number', min: '0', step: '1', value: params.get('block') ?? '', class: 'mono' })),
-      field('Units (compounds only)', input({ name: 'amount', type: 'text', inputmode: 'numeric', pattern: '[1-9][0-9]*', value: '1', class: 'mono' }))),
-    field('Payment rail', select([['tap', 'TAP wallet'], ['ethereum', 'MetaMask']], { name: 'kind' })),
-    h('div.row', {}, h('button.btn.primary', {}, 'Get quote')));
-  form.onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(form)); const input = { asset: f.asset, kind: f.kind, ...(f.block === '' ? { amount: f.amount } : { block: Number(f.block) }) };
-    try {
-      const q = await api('/mint/quote', input);
-      clear(output, h('section.panel', {}, h('header', {}, h('h2', {}, `Quote: ${formatTap(q.price)}`), h('div.grow'), inspectBtn('Quote', q)),
-        kv([
-          ['Matter', h('span', {}, h('span.swatch', { style: { background: mineral(q.asset) } }), assetName(q.asset))],
-          q.block !== undefined ? ['From block', blockLink(q.block)] : null,
-          q.amount !== undefined && q.block === undefined ? ['Units', h('span.mono', {}, fmtInt(q.amount))] : null,
-          ['Paid with', q.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'],
-          ['Price', h('strong.mono', {}, formatTap(q.price))],
-          ['Base price', h('span.mono', {}, formatTap(q.baseFee))],
-          q.networkFeeSats ? ['Bitcoin inscription fee', h('span.mono', {}, `${btc(q.networkFeeSats)} · ${fmtInt(q.networkFeeSats)} sats`)] : null,
-          q.feeQuote?.validUntil ? ['Price holds', h('span', {}, `until block ${fmtInt(q.feeQuote.validUntil)}`)] : null,
-        ]),
-        q.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(q.split, q.destinations ?? {}, q.kind, q.unit))] : null,
-        h('div.body.small.muted', {}, 'This quote does not reserve units. Your agent creates the signed request and payment link for your connected wallets.')));
-    }
-    catch (e) { clear(output, h('div.note.bad', { role: 'alert' }, `Quote unavailable: ${walletError(e)}`)); } };
-  app.append(panel('Quote', form), output);
+  async function picked(player, out) {
+    const w = wallet.tap ?? wallet.ethereum;
+    if (!player) { clear(out, h('p.small.muted', { style: { margin: 0 } }, 'Link your wallet first (see above); then ask your agent to mint it.')); return; }
+    let row;
+    try { row = ((await get(`/blocks/${chosen.block}/mintRights?owner=${player.agent}&asset=${chosen.asset}&limit=1`)).mintRights ?? [])[0]; } catch {}
+    const rule = row ? mintRule(row, store.status?.counted) : null;
+    clear(out, row ? h('div.row', {}, pill(row.allowed ? 'You may mint' : rule.label, row.allowed ? 'good' : rule.kind), h('span.small.muted', {}, rule.text)) : h('p.small.muted', { style: { margin: 0 } }, 'This block has no settled find of this pattern.'),
+      row?.allowed ? [h('p.small', { style: { margin: 0 } }, 'Your agent creates the payment request. Send it this message, then open the link it gives you:'), copyBlock(ask(chosen, w))] : null);
+  }
+  const draw = () => {
+    const player = wallet.player(), any = wallet.connected();
+    const out = [];
+    out.push(panel('Your wallet', h('div.stack', { style: { gap: '10px' } },
+      h('p', { style: { margin: 0 } }, 'TAP Wallet pays the mint fees in TAP. MetaMask pays with bridged TAP on Ethereum instead. Either way the mint is inscribed from TAP Wallet, so it needs a little BTC for Bitcoin fees.'),
+      walletSummary('tap'), walletSummary('ethereum'),
+      wallet.ethereum && !wallet.tap ? h('p.small.muted', { style: { margin: 0 } }, 'Also connect TAP Wallet: the mint is inscribed on Bitcoin.') : null,
+      any && !wallet.tap ? connectButtons(['tap'], status) : any ? null : connectButtons(undefined, status), status)));
+    if (chosen) { const box = h('div.stack', { style: { gap: '8px' } }, any ? h('div.empty', {}, 'Loading…') : h('p.small.muted', { style: { margin: 0 } }, 'Connect your wallet above to see whether you may mint it.')); out.push(panel(`${assetName(chosen.asset)} from block ${fmtInt(chosen.block)}`, box)); if (any) void picked(player, box); }
+    if (player) { const why = h('div'); out.push(panel('What you can mint', [h('div', { style: { padding: '10px 14px 0' } }, why), rights(player)], { flush: true })); void reason(player, why); }
+    else out.push(panel('What you can mint', h('p', { style: { margin: 0 } }, !any ? 'Connect a wallet to see the finds your agent’s player may mint.'
+      : [wallet.tap, wallet.ethereum].some(w => w && w.players === null) ? 'Looking up your player…' : 'Your wallet is not linked to a player yet, so there is nothing to mint. Ask your agent to link it (message above), sign the link it gives you, then come back.')));
+    out.push(h('p.small.muted', { style: { margin: 0 } }, 'Already have a payment link from your agent? Open it; it shows the request and lets you pay.'));
+    clear(app, ...out);
+  };
+  draw();
+  return wallet.on(draw);
 }

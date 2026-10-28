@@ -11,15 +11,11 @@ async function api(path, body) {
   if (!response.ok) throw Error(result.error ?? 'request_failed');
   return result;
 }
+// Only a request link opens this page; Mint On-Chain without one is the public money page's own view.
 export function mount(root, { id }) {
   const body = h('div.stack'), actions = h('div.row'), note = h('div', { role: 'status', 'aria-live': 'polite' });
   clear(root, h('div.page', {}, h('div.page-head', {}, h('h1', {}, 'Mint from your wallet')),
     h('p', {}, 'Pay the fee items first. Once payment is final, your units are consumed and your permanent permit is ready. You pay the Bitcoin inscription fees, including when paying with Ethereum.'), body, actions, note));
-  if (!id) {
-    body.append(h('p', {}, 'Open the mint request link issued by your agent. Bind your payout wallet before requesting a signed quote. Your agent reserves the units and supplies the receiver-bound request ID.'),
-      h('a', { href: '/bind-payout' }, 'Payout wallets'));
-    return () => {};
-  }
   let stopped = false, busy = false, timer, status, target, wallet, ethereum, paymentDraft = '';
   const attempt = async fn => {
     if (busy || stopped) return; busy = true;

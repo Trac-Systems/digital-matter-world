@@ -48,6 +48,10 @@ export async function serve({ intake, files, headers, mints, links, publicAPI, b
         const result = bindings.read(req.url); res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
         res.end(req.method === 'HEAD' ? undefined : JSON.stringify(result)); return;
       }
+      if (bindings && ['GET', 'HEAD'].includes(req.method) && /^\/wallets\/[^/?#]{1,100}$/.test(req.url)) {
+        const result = publicIdentities(bindings.wallets(req.url.slice(9))); res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify(result)); return;
+      }
       if (['GET', 'HEAD'].includes(req.method) && publicAPI?.handles(req.url)) {
         const bytes = Buffer.from(JSON.stringify(await publicAPI.read(req.url))), etag = '"' + hash(bytes) + '"';
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'public, max-age=1, must-revalidate'); res.setHeader('ETag', etag);

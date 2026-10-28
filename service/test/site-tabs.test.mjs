@@ -6,7 +6,7 @@ import { createWeb } from '../src/web.mjs';
 import { serveControl } from '../../playground/http.mjs';
 
 const pages = [
-  { path: '/mint', tab: 'Mint On-Chain', heading: 'Mint from your wallet' },
+  { path: '/mint', tab: 'Mint On-Chain', heading: 'Mint On-Chain' },
   { path: '/link', tab: 'Link Bitmap', heading: 'Link a Bitmap' },
   { path: '/bind-payout', tab: 'Payout wallets', heading: 'Bind payout wallet' },
 ];
@@ -40,7 +40,9 @@ async function open(t) {
   return page;
 }
 async function selected(page, item, address = item.path) {
-  await page.getByRole('heading', { name: item.heading, exact: true }).waitFor();
+  // A mint request link opens its payment; Mint On-Chain without one lists what the person may mint.
+  const heading = /^\/mint\/[0-9a-f]{64}$/.test(address) ? 'Mint from your wallet' : item.heading;
+  await page.getByRole('heading', { name: heading, exact: true }).waitFor();
   await page.getByRole('tab', { name: item.tab, exact: true, selected: true }).waitFor();
   assert.equal(await page.getByRole('tab', { selected: true }).count(), 1);
   assert.deepEqual(await page.getByRole('tab').allTextContents(), pages.map(p => p.tab));
@@ -48,7 +50,7 @@ async function selected(page, item, address = item.path) {
   assert.equal(url.pathname + url.search + url.hash, address);
 }
 async function loaded(page, item) {
-  if (item.path === '/mint') await page.getByText('Open the mint request link issued by your agent.', { exact: false }).waitFor();
+  if (item.path === '/mint') await page.getByText('Connect a wallet to see the finds your agent’s player may mint.', { exact: false }).waitFor();
   else {
     await page.getByRole('button', { name: 'Connect TAP wallet', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).count(), item.path === '/bind-payout' ? 1 : 0);

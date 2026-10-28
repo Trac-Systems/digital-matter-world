@@ -7,6 +7,7 @@ import { tap, feePolicyTip } from './console/js/money.js';
 import { pagedTable } from './console/js/paged.js';
 import { route } from './data.js';
 import { moneyPage } from './money.js';
+import { walletControl } from './connect.js';
 
 const VIEWS = {
   about: { label: 'About', href: '/about', load: () => import('./console/js/views/about.js') },
@@ -57,7 +58,7 @@ async function boot() {
     navEl.append(h('a', { href: r.href, 'data-route': id }, h('span.hide-phone', {}, r.label), h('span', { class: 'show-phone', style: { display: 'none' } }, r.short ?? r.label)));
   }
   clear(app, h('div.app', {},
-    h('header.topbar', {}, h('a.brand', { href: '/', style: { textDecoration: 'none' } }, logo(), h('span.name', {}, 'Digital Matter World')), navEl, h('div.spacer'), connEl),
+    h('header.topbar', {}, h('a.brand', { href: '/', style: { textDecoration: 'none' } }, logo(), h('span.name', {}, 'Digital Matter World')), navEl, h('div.spacer'), connEl, walletControl()),
     stripEl, mainEl));
   phoneLabels();
   bus.on('event-stream', drawConn); drawConn(stream.state);
