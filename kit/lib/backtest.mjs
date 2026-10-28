@@ -7,6 +7,8 @@ import { check, hex32, integer } from './check.mjs';
 // Replays all-history claims and the H+2 draw. Strategies see only the prefix ending at H.
 // Scores are a single-agent experiment unless explicit opponent strategies enter.
 export async function backtest({ history, patterns, owner, strategy = chooseClaims, opponents = [], start = 1, end = history.length - 1, settings = {}, signal, onProgress = () => {} }) {
+  check(settings.ruleset !== 'dmw-v2' && !patterns.some(p => p.key || p.asset?.startsWith('p2:')),
+    'V2 backtests require accepted catalog and claim-state snapshots; the legacy replay cannot model deferred header awards');
   owner = decodeTracAddress(owner);
   opponents = opponents.map(o => ({ ...o, owner: decodeTracAddress(o.owner) }));
   const proof = historyProof(history);

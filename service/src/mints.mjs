@@ -10,6 +10,7 @@ import { creditOperations, migrateCreditPage, releaseCreditClaims, selectCredits
 import { activeOwnerSpace, reservingSpace, releaseAdmission, migrateMintAdmission, reservedFor } from './mint-admission.mjs';
 import { financialMintId, financialAsset } from '../../rules/src/financial-mint.js';
 import { financialSplit } from '../../rules/src/financial-fees.js';
+import { mintAssetDefinition } from './mint-assets.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 
 export function publicMint(r) {
@@ -84,14 +85,14 @@ export class Mints {
   }
   async deploymentNeeded(asset, details = {}) {
     if (!this.provisioner) return null;
-    const definition = (this.store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset) ?? this.store.get('types', asset);
-    check(definition, 'asset_unknown');
-    const deployment = await this.provisioner.request(asset, definition);
+    const resolved = await mintAssetDefinition(this.store, asset);
+    const deployment = await this.provisioner.request(resolved.asset, resolved.definition);
     if (deployment.state === 'registered') return null;
-    return { ...details, requestId: null, asset, state: 'deployment_needed', deploymentNeeded: true,
+    return { ...details, requestId: null, asset: resolved.asset, catalogAsset: resolved.catalogAsset, state: 'deployment_needed', deploymentNeeded: true,
       message: 'Deployment needed. Inscribe the supplied content from your own Bitcoin wallet before requesting the mint.',
       payable: false, reservation: 'none', fees: [], missing: [], blocked: ['deployment_needed'],
-      deployment, deploymentPath: '/mint/deployment/' + asset };
+      deployment: { ...deployment, catalogAsset: resolved.catalogAsset }, deploymentPath: '/mint/deployment/' + resolved.asset,
+      deploymentPage: '/mint/' + resolved.catalogAsset };
   }
   request(body) { return this.gate(async () => {
     const { request, signature, receiver, payer, kind } = body, counted = await this.reads.counted();

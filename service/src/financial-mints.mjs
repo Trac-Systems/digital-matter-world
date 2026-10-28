@@ -11,6 +11,7 @@ import { buildFinancialExecution } from './financial-execution.mjs';
 import { financialBlock } from './financial-status.mjs';
 import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { surplusCreditId } from '../../contract/payment-pages.js';
+import { deploymentAssetId, mintAssetDefinition } from './mint-assets.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const ownerSpace = owner => 'financialMintOwner/' + owner;
@@ -23,16 +24,23 @@ export class FinancialMints extends Mints {
   async quote(input) {
     if (input.request) return this.request(input);
     if (!input.feeQuote) check(!this.financial.admissionReady || await this.financial.admissionReady(), 'financial_admission_fenced', 503);
+    const provisionable = deploymentAssetId(input.asset);
+    const needed = provisionable && await super.deploymentNeeded(input.asset, { block: input.block, amount: input.amount, kind: input.kind ?? 'tap', receiver: input.receiver });
+    if (needed) return { ...needed, financialVersion: 2 };
+    const resolved = this.provisioner && provisionable ? await mintAssetDefinition(this.store, input.asset) : null;
+    if (resolved) input = { ...input, asset: resolved.asset };
     if (this.reads.financialDeployment) {
       const generation = await this.reads.financialDeployment(input.asset, await this.reads.batchStamp());
       if (!generation.existing) {
         await this.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
-        check(false, 'financial_deployment_pending', 409);
+        return { requestId: null, asset: input.asset, state: 'deployment_pending', financialVersion: 2, payable: false,
+          reservation: 'none', fees: [], missing: [], blocked: ['financial_deployment_pending'],
+          message: 'The Bitcoin deployment is registered. Wait for its financial registration, then quote again.' };
       }
     }
     const quote = await super.quote(input);
     if (this.reads.identifyFinancialFees) quote.fees = this.reads.identifyFinancialFees(quote.fees, input.kind ?? 'tap', quote.custody);
-    return { ...quote, financialVersion: 2, settingsHash: quote.feeQuote.settingsHash ?? rules.hashObject(this.document) };
+    return { ...quote, ...(resolved ? { catalogAsset: resolved.catalogAsset } : {}), financialVersion: 2, settingsHash: quote.feeQuote.settingsHash ?? rules.hashObject(this.document) };
   }
   async deploymentNeeded() { return null; }
   public(id) {
@@ -61,6 +69,8 @@ export class FinancialMints extends Mints {
       check(rules.compareOrdinal(counted, r.until) <= 0 && body.feeQuote, 'financial_request_expired');
       check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
       const quote = await this.quote({ asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote });
+      if (quote.deploymentNeeded || quote.state === 'deployment_pending') return quote;
+      check(quote.asset === r.asset, 'mint_asset_use_ledger');
       if (this.reads.financialFeePlan && quote.feeQuote.settingsHash) {
         const terms = { split: quote.split, destinations: quote.destinations, beneficiaries: quote.beneficiaries, id, rail: body.kind };
         const plan = this.reads.financialFeePlan({ ...terms, payer: body.payer });

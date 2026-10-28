@@ -42,6 +42,8 @@ import { ServiceClient } from '../../kit/lib/service-client.mjs';
 import { loadRegtestHistory } from '../../kit/lib/headers.mjs';
 import { temp, network, secret, agent as witness } from './helpers.mjs';
 import { claimAttackChecks } from './claim-policy-attacks.mjs';
+import { firstMintFixture } from './first-mint-fixture.mjs';
+import { createFeePolicy } from '../src/fees.mjs';
 
 // Five independent policy/evidence instances and loopback HTTP endpoints. The
 // fixture uses one disposable committee key after all five policies agree;
@@ -58,8 +60,19 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
   const old = harness(options); await old.advance(1009); assert.equal(await old.batch([]), null); await old.advance(1);
   const imported = prepareTerminalImport({ records: old.db, height: 1010, pageBytes: 10000 });
   const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: '1010', values: { ...r.SETTINGS_PROFILE, puzzleBits: 0, proofBytes: 262144,
-    settlementPageRows: 100, settlementPagesPerObservation: 2, compoundPrecisionBits: 1, compoundWorkBudget: 8, adminDelayTips: 1 } });
-  const named = r.emptyNamedDiscovery(), manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2',
+    settlementPageRows: 100, settlementPagesPerObservation: 2, compoundPrecisionBits: 1, compoundWorkBudget: 8, adminDelayTips: 1,
+    feePolicyRevision: createFeePolicy('100').current, linkMultiplier: r.FEE_DEFAULTS.link } });
+  const named = r.emptyNamedDiscovery();
+  const legacyPattern = { number: 0, name: 'dmwflorite', pat: '1', fld: 4, dt: 'n', tier: 1, rarity: 1,
+    discoverer: r.bytesToHex(ed25519.getPublicKey(r.hashBytes('isolated-kit-player-7'))), historyHeight: 1009, historyHash: history.hashAt(1009) };
+  const legacyKey = r.definitionKey({ name: legacyPattern.name, pat: legacyPattern.pat, fld: legacyPattern.fld, dt: legacyPattern.dt }, document), legacyRecord = { ...legacyPattern, number: '0', key: legacyKey,
+    legacy: { asset: 'p0', record: legacyPattern }, knownMatchCount: '0', knownOccurrenceTotal: '0', evidenceRoot: r.namedRoot(null),
+    catalogRevision: '0', settingsHash: r.hashObject(document), definitionSettingsHash: r.hashObject(document),
+    anchor: { height: '1009', hash: history.hashAt(1009) }, attributionProvisional: false };
+  for (const [key, value] of [['number/0', legacyKey], ['pattern/' + legacyKey, legacyRecord], ['name/' + legacyPattern.name, legacyKey], ['revision/' + legacyKey + '/0', legacyRecord]])
+    named.records = r.namedSet(named.records, key, value);
+  named.nextPattern = '1';
+  const manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2',
     previousBatchRoot: old.db.get('bt/1'), bitcoinAnchor: { height: '1010', hash: history.hashAt(1010) }, settingsHash: r.hashObject(document),
     catalogRoot: r.namedStateRoot(named), accountsRoot: imported.financialRoot, receiptSegmentStart: '0',
     schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
@@ -89,8 +102,11 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
     const body = await response.json(); assert.equal(response.status, 200, body.error); return body;
   };
   const financialSources = new Map();
-  const financialEvidence = async transition => {
-    const evidence = financialSources.get(r.hashObject(transition)); assert.ok(evidence, 'independent financial source fixture');
+  let firstMintReads;
+  const financialEvidence = async (transition, at) => {
+    const evidence = financialSources.get(r.hashObject(transition));
+    if (!evidence && firstMintReads) return firstMintReads.financialEvidence(transition, at);
+    assert.ok(evidence, 'independent financial source fixture');
     return structuredClone(evidence);
   };
   const servers = [], evidenceReaders = [];
@@ -203,6 +219,7 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
   committee.healthy = healthy;
   const transport = { prepareMessage: async (op, value) => ({ op, value }), sendMessage: async m => { assert.equal(await contract.run(m.op, m.value), null); },
     status: async job => ({ state: contract.db.get('bt/' + job.value.n) === job.value.root ? 'accepted' : 'pending' }) };
+  reads.financialRecord = async key => contract.db.get(key) ?? null;
   const financial = new FinancialExecution({ store, reads, document, resources: { workPage: 32, mintInputCapacity: 100 } });
   pipeline = new Pipeline({ pipelineDepth: 2, store, files, history: replayHistory, intake: runtime.intake, reads, committee, financial, settings: runtime.settings, outbox: new Outbox({ store, transport, retryMs: 0 }) }); closes.push(() => pipeline.close());
   const http = await serve({ intake: runtime.intake, files, evidence: publisher }); closes.push(() => http.close());
@@ -239,7 +256,7 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
   assert.deepEqual(first.agent.journal.get('discovery/keep').body, saved);
   for (tip = 1011; tip <= 1012; tip++) { await contract.advance(1); await observe(); await drain(); } tip = 1012;
   const start = performance.now(); await submitGroup(p => p.agent.reveal({ actionId: 'keep', history })); timings.push(performance.now() - start);
-  const patterns = store.list('patternsByAsset', { limit: 100 }).map(row => ({ ...row.value, number: Number(row.value.number) })); assert.equal(patterns.length, 8);
+  const patterns = store.list('patternsByAsset', { limit: 100 }).map(row => ({ ...row.value, number: Number(row.value.number) })).filter(p => !p.legacy); assert.equal(patterns.length, 8);
   await submitGroup(p => {
     const pattern = patterns.find(q => q.name === p.proposal.name);
     return p.agent.claim({ event: { window: tip, hash: history.hashAt(tip) }, plots: Array.from({ length: 100 }, (_, i) => ({ block: i + 1, patterns: [pattern.number] })), history, patterns });
@@ -273,6 +290,8 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
     return BigInt(readAccountLeaf(root, new AccountAvailability(store).prove(root, [key]), key)?.available ?? '0'); };
   const ownBefore = balanceBeforeClaim(`p2:${own.number}`), ingredientBefore = balanceBeforeClaim(`p2:${ingredient.number}`);
   await maker.claim({ event: { window: tip, hash: history.hashAt(tip) }, plots: [{ block: 101, patterns: [ingredient.number] }], history, patterns }); await drain();
+  await players[7].agent.claim({ event: { window: tip, hash: history.hashAt(tip) }, plots: [{ block: 1, patterns: [0] }], history,
+    patterns: [...patterns, { ...legacyRecord, number: 0 }] }); await drain();
   for (tip = 1017; tip <= 1018; tip++) { await contract.advance(1); await observe(); await drain(); } tip = 1018;
   await runtime.intake.seal(); await drain();
   const balanceAt = asset => { const key = accountKey('balance', asset), root = contract.db.get('ar/' + maker.owner).root;
@@ -333,12 +352,23 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
     assert.equal(store.count('financialQueue'), 0);
   };
   assert.equal(approvals % 5, 0); assert.ok(proofRequests > approvals);
+  await t.test('settled p2 find deploys, registers, quotes, reserves, pays and receives a mint permit over HTTP', async t => {
+    const player = players[7], p = patterns.find(p => p.name === player.proposal.name);
+    await firstMintFixture(t, { store, contract, document, network, secret, committeeSecret, rulesContext, stamp, financial, drain,
+      agent: player.agent, catalogAsset: 'p2:' + p.number, sourceReady: reads => { firstMintReads = reads; } });
+  });
+  await t.test('imported p2 catalog pattern spends its settled p0 find through the same first-mint flow', async t => {
+    assert.equal(store.get('finds', 'f2:1:0').asset, 'p0');
+    await firstMintFixture(t, { store, contract, document, network, secret, committeeSecret, rulesContext, stamp, financial, drain,
+      agent: players[7].agent, catalogAsset: 'p2:0', sourceReady: reads => { firstMintReads = reads; } });
+    assert.equal(store.get('provisioning', 'p2:0'), null, 'no duplicate token for the catalog alias');
+  });
   const feeds = new Feeds({ store, files, history: replayHistory, reads: {}, settings: { feedEventRows: 19 } });
   const publicAPI = createPublicAPI({ views: { store }, files });
   await assert.rejects(publicAPI.read('/patterns'), /public_projection_pending/);
   for (let i = 0; store.count('feedEvents') && i < 1000; i++) await feeds.events();
   assert.equal(store.count('feedEvents'), 0);
-  assert.equal((await publicAPI.read('/patterns')).patterns.length, 8);
+  assert.equal((await publicAPI.read('/patterns')).patterns.length, 9);
   const projectedCompound = store.get('catalogTypes', crafted.compound.id);
   const { tierProgress, ...compoundRecord } = projectedCompound;
   assert.deepEqual(compoundRecord, store.get('compoundTypes', crafted.compound.id));
@@ -360,7 +390,7 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
     const page = await publicAPI.read('/patterns/' + asset + '/claimed-blocks?limit=50&found=true');
     assert.equal(page.knownMatchCount, store.get('catalogPatterns', asset).knownMatchCount); assert.equal(page.rows.length, 50); assert.ok(page.nextCursor);
     assert.ok(page.rows.every(row => row.find?.finderUntil));
-    assert.equal(store.get('catalogAgents', p.agent.owner).discoveryCount, '1');
+    assert.equal(store.get('catalogAgents', p.agent.owner).discoveryCount, p === players[7] ? '2' : '1');
     const balance = await publicAPI.read('/accounts/' + p.agent.owner + '/balances/' + asset);
     assert.equal(balance.account.root, contract.db.get('ar/' + p.agent.owner).root);
     assert.deepEqual(readAccountLeaf(balance.account.root, balance.proof, accountKey('balance', asset)),
@@ -414,7 +444,7 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
   const permitHash = r.hash('mg1-permit');
   await pay({ type: 'consume', id: requestId, permitHash }, { requestId, owner: payer.owner, terms: reservationAction.terms,
     state: 'authorized', permitHash, fundingRoot: contract.db.get('fp/' + requestId).root });
-  assert.equal(contract.db.get('ao/' + requestId).state, 'consumed'); assert.equal(store.count('financialAccepted'), 3);
+  assert.equal(contract.db.get('ao/' + requestId).state, 'consumed'); assert.equal(store.count('financialAccepted'), 11);
   assert.equal(store.get('meta', 'ruleState').claimRoot, contract.db.get('v2/claims'));
   assert.equal(financial.document.revision, '1');
   assert.equal(contract.db.get('ao/' + requestId).terms, r.hashObject(terms));
@@ -443,7 +473,7 @@ test('eight kit journals, five HTTP policies, targeted evidence and imported not
     archive: (route, { start = 0 }) => fetch(recoveredHTTP.url + route, { headers: start ? { range: `bytes=${start}-` } : {} }) };
   const downloaded = await downloadArchive({ output: join(path, 'downloaded.bin'), source, independent: { hash: source.hash }, network: 'regtest', manifestTrust: manifestTrust(edPublic(secret)) });
   assert.equal(downloaded.count, tip + 1); assert.equal(downloaded.tip, history.hashAt(tip));
-  t.diagnostic(JSON.stringify({ players: 8, signers: 5, claimsPerPlayer: 100, explicitFinds: 802, implicitFinds: 2, mixedCraftFinancialBatches: mixedBatches, financialTransitions: 3, acceptedV2Batches: String(BigInt((await contract.state().batchLast()).n) - 1n),
+  t.diagnostic(JSON.stringify({ players: 8, signers: 5, claimsPerPlayer: 100, explicitFinds: 803, implicitFinds: 2, mixedCraftFinancialBatches: mixedBatches, financialTransitions: 11, acceptedV2Batches: String(BigInt((await contract.state().batchLast()).n) - 1n),
     readyRevealMs: timings[0], publicReadClientsAfterRestart: 500, publicReadElapsedMs: readElapsedMs, headerDownloadBytes: downloaded.downloadedBytes, publicReadSourceRequests: 0, approvals, targetedEvidenceRequests: proofRequests, importedRecords: imported.importRows, maximumProofBytes, proofBudget: document.values.proofBytes,
     signing: 'five independent HTTP policies; disposable common key, no TSS in this fixture' }));
 });

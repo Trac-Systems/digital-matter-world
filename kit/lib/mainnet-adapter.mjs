@@ -5,14 +5,15 @@ import { validatePlayerConfig } from './network.mjs';
 import { productionTrac } from './trac.mjs';
 import { headerSource } from './headers.mjs';
 import { openPlayerRuntime } from './player-runtime.mjs';
-import { decimalV2, safeNumberV2 } from '../../rules/src/index.js';
+import { readInteger, nextCursor } from './api-values.mjs';
 
 async function collect(read, field) {
   const rows = [], seen = new Set(); let cursor;
   do {
     const page = await read(cursor);
-    check(Array.isArray(page[field]) && (page.next === null || typeof page.next === 'string' && page.next.length > 0 && !seen.has(page.next)), 'Invalid public collection page');
-    rows.push(...page[field]); cursor = page.next; seen.add(cursor);
+    const next = nextCursor(page);
+    check(Array.isArray(page[field]) && (next === null || !seen.has(next)), 'Invalid public collection page');
+    rows.push(...page[field]); cursor = next; seen.add(cursor);
   } while (cursor !== null);
   return wireIdentities(rows);
 }
@@ -31,7 +32,7 @@ export async function create({ wallet, network, config, service, dryRun = true, 
       check(publicKey(runtime.peer.wallet) === publicKey(wallet), 'Runtime must belong to this signer');
       const trac = productionTrac(runtime.peer, { network, msb: runtime.bus, pins: config.trac });
       trac.balanceProof = (owner, asset, limit) => service.accountProof(owner, asset, limit);
-      const health = await service.health(), tip = safeNumberV2(decimalV2(health.tip));
+      const health = await service.health(), tip = readInteger(health.tip);
       check(Number.isSafeInteger(tip) && tip >= config.runtime.deployment.beacon.checkpoint.height, 'Gateway has no current mainnet tip');
       const hash = await source.hash(tip);
       check(hex32(hash), 'Public header source has no current mainnet tip hash');

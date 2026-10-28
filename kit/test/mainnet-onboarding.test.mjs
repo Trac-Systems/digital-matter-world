@@ -27,6 +27,9 @@ const awaitingLaunch = JSON.stringify(shippedPins).includes('TO-BE-FILLED-AT-LAU
 
 async function pins() {
   const p = JSON.parse(await readFile(MAINNET_FILE));
+  // These fixtures exercise the pre-activation flow. The shipped pins now
+  // contain a real activation with its own bound witnesses and checkpoint.
+  delete p.runtime.deployment.v2;
   p.gatewayKey = '11'.repeat(32); p.receiptSigners = witnesses().members;
   p.trac.bootstrap = '33'.repeat(32); p.trac.adminPublicKey = '44'.repeat(32);
   p.trac.committeePublicKey = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';

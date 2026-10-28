@@ -1,6 +1,7 @@
 # Digital Matter World agent kit
 
-Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.0**
+supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
 
@@ -12,7 +13,7 @@ Check the request’s quote before paying. Existing requests keep their signed t
 
 Use your own local Trac signer to find, discover and craft matter, then reserve, pay and
 inscribe authorized mints from your own Bitcoin wallet. Start with `rules`, `address`, `status`,
-`public_status` and `hunting`. All read commands work in either launch mode.
+`public_status` and `hunting`. Read tools work in either launch mode subject to the transport and proof requirements below.
 
 Read [llms.txt](llms.txt) for the game and fee rules, [SKILL.md](SKILL.md) for a
 short play loop, [the read reference](docs/READS.md) for filters/sorts/units and
@@ -45,8 +46,8 @@ journals, salts and headers stay in place. Legacy commitments add a separate
 signed witness attachment. If the service or independent verifier reports
 `upgrade_required`, install kit **0.2.0** from the reviewed public repository
 before sending again; keep the same player directory and verification settings.
-The network's accepted activation manifest selects v1 or v2. Installing this
-checkout alone does not activate a network or provide its new notary adapter.
+The accepted manifest selects the protocol; live mainnet is already v2. Installing
+this checkout does not change consensus or replace independent notary verification.
 
 ## Start here: mainnet
 
@@ -87,15 +88,12 @@ containing `TO-BE-FILLED-AT-LAUNCH`. Use the reviewed repository release;
 never fill pins from a gateway response or copy RESET's subnet. See the operator
 [launch step](#pin-the-public-release-at-launch) below.
 
-The periodic table starts empty. There are no starter patterns. Read `patterns`;
-if it is empty, use `search_patterns`, `propose_pattern` with a stable action ID,
-and `reveal_pattern` after the witnessed reveal window opens. Wait for acceptance
-before claiming. The first accepted v2 pattern is number 0 (`p2:0`); imported legacy assets
-retain their original `p0` identities. `mine_once`
-returns `discovery_needed` with those next actions while the table is empty, and
-includes the header submission (or dry-run preview) in `header`.
-The default strategy searches valid candidates against full history; it adds no
-patterns to the table by itself. Once patterns exist, `mine_once` selects claims.
+The live catalog already has patterns. Read `catalog` (all current pages) or
+`patterns` (one wire-format page). V2 records have `number:"0"`, a 64-hex `key`
+and `asset:"p2:0"`; imported `p0` identities are nested under `legacy` provenance.
+A successfully drained empty catalog returns `discovery_needed` and its next
+actions. A 503 index failure is not an empty table. Search and discovery do not
+add entries by themselves; wait for accepted reveal before claiming a pattern.
 
 ## Mainnet reads and mining
 
@@ -113,6 +111,10 @@ node bin/dmw.mjs once --config "$HOME/.dmw-signer/mainnet.json"
 ```
 
 `preflight` checks local pins; it does not certify live network readiness.
+Dry-run prevents sends/signatures but is not a GET-only transport policy: native
+contract reads use Trac P2P, and `mint_quote`, `craft` and `link_bitmap` can POST
+unsigned previews. Skip those previews under a GET-only policy. `submit_bitmap`
+and `report_custody_payment` are actions and send nothing in dry-run.
 The built-in native Trac runtime uses the same trac-peer/MSB stack as RESET's
 Pear runtime, directly under Node. It joins network **918**, discovers validators,
 replicates DMW's pinned subnet into your private signer directory and waits for
@@ -124,7 +126,9 @@ for retry. MCP initializes immediately; the first contract read connects Trac.
 `once` and every MCP action default to **dry-run**. To authorize real moves,
 launch `once` or `mcp` with `--live`. MCP cannot enable live mode itself. The
 `pay_mint`, `inscribe_mint` and `inscribe_deployment` tools use the local Bitcoin signer only in live mode. `once` hunts patterns throughout counted history using the local archive and
-excludes slots in the paged public found/minted index. It selects up to the
+excludes materialized found/minted slots through `/patterns/p2:N/claimed-blocks`
+with limits at most 50. Missing submitted evidence cannot exclude implicit header
+awards; use `window_eligibility` and accepted closure evidence. It selects up to the
 configured window budget (100 by default), then adds the tip header. While the
 archive loads, it sends that header and reports `claimState:history_downloading`.
 Selected headers are checked for proof of work and against the contract chain.
@@ -132,11 +136,11 @@ Pre-checkpoint archive claims require verified history overlapping that chain.
 
 MCP starts a resumable background download to `headers.bin` in the signer
 directory (`--headers FILE` or config `headers` selects another cache). The gateway
-serves a small `/headers/manifest.json` and one immutable binary file: 80 bytes
-per header, about 77.6 MB for 970,000 headers. A stopped transfer resumes with
-HTTP Range. The first download uses the gateway's gzip copy when available;
-compressed and uncompressed bytes each have a checked SHA-256 digest. Later
-updates request only the new raw byte range. Reorgs replace the divergent tail.
+serves a signed `/headers/manifest.json` and authenticated immutable chunks.
+Each raw header is 80 bytes, roughly 78 MB for the current chain. Interrupted
+chunks resume at their exact byte; updates fetch only changed chunks/tree nodes.
+Reorgs replace the divergent tail. Legacy archive compatibility does not change
+the active v2 distribution or allow unsigned downgrade.
 The download checks free space on the filesystem containing your chosen output,
 budgeting additional compressed/raw temporary files plus 10% and a 512 MiB
 reserve (about 680 MiB free for a first 78 MB archive). An already verified,
@@ -174,12 +178,11 @@ follow [the recovery instructions](docs/ACTIONS.md#recover-an-old-refused-reveal
 moves are signed locally and submitted to the gateway, whose operator submits
 the settlement batches. The player does not need an MSB account: the contract
 creates its matter account when it credits a win. Crafting requires owned matter.
-Transfers are separate: they need a funded player MSB account, an admitted Trac
-writer and three connected validators. The adapter checks the current MSB fee
-and reports the exact required TNK atoms (10^18 atoms per TNK) if funding is
-missing. The pinned trac-msb version charges **0.03 TNK (30000000000000000 atoms)
-per transfer**, paid by the signing player. The kit never funds or registers a
-writer automatically. There is no fixed TNK onboarding charge. TAP payment fees and Bitcoin miner fees are separate.
+The old direct TNK `transfer` path is unavailable on activated v2 accounts and
+returns `account_v2_required` before preparing a transaction. It needs a verified
+v2 account-transfer adapter; do not apply legacy writer/funding instructions to
+mainnet. Existing legacy transaction status remains inspectable. TAP payment
+fees and Bitcoin miner fees are separate from free game moves.
 
 ## Connect your agent
 
@@ -293,21 +296,22 @@ node bin/dmw.mjs read events /absolute/path/event-read.json --config /absolute/p
 
 `block-read.json`: `{"height":123,"collection":"draws","limit":10}`.
 `event-read.json`: `{"since":42,"filters":{"category":"chain"}}`.
-Use `limit` (default 50, 1–200), `cursor`, `sort`, `order` and `filters` on
-collections. Summaries accept `limit`; select a `collection` to filter or page one
-list. Follow `pages` and nested routes with `read_page`, retaining filters/order
-and sending `next` as `cursor` until null. Full route, field and filter tables are
+Use explicit small `limit` values with `cursor`, `sort`, `order` and `filters`.
+General schemas accept up to 200; claimed-block tools cap at 50 and server work
+budgets may clamp other limits. Follow `collections` or `pages` links with
+`read_page`, retaining filters/order and sending `next`/`nextCursor` as `cursor`
+until null. Continue empty pages with a cursor. `total:null` means unknown. Full route, field and filter tables are
 in [READS.md](docs/READS.md). Catalog loading traverses all `/patterns` pages.
 
 Public SDK reads need neither wallet nor adapter:
 
 ```js
 import { ServiceClient } from './lib/index.mjs';
-const service = new ServiceClient({ origin: 'http://127.0.0.1:5570' });
+const service = new ServiceClient({ origin: 'https://dmtworld.tap-protocol.com', mode: 'mainnet' });
 const first = await service.events({ since: 42, limit: 20 });
 if (first.next) await service.events({ since: 42, limit: 20, cursor: first.next });
-const quote = await service.mintQuote({ asset: 'p0', block: 123, kind: 'tap' });
-console.log(quote.amounts['/price'].human);
+const detail = await service.block('973603');
+console.log(detail.header.hash); // Block-list rows do not carry a hash.
 ```
 
 ## Local signer setup
@@ -443,6 +447,9 @@ The flow is:
 
 For a pattern's first mint, a quote returns `deployment_needed`, `payable:false`
 and the current deployment plan. No mint payment or reservation exists yet.
+The answer also carries a `deploymentLink` to the public `/mint/ASSET?owner=AGENT`
+page, where the owner can inscribe the pattern and deploy the token with TAP Wallet
+instead. Imported patterns keep their ledger asset (dmwflorite: p0, listed as p2:0).
 The first minter uses `inscribe_deployment {asset,maxFeeSats,feeRate?}` from their
 bound local Bitcoin wallet. First it inscribes the supplied element text; an
 existing indexed element with the same `(pat,fld)` is reused. Once included in a block, repeat the action to register that phase and fetch the exact
@@ -541,8 +548,12 @@ The default hunts the rarest pattern across history, filling the window budget
 before moving to the next pattern. Claims use `{window,plots,header?}` with at
 most 1,000 slots, with a default budget of 100. The kit validates the complete bundle before signing.
 The tip header enters only that tip's unclaimed-pattern draws. `hunting` tracks
-historic claims and header wins. Discovery follows `PATTERN_LIMITS` (three
-matching blocks minimum); mint choices require a finder.
+historic claims and observed header wins without finalizing sparse projections
+as losses. Discovery follows accepted `settings.values` (including
+`minMatchingBlocks` and `occurrencePageSize`); v2 allows constant counts and checks
+canonical-definition uniqueness. Public known counts are lower bounds. Compound
+suggestions require an authenticated v2 preview to determine the output identity;
+legacy rarity formulas do not produce valid v2 compounds. Mint choices require a find.
 
 ```sh
 node bin/dmw.mjs download --output /absolute/build/path/headers.bin
@@ -552,12 +563,15 @@ node bin/dmw.mjs backtest --headers /absolute/build/path/headers.bin --start 100
 
 Downloads verify genesis, proof of work, linkage, retargets and median time, resume
 a `.part` file and cross-check the tip with an independent source. The default
-source is the gateway's single binary archive; no metadata-page crawl is needed.
+source is the gateway's signed immutable chunk tree; no block metadata crawl is needed.
 Discovery needs a snapshot reaching the exact current tip. Mainnet MCP updates
 it automatically. Custom local adapters that supply a fixed `history` still need
 a fresh snapshot when their tip changes.
 
-Backtests make no sends or payments. They exclude future headers and later catalog
+The current backtest engine supports legacy fixtures only and rejects v2 settings
+or named catalogs. V2 replay requires accepted catalog and claim-state snapshots,
+including deferred header awards. Do not interpret a legacy run as v2 earnings.
+Legacy backtests make no sends or payments. They exclude future headers and later catalog
 entries, leave the last two windows unsettled and record snapshot, catalogIds,
 settings and opponents. They model all-history claims, excluding earlier finds.
 The CLI defaults to an empty catalog; use `--patterns FILE` for an
@@ -581,15 +595,16 @@ signed packets and storage retain the protocol key encoding.
 Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
 `localMatchCount`, real `matches` (decimal height/count and canonical hash),
 `localResultId`, and `nextCursor` for each accepted local candidate. Continue with
-`pattern_search_matches` using the same proposal and cursor (page size 3–200,
-default 100). Cursors retain the original snapshot across restarts and later
+`pattern_search_matches` using the same proposal and cursor (page size 1 through the accepted
+`occurrencePageSize`; that setting also supplies the default). Cursors retain the original snapshot across restarts and later
 headers, and refuse a replaced canonical snapshot. These are local search
 results, not finds or an exhaustive server catalog. The existing action journal,
 salts and signed packets are preserved. When an accepted activation manifest
 selects v2, the kit uses signed named-evidence moves and pinned commitment
 settings. Its independent notary/proof adapter must support that version;
 otherwise it refuses with upgrade_required. Never treat a gateway receipt as
-accepted batch inclusion. Before activation the historical v1 flow remains.
+accepted batch inclusion. General saved-v2-move status reconciliation currently
+reports an unavailable batch verifier and preserves the packet.
 
 ## Copyable discovery prompt
 
@@ -617,6 +632,8 @@ verified submitted matching blocks. `pattern_matches` selects this route for
 v2 asset IDs. `submit_bitmap({block:HEIGHT,inscription:OPTIONAL_ID})` asks the
 service to verify one named Bitmap and its current agent binding. It never
 subscribes to wallet history; inventory completeness is `submitted_items_only`.
-These tools need no wallet signing or payment. Mint admission independently
+`claimed_blocks` and `window_eligibility` are GET reads. `submit_bitmap` is an
+action: its dry-run returns `sent:false`; a live call submits evidence even though
+it needs no wallet signing or payment. Mint admission independently
 rechecks the named ownership evidence. Follow `next` / `nextCursor` even when
 an indexed work page is empty; `total:null` means no exact total was computed.

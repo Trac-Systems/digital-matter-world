@@ -279,7 +279,10 @@ function walletsHome(root, type) {
   side.append(...[panel('How minting works', h('ol.steps-list', {},
     h('li', {}, 'Your agent finds a pattern in a block and the find settles.'),
     h('li', {}, 'You link your wallet to your agent’s player: your agent starts it, you sign.'),
-    h('li', {}, 'You mint here: your agent creates the payment request, you pay and inscribe with your wallet.'))),
+    h('li', {}, h('strong', {}, 'Token not deployed yet? Inscribe the pattern and deploy its token first, then mint. '), 'Your find shows an “Inscribe & deploy” button: inscribe the pattern, wait for a Bitcoin block, deploy the token, wait for a block. ',
+      h('strong', {}, 'Already deployed? Just mint.'), ' Your find shows a “Mint On-Chain” button.'),
+    h('li', {}, 'Ask your agent to mint: it reserves the units and gives you a payment link.'),
+    h('li', {}, 'On that link, pay the fee in TAP, then inscribe the mint with your wallet. The tokens arrive in your wallet.'))),
     policy?.baseFee ? panel('Prices', [kv([['Base price', h('span.mono', {}, tap(policy.baseFee, policy.unit))], policy.feeSettings ? ['Bitmap link', h('span.mono', {}, feePrice(policy, 'link'))] : null]),
       h('p.small.muted', { style: { margin: '0 14px 12px' } }, policy.feeSettings ? `A find costs the base price times its tier: ${Array.from({ length: 5 }, (_, i) => `tier ${i + 1}: ${feePrice(policy, 'find', i + 1)}`).join(', ')}. ` : '', 'The request shows the exact price before you pay.')], { flush: true }) : null,
     h('p.small.muted', { style: { margin: 0 } }, 'Already have a payment link from your agent? Open it; it shows the request and lets you pay.')].filter(Boolean));
@@ -297,8 +300,11 @@ function walletsHome(root, type) {
       { key: 'block', label: 'Block', num: true, render: r => r.block === null ? h('span.faint', {}, 'compound') : blockLink(r.block) },
       { key: 'amount', label: 'Units', num: true },
       { key: 'rule', label: 'May mint', render: r => { const rule = mintRule(r, store.status?.counted); return h('span', {}, pill(r.allowed ? 'You may mint' : rule.label, r.allowed ? 'good' : rule.kind, rule.text)); } },
-      { key: 'act', label: '', render: r => r.allowed && r.block !== null ? mintButton(r, true) : null },
+      { key: 'act', label: '', render: r => r.allowed && r.block !== null ? mintButton(r, true) : undeployed(r) ? h('a.btn.sm', { href: deployHref(r.asset, player) }, 'Inscribe & deploy') : null },
     ] }).el;
+  // A pattern's first mint deploys its TAP token; until then its finds are not ready to mint.
+  const undeployed = r => r.reason === 'asset_unregistered' && r.rightAllowed && r.block !== null;
+  const deployHref = (asset, player) => `/mint/${asset}?owner=${encodeURIComponent(player.agent)}`;
   // Why nothing is ready, from the player's first page of settled finds.
   async function reason(player, out) {
     let rows;
@@ -306,6 +312,13 @@ function walletsHome(root, type) {
     catch { return; }
     if (!rows) return;
     const own = rows.filter(r => r.finder === player.agent);
+    // One row per held pattern: imported patterns are listed under their ledger asset (p0).
+    let held = [];
+    try { held = ((await get(`/agents/${player.agent}/assets?limit=50`)).assets ?? []).map(a => a.asset).filter(a => a.startsWith('p')); } catch {}
+    const firsts = await Promise.all(held.map(a => get(`/mint-rights?owner=${player.agent}&asset=${encodeURIComponent(store.pattern(a)?.legacy?.asset ?? a)}&limit=1`).then(r => r.mintRights?.[0], () => null)));
+    const deploy = [...new Set([...rows, ...firsts.filter(Boolean)].filter(undeployed).map(r => r.asset))];
+    if (deploy.length) return clear(out, h('div.note', {}, `${deploy.map(assetName).join(', ')} ${deploy.length > 1 ? 'have' : 'has'} no token on Bitcoin yet. Before the first mint, inscribe the pattern and deploy its token, once, from your wallet, each in its own block. `,
+      ...deploy.map(a => h('a.btn.sm', { href: deployHref(a, player), style: { marginLeft: '6px' } }, `Inscribe & deploy ${assetName(a)}`))));
     clear(out, h('div.note', {}, !rows.length ? 'No settled find yet. When your agent wins a find and it settles, it shows up here.'
       : rows.some(r => r.whoMayMint === 'finder' && r.finder !== player.agent) && !own.length ? 'The finds so far are still in another agent’s finder window: only the finder may mint for 1,008 blocks (about a week) after the find.'
       : own.some(r => r.reason === 'insufficient_balance') ? 'Your player does not hold enough units for its finds right now.'

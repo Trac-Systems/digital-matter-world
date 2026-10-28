@@ -1,11 +1,12 @@
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { blake3 } from '@noble/hashes/blake3.js';
-import { assetPairs, stableJSON, decimalV2, safeNumberV2 } from '../../rules/src/index.js';
+import { assetPairs, stableJSON, decimalV2 } from '../../rules/src/index.js';
 import { financialAsset } from '../../rules/src/financial-mint.js';
 import { check, exact, hex32, integer, nonce } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signBytes } from './signing.mjs';
 import { fanOutValidatorSends } from '../../contract/runtime/fanout.js';
+import { readInteger } from './api-values.mjs';
 
 export function transactionCommand(op, value) {
   check(op === 'tf', 'Only transfers are permitted');
@@ -33,10 +34,10 @@ export class TracClient {
     const head = await this.api.dmwHead();
     if (this.integerVersion !== 2) return head;
     // Local archive offsets use safe Numbers. Never round a consensus height.
-    return { ...head, tip: { ...head.tip, height: safeNumberV2(decimalV2(head.tip.height)) }, counted: safeNumberV2(decimalV2(head.counted)),
-      ...(head.confirmed === undefined ? {} : { confirmed: safeNumberV2(decimalV2(head.confirmed)) }) };
+    return { ...head, tip: { ...head.tip, height: readInteger(head.tip.height) }, counted: readInteger(head.counted),
+      ...(head.confirmed === undefined ? {} : { confirmed: readInteger(head.confirmed) }) };
   }
-  hashAt(height) { check(integer(height), 'Invalid height'); return this.api.dmwHashAt(this.integerVersion === 2 ? String(height) : height); }
+  hashAt(height) { height = readInteger(height); return this.api.dmwHashAt(this.integerVersion === 2 ? String(height) : height); }
   async balance(owner, asset) {
     check(hex32(owner) && financialAsset(asset), 'Invalid balance read');
     if (this.integerVersion !== 2) return this.api.dmwBalance(owner, asset);

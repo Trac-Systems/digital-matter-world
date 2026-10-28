@@ -7,11 +7,11 @@ import { hash } from '../src/util.mjs';
 import { authority } from '../../local/protocol.mjs';
 import { createRequire } from 'node:module';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
-export async function provisioningFixture(t) {
+export async function provisioningFixture(t, { secret = Buffer.alloc(32, 73) } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dmw-provision-')), store = await Store.open(join(directory, 'store')), registryPath = join(directory, 'registry.json');
   t.after(async () => { await store.close(); await rm(directory, { recursive: true }); });
   await writeFile(registryPath, JSON.stringify({ assets: {}, feePolicy: { retained: true } }));
-  const secret = Buffer.alloc(32, 73), privilege = hash('privilege') + 'i0', auth = authority(secret, { privilege: true });
+  const privilege = hash('privilege') + 'i0', auth = authority(secret, { privilege: true });
   const elements = [], deployments = new Map(), contents = new Map([[privilege, auth]]), packages = new Map(), canonical = new Map();
   let tip = 100, funds = 1000000000n, hook;
   const reads = { inscription: async () => ({address:'maker'}), bindings: {resolve:()=>({request:{address:'maker'}})}, registry: () => readFile(registryPath, 'utf8').then(JSON.parse), tip: async () => ({ tip }), counted: async () => tip,

@@ -161,17 +161,18 @@ test('the local source recovers only signed-plan cardinal change from the durabl
   assert.deepEqual(calls, [`/tx/${plan.commitTxid}`, `/tx/${plan.commitTxid}/outspend/1`]);
 });
 
-test('first pattern minter preserves separate element/deploy attempts and exact indexed bindings', async t => {
+for (const [asset, ledger] of [['p0', 'p0'], ['p2:1', 'p2:1'], ['p2:0', 'p0']]) test(`first pattern minter preserves separate element/deploy attempts and exact indexed bindings: ${asset}`, async t => {
   const { deploymentContent } = await import('../lib/inscription-core.mjs');
   const f = fixture(), journal = await Journal.open(await temp(t), 'pattern-deploy'); cleanup(t, () => journal.close());
   const owner = 'pattern-minter', definition = { number: 0, name: 'dmwfirstlight', pat: '[12]', fld: 4, dt: 'n' };
   const elementText = 'dmwfirstlight.[12].4.element';
-  const job = { asset: 'p0', kind: 'dmt', state: 'awaiting_player_deploy', phase: 'element', definition, elementAttempt: 0, tickerAttempt: 0,
+  const job = { asset: ledger, catalogAsset: asset, kind: 'dmt', state: 'awaiting_player_deploy', phase: 'element', definition, elementAttempt: 0, tickerAttempt: 0,
     content: elementText, inscriptionText: elementText, privilege: payee + 'i0', attempts: [{ id, phase: 'element', attempt: 0, text: elementText }] };
   let confirmed = false, sends = 0;
   f.wallet.source.broadcast = async (_raw, txid) => { sends++; return txid; };
   const service = { deployment: async () => job, payoutBinding: async () => ({ binding: { request: { agent: owner, address: f.wallet.address } } }),
-    submitDeployment: async ({ phase, inscription }) => {
+    submitDeployment: async ({ asset: submittedAsset, phase, inscription }) => {
+      assert.equal(submittedAsset, ledger);
       if (!confirmed) throw Error('deployment_confirmations');
       if (phase === 'element') {
         const payload = { p: 'tap', op: 'dmt-deploy', tick: definition.name, elem: inscription, dt: 'n', prv: job.privilege };
@@ -181,7 +182,7 @@ test('first pattern minter preserves separate element/deploy attempts and exact 
       return job;
     } };
   const player = new PlayerMint({ wallet: f.wallet, journal, service, owner });
-  const args = { asset: 'p0', maxFeeSats: '10000' };
+  const args = { asset, maxFeeSats: '10000' };
   assert.equal((await player.deploy(args)).state, 'dry-run'); assert.equal(sends, 0);
   assert.throws(() => deploymentContent({ ...job, inscriptionText: 'dmwfirstlight.999.4.element' }), /Element differs/);
   player.dryRun = false;

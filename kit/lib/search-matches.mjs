@@ -1,4 +1,4 @@
-import { countWith, hashObject, stableJSON, validateDefinition } from '../../rules/src/index.js';
+import { countWith, hashObject, stableJSON, validateDefinition, canonicalDefinition } from '../../rules/src/index.js';
 import { assertHistoryTip, historyProof } from './headers.mjs';
 import { check } from './check.mjs';
 
@@ -9,7 +9,7 @@ export async function searchMatchPage({ history, tip, proposal, cursor, pageSize
     const proof = historyProof(history);
     check(Number.isSafeInteger(tip.height) && tip.height >= 0 && tip.height < proof.count && history.get(tip.height).hash === tip.hash, 'Local search snapshot is not in verified history');
   } else assertHistoryTip(history, tip);
-  validateDefinition(proposal);
+  if (settings) canonicalDefinition(proposal, settings); else validateDefinition(proposal);
   check(Number.isSafeInteger(pageSize) && pageSize >= (settings ? 1 : 3) && pageSize <= (settings?.values.occurrencePageSize ?? 200), 'Invalid local match page size');
   let searchSnapshot = { height: tip.height, hash: tip.hash }, saved;
   let start = 0;

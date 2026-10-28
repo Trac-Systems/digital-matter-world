@@ -101,7 +101,9 @@ export class PlayerMint {
   deploy({ asset, feeRate, maxFeeSats }) {
     return this.serial(async () => {
       const job = await this.service.deployment(asset);
-      ensure(job.asset === asset, 'Deployment asset mismatch');
+      ensure(job.asset === asset || asset === job.catalogAsset && /^p2:(0|[1-9][0-9]*)$/.test(asset) &&
+        job.asset === 'p' + BigInt(asset.slice(3)).toString(36), 'Deployment asset mismatch');
+      asset = job.asset;
       if (job.state === 'registered') return { state: 'registered', asset, inscriptionId: job.entry?.id, sent: false };
       const { text, attemptId, phase } = deploymentContent(job);
       if (job.kind === 'compound') ensure(this.owner && job.definition?.firstMaker === this.owner, 'Only this compound’s first maker may inscribe its deployment');

@@ -26,7 +26,7 @@ export function eventScopes(event, get) {
   const scopes = new Set(['publicEvents']);
   const add = (...names) => names.forEach(x => scopes.add(x));
   for (const row of [...values(event.occurrences), ...values(event.finds)]) {
-    const asset = row.asset ?? rules.patternAssetV2(rules.decimalV2(row.pattern)), height = rules.decimalV2(row.block);
+    const asset = row.pattern != null ? rules.patternAssetV2(rules.decimalV2(row.pattern)) : row.asset, height = rules.decimalV2(row.block);
     add('claimed2/' + asset, 'claimedAt2/' + rules.uintKeyV2(height), 'world', 'block/' + height);
     if (row.finder) add('catalogAgents', 'agent/' + row.finder, 'findsByAgent/' + row.finder, 'agentAssets/' + row.finder, 'rankings');
   }

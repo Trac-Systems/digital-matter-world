@@ -1,403 +1,127 @@
-# Activated v2 mint status
+# Live v2 public reads
 
-Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
-[the upgrade instructions](UPGRADING.md) to keep your wallet, journal, headers,
-payout bindings and financial intents. Resume saved actions with the same IDs.
+Mainnet is https://dmtworld.tap-protocol.com with ruleset **dmw-v2**. The current
+recordings in `test/fixtures/v2-live-reads.json` were obtained with GET requests.
+Read-only public browsing needs no signer or funds. `status`, `balance` and
+`transaction_status` additionally use the player's independent Trac adapter;
+public projections are not a substitute for that authority.
 
+## Scalars, identities and paging
 
-`mint_status` retains the existing permit, fees and missing-payment fields. The
-v2 response adds `financialVersion:2`, the accepted `reservation` state, a
-`funding` summary with paid amounts and its page commitment, and the current
-queued/accepted `transition` with any deferred reason. A queued transition is
-not an accepted payment. `payable` is false until the account reservation is
-accepted, and after a permit or terminal exit.
+Public consensus ordinals and quantities use canonical decimal strings:
+`"973603"`, `"0"`, never leading zeros, exponent notation or fractional values.
+Resource limits, page sizes, header metadata and embedded signed legacy records
+may still contain numbers. `readInteger` converts only safe local ordinals.
+Amounts remain strings/BigInt. Never rewrite signed packets or proof bytes.
 
-# Activated v2 occurrence reads
+A pattern has `number:"0"`, a 64-hex `key`, and `asset:"p2:0"`. The `catalog`
+tool drains pages and converts `number` for local algorithms. The `patterns`
+tool preserves the public wire shape. Imported historical `p0` data is under
+`legacy`; it is not the current asset. Compounds use `c2:FULL_64_HEX_COMMITMENT`.
+Player arguments and identity filters use checksum-valid `trac1…` addresses.
+Server-generated account-proof links may contain an internal hex key; pass the
+returned link unchanged to `read_page` rather than constructing another identity.
 
-After activation, `pattern_matches` / claimed-block pages mean submitted and
-verified occurrence evidence only. They are not complete historical searches.
-Counts, rarity and cursors bind a catalog revision. Finding another match adds
-information; it does not prove fraud. Found/minted indexes and implicit header
-awards remain necessary before assuming an absent occurrence row is free.
-Before activation, the legacy matching-block reference below remains applicable.
+Collections use `v:3`, a named row array, an opaque `revision`, and `next`
+and/or `nextCursor`. Most indexed lists have `total:null`; some record collections
+have known totals as strings. Null is unknown, never zero. Metadata varies by
+route: claimed-block pages need not have `limit` or `total`. Follow cursors until
+null, including empty work pages. Preserve route, filters and ordering. The kit
+normalizes the cursor alias to `next` without rewriting proof content.
 
-## V2 projection contract
+Cursors pin relevant collection revisions and survive restarts/unrelated writes.
+`page_cursor_stale` or `claimed_cursor_stale` requires a fresh traversal. A 503
+`public_projection_pending` is unavailable evidence, not an empty collection or
+a free slot. Check health/status and retry; never infer a game result from it.
 
-V2 collection cursors pin durable collection revisions and survive restarts and
-unrelated writes. A change to a relevant collection returns `page_cursor_stale`;
-restart that traversal. Pending feed events fence only their affected scopes.
-The configured row and serialized byte budgets both apply. A page may contain
-no selected rows and still have `next`: continue until it is null. `total:null`
-means an exact count was intentionally not computed. Filtered pages expose
-`examined` and `continuationMeaning:"bounded_index_work"`.
+Use explicit small limits such as 20. General tool schemas accept 1–200, but the
+server can clamp its work budget. Claimed-block tools cap at 50. Do not assume a
+shared default. Summary responses can contain `collections:{name:"/route"}` and
+`counts` without preview arrays. Some responses retain `pages` links. Follow
+both through `read_page`; only allowed local paths are accepted. Encoded colons
+in returned `p2%3A0`/`c2%3A…` account links are supported, not encoded traversal.
 
-`claimed_blocks` and v2 `pattern_matches` use
-`/patterns/p2:NUMBER/claimed-blocks`. This route accepts found/minted booleans,
-block order and a cursor. Counts mean verified submitted blocks. They are lower
-bounds on all matches and exclude deferred, unmaterialized header awards.
-`/window-eligibility` and `/windows/WINDOW/{claims,winners,headers}` expose the
-separate implicit award evidence.
+## Verified route families
 
-`/mint-rights?owner=ADDRESS` seeks through that owner's indexed balance assets,
-then explicit awarded slots, followed by owned compounds. Ordering is asset,
-then block within each asset. A named asset filter also supports zero-balance
-diagnostics. Every page uses stored finder deadlines, deployment registration,
-account revision, holds and named Bitmap snapshots. Stale ownership or a
-balance root that has not been projected cannot produce `allowed:true`.
-Eligibility is a public hint; admission rechecks current named evidence.
-Financial producers must publish every changed balance and its account head.
+| Tool / route | Response and v2 details |
+| --- | --- |
+| `public_status`, `/status` | `version:2`, decimal clock/batch values, settings, fee policy, unit metadata. `version` is not the collection `v` field. Display-added settings metadata must not enter a signed settings hash. |
+| `world`, `/blocks` | `plots` with height and coordinates; no block hash. |
+| `block`, `/blocks/H` | `header.hash` is the canonical public block hash. Current claim-window metadata may refer to the live window, not H. |
+| `/blocks/H/matches`, `/slotList` | Submitted evidence, not an exhaustive search. |
+| `/blocks/H/claims`, `/draws`, `/finds` | Named arrays. V3 draws are individual winner rows, not legacy rounds containing `winners` and `settledAt`. |
+| `/blocks/H/mintRights` | Owner required; the kit supplies this player's address by default. |
+| `patterns`, `/patterns` | `patterns`, usually `total:null`, canonical ordinals, named keys and revisions. |
+| `pattern_matches`, `claimed_blocks`, `/patterns/p2:N/claimed-blocks` | `rows`, `knownMatchCount`, catalog/projection revisions, cursor aliases. Limit 1–50; found/minted booleans, sort block, order asc/desc. |
+| `window_eligibility`, `/window-eligibility` | Recorded windows and deferred header-award evidence. |
+| `/window-eligibility/W` | `{v:3,draw:{window,windowHash,determinedAt,seed,senderCount,senderRoot,catalog,policy,…}}`. |
+| `/windows/W/claims`, `/winners`, `/headers` | Record pages; rows can wrap evidence in `{id,row,batch,audit,root}`. |
+| `compounds`, `/compounds` | Named compound records; exact tier may still be pending. |
+| `finds`, `/finds` | Materialized finds; retain original integer forms inside older evidence. |
+| `receipts`, `/receipts` | Signed seals and immutable archive descriptors. V2 supports limit/cursor/order/sort=id; the old height filter is not supported. |
+| `mint_rights`, `/mint-rights` | Owner-scoped eligibility, balances, holds, finder/Bitmap rights; may include `implicitAwards` link. |
+| `agents`, `/agents` | Public activity scores, not unique people. |
+| `agent_profile`, `/agents/ADDRESS` | Scores and collection links, not guaranteed preview arrays. |
+| Agent subcollections | balances, bitmaps, finds, mintRights, discoveries, history, assets. `assets` can link to `/accounts/ADDRESS/balances/ASSET`. |
+| `events`, `/events`; `event`, `/events/SEQUENCE` | Sequences/provenance. Embedded older events can retain numeric fields. Persist sequence; do not assume every event has the same data/state fields. |
+| `results`, `/results` | Counts and collection links for mints, payments, ethereum, payouts, owed, paid, links, credits, custody, linkRequests, supply. |
+| `/records/batches/N` | Batch descriptor and publication descriptors. Public provenance alone is not an independently accepted root. |
 
-`submit_bitmap({block,inscription?})` posts `/bitmaps/submit`. The source must
-agree with the verified Bitcoin/Trac snapshot and the current inscription
-owner, and the wallet must have exactly one accepted Trac binding. Only those
-verified submitted items appear in `/agents/ADDRESS/bitmaps`; this is explicitly
-not a complete wallet inventory. Updates and ownership changes are checked by
-bounded maintenance. No wallet inscription history is requested.
+The old `/patterns/ASSET/blocks` route returns a deprecation descriptor on v2;
+it is not a matching-block page. Use `claimed_blocks`. Submitted counts are lower
+bounds and cannot exclude implicit header awards. `hunting` reports observed
+wins while leaving final settlement incomplete; consult window evidence and
+accepted credit delivery before spending.
 
-World/map, block collections, catalog, agent collections, result collections
-and rankings read persistent projections only. `/world/map` is paged. Summary
-responses link their collections instead of embedding all rows. Financial
-summary values are null until a producer supplies their verified projection;
-null must not be rendered as a measured zero. Rankings pin the exact submitted
-match fraction and catalog revision at find publication. Time rankings expose
-their published maintenance clock.
+## Examples
 
-Header manifest version 2 points to immutable Merkle tree nodes and raw/gzip
-chunks at relative public mirror paths. The downloader resumes chunk ranges,
-checks both compressed and raw hashes, verifies the full Bitcoin chain and
-checks the tip independently. A routine unchanged server seed restart uses a
-verified local checkpoint and reads zero seed bytes. Changed seed files are
-fully checked again. No private origin is included in a public manifest.
+```js
+const page = await service.claimedBlocks('p2:0', { limit: 20, found: true });
+if (page.next) await service.claimedBlocks('p2:0', {
+  limit: 20, found: true, cursor: page.next
+});
+const detail = await service.block('973603');
+console.log(detail.header.hash);
+```
 
-The following reference describes legacy read defaults where they differ.
+MCP/CLI arguments use `filters` for list filters:
 
-# Public read reference
+```json
+{"asset":"p2:0","limit":20,"filters":{"found":true},"order":"asc"}
+```
 
-Use the tool names and CLI examples in [README.md](../README.md). This is the
-kit’s own copy of the gateway read contract; no external documentation is needed.
-MCP/CLI use `filters:{...}`; SDK options are flat. `events` explicitly selects
-ascending order; bare `/events` and `read_page` retain the gateway’s descending
-default. `block {height}` sends only the height in the path; add
-`filters:{owner:ADDRESS}` when you want wallet-specific block rights.
+`read_page({route:profile.collections.finds,limit:20})` follows a summary link.
+Pass the resulting cursor back with identical filters and ordering. A fully
+traversed empty catalog is valid; an HTTP error is never a substitute for it.
 
+## Amounts, payments and proof status
 
-The gateway is the common read boundary for agents and the playground. No login,
-wallet or operator credential is required. These routes expose public chain,
-receipt and accepted-batch data. They never expose wallet journals, discovery
-salts, unrevealed proposals, signer enrollment packages or private endpoints.
+`presentRead` preserves wire values and adds `amounts`, keyed by JSON pointers.
+Each display has `{amount,unit,human}`. TAP uses 18 decimals; matter is whole units;
+Bitcoin network fees use satoshis with zero decimals. Totals and page counts are
+not money. Read current `feePolicy.baseFee` and `feeSettings`; request signatures
+pin their own terms. Do not hardcode legacy link/compound fees.
 
-## Paging
+`mint_quote` uses POST /mint/quote even though it does not reserve or pay.
+It cannot run under a GET-only policy. `mint_status`/`poll_mint` read /mint/ID;
+`poll_link` reads /link-status/ID. Unknown test IDs correctly return 404
+request_not_found. V2 status adds financialVersion, reservation, credit, and
+payable state. authorizing/reserving is not permission to pay. Credit and custody
+reads return meaningful unknown-action/missing-liability errors for absent IDs.
 
-Collections accept `limit` (default 50, 1–200), opaque `cursor`, `sort`, and
-`order=asc|desc`. Unknown/duplicate parameters, invalid filters and foreign
-cursors return 400. Every page retains its named array and adds
-`{total,next,limit,sort,order,route}`. Send `next` as `cursor` with the same route,
-filters and ordering; `next:null` means the end. Page size may change. Ordering
-has a stable identity tie breaker; integer amounts compare as integers. Cursors
-expire on gateway restart. These are live reads: refresh after a mutation/reorg.
+`payout_binding` reads /payout-bindings/ADDRESS/RAIL, optionally /history.
+Binding proof serialization still uses `dmw-payout-binding-v1`; this stable
+signature domain is independent of the game's ruleset. Do not rename it.
 
-Summary routes accept `limit` and return bounded previews, plus
-`counts:{collection:total}` and `pages:{collection:{total,next,limit,sort,order,route}}`.
-Follow the supplied collection route. Nested arrays also have counts/pages;
-two-scalar tuples are atomic. A nested array without a dedicated route uses
-`/list?source=ENCODED_PUBLIC_PATH_AND_QUERY&path=ENCODED_JSON_POINTER` and returns
-`{items,total,next,limit,sort,order,route}`. It accepts `sort=index` or a scalar
-field, and optional case-insensitive `q`. Sources must be gateway read paths. `path` is a JSON pointer into the returned
-source page: array indices start at zero within that page, after filtering,
-sorting and cursor selection. Keep the exact source URL, including its limit,
-filters, order and cursor. For example, the first filtered event uses
-`/events/0/data/assets`, regardless of its sequence number. The selected nested
-array is paged in full even if the source only previews it. A missing position
-returns `list_path_missing`. Nested `/list` sources are bounded to two levels. Mint-rights sources (including the
-`mintRights` field of a block/profile) are excluded from `/list`; use the
-indexed `/mint-rights`, `/agents/ADDRESS/mintRights` or `/blocks/HEIGHT/mintRights`
-route instead. Unsupported rights sources return `list_source_has_dedicated_route`.
+`verify_claim` verifies admission in the original witnessed publication; it
+accepts decimal provenance `{height,observation,audit:{path,hash,bytes}}`.
+Descriptor byte lengths remain numeric. Receipt tip and audit counted height
+are different concepts. A receipt is not a final win; public audit outcomes are
+not independent contract proofs. Renewal verification requires independent
+batchRoot/settingsByHash/renewalSlice readers and original signed bytes.
 
-Booleans accept only `true|false`. Block filters are nonnegative safe integers.
-`q` searches names/IDs without case sensitivity. Exact filters are otherwise
-strings. All money is an integer string with
-`unit:{currency:"TAP",denomination:"atomic",decimals:18}`. Matter units have zero
-decimals. Bitcoin network fees are separate satoshi amounts with `decimals:0`; e.g. `100000` displays as `100000 sat`. Page totals, limits and other metadata are counts, never money.
-
-## Routes
-
-| GET route | Array | Default sort/order | Other sorts | Filters |
-| --- | --- | --- | --- | --- |
-| `/world`, `/blocks` | plots | height/desc | region,halving | from,to (inclusive),found,linked,minted |
-| `/patterns`, `/table` | patterns | number/asc | name,tier,rarity,supply,minted,madeReal,discoverer | asset,tier,discoverer,q |
-| `/compounds` | compounds | id/asc | name,tier,recipe,supply,madeReal,firstMaker | asset,tier,recipe,firstMaker,q |
-| `/patterns/ASSET/blocks` | rows | block/desc | count,finder,findHeight | from,to,found,minted,linked |
-| `/finds` | finds | block/desc | asset,pattern,count,finder,findHeight | owner,asset,block,minted |
-| `/receipts` | receipts | id/desc | height | height |
-| `/records/batches` | batches | n/desc | from,to | none |
-| `/mint-rights?owner=ADDRESS` | mintRights | block/desc | asset,amount,reason,finderUntil | asset,reason,block,allowed,minted,pending,whoMayMint |
-| `/agents` | agents | finds/desc | address,discoveries,crafts,mints | address,q |
-| `/agents/ADDRESS/balances` | balances | asset/asc | amount | asset,nonzero |
-| `/agents/ADDRESS/bitmaps` | bitmaps | height/asc | inscription,linked | height,linked |
-| `/agents/ADDRESS/finds` | finds | block/desc | asset,pattern,count,finder,findHeight | asset,block,minted |
-| `/agents/ADDRESS/mintRights` | mintRights | block/desc | asset,amount,reason,finderUntil | same as mint-rights, excluding owner |
-| `/agents/ADDRESS/discoveries` | discoveries | asset/asc | name,state,opensAt | asset,state,q |
-| `/agents/ADDRESS/history` | history | sequence/desc | at,type | type,actor,category,since |
-| `/events`, `/feed` | events | sequence/desc | at,type | type,actor,category,since |
-| `/results/mints` | mints | id/asc | asset,block,amount,kind,state,price | asset,kind,state,owner,block |
-| `/results/payments` | payments | id/asc | block,action,total | action |
-| `/results/ethereum` | ethereum | id/asc | amount,status,payer | status,payer |
-| `/results/payouts` | payouts | id/asc | beneficiary,accrued,paid,owed | beneficiary |
-| `/results/owed` | owed | id/asc | role,amount,to | role,to |
-| `/results/paid` | paid | id/asc | amount,to | to |
-| `/results/links` | links | block/desc | id,linkHeight,owner | owner,block |
-
-`GET /status` returns public network, tip/counting/batch progress, fee policy,
-settings and unit metadata. `GET /agents/ADDRESS` returns a public profile with
-bounded balances, finds, discoveries, history and mintRights. All Trac identities are checksum-validated lowercase `trac1…` addresses. Raw hex keys are rejected. A sealed discovery exposes only
-`{state:"sealed",exists:true,opensAt:N}`; proposals appear only after public reveal.
-Leaderboard scores count public finds, accepted discoveries/crafts and completed
-mints; they are not wallet balances or a claim about unique people.
-
-`GET /blocks/HEIGHT` returns header fields, spiral coordinates, found/minted state,
-`claimWindow:{window,closesAt,drawAt,settlesAt,claimable,claimsPerWindow}`, `link`
-and the collections below. Window H admits claims during H and H+1; H+2 closes
-and decides it on arrival, without an extra confirmation depth.
-
-| Suffix on `/blocks/HEIGHT` | Array | Default sort/order | Other sorts | Filters |
-| --- | --- | --- | --- | --- |
-| `/matches` | matches | number/asc | asset,count | asset,positive |
-| `/slotList` | slotList | number/asc | asset,count,pattern | asset |
-| `/claims` | claims | agent/asc | window,reason | agent,header |
-| `/draws` | draws | window/desc | settledAt | window |
-| `/finds` | finds | asset/asc | block,pattern,count,finder,findHeight | asset,owner,minted |
-| `/mintRights` | mintRights | block/desc | asset,amount,reason,finderUntil | asset,reason,block,allowed,minted,pending,whoMayMint |
-
-Block reads optionally accept `owner=ADDRESS`, including collection routes. Without
-an owner, rights describe eligibility in general; `allowed` does not assert a
-particular wallet balance. With an owner, rights also check that owner's units.
-Rights enumerate every found matching slot,
-and compounds for agent reads. Each row contains `asset,block,amount,allowed,
-rightAllowed,deploymentRegistered,whoMayMint,reason,finderUntil,finder,link,currentHolder,minted,pending`.
-`whoMayMint` is `finder`, `bitmap` (the current linked Bitmap holder), `public`
-or `holder` (compound units). `reason` also reports `minted`, `pending`,
-`insufficient_balance`, `holder_unavailable`, or `asset_unregistered`.
-`deploymentRegistered` means the service has verified the player-inscribed Bitcoin deployment;
-`allowed` requires this as well as the units/rights/hold checks. `rightAllowed`
-reports the ownership right independently of registration. Registry or chain
-state may change after a read; quote and admission still verify the deployment,
-active authority, payment destinations and live evidence. `whoMayMint` filters additionally
-accept `me` (`allowed:true` for the selected owner), `none` (`allowed:false`
-for that owner, including missing units, pending/minted slots and unregistered
-assets) and `landowner` (alias of `bitmap`). Role filters compare `whoMayMint`,
-independently of `reason`; for example an unregistered public slot still matches
-`whoMayMint=public`. `none` does not mean no one can ever mint that slot. Finder exclusivity lasts
-1,008 counted blocks; subsequent Bitmap exclusivity requires a link predating
-the find. An unfound slot cannot be minted.
-
-Compound type catalogs omit the first craft's `amount`; it is neither current
-supply nor wallet balance. `supply` is remaining fungible matter, `madeReal` is
-units inscribed, and `minted` counts completed mints. Craft results retain `amount`.
-
-`POST /mint/quote` creates a signed player's reservation and returns
-`{requestId,receiver,asset,amount,fees:[{role,to,ticker,amount,tt}],payBy:{rail,untilBlock}}`.
-The kit's `mint_on_chain` supplies its durable signed request. A bare
-`mint_quote` read previews terms without payment or a reservation; it is not a
-payable request. Fees are atomic TAP strings, `tt:"a"` is an address payment and
-`role:"burn"` uses `tt:"a"` to the fixed unspendable burn address. Per-role `dta` values correlate
-executed fee items with this request. Payout binding snapshots fix recipients;
-a later wallet replacement must not redirect an existing quote.
-
-`GET /mint/<requestId>` adds `state` and `missing`. States are
-`awaiting_payment`, `partly_paid`, `paid`, `permit_issued`, `minted`, `expired`.
-A missing item's amount can be smaller than its original fee after partial
-payment or a credit. Pay only those missing amounts. `permit_issued` supplies
-`mintContent`, the exact inscription JSON/text; it must be bound to the receiver
-and request ID. A first quote can instead return `state:"deployment_needed"`, `payable:false`,
-`requestId:null`, and `deployment` with its exact current phase content.
-`GET /mint/deployment/ASSET` serves the plan for either a pattern or a compound.
-A pattern has an element phase followed by `dmt-deploy`; an existing matching
-indexed element skips the element phase. `POST /mint/deployment` takes
-`{asset,phase,inscription}` once included in a block. No mint permit is issued
-until its indexed element and deployment have been verified.
-
-A missing beneficiary binding makes quoting fail with its role-specific
-`*_address_missing` error (`first_maker_address_missing` for the first maker).
-On Bitcoin mainnet the TAP burn share is sent to the unspendable
-`1BitcoinEaterAddressDontSendf59kuE` as a `tt:"a"` item (test networks use the
-same key hash in their own address encoding). Use the exact quoted
-address and amount; it is still burned. Ethereum uses the escrow token's burn
-function. Do not invent or substitute a burn recipient.
-
-Public Bitcoin fee
-estimates and the player-approved maximum determine local commit/reveal fees;
-there is no service Bitcoin-fee invoice.
-
-### Payout wallet bindings
-
-`GET /payout-bindings/KEY/tap` and `/payout-bindings/KEY/ethereum` return
-`{agent,rail,binding}`; `binding:null` means no accepted wallet. Append `/history`
-for `{bindings,total,next,limit,sort,order,route}`. History uses the common paging
-contract, defaults to `acceptedAt/desc`, and also sorts by `id`; it has no filters.
-Each accepted binding contains `id,request,agentSignature,walletSignature,
-acceptedAt,attestations`. These are public proofs, with no private wallet data.
-
-`POST /payout-bindings/request` accepts `{request,agentSignature}`, where request
-is exactly `{agent,rail,address,nonce,expiry}`. `nonce` is a positive decimal
-integer string (at most 20 digits) that increases for that agent and rail;
-`expiry` is a Unix time in milliseconds, at most 24 hours ahead. The canonical
-UTF-8 signing message is `dmw-payout-binding-v1\n` followed by stable-key-sorted
-JSON of `{network,bitcoinNetwork,agent,rail,address,nonce,expiry}`. Both wallets
-sign that same message: the agent with Ed25519, the human with a TAP wallet or
-Ethereum EIP-191 `personal_sign`. Ethereum addresses are lowercase.
-TAP accepts BIP-322 simple key-path P2TR (SIGHASH_DEFAULT or SIGHASH_ALL, optional
-`smp` prefix) and TAP Wallet's legacy Bitcoin Signed Message compact signature.
-Legacy proofs must be canonical base64, exactly 65 bytes with header 27–34 and
-low-S ECDSA. The recovered account key's x-only BIP86 Taproot address must exactly
-match the request on the configured mainnet/regtest network. Other Bitcoin
-address types are refused; legacy messages are limited to 4,096 UTF-8 bytes.
-Both formats retain the original wallet signature in the committee certificate.
-
-The response supplies `id,message,bindPath,state` and the public agent request.
-`GET /payout-bindings/requests/ID` reads the same public request. The local
-`/bind-payout/ID` page lets the human review and sign with TAP wallet or MetaMask;
-the page submits the signature itself. The link contains only a public request ID.
-`POST /payout-bindings/complete` takes `{id,walletSignature}` and returns the
-accepted binding after three independently verifying committee endorsements.
-All five members are contacted. The request expiry limits submission, not the
-lifetime of an accepted binding. Replacement needs another double-signed request
-with a higher nonce. Exact retries retain their request ID and proofs.
-`binding_transition` means a replacement is awaiting committee endorsement;
-retry that request, or create a higher-nonce binding if it expired. Existing
-quotes fixed before the transition keep their original binding IDs.
-
-`GET /results` returns previews of all result collections plus `treasury`, `burn` totals and
-`outstandingSupply:{ethereum:ATOMIC_STRING}`, the bridged ERC-20 `totalSupply()`.
-Outstanding supply is independent of the burned amounts; all use TAP's 18 decimals. `kind=COLLECTION` aliases the corresponding collection route.
-`mints.kind` identifies the payment rail: both TAP and Ethereum payments produce
-Bitcoin inscriptions. Ethereum results include escrow state/transaction evidence.
-Mint fee shares are paid directly by the player. Indexed item evidence must
-show each beneficiary’s payment; a permit or broadcast response alone is not
-proof of the final inscription. `GET /mint/ID` retains its public
-progress response. Link `owner` filters refer to the currently indexed Bitmap
-holder, not the original link payer. Ethereum rows include public deposit/release
-transaction IDs. Burn totals count verified paid TAP burn items and released Ethereum
-escrows, excluding refunded payments.
-
-Events have `{sequence,id,at,type,data,provenance}`. Use `since=SEQUENCE&order=asc`
-to read forward from a durable sequence; `cursor` continues a bounded traversal.
-Types include `claim`, `find`, `header_find`, `discovery`, `craft`, `mint_request`,
-`mint_complete`, `link`, `transfer`, and `block`.
-Categories are `chain|money`; `actor` selects a public agent key. `GET
-/events/SEQUENCE` (also `/feed/SEQUENCE`) reads one event. Events cite the public
-receipt, accepted batch/audit, or indexed transaction that produced them. No
-local bot/job/wallet activity is mixed into the public feed. Transfer `at` uses
-the counted Bitcoin block time when the public transaction is indexed;
-`provenance.timeSource:"indexed_counted_block"` and `height` identify that clock,
-not an invented Trac transaction timestamp. Discovery events distinguish
-`revealed`, `accepted` and `rejected`; rejections include the public commitment.
-
-## Proof publications
-
-`/latest.json` identifies the latest observation's immutable audit, summary and
-receipt seal. Immutable files retain their exact bytes for hash/signature
-verification (1 MB summary JSON, 1.5 MB binary audit). Use `/list` with an immutable file as
-its source to page arrays inside it with the same 50-row default and 200-row cap.
-
-Public collections have one cursor contract. Read `/patterns`,
-`/patterns/ASSET/blocks`, `/agents/ADDRESS/balances` and `/world` for live views.
-Numbered collection files, their index pointers and `/world.json` are not public
-routes; requests return 404 even if those files exist on disk. `next` is always
-an opaque cursor or null, never a filename. Internal pattern snapshots and
-retention pointers are not a second collection API.
-
-Claims, draws and events are indexed in the background. `/status.publicIndex`
-reports `processedObservation`, `latestObservation` and `observationLag` as
-publication ordinals, plus `indexedHeight`/`indexedTip` (counted/raw heights of
-the processed publication) and `latestHeight`/`latestTip` (published targets).
-Heights are null before the corresponding publication exists. Accepted-batch
-provenance progress is separate: `processedBatch`, `latestBatch`, `batchLag`
-and `indexedBatchHeight`. `eventSequence` is the last emitted event sequence.
-`caughtUp:true` means both publication and batch ordinals reached their targets;
-it does not assert that Bitcoin, Trac or payment indexers have caught up.
-Top-level `catchingUp`, `tip`, `counted`, `bitcoinTip` and `batch` describe those
-chain/batch clocks separately.
-
-Public views are reproducible indexes, not an additional consensus authority.
-`GET /records/batches/N` returns the accepted batch and a paged publications
-manifest. Events cite that manifest, batch root and leaf index when indexed.
-Retrieve the manifest's immutable audit files to reconstruct its Merkle root;
-compare that root with Trac's accepted batch N. Manifest arrays use `/list`.
-Verify immutable audit hashes, receipt signatures/witnesses and Trac batch roots
-for consensus claims. Live ownership, balance, hold and payment reads come from
-the same indexers used for mint admission; unavailable evidence fails closed.
-
-## Interpreting fields
-
-- `publicIndex` distinguishes publication/batch ordinals from Bitcoin heights;
-  use its `caughtUp` and lag fields as described above.
-- Block `claimWindow` and local `hunting` use deciding height H+2;
-  check actual settlement evidence.
-- `results.outstandingSupply.ethereum` is the bridged token's outstanding
-  supply. `results.burn` contains only independently counted burn totals.
-- Compound type catalogs omit first-craft `amount`. Read `supply`, `madeReal`
-  and `minted` for current totals; wallet amounts come from balances.
-- Pattern `rarity`, `total`, `tier`, `fingerprint` and `historyHeight` describe the
-  accepted discovery snapshot. The number of headers is `historyHeight+1`, since
-  genesis is included. Growing history does not reassign that recorded tier.
-- Rights rows also carry `found,void,time,find` for candidate selection.
-  `time` is Unix seconds. `find` includes `asset,block,count,finder,findHeight`
-  with a required finder and find height. An
-  `allowed:true` row requires `deploymentRegistered:true` as well as indexed
-  units/rights/holds. Quote and admission recheck current evidence.
-
-Use [ACTIONS.md](ACTIONS.md) for action formats, states, proof publications and
-error meanings.
-
-Draw winners and finds expose `source:"claim"|"header"`. `tickets` counts
-distinct eligible keys in that source’s draw. `header_find` events identify
-whole units awarded for a correct header where nobody made an eligible claim.
-They belong to category `chain`, include finder/block/asset/count and cite the
-settlement audit just like claim finds. There is no global find cap. Header wins have the normal finder mint right.
-Large rounds may credit across batches; per-file settlements show `credited/total`,
-`complete` and the newly credited `winners` segment. Each credited find receives
-its full finder window. A changed window or deciding hash can void a round
-before its credits begin. A new pattern may be claimed in all historical blocks
-where it matches; minting always requires a find.
-
-Compound modeled matches use `ceil(rarity * (countedHeight + 1))` when the craft
-is evaluated; a suggestion uses the counted height it just read. Stored type
-properties reflect the first accepted craft (`created + 1` headers), not the
-latest tip. The pattern input fractions use their own recorded discovery
-`historyHeight + 1` snapshots.
-
-Trac identity fields (including owner, finder, agent, firstMaker and discoverer),
-route parameters, filters and cursor anchors use the same `trac1…` address.
-Agent search matches address prefixes. Protocol archives retain their signed wire
-encoding; public projections encode identities without changing transaction IDs,
-block hashes, Bitcoin addresses, Ethereum addresses or exact amounts.
-
-The live `feePolicy` includes `baseFee`, `revision`, `unit` and
-`feeSettings:{link,tierMultipliers,compoundMinimum}`. Multipliers are counts,
-not atomic TAP. Launch settings are link 3, tiers 1/3/10/30/100 and compound
-minimum 10. Signed quotes bind their own revision and multipliers; a live
-change does not reprice existing requests.
-
-
-Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
-`localMatchCount`, real `matches` (decimal height/count and canonical hash),
-`localResultId`, and `nextCursor` for each accepted local candidate. Continue with
-`pattern_search_matches` using the same proposal and cursor (page size 3–200,
-default 100). Cursors retain the original snapshot across restarts and later
-headers, and refuse a replaced canonical snapshot. These are local search
-results, not finds or an exhaustive server catalog. The existing action journal,
-salts and signed packets are unchanged. The accepted activation manifest selects the protocol. On v2, use named
-witnesses and `claimed_blocks`; on v1, keep the legacy commit/reveal protocol.
-
-Activated v2 craft previews use `POST /craft-preview` with
-`{recipe,inputs,snapshot:{height,hash}}`. This read returns named-state proof nodes,
-the original compound record and output quantity. The kit independently rebuilds
-the preview against the accepted catalog root. It never trusts supplied parent
-properties or a gateway's claimed revision without proof.
-
-`GET /named-record/compound/assets/c2:COMMITMENT`, `/tiers/c2:COMMITMENT` and
-`/maker/c2:COMMITMENT` (under the same `/named-record/compound` prefix) return
-bounded membership/nonmembership proofs. `assets` is immutable; `tiers` holds
-accepted comparison progress and its cursor; `maker` records the first accepted
-maker and provenance. A null progress record uses the original record's tier.
-These are v2 proof reads; existing public collection pagination is separate.
+Known limits: general saved-v2-move reconciliation still reports an unavailable
+batch verifier; direct legacy TNK transfer and legacy backtest refuse v2 use.
+`GET /mint/deployment-state/ASSET` reads a pattern's token deployment state without
+side effects; p2:N and an imported pattern's ledger asset (p0) both resolve. See
+[ACTIONS.md](ACTIONS.md) for recovery and supported action arguments.

@@ -46,3 +46,9 @@ chunks; insufficient local resources cause a clear refusal rather than weaker
 verification. Changing these resources never changes the operator identity or
 Bitcoin rules. Legacy v1 archives remain supported until this output file has
 seen an authenticated v2 manifest.
+
+
+Header-distribution versions are separate from the game ruleset and public v:3
+collection envelopes. Manifest resource heights/counts/byte lengths can be JSON
+numbers. The stable dmw-header-manifest-v1 signature domain is intentional even
+for v2 chunk manifests; do not rename it or coerce signed fields.

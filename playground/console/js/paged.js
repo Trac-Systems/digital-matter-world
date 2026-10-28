@@ -9,7 +9,7 @@ export function pageRows(r, key) {
 
 // One server page at a time: total count, sort, filters and a cursor pager. Only the current page is rendered.
 // opts: path (string or () => string), key, columns, sorts [['key:asc|desc', label]], sort, filters
-// [{ name, label, options: [[value, label]], value }], limit, empty (text, or filters => text), onRow, selected, onPage(rows, body),
+// [{ name, label, options: [[value, label]], value }], limit, empty (text, or filters => text), onRow, selected, onPage(rows, body), group(rows) to merge rows before rendering,
 // render(rows) for a custom body instead of a table.
 export function pagedTable(opts) {
   const state = { sort: opts.sort ?? opts.sorts?.[0]?.[0] ?? null, filters: Object.fromEntries((opts.filters ?? []).map(f => [f.name, f.value ?? ''])), cursors: [null], at: 0, seq: 0, loading: false, count: 0 };
@@ -59,7 +59,7 @@ export function pagedTable(opts) {
     state.cursors[state.at + 1] = r.next ?? null;
     state.cursors.length = state.at + 2;
     const empty = (typeof opts.empty === 'function' ? opts.empty(state.filters) : opts.empty) ?? 'Nothing here yet.';
-    clear(body, opts.render ? (rows.length ? opts.render(rows, { offset: state.at * limit }) : h('div.empty', {}, empty)) : table(rows, opts.columns, { empty, onRow: opts.onRow, selected: opts.selected, sortable: false }));
+    clear(body, opts.render ? (rows.length ? opts.render(rows, { offset: state.at * limit }) : h('div.empty', {}, empty)) : table(opts.group ? opts.group(rows) : rows, opts.columns, { empty, onRow: opts.onRow, selected: opts.selected, sortable: false }));
     drawFoot(rows.length);
     opts.onPage?.(rows, r);
   }

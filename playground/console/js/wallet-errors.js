@@ -19,6 +19,8 @@ const messages = {
   request_not_found: 'This request could not be found. Check the link with your agent.',
   mint_missing: 'This mint request could not be found. Check the link with your agent.',
   mint_expired: 'This mint request has expired. Ask your agent to check its status before creating a new request.',
+  deployment_confirmations: 'Wait until the inscription is included in a Bitcoin block, then register the same receipt again.',
+  deployment_receiver: 'Use the wallet that received the pattern element for its token deployment.',
   web_target_unavailable: 'Wallet payments are temporarily unavailable. Try again shortly.',
 };
 // Keep existing plain wallet guidance, but never put a bare protocol code on a
@@ -28,5 +30,5 @@ export function walletError(error) {
   const message = typeof error === 'string' ? error : error?.message;
   if (Object.hasOwn(messages, message)) return messages[message];
   if (typeof message === 'string' && message && !/^[a-z][a-z0-9_]{0,80}$/.test(message)) return message;
-  return 'The wallet or gateway request could not be completed. Refresh its status before trying again.';
+  return `The wallet or gateway request could not be completed${typeof message === 'string' && message ? ` (${message})` : ''}. Refresh its status before trying again.`;
 }

@@ -3,8 +3,9 @@ import { open, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { check, privateDirectory, sha256 } from './check.mjs';
-import { stableJSON, DISCOVERY_LIMITS, moveId, moveIdV2, decimalV2, addUint } from '../../rules/src/index.js';
+import { stableJSON, DISCOVERY_LIMITS, moveId, moveIdV2 } from '../../rules/src/index.js';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { readInteger, claimSelection } from './api-values.mjs';
 
 // One durable intent per logical action; ambiguous sends retain the exact packet.
 export class Journal {
@@ -158,17 +159,20 @@ export class Journal {
     const rows = this.db.prepare(`SELECT a.rowid AS position,a.id,a.body,a.result,a.state FROM actions a WHERE ${where} AND a.rowid<? ORDER BY a.rowid DESC LIMIT ?`).all(this.scope, before, limit + 1);
     const selected = rows.slice(0, limit), items = selected.map(row => {
       const body = JSON.parse(row.body), receipt = row.result ? JSON.parse(row.result) : null;
-      if (body.t === 'header') return { type: 'header', id: row.id, state: row.state, headerBlock: body.p.height, plots: [], receiptTip: receipt?.tip ?? null };
-      if (body.t === 'claim') return { type: 'claim', id: row.id, state: row.state, window: body.p.window,
-        closesAt: body.p.window + 2, drawAt: body.p.window + 2, settlesWhenCounted: body.p.window + 2, settlesAt: body.p.window + 2,
-        plots: body.p.plots.map(p => ({ block: p.block, patterns: p.patterns })), header: !!body.p.header, headerBlock: body.p.header?.height ?? null,
-        receiptTip: receipt?.tip ?? null };
+      const receiptTip = receipt?.tip == null ? null : readInteger(receipt.tip), version = body.v === 2 ? { ruleset: 'dmw-v2' } : {};
+      if (['header', 'header-v2'].includes(body.t)) return { ...version, type: 'header', id: row.id, state: row.state, headerBlock: readInteger(body.p.height), plots: [], receiptTip };
+      if (['claim', 'claim-v2'].includes(body.t)) {
+        const p = claimSelection(body.p);
+        return { ...version, type: 'claim', id: row.id, state: row.state, window: p.window,
+          closesAt: p.window + 2, drawAt: p.window + 2, settlesWhenCounted: p.window + 2, settlesAt: body.v === 2 ? null : p.window + 2,
+          plots: p.plots, header: !!p.header, headerBlock: p.header?.height ?? null, receiptTip };
+      }
       const actionId = row.id.slice(10, -7), parent = this.get(`discovery/${actionId}`), reveal = this.get(`discovery/${actionId}/reveal`);
-      const witnessed = parent?.result?.receipt, tip = receipt?.tip ?? witnessed?.tip ?? null;
+      const witnessed = parent?.result?.receipt, rawTip = receipt?.tip ?? witnessed?.tip, tip = rawTip == null ? null : readInteger(rawTip);
       const settings = parent?.body?.settings?.values;
       return { type: 'discovery', actionId, state: row.state, sealed: true, commitment: body.p.commitment,
-        receiptTip: tip, revealFrom: tip === null ? null : settings ? addUint(decimalV2(tip), String(settings.minRevealDelay)) : tip + 2,
-        revealUntil: tip === null ? null : settings ? addUint(decimalV2(tip), String(settings.commitLifetime)) : tip + DISCOVERY_LIMITS.lifetime,
+        receiptTip: tip, revealFrom: tip === null ? null : tip + (settings?.minRevealDelay ?? 2),
+        revealUntil: tip === null ? null : tip + (settings?.commitLifetime ?? DISCOVERY_LIMITS.lifetime),
         witnessRecorded: !!witnessed, revealState: reveal?.state ?? null, revealMove: reveal ? (reveal.body.v === 2 ? moveIdV2 : moveId)(reveal.body) : null,
         revealRefusal: reveal?.state === 'refused' ? reveal.result : null };
     });

@@ -1,5 +1,5 @@
 import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument } from '../../rules/src/index.js';
-import { wireIdentities } from '../../rules/src/trac-address.js';
+import { wireIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { financialMintDigest, financialMintId } from '../../rules/src/financial-mint.js';
 import { accountActionDigest } from '../../contract/root-accounts.js';
 import { check, sha256, nonce } from './check.mjs';
@@ -11,7 +11,11 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
   const { journal, service, network, wallet, owner } = agent, key = `mint/${actionId}`, old = journal.get(key);
   if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting mint action ID');
   if (!agent.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
-  const { asset, amount, receiver, payer, kind, compound } = intent, block = intent.block === undefined ? undefined : decimalV2(intent.block);
+  const { asset: requestedAsset, amount, receiver, payer, kind, compound } = intent, block = intent.block === undefined ? undefined : decimalV2(intent.block);
+  // Imported p2 catalog entries still spend their original pN ledger units.
+  // Never rewrite a saved signed intent, and only accept the exact numeric alias.
+  const legacy = /^p2:(0|[1-9][0-9]*)$/.test(requestedAsset) ? 'p' + BigInt(requestedAsset.slice(3)).toString(36) : null;
+  const asset = old?.body.request.asset ?? (!compound && legacy && candidate?.find?.asset === legacy ? legacy : requestedAsset);
   const policyHash = old?.body.request.settingsHash ?? context.settingsHash;
   const policy = policyHash === context.settingsHash ? context.settings : await agent.trac.settingsByHash(policyHash);
   check(hashObject(validateSettingsDocument(policy)) === policyHash && policy.network === network, 'Financial request settings mismatch');
@@ -22,6 +26,11 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
       link: candidate.link, currentHolder: candidate.currentHolder, finderWindow: v.finderWindow }).allowed, 'Mint right unavailable');
   const quoteInput = { asset, amount, ...(block === undefined ? {} : { block }), kind, payer, receiver };
   const quote = old?.body.feeQuote ? { feeQuote: old.body.feeQuote } : await service.mintQuote(quoteInput);
+  if (quote.deploymentNeeded || quote.state === 'deployment_pending') return { ...quote, signed: false,
+    ...(quote.deploymentNeeded ? { deploymentLink: service.deploymentLink?.(quote.catalogAsset ?? asset, encodeTracAddress(owner), agent.paymentOrigin),
+      next: [{ tool: 'inscribe_deployment', arguments: { asset: quote.asset ?? asset } }] } :
+      { next: [{ tool: 'mint_on_chain', arguments: { ...intent, actionId } }] }) };
+  check(!quote.asset || quote.asset === asset, 'Mint ledger asset mismatch');
   check(quote.feeQuote?.settingsHash === policyHash, 'Financial quote settings mismatch');
   const request = old?.body.request ?? { v: 2, owner, asset, amount, receive: sha256(receiver), ...(block === undefined ? {} : { block }), nonce: nonce(),
     until: addUint(decimalV2(head.counted), String(v.moveFreshnessTips)), expires: addUint(decimalV2(head.counted), String(v.pendingBlocks)), settingsHash: policyHash };
@@ -36,6 +45,11 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
     let reservation = journal.get(reservationKey), response;
     if (!reservation) {
       response = wireIdentities(await service.requestMint(saved.body));
+      if (response.deploymentNeeded || response.state === 'deployment_pending') {
+        journal.mark(key, 'unknown');
+        return { ...response, signed: true, next: response.deploymentNeeded ? [{ tool: 'inscribe_deployment', arguments: { asset } }] :
+          [{ tool: 'mint_on_chain', arguments: { ...intent, actionId } }] };
+      }
       check((response.id ?? response.requestId) === id, 'Mint request ID mismatch');
       const action = response.reservationAction, evidence = response.reservationEvidence;
       check(response.state === 'authorizing' && evidence && evidence.version === 2 && evidence.requestId === id && evidence.owner === owner &&

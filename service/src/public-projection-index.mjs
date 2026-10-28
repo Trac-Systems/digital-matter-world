@@ -40,6 +40,8 @@ export function publicProjectionSchema(db) {
     CREATE INDEX IF NOT EXISTS publicOrderV2Block ON publicOrderV2(kind,scope,sort,block,key,id);
     CREATE INDEX IF NOT EXISTS publicOrderV2State ON publicOrderV2(kind,scope,sort,state,key,id);`);
 }
+// Pattern ledger assets: v2 p2:N, and imported v1 patterns that keep their ledger asset (p0).
+export const patternLedgerAsset = asset => typeof asset === 'string' && (asset.startsWith('p2:') || /^p[0-9a-z]{1,23}$/.test(asset));
 export function projectPublicRecord(store, op, previous) {
   const { db } = store, id = String(op.id), row = op.value;
   const item = (kind, scope, key, value, position = key) => {
@@ -73,7 +75,7 @@ export function projectPublicRecord(store, op, previous) {
   if (op.space === 'catalogTypes') item('compounds', '', id, row);
   if (op.space === 'catalogAgents') item('agents', '', id, row && { ...row, finds: row.findCount, discoveries: row.discoveryCount,
     crafts: row.craftCount ?? '0', mints: row.mintCount ?? '0', links: row.linkCount ?? '0' }, row ? rules.uintKeyV2(rules.decimalV2(row.findCount)) : id);
-  if (op.space === 'finds' && (row ?? previous)?.asset?.startsWith('p2:')) {
+  if (op.space === 'finds' && patternLedgerAsset((row ?? previous)?.asset)) {
     const f = row ?? previous, h = rules.decimalV2(f.block), pos = rules.uintKeyV2(h);
     for (const scope of ['', 'owner/' + f.finder, 'block/' + h]) item('finds', scope, id, row, pos);
     block(h, 'finds', Number(!!row) - Number(!!previous));
@@ -90,7 +92,7 @@ export function projectPublicRecord(store, op, previous) {
       item('links', '', id, row, rules.uintKeyV2(h)); block(h, 'linked', Number(!!row) - Number(!!previous));
     }
   }
-  if (op.space === 'minted' && id.startsWith('p2:')) {
+  if (op.space === 'minted' && patternLedgerAsset(id.split('/')[0])) {
     const [asset, height] = id.split('/');
     block(height, 'mints', Number(!!row) - Number(!!previous));
     db.prepare('UPDATE claimedBlocksV2 SET minted=? WHERE asset=? AND heightKey=?').run(Number(!!row), asset, rules.uintKeyV2(height));

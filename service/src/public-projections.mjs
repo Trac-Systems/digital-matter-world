@@ -6,6 +6,7 @@ import { bitmapFresh } from './submitted-bitmaps.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
 import { PUBLIC_SORTS } from './public-projection-index.mjs';
 import { financialBlock } from './financial-status.mjs';
+import { patternCatalogId } from './mint-assets.mjs';
 
 const encode = x => Buffer.from(JSON.stringify(x)).toString('base64url');
 const financialKinds = ['balances', 'mints', 'payments', 'ethereum', 'credits', 'custody', 'linkRequests', 'links', 'supply'];
@@ -164,7 +165,7 @@ function rights(store, owner, params, settings, onlyBlock) {
   const p = paging(params, 'rights/' + owner + '/' + (onlyBlock ?? ''), revision, settings, ['asset', 'block', 'allowed', 'whoMayMint', 'reason', 'minted', 'pending']);
   check(!params.has('sort') || params.get('sort') === 'block', 'projection_sort');
   const block = onlyBlock ?? params.get('block'), namedAsset = params.get('asset');
-  if (namedAsset) check(rules.assetIdV2(namedAsset), 'asset');
+  if (namedAsset) check(rules.assetIdV2(namedAsset) || /^p[0-9a-z]{1,23}$/.test(namedAsset), 'asset');
   const compoundsPhase = p.anchor?.[0] === 'compounds';
   const filtering = ['allowed', 'reason', 'whoMayMint', 'minted', 'pending'].some(k => params.has(k));
   for (const key of ['allowed', 'minted', 'pending']) if (params.has(key)) check(['true', 'false'].includes(params.get(key)), 'rights_filter');
@@ -172,11 +173,22 @@ function rights(store, owner, params, settings, onlyBlock) {
   const rows = []; let workAfter = null, candidateWork = 0, candidateMore = false;
   // The outer seek is through this owner's asset keys. No global find/catalog
   // traversal or fanout over other owners is part of an owner-wide read.
-  if (!compoundsPhase && !namedAsset?.startsWith('c2:')) {
+  if (namedAsset && block != null && patternCatalogId(namedAsset)) {
+    // First mint names an exact block. Read its accepted find directly, also
+    // for imported pN finds omitted from older publicRightsV2 indexes. No
+    // index rebuild, global scan or catalog-to-ledger relabeling is needed.
+    const catalogAsset = patternCatalogId(namedAsset), pattern = store.get('patternsByAsset', catalogAsset);
+    const ledger = pattern?.legacy?.asset ?? catalogAsset, height = rules.decimalV2(block);
+    check(namedAsset === catalogAsset || namedAsset === ledger, 'asset');
+    const id = rules.findIdV2(height, catalogAsset.slice(3)), find = store.get('finds', id);
+    if (!p.anchor && find && find.asset === ledger) rows.push({ id, position: [ledger, rules.uintKeyV2(height)], value: JSON.stringify(find) });
+    candidateWork = 1;
+  } else if (!compoundsPhase && !namedAsset?.startsWith('c2:')) {
     const anchor = p.anchor?.[0];
     check(!anchor || Array.isArray(anchor) && anchor.length === 2 && anchor.every(x => typeof x === 'string'), 'page_cursor');
-    const afterAsset = anchor?.[0] ?? 'p2:';
-    const assets = namedAsset ? [{ asset: namedAsset }] : store.db.prepare("SELECT asset FROM publicBalancesV2 WHERE owner=? AND asset>=? AND asset<'p2;' ORDER BY asset LIMIT ?").all(owner, afterAsset, budget + 1);
+    // Pattern balances: p2:N and imported v1 ledger assets such as p0 (all sort between 'p' and 'q').
+    const afterAsset = anchor?.[0] ?? 'p';
+    const assets = namedAsset ? [{ asset: namedAsset }] : store.db.prepare("SELECT asset FROM publicBalancesV2 WHERE owner=? AND asset>=? AND asset>='p' AND asset<'q' ORDER BY asset LIMIT ?").all(owner, afterAsset, budget + 1);
     for (const { asset } of assets.slice(0, budget)) {
       if (candidateWork >= budget || rows.length > budget) { candidateMore = true; break; }
       candidateWork++;
@@ -204,7 +216,7 @@ function rights(store, owner, params, settings, onlyBlock) {
     const deployment = store.get('publicDeployments', f.asset), registryRevision = store.get('meta', 'publicRegistryRevision');
     const registered = deployment && (registryRevision == null || deployment.registryRevision === registryRevision) ? !deployment.suspended : null;
     const allowed = !!(!blocked && rightAllowed && registered && amount !== null && BigInt(amount) >= BigInt(f.count) && !minted && !pending);
-    return { ...f, amount: String(f.count), balance: amount, finderUntil: rules.decimalV2(f.finderUntil), right: role, whoMayMint: role,
+    return { ...f, find: f, link: link ?? null, amount: String(f.count), balance: amount, finderUntil: rules.decimalV2(f.finderUntil), right: role, whoMayMint: role,
       eligible: rightAllowed, rightAllowed, allowed, deploymentRegistered: registered, minted, pending: pending ? { id: hold.id, expiry: hold.expiry } : null,
       currentHolder: fresh ? bitmap.agent : null, ownership: fresh ? 'verified_at_snapshot' : 'unverified_or_stale',
       reason: blocked ?? (minted ? 'minted' : pending ? 'pending' : !registered ? 'asset_unregistered' : amount === null ? 'balance_projection_pending' : BigInt(amount) < BigInt(f.count) ? 'insufficient_balance' : rightAllowed === null ? 'holder_unavailable' : role),

@@ -82,7 +82,8 @@ test('reviewed v2 mainnet pins select a new peer store and forward independent a
   const manifest = { version: 1, network: pins.network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: r.hash('previous'),
     bitcoinAnchor: { height: String(checkpoint.height), hash: checkpoint.hash }, settingsHash: r.hashObject(document), catalogRoot: r.namedStateRoot(r.emptyNamedDiscovery()),
     accountsRoot: r.hash('accounts'), receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: KIT_VERSION, route: 'terminal-import' };
-  const oldStore = playerPeerStore(pins); assert.equal(oldStore, 'peer');
+  const legacyPins = structuredClone(pins); delete legacyPins.runtime.deployment.v2;
+  const oldStore = playerPeerStore(legacyPins); assert.equal(oldStore, 'peer');
   pins.runtime.deployment.v2 = { manifest, manifestHash: r.hashObject(manifest), document, importRoot: r.hash('import'), importRows: 1,
     receiptProtocol: 1, gateway: pins.gatewayKey, receiptSigners: structuredClone(pins.receiptSigners) };
   validateMainnet(pins); assert.equal(playerPeerStore(pins), 'peer-v2-' + pins.trac.bootstrap);

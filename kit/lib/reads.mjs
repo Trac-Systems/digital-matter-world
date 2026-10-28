@@ -1,5 +1,6 @@
 import { validateTracAddress, publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
 import { check, integer } from './check.mjs';
+import { patternId, nextCursor, isAsset } from './api-values.mjs';
 
 const numeric = new Set(['limit', 'height', 'from', 'to', 'block', 'since', 'window']);
 const boolean = new Set(['found', 'linked', 'minted', 'allowed', 'pending', 'nonzero', 'positive', 'header']);
@@ -26,10 +27,13 @@ export function readQuery(options = {}) {
 
 export function publicRoute(route, depth = 0) {
   check(typeof route === 'string' && route.length <= 16384 && depth < 3 && route.startsWith('/') && !route.startsWith('//') && !/[#\\\s]/.test(route), 'Invalid public read route');
-  const [path, ...search] = route.split('?');
+  const [encodedPath, ...search] = route.split('?');
+  // Account links encode the colon in p2:/c2: identities. Decode only that
+  // delimiter; encoded slashes, traversal and origins remain forbidden.
+  const path = encodedPath.replace(/%3a/gi, ':');
   check(search.length <= 1 && /^\/[a-zA-Z0-9/:_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid public read path');
   check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|payouts|agents|accounts|events|feed|results|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
-  tracReadRoute(route);
+  tracReadRoute(path + (search.length ? '?' + search[0] : ''));
   const query = {}, params = new URLSearchParams(search[0]);
   for (const [key, value] of params) {
     check(!Object.hasOwn(query, key), 'Duplicate read parameter');
@@ -72,13 +76,13 @@ export function presentRead(value, { route = '', contextPath = '', asset } = {})
   const walk = (node, path, context = {}) => {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
-      if (node.length === 2 && typeof node[0] === 'string' && /^[pc][0-9a-z]+$/.test(node[0]) && decimal(node[1])) {
+      if (node.length === 2 && isAsset(node[0]) && /^[pc]/.test(node[0]) && decimal(node[1])) {
         amounts[path + '/1'] = amountView(node[1], matter(node[0])); return;
       }
       node.forEach((row, i) => walk(row, path + '/' + i, context)); return;
     }
-    const ownAsset = node.asset ?? (typeof node.id === 'string' && /^[pc][0-9a-z]{1,23}$/.test(node.id) ? node.id : undefined) ??
-      (integer(node.number) ? 'p' + node.number.toString(36) : undefined) ?? context.asset;
+    const ownAsset = node.asset ?? (isAsset(node.id) && /^[pc]/.test(node.id) ? node.id : undefined) ??
+      (decimal(node.number) ? patternId(node) : undefined) ?? context.asset;
     const monetary = context.monetary || /\/(?:payments|ethereum|payouts|owed|paid|split|feeDestinations|feePolicy|treasury|burn|outstandingSupply)(?:\/|$)/.test(path);
     for (const [key, child] of Object.entries(node)) {
       if (['amounts', 'pages', 'pagination', 'counts', 'listCounts', 'provenance', 'receipt', 'feeQuote'].includes(key)) continue;
@@ -93,7 +97,7 @@ export function presentRead(value, { route = '', contextPath = '', asset } = {})
       } else walk(child, next, { asset: ownAsset, monetary });
     }
   };
-  asset ??= /^\/patterns\/([a-z0-9]+)\/blocks/.exec(route)?.[1];
+  asset ??= /^\/patterns\/([a-z0-9:]+)\/(?:claimed-blocks|blocks)/.exec(route)?.[1];
   walk(value, '', { asset, monetary: /^\/results\/(payments|ethereum|payouts|owed|paid)(?:\?|$)/.test(route) || /^\/(payments|ethereum|payouts|owed|paid|treasury|burn|outstandingSupply)(?:\/|$)/.test(contextPath) });
-  return publicIdentities({ ...value, amounts });
+  return publicIdentities({ ...value, ...(Object.hasOwn(value, 'next') || Object.hasOwn(value, 'nextCursor') ? { next: nextCursor(value) } : {}), amounts });
 }

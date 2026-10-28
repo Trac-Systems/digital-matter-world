@@ -1,5 +1,5 @@
 import { canonicalDefinition, namedCommitment, witnessRoot, verifyNamedWitnesses, hashObject, stableJSON,
-  decimalV2, addUint, compareUint, safeNumberV2, discoveryCommitment, RESOURCE_PROFILE, verifyNamedRecord, activationManifest, validateSettingsDocument } from '../../rules/src/index.js';
+  decimalV2, addUint, compareUint, safeNumberV2, discoveryCommitment, RESOURCE_PROFILE, verifyNamedRecord, activationManifest, validateSettingsDocument, validateNamedPayload } from '../../rules/src/index.js';
 import { signNamedMove } from './signing.mjs';
 import { searchMatchPage } from './search-matches.mjs';
 import { check, nonce, sha256 } from './check.mjs';
@@ -19,6 +19,7 @@ async function evidence(agent, proposal, history, settings, supplied) {
   return { anchor, matches, witnessRoot: witnessRoot(matches) };
 }
 export async function sendNamedMove(agent, id, type, payload, settings, validate = async () => {}) {
+  validateNamedPayload(type, payload, settings);
   let row = agent.journal.get(id); const intent = { type, payload };
   if (row) check(row.fingerprint === sha256(stableJSON(intent)), 'Conflicting action refused; use the saved intent');
   if (!agent.dryRun && row && ['received', 'accepted', 'rejected'].includes(row.state)) return { state: row.state, receipt: row.result, replayed: true };

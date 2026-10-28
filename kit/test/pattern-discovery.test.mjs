@@ -12,10 +12,11 @@ import { loadHistory } from '../lib/headers.mjs';
 import { findPatterns } from '../lib/search.mjs';
 import { runTool } from '../lib/tools.mjs';
 import { temp } from './helpers.mjs';
+import { settingsRevision, SETTINGS_PROFILE } from '../../rules/src/index.js';
 
 const owner = '11'.repeat(32);
 const definition = p => `${p.fld}:${p.dt}:${p.pat}`;
-const docs = ['llms.txt', 'SKILL.md', 'docs/ACTIONS.md'];
+const docs = ['docs/DISCOVERY.md'];
 const fixtureBytes = async () => Buffer.from((await readFile(new URL('./fixtures/mainnet-64.hex', import.meta.url), 'utf8')).trim(), 'hex');
 async function verifiedHistory(t) {
   const file = join(await temp(t), 'headers.bin');
@@ -123,8 +124,9 @@ function reasons(source) {
   return [...source.matchAll(/\b(?:assert|check)\([\s\S]*?,\s*(['"])([^'"\n]+)\1\s*\);|throw new Error\((['"])([^'"\n]+)\3\)/g)].map(m => m[2] ?? m[4]);
 }
 
-test('all three discovery references cover every canonical validator and search preflight rejection', async () => {
+test('agent references link to one complete canonical validator and search rejection reference', async () => {
   const read = async path => readFile(new URL(path, import.meta.url), 'utf8');
+  for (const path of ['llms.txt', 'SKILL.md', 'docs/ACTIONS.md']) assert.match(await read('../' + path), /DISCOVERY\.md/);
   const patterns = await read('../../rules/src/patterns.js');
   const search = await read('../lib/search.mjs');
   const headers = await read('../lib/headers.mjs');
@@ -154,7 +156,8 @@ test('all three discovery references cover every canonical validator and search 
 
 test('worked field examples and complete search responses match verified Bitcoin headers in every reference', async t => {
   const history = await verifiedHistory(t);
-  const agent = { owner, trac: { head: async () => ({ tip: history.get(63) }) }, catalog: async () => [] };
+  const settings = settingsRevision({ network: 'fixture', effectiveBatch: '43', effectiveBitcoinWindow: '0', values: { ...SETTINGS_PROFILE, puzzleBits: 0, occurrencePageSize: 3 } });
+  const agent = { owner, trac: { head: async () => ({ tip: history.get(63) }) }, catalog: async () => [], namedContext: async () => ({ settings }) };
   for (const path of docs) {
     const text = await readFile(new URL('../' + path, import.meta.url), 'utf8');
     const rows = text.split('\n').filter(line => /^\| (4|10|11) \/ [nh] \|/.test(line));
@@ -173,7 +176,7 @@ test('worked field examples and complete search responses match verified Bitcoin
     }
     const sample = text.match(/Worked `search_patterns` call:\s*```js\n([\s\S]+?)\n```/)[1];
     const result = await runInNewContext(sample, { search_patterns: args => runTool({ agent, history }, 'search_patterns', JSON.parse(JSON.stringify(args))) });
-    const expected = JSON.parse(text.slice(text.indexOf('Exact result for an empty catalog')).match(/```json\n([\s\S]+?)\n```/)[1]);
+    const expected = JSON.parse(text.slice(text.indexOf('Exact result for the v2 fixture')).match(/```json\n([\s\S]+?)\n```/)[1]);
     assert.deepEqual(JSON.parse(JSON.stringify(result)), expected, path);
   }
 });

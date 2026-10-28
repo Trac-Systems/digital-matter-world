@@ -79,13 +79,15 @@ export async function claimedEventsV2(feeds) {
     const chunk = rows.slice(cursor.offset, cursor.offset + s.feedEventRows);
     for (const row of chunk) {
       if (phase === 'occurrences' || phase === 'finds') {
-        const asset = row.asset ?? rules.patternAssetV2(rules.decimalV2(row.pattern));
-        check(asset.startsWith('p2:'), 'projection_asset_version');
+        // Patterns imported from v1 keep their ledger asset (e.g. "p0") in finds and occurrences;
+        // the public projection is always keyed by the v2 pattern id.
+        const asset = row.pattern != null ? rules.patternAssetV2(rules.decimalV2(row.pattern)) : row.asset;
+        check(asset?.startsWith('p2:'), 'projection_asset_version');
         const height = rules.decimalV2(row.block), pattern = asset.slice(3), k = rules.uintKeyV2(height), old = get('claimed2/' + asset, k);
         put('claimed2/' + asset, k, { ...old, height, pattern, count: rules.decimalV2(row.count),
           hash: row.hash ?? old?.hash ?? history.get(height).hash,
           contribution: old?.contribution ?? row.agent ?? null, provenance: old?.provenance ?? row.provenance ?? null,
-          found: !!(row.finder || old?.found), minted: !!store.get('minted', `${asset}/${height}`) });
+          found: !!(row.finder || old?.found), minted: !!(store.get('minted', `${asset}/${height}`) || row.asset && store.get('minted', `${row.asset}/${height}`)) });
         put('claimedAt2/' + k, asset, true);
         put('claimedRevision', asset, rules.nextUint(rules.decimalV2(get('claimedRevision', asset) ?? '0')));
         const dirty = v2Dirty(asset, height, s.patternPageHeights); put(dirty.space, dirty.id, dirty.value);

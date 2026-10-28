@@ -3,6 +3,7 @@ import { check, hash, serial, atomicWrite } from './util.mjs';
 import { rules } from './rules.mjs';
 import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementByDefinition, elementByName } from './deployments.mjs';
 import { updateRegistryAsset } from './registry.mjs';
+import { mintAssetDefinition } from './mint-assets.mjs';
 
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy }) {
@@ -23,20 +24,34 @@ export class Provisioner {
       attempts: [], spentSats: '0', state: entry ? 'confirming' : 'queued', ...(entry ? { entry } : {}) };
     return this.save(job);
   }
-  request(asset, definition) { return this.gate(async () => this.advance(await this.enqueue(asset, definition))); }
+  async state(asset) {
+    const resolved = await mintAssetDefinition(this.store, asset);
+    const job = this.store.get('provisioning', resolved.asset);
+    return { ...(job ?? { asset: resolved.asset, definition: resolved.definition, kind: resolved.asset.startsWith('p') ? 'dmt' : 'compound',
+      displayLabel: resolved.definition.name ?? resolved.asset, state: 'not_started' }), catalogAsset: resolved.catalogAsset };
+  }
+  request(asset, definition) { return this.gate(async () => {
+    const resolved = definition ? { asset, definition, catalogAsset: asset } : await mintAssetDefinition(this.store, asset);
+    const job = await this.advance(await this.enqueue(resolved.asset, resolved.definition));
+    return definition ? job : { ...job, catalogAsset: resolved.catalogAsset };
+  }); }
   async tick() {
     return this.gate(async () => {
       const settings = (await this.reads.registry()).operator?.provisioning;
       if (settings) this.policy = { ...this.policy, ...settings };
       const patterns = this.store.get('meta', 'patterns') ?? [], cursor = this.store.get('meta', 'provisioningCursor') ?? { pattern: 0, type: '' };
       const definitions = [];
-      for (let i = 0; i < Math.min(8, patterns.length); i++) { const p = patterns[(cursor.pattern + i) % patterns.length]; definitions.push([rules.patternAsset(p), p]); }
+      const v2 = this.store.get('meta', 'ruleState')?.batchVersion === 2;
+      const named = v2 ? this.store.list('patternsByAsset', { after: cursor.named ?? '', limit: 8 }) : [];
+      if (v2) for (const row of named) { const r = await mintAssetDefinition(this.store, row.id); definitions.push([r.asset, r.definition]); }
+      else for (let i = 0; i < Math.min(8, patterns.length); i++) { const p = patterns[(cursor.pattern + i) % patterns.length]; definitions.push([rules.patternAsset(p), p]); }
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
       for (const [asset, definition] of definitions) {
         const job = await this.enqueue(asset, definition);
         if ((job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
       }
-      const next = { pattern: patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '' };
+      const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
+        ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '' } : {}) };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
     });
   }
@@ -60,6 +75,7 @@ export class Provisioner {
   }
   async submit(asset, { phase, inscription }) {
     return this.gate(async () => {
+      if (!this.store.get('provisioning', asset)) asset = (await mintAssetDefinition(this.store, asset)).asset;
       let job = this.store.get('provisioning', asset);
       check(job && ['element', 'deployment'].includes(phase) && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(inscription), 'deployment_submission');
       const attempt = phase === 'element' ? job.elementAttempt : job.tickerAttempt;

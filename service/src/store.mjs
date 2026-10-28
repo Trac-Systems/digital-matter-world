@@ -12,7 +12,7 @@ import { exportableSpace, projectEvidence } from './evidence-projection.mjs';
 import { rules } from './rules.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { projectionSchema, projectRevision } from './projection-state.mjs';
-import { publicProjectionSchema, projectPublicRecord } from './public-projection-index.mjs';
+import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset } from './public-projection-index.mjs';
 const run = promisify(execFile);
 const identity = async pid => (await run('ps', ['-p', String(pid), '-o', 'lstart='])).stdout.trim();
 export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096 });
@@ -131,6 +131,18 @@ export class Store {
     // A transaction without its durable commit marker was never acknowledged.
     this.db.exec('DELETE FROM staged_transactions');
     await syncDirectory(this.directory);
+    // Finds of imported v1 patterns (ledger asset p0) were left out of the public index before
+    // it accepted them. Index the ones already stored, once.
+    this.db.exec('CREATE TABLE IF NOT EXISTS public_projection_fixes(name TEXT PRIMARY KEY) WITHOUT ROWID');
+    if (this.publicProjectionActive && !this.db.prepare("SELECT 1 FROM public_projection_fixes WHERE name='legacy-pattern-finds'").get()) {
+      const rows = this.db.prepare("SELECT id,value FROM records WHERE space='finds'").all().map(r => ({ id: r.id, value: JSON.parse(r.value) }))
+        .filter(r => patternLedgerAsset(r.value.asset) && !r.value.asset.startsWith('p2:'));
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const r of rows) projectPublicRecord(this, { space: 'finds', id: r.id, value: r.value }, null);
+        this.db.exec("INSERT INTO public_projection_fixes VALUES('legacy-pattern-finds'); COMMIT");
+      } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    }
   }
   get(space, id) { const row = this.getStmt.get(space, String(id)); return row ? JSON.parse(row.value) : null; }
   list(space, { after = '', limit = this.defaultPageRows } = {}) {

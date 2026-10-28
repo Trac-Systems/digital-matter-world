@@ -18,6 +18,16 @@ test('mint, link and payout wallets are one page; request links keep their own f
     assert.deepEqual(route(`/${type}/${id}/`), { kind: 'money', type, id });
   }
 });
+
+test('first-mint asset links reach the public wallet page before a request exists', async t => {
+  const web = await serve({ intake: { store: {} }, files: { serve: async () => false }, web: createWeb() }); t.after(() => web.close());
+  for (const asset of ['p2:0', 'p2:1', 'p0']) {
+    assert.deepEqual(route('/mint/' + asset), { kind: 'money', type: 'mint', id: asset });
+    const response = await fetch(web.url + '/mint/' + asset, { headers: { accept: 'text/html' } });
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
+  }
+  assert.equal(route('/mint/p2:01').kind, 'missing');
+});
 test('results show a summary meaning as words, without changing other keys', () => {
   const shown = presentation({ treasury: { meaning: 'independently_verified_address_balances', tap: '1' }, burn: { meaning: 'verified_accepted_payment_receipts' }, rows: [{ meaning: 'new_key', countMeaning: 'verified_submitted_blocks' }] });
   assert.equal(shown.treasury.meaning, 'Balances checked independently against each address');

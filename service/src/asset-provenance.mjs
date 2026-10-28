@@ -55,7 +55,7 @@ export async function acceptedAssetProvenance({ store, reads, asset, block }) {
     if (block !== undefined) {
       const height = rules.decimalV2(block), map = claims.maps.finds;
       find = await get('claimNodes', map.storage, map.root, rules.findIdV2(height, number));
-      check(!find || find.asset === asset && rules.decimalV2(find.block) === height, 'asset_provenance_find');
+      check(!find || find.asset === (pattern.legacy?.asset ?? asset) && rules.decimalV2(find.block) === height, 'asset_provenance_find');
     }
     check(Number.isSafeInteger(pattern.tier) && pattern.tier >= 1 && pattern.tier <= 5, 'asset_provenance_tier');
     return finish({ pattern, find, maker: find?.finder ?? null, tier: pattern.tier });

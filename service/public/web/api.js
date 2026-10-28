@@ -57,16 +57,23 @@ export const bus = {
 // The public feed has no event stream; this follows it the way the console's server does: start from the
 // newest page, then read every event after the last sequence once a second or two. Keeps at most `max`.
 export const stream = {
-  state: 'idle', events: [], seen: new Set(), max: 200, last: null, timer: null, running: false, retry: 2000,
+  state: 'idle', events: [], seen: new Set(), max: 2000, rows: 100, last: null, timer: null, running: false, retry: 2000,
   start() { if (this.running) return; this.running = true; this.run(); },
   stop() { this.running = false; clearTimeout(this.timer); this.set('idle'); },
   set(s) { if (this.state !== s) { this.state = s; bus.emit('event-stream', s); } },
   async seed() {
-    const r = await get('/feed?limit=200&order=desc');
-    if (!this.running) return;
-    const rows = (r.events ?? []).slice().reverse();
-    for (const e of rows) this.add(e, false);
-    this.last = rows.length ? rows.at(-1).sequence : 0;
+    // The server caps a page well below `max`. Follow its cursor until the feed shows `rows` rows:
+    // a settled batch of finds is one row on the page however many events it holds.
+    const got = [], key = e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null;
+    const rows = () => got.filter((e, i) => !key(e) || key(e) !== key(got[i - 1] ?? {})).length;
+    for (let r = null; got.length < this.max && rows() < this.rows && (!r || r.next);) {
+      r = await get(`/feed?limit=200&order=desc${r?.next ? `&cursor=${encodeURIComponent(r.next)}` : ''}`);
+      if (!this.running) return;
+      got.push(...(r.events ?? []));
+    }
+    const seeded = got.slice(0, this.max).reverse();
+    for (const e of seeded) this.add(e, false);
+    this.last = seeded.length ? seeded.at(-1).sequence : 0;
     this.retry = 2000;
     this.set('live');
   },
@@ -119,7 +126,7 @@ export const store = {
   async refreshPlayer() { return null; },
   pattern(ref) {
     const list = this.patterns?.patterns ?? [];
-    return list.find(p => p.asset === ref || p.number === ref || String(p.number) === String(ref) || p.name === ref) ?? null;
+    return list.find(p => p.asset === ref || p.legacy?.asset === ref || p.number === ref || String(p.number) === String(ref) || p.name === ref) ?? null;
   },
   compound(ref) { return (this.patterns?.compounds ?? []).find(c => c.id === ref || c.asset === ref) ?? null; },
 };

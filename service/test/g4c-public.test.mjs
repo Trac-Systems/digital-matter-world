@@ -78,6 +78,33 @@ test('owner-wide rights, submitted Bitmap inventory, results and maps never call
   } finally { await store.close(); }
 });
 
+test('an imported-pattern find is indexed under its ledger asset and resolves as p0 and p2:0', async () => {
+  const f = await setup(), { store, api } = f;
+  try {
+    const find = { block: '1', pattern: '0', asset: 'p0', count: '3', finder: owner, findHeight: '90', finderUntil: '200' };
+    await store.transact([
+      { space: 'patternsByAsset', id: 'p2:0', value: { number: '0', legacy: { asset: 'p0' } } },
+      { space: 'finds', id: 'f2:1:0', value: find },
+      { space: 'publicBalances', id: owner + '/p0', value: { owner, asset: 'p0', amount: '3' } }
+    ]);
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM publicRightsV2 WHERE asset='p0'").get().n, 1);
+    const before = store.sequence;
+    for (const asset of ['p0', 'p2:0']) {
+      const page = await api.read('/mint-rights?' + new URLSearchParams({ owner: address, asset, block: '1' }));
+      assert.equal(page.mintRights.length, 1); assert.equal(page.candidateWork, 1);
+      const candidate = page.mintRights[0];
+      assert.equal(candidate.asset, 'p0'); assert.equal(candidate.find.asset, 'p0');
+      assert.equal(candidate.find.finder, address); assert.equal(candidate.rightAllowed, true);
+      assert.equal(candidate.reason, 'asset_unregistered'); assert.equal(candidate.link, null);
+    }
+    assert.equal(store.sequence, before, 'candidate read does not rebuild indexes');
+    assert.equal((await api.read('/mint-rights?' + new URLSearchParams({ owner: address, asset: 'p2:0', block: '2' }))).mintRights.length, 0);
+    // The owner-wide list includes imported ledger assets.
+    const all = await api.read('/mint-rights?' + new URLSearchParams({ owner: address }));
+    assert.deepEqual(all.mintRights.map(r => [r.asset, r.block]), [['p0', '1']]);
+  } finally { await store.close(); }
+});
+
 test('exact pinned rankings and expiry use indexed deltas', async () => {
   const values = []; for (let n = 0; n < 40; n++) for (let d = 1; d < 40; d++) values.push({ n: BigInt(n), d: BigInt(d), key: rationalKey(n, d) });
   values.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);

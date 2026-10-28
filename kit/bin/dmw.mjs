@@ -124,7 +124,7 @@ async function main() {
       check(input && typeof input === 'object' && !Array.isArray(input), 'Tool arguments must be an object');
     }
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
-    const historyTool = ['search_patterns', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
+    const historyTool = ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
     const session = ['mcp', 'once'].includes(command);
     const source = adapter.source ?? (config.headerCookie ? regtestSource({ origin: opts.source ?? config.headerSource, cookiePath: config.headerCookie }) : headerSource(opts.source ?? config.headerSource, config.headerHTTPSettings));
     let history = adapter.history;

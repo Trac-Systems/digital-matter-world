@@ -1,5 +1,9 @@
 # Upgrade to kit 0.2.0
 
+Live mainnet is activated **dmw-v2**. Its current p2 assets keep imported p0
+records only as nested legacy provenance; use current catalog identities for
+new actions. Keep old signed intents unchanged during recovery.
+
 Get the reviewed **Digital Matter World kit 0.2.0** checkout from
 [Trac-Systems/digital-matter-world](https://github.com/Trac-Systems/digital-matter-world).
 Use Node 24.22.1 or newer 24.x. The accepted activation manifest determines when

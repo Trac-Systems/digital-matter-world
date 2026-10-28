@@ -14,7 +14,7 @@ export async function findPatterns({ history, tip, existing, owner, limits, sett
   owner = decodeTracAddress(owner);
   assertHistoryTip(history, tip); check(Number.isSafeInteger(maxCandidates) && maxCandidates > 0 && maxCandidates <= 10000, 'Invalid search budget');
   const accepted = [], rejected = []; let tried = 0;
-  function* proposals() { yield* candidates; yield* strategy({ history, patterns: publicIdentities(existing) }); }
+  function* proposals() { yield* candidates; yield* strategy({ history, patterns: publicIdentities(existing), settings }); }
   const keyOf = p => { try { return p.key ?? definitionKey(p, settings); } catch { return null; } };
   const taken = new Map(), known = new Set();
   if (settings) for (const p of existing) { const k = keyOf(p); if (k) { known.add(k); if (p.name) taken.set(p.name, k); } }

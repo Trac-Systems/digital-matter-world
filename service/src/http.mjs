@@ -10,6 +10,7 @@ import { KIT_VERSION, KIT_DOWNLOAD_URL, KIT_UPGRADE_CODE, KIT_UPGRADE_MESSAGE } 
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey } from '../../contract/account-tree.js';
 import { financialAsset } from '../../rules/src/financial-mint.js';
+import { deploymentAssetId } from './mint-assets.mjs';
 async function body(req, maxBytes) {
   check(!req.headers['content-length'] || Number(req.headers['content-length']) <= maxBytes, 'body_limit', 413);
   check((req.headers['content-type'] ?? '').split(';')[0] === 'application/json', 'content_type', 415);
@@ -115,12 +116,17 @@ export async function serve({ intake, files, headers, mints, links, financialAct
       else if (links?.quote && req.method === 'POST' && req.url === '/link/quote') result = await links.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (links?.public && req.method === 'GET' && /^\/link-status\/[0-9a-f]{64}$/.test(req.url)) result = await links.public(req.url.split('/').at(-1));
       else if (links && req.method === 'POST' && req.url === '/link/payment') result = await links.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
-      else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment\/[0-9a-z]{1,24}$/.test(req.url)) {
-        const asset = req.url.split('/').at(-1), definition = (intake.store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset) ?? intake.store.get('types', asset);
-        check(definition, 'asset_unknown'); result = await operator.provisioner.request(asset, definition);
+      else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment-state\/[^/?#]+$/.test(req.url)) {
+        const asset = decodeURIComponent(req.url.split('/').at(-1)); check(deploymentAssetId(asset), 'deployment_asset');
+        result = await operator.provisioner.state(asset);
+      }
+      else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment\/[^/?#]+$/.test(req.url)) {
+        const asset = decodeURIComponent(req.url.split('/').at(-1)); check(deploymentAssetId(asset), 'deployment_asset');
+        result = await operator.provisioner.request(asset);
       }
       else if (operator?.provisioner && req.method === 'POST' && req.url === '/mint/deployment') {
-        const input = JSON.parse(await body(req, 4096)); result = await operator.provisioner.submit(input.asset, input);
+        const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input.asset), 'deployment_asset');
+        result = input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input);
       }
       else if (mints && req.method === 'POST' && req.url === '/mint/quote') result = await mints.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (mints && req.method === 'POST' && req.url === '/mint/request') result = await mints.request(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 8192)));

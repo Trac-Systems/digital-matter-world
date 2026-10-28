@@ -21,6 +21,7 @@ import { PlayerMint } from './player-mint.mjs';
 import { proposeNamed, revealNamed, addNamedOccurrences, sendNamedMove } from './named-discovery.mjs';
 import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RESOURCE_PROFILE, validateResources, safeNumberV2 } from '../../rules/src/index.js';
 import { requireKitVersion, resumeLegacyFinancial } from './upgrade.mjs';
+import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './api-values.mjs';
 
 export class Agent {
   useCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
@@ -82,10 +83,10 @@ export class Agent {
           if (page.discoveries.some(matches)) return;
           cursor = page.next; check(!cursor || !seen.has(cursor), 'Repeated discovery cursor'); seen.add(cursor);
         } while (cursor);
-        this.journal.observe(id, 'accepted', { source: 'public_catalog', asset: patternAsset(found) });
+        this.journal.observe(id, 'accepted', { source: 'public_catalog', asset: patternId(found) });
       }
     } else if (row.body.t) {
-      check(row.body.v !== 2, 'upgrade_required: v2 batch inclusion verifier required; saved packet retained');
+      if (row.body.v === 2) throw Object.assign(new Error('V2 accepted batch inclusion verifier required; saved packet retained'), { code: 'v2_batch_verifier_required' });
       const proof = await this.service.inclusion(row.body, { receipt: row.result ?? undefined, hashAt: h => this.trac.hashAt(h) });
       const state = proof.reportedOutcome === 'accepted' ? 'accepted' : 'rejected';
       const evidence = { source: 'witnessed_audit', reason: proof.reportedOutcome, publication: proof.publication, contractCommitted: proof.contractCommitted };
@@ -129,7 +130,7 @@ export class Agent {
     return { address: this.address, dryRun: this.dryRun, head: await this.trac.head(), actions, reconciliationPending,
       note: 'Accepted/rejected states come from public outcomes; delivery states remain until evidence is available. Witnessed audit outcomes are not contract proofs. Payment requests require their own service progress.' };
   }
-  block(height, options = {}) { return this.service.block(height, options); }
+  block(height, options = {}) { return this.service.block(height, { ...(options.collection === 'mintRights' ? { owner: this.address } : {}), ...options }); }
   async mintStatus(id) {
     if (!hex32(id)) {
       check(typeof id === 'string' && id.startsWith('mint/'), 'Use a mint request ID or the mint/actionId from status');
@@ -175,7 +176,7 @@ export class Agent {
   agents(options) { return this.service.agents(options); }
   profile(owner = this.address, options) { return this.service.profile(owner, options); }
   async balance(asset) {
-    check(typeof asset === 'string' && /^[0-9a-z]{1,24}$/.test(asset), 'Invalid asset');
+    check(isAsset(asset), 'Invalid asset');
     return { asset, ...amountView(await this.trac.balance(this.owner, asset), { currency: asset, denomination: 'unit', decimals: 0 }) };
   }
   async hunting(options) {
@@ -191,7 +192,7 @@ export class Agent {
           const block = settlement ?? await this.service.block(row.headerBlock);
           const window = row.headerBlock;
           check(integer(window), 'Header claim window unavailable');
-          Object.assign(row, { window, closesAt: window + 2, drawAt: window + 2, settlesWhenCounted: window + 2, settlesAt: window + 2 });
+          Object.assign(row, { window, closesAt: window + 2, drawAt: window + 2, settlesWhenCounted: window + 2, settlesAt: row.ruleset === 'dmw-v2' ? null : window + 2 });
         } catch { items.push({ ...row, phase: 'check_settlement' }); continue; }
       }
       const tracked = row.plots.map(p => ({ ...p }));
@@ -200,14 +201,32 @@ export class Agent {
       if (!settlement && phase === 'check_settlement') {
         const plots = [];
         try {
+          if (row.ruleset === 'dmw-v2') {
+            // V3 draws are individual winner rows, not v1 aggregate rounds.
+            // Empty pages cannot prove a loss while deferred awards exist.
+            const observedWins = [];
+            for (const plot of tracked) {
+              let cursor; const seen = new Set();
+              do {
+                const page = await this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 50, cursor });
+                check(page.v === 3 && Array.isArray(page.draws), 'Invalid v2 draw page');
+                for (const winner of page.draws) if (readInteger(winner.window) === row.window && readInteger(winner.block) === plot.block &&
+                  winner.winner === this.address && (plot.patterns.includes(readInteger(winner.pattern)) || winner.source === 'header' && row.headerBlock === plot.block)) observedWins.push(winner);
+                cursor = nextCursor(page); check(!cursor || !seen.has(cursor), 'Repeated draw cursor'); seen.add(cursor);
+              } while (cursor);
+            }
+            items.push({ ...row, phase: observedWins.length ? 'won_pending_settlement' : 'check_settlement', observedWins, settlementComplete: false,
+              next: { tool: 'window_eligibility', arguments: { window: row.window } } });
+            continue;
+          }
           for (const plot of tracked) {
             const page = await this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 200 });
-            const draw = page.draws.find(d => d.window === row.window && Number.isSafeInteger(d.settledAt));
+            const draw = page.draws.find(d => readInteger(d.window) === row.window && d.settledAt != null && integer(readInteger(d.settledAt)));
             if (!draw) break;
             const winners = [...draw.winners];
             let cursor = draw.pages?.winners?.next;
             while (cursor) { const more = await this.service.readPage(draw.pages.winners.route, { cursor, limit: 200 }); winners.push(...more.items); cursor = more.next; }
-            const won = draw.void ? [] : winners.filter(w => w.block === plot.block && w.winner === this.address && (plot.patterns.includes(w.pattern) || w.source === 'header' && row.headerBlock === plot.block));
+            const won = draw.void ? [] : winners.filter(w => readInteger(w.block) === plot.block && w.winner === this.address && (plot.patterns.includes(readInteger(w.pattern)) || w.source === 'header' && row.headerBlock === plot.block));
             plots.push({ block: plot.block, settledAt: draw.settledAt, void: !!draw.void, reason: draw.reason ?? null, wins: won.map(w => ({ asset: w.asset, pattern: w.pattern, count: w.count, source: w.source ?? 'claim' })), provenance: draw.provenance ?? null });
           }
           if (plots.length === tracked.length) {
@@ -225,16 +244,16 @@ export class Agent {
     const rows = [], cursors = new Set(); let cursor, total, version, revision, pages = 0;
     do {
       const page = await this.service.patterns({ cursor, sort: 'number', order: 'asc' });
-      const bounded = page.v === 3;
+      const bounded = page.v === 3, next = nextCursor(page);
       check(++pages <= 100000 && (bounded && page.total === null || integer(page.total) && page.total <= 100000), 'Invalid catalog size');
       if (pages === 1) { total = page.total; version = bounded; revision = page.revision; }
       check(bounded === version && (!bounded || typeof page.revision === 'string' && /^(0|[1-9][0-9]*)$/.test(page.revision) && page.revision === revision), 'Catalog changed during read');
       check(page.total === total && Array.isArray(page.patterns) && integer(page.limit) && page.limit >= 1 && page.limit <= 200 &&
-        page.patterns.length <= page.limit && (page.next === null || typeof page.next === 'string' && page.next.length > 0), 'Invalid catalog page');
+        page.patterns.length <= page.limit, 'Invalid catalog page');
       rows.push(...page.patterns.map(p => bounded ? { ...p, number: safeNumberV2(p.number) } : p));
       check(rows.length <= 100000 && (total === null || rows.length <= total) &&
-        (page.next === null || (bounded || page.patterns.length > 0) && !cursors.has(page.next)), 'Catalog changed during read');
-      cursor = page.next; if (cursor !== null) cursors.add(cursor);
+        (next === null || (bounded || page.patterns.length > 0) && !cursors.has(next)), 'Catalog changed during read');
+      cursor = next; if (cursor !== null) cursors.add(cursor);
     } while (cursor !== null);
     check((total === null || rows.length === total) && rows.every(p => integer(p.number)) && new Set(rows.map(p => p.number)).size === rows.length, 'Catalog changed during read'); return rows;
   }
@@ -326,7 +345,7 @@ export class Agent {
           const h = checkedHeader(header.raw, header.height, history.get(header.height).hash, { powLimitBits: this.powLimitBits });
           await assertHeaderChain({ history, height: header.height, hash: h.hash, trac: this.trac, head });
         }
-        const budget = (await this.trac.settings()).claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow;
+        const settings = await this.trac.settings(), budget = settings.values?.claimsPerWindow ?? settings.claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow;
         check(plots.reduce((n, q) => n + q.patterns.length, 0) <= budget, 'Claim budget exceeded');
         for (const q of plots) {
           check(q.block <= (event.claimableHeight ?? head.counted) || q.block === event.window, 'Claim block is not counted');
@@ -458,6 +477,7 @@ export class Agent {
   transaction({ actionId, op, value }) {
     return this.exclusive(async () => {
       this.actionId(actionId); check(op === 'tf', 'Only transfers are permitted');
+      check(!await this.namedContext(), 'account_v2_required');
       value = { ...value, to: decodeTracAddress(value.to) }; transactionCommand(op, value);
       const id = `tx/${actionId}`, intent = { op, value }, old = this.journal.get(id);
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting transaction action ID');
@@ -508,7 +528,8 @@ export class Agent {
       }
       const quoteInput = { asset, amount, ...(block === undefined ? {} : { block }), kind };
       const quote = old?.body.feeQuote ? await this.service.quote({ ...quoteInput, feeQuote: old.body.feeQuote }) : await this.service.mintQuote(quoteInput);
-      if (quote.deploymentNeeded) return { ...quote, next: [{ tool: 'inscribe_deployment', arguments: { asset } }], signed: false };
+      if (quote.deploymentNeeded) return { ...quote, deploymentLink: this.service.deploymentLink?.(asset, this.address, this.paymentOrigin),
+        next: [{ tool: 'inscribe_deployment', arguments: { asset } }], signed: false };
       // Check schema/rights with a locally computed signature even for previews;
       // previews do not expose or send that signature.
       const signature = old?.body.signature ?? signOwnerRequest(this.wallet, 'rq', this.network, request, head.counted);
@@ -541,13 +562,13 @@ export class Agent {
       const blocks = new Set(), cursors = new Set(); let cursor;
       do {
         // v2 serves the found index at /claimed-blocks (pages of up to 50) with decimal-string heights.
-        const v2 = typeof pattern.key === 'string' && /^[0-9a-f]{64}$/.test(pattern.key), asset = v2 ? `p2:${pattern.number}` : patternAsset(pattern);
+        const asset = patternId(pattern), v2 = asset.startsWith('p2:');
         const page = await this.service.readPage(`/patterns/${asset}/${v2 ? 'claimed-blocks' : 'blocks'}`, { found: true, limit: v2 ? 50 : 200, cursor });
-        page.next ??= null;
-        check(Array.isArray(page.rows) && (page.next === null || typeof page.next === 'string' && page.next.length > 0), 'Invalid found index page');
-        for (const row of page.rows) { const block = typeof row.block === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(row.block) ? Number(row.block) : row.block;
+        const next = nextCursor(page);
+        check(Array.isArray(page.rows), 'Invalid found index page');
+        for (const row of page.rows) { const block = readInteger(row.block);
           check(integer(block) && (row.found || row.minted), 'Invalid found index row'); blocks.add(block); }
-        cursor = page.next; check(!cursor || !cursors.has(cursor), 'Repeated found index cursor'); cursors.add(cursor);
+        cursor = next; check(!cursor || !cursors.has(cursor), 'Repeated found index cursor'); cursors.add(cursor);
       } while (cursor);
       taken[pattern.number] = blocks;
     }
@@ -563,18 +584,17 @@ export class Agent {
     if (!history) return { ...await sendHeader(), claimState: 'history_downloading', message: 'The history archive is needed to hunt all matching blocks.' };
     let publication;
     try { publication = await this.service.latest(); } catch (e) { if (e.status === 404) return sendHeader(); throw e; }
-    const summary = await this.service.publication(publication.summary);
-    // v2 summaries carry heights as decimal strings ("973603").
-    for (const k of ['tip', 'height']) if (typeof summary[k] === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(summary[k])) summary[k] = Number(summary[k]);
+    const published = await this.service.publication(publication.summary);
+    const summary = { ...published, tip: readInteger(published.tip), ...(published.height === undefined ? {} : { height: readInteger(published.height) }) };
     if (claimWindow(summary.tip, head.tip.height) && summary.tipHash === await this.trac.hashAt(summary.tip)) {
       if (summary.tip >= history.length || history.get(summary.tip).hash !== summary.tipHash)
         return { ...await sendHeader(), claimState: 'history_downloading' };
       const event = { window: summary.tip, claimableHeight: summary.height ?? head.counted, hash: summary.tipHash };
       const bytes = history.raw(summary.tip), raw = typeof bytes === 'string' ? bytes : Buffer.from(bytes).toString('hex');
-      const saved = this.journal.get(`claim/${event.window}`), settings = await this.trac.settings();
-      const plots = saved?.body.p.plots ?? await strategy({ history, patterns: publicIdentities(patterns), owner: this.address,
-        taken: await this.takenSlots(patterns), claimsPerWindow: settings.claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow, claimableHeight: event.claimableHeight, window: event.window });
-      if (plots.length) return { ...await this.claim({ event, plots, history, patterns, header: saved?.body.p.header ?? { height: summary.tip, raw } }), window: event.window, plots, patterns: [...new Set(plots.flatMap(p => p.patterns))].sort((a, b) => a - b) };
+      const saved = this.journal.get(`claim/${event.window}`), selection = saved && claimSelection(saved.body.p), settings = await this.trac.settings();
+      const plots = selection?.plots ?? await strategy({ history, patterns: publicIdentities(patterns), owner: this.address,
+        taken: await this.takenSlots(patterns), claimsPerWindow: settings.values?.claimsPerWindow ?? settings.claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow, claimableHeight: event.claimableHeight, window: event.window });
+      if (plots.length) return { ...await this.claim({ event, plots, history, patterns, header: selection?.header ?? { height: summary.tip, raw } }), window: event.window, plots, patterns: [...new Set(plots.flatMap(p => p.patterns))].sort((a, b) => a - b) };
       return this.headers({ height: summary.tip, raw, history });
     }
     return sendHeader();

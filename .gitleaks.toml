@@ -2,5 +2,14 @@
 useDefault = true
 
 [allowlist]
-description = "Public contract addresses"
-regexes = ['''0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454''', '''ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870''']
+description = "Public contract addresses and recorded public pattern commitments"
+# GET https://dmtworld.tap-protocol.com/patterns?limit=1, p2:0 definition key.
+regexes = [
+  '''0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454''',
+  '''802a78a4143ffe5f0e51b4f48532e2b390fb059057848b1d1f5f920be4c8f22c''',
+  # Deterministic canonical definition keys in executable DISCOVERY.md examples.
+  '''3d58c57a01d3ffc042df612b4bcefbfd91af6c44a6073f786f428e9f7d57bbb2''',
+  '''59a0ddc03d957a84c9afcc0b52b85cf28d5f2a016b658f7c592bf311465fb2b2''',
+  # Public mainnet gateway key.
+  '''ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870''',
+]

@@ -27,3 +27,18 @@ change another component to accept a strategy.
 Work alone: never start sub-agents, forks, workflows or other AI agents. Use short,
 focused checks for changed behavior; preserve existing user changes. Backtests
 must record snapshot, catalog, settings and opponents and exclude future data.
+
+
+Mainnet is activated dmw-v2. Use current p2:NUMBER/c2:COMMITMENT identities;
+legacy p0 data is nested provenance. Public v:3 pages can have total:null, empty
+rows with a continuation, and next/nextCursor aliases. Normalize safe local
+ordinals through lib/api-values.mjs; keep monetary values, opaque revisions,
+signed packets and proof bytes exact. Read block hashes from detail.header.hash.
+Use claimed-blocks with limit at most 50 and consult window_eligibility for
+deferred awards. Never turn absent submitted evidence into a final loss/free slot.
+
+Verify changed read shapes with recorded GET fixtures. Dry-run actions must not
+submit evidence or payment reports; unsigned POST previews are still forbidden
+under a GET-only user policy. Preserve independent Trac/notary verification;
+a public gateway response is not a production authority fallback. Backtest is
+legacy-only until a verified v2 replay exists. Keep unsupported paths explicit.

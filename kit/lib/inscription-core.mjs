@@ -150,7 +150,7 @@ export function mintContent(status, address) {
 
 export function deploymentContent(job) {
   const pattern = job?.kind === 'dmt';
-  ensure((pattern ? /^p[0-9a-z]+$/.test(job.asset) : job?.kind === 'compound' && /^c[0-9a-z]{1,23}$/.test(job.asset)) &&
+  ensure((pattern ? /^(?:p[0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(job.asset) : job?.kind === 'compound' && /^c[0-9a-z]{1,23}$/.test(job.asset)) &&
     job.state === 'awaiting_player_deploy' && (job.phase === 'deployment' || pattern && job.phase === 'element'), 'Deployment is not ready for the player');
   const attempt = job.attempts?.find(a => a.phase === job.phase && a.attempt === (job.phase === 'element' ? job.elementAttempt : job.tickerAttempt));
   ensure(attempt && /^[0-9a-f]{64}$/.test(attempt.id), 'Missing deployment attempt');
