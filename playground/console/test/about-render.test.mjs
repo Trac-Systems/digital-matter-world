@@ -21,3 +21,9 @@ test('the Markdown subset escapes source text, including bold and inline code', 
   assert.match(html, /<span data-fee-kind="find" data-fee-tier="3">current price<\/span>/);
   assert.match(html, /tabindex="0" role="region" aria-labelledby="about-heading-0"/);
 });
+
+test('a link inside bold text is rendered as a clickable link, and leftover Markdown fails the build', () => {
+  const html = renderMarkdown('See **[the repo](https://github.com/x/y)** now.');
+  assert.match(html, /<strong><a href="https:\/\/github\.com\/x\/y" target="_blank" rel="noopener">the repo<\/a><\/strong>/);
+  assert.throws(() => renderMarkdown('A [link](http://plain.example) only https is supported.'), /unrendered/);
+});

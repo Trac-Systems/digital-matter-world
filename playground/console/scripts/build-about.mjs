@@ -12,7 +12,7 @@ function inline(text) {
       const [kind, tier = '1'] = match[5].split(':');
       html += `<span data-fee-kind="${kind}" data-fee-tier="${tier}">current price</span>`;
     } else if (match[3] !== undefined) html += `<a href="${escape(match[4])}" target="_blank" rel="noopener">${escape(match[3])}</a>`;
-    else html += match[1] === undefined ? `<code>${escape(match[2])}</code>` : `<strong>${escape(match[1])}</strong>`;
+    else html += match[1] === undefined ? `<code>${escape(match[2])}</code>` : `<strong>${inline(match[1])}</strong>`;
     at = match.index + match[0].length;
   }
   return html + escape(text.slice(at));
@@ -51,7 +51,11 @@ export function renderMarkdown(markdown) {
     }
     html.push(`<p>${inline(paragraph.join('\n'))}</p>`);
   }
-  return html.join('\n');
+  const out = html.join('\n'), text = out.replace(/<[^>]*>/g, '');
+  // Markdown syntax left in the visible text means the renderer missed it; fail the build.
+  const raw = /\*\*|\]\(|`/.exec(text);
+  if (raw) throw Error(`About markdown left unrendered near: ${text.slice(Math.max(0, raw.index - 40), raw.index + 40)}`);
+  return out;
 }
 
 export function buildAbout(markdown) {
