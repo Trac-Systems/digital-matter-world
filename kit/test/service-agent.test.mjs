@@ -82,9 +82,26 @@ test('the default pass sends a header with an empty table and directs the player
   f.agent.dryRun = false;
   const result = await f.agent.runOnce({ history: f.hist });
   assert.equal(result.state, 'discovery_needed'); assert.equal(result.header.state, 'received');
+  assert.match(result.message, /No patterns have been accepted/);
+  assert.match(result.message, /two Bitcoin blocks/);
+  assert.match(result.message, /wait for evaluation/);
   assert.deepEqual(result.next.map(n => n.tool), ['search_patterns', 'propose_pattern', 'reveal_pattern']);
   assert.equal(f.journal.recent().length, 1); assert.equal(f.store.count('dedupe'), 1);
   assert.equal(f.intake.entries()[0].value.move.t, 'header');
+});
+test('real gateway reveal capacity refuses before intake and the same journal intent can refresh after three blocks', async t => {
+  const f = await fixture(t), proposal = { name: 'dmwcapacity', pat: '[12]', fld: 4, dt: 'n' };
+  const first = { proposal, salt: '01'.repeat(32) }, second = { proposal, salt: '02'.repeat(32) };
+  await f.agent.sendMove('discovery/first/reveal', 'discovery-reveal', first);
+  await assert.rejects(f.agent.sendMove('discovery/second/reveal', 'discovery-reveal', second), /reveal_capacity/);
+  const old = f.journal.get('discovery/second/reveal');
+  assert.equal(old.state, 'refused'); assert.equal(f.store.count('dedupe'), 1);
+  f.state.tip = 23;
+  await f.intake.observe({ tip: 23, hash: f.hist.hashAt(23), counted: 18, confirmed: 18 });
+  assert.equal((await f.agent.sendMove('discovery/second/reveal', 'discovery-reveal', second)).state, 'received');
+  const fresh = f.journal.get('discovery/second/reveal');
+  assert.equal(fresh.body.b, 23); assert.equal(fresh.fingerprint, old.fingerprint); assert.deepEqual(fresh.body.p, old.body.p);
+  assert.equal(f.store.count('dedupe'), 2);
 });
 test('craft signs an exact owner exchange and enforces stable action IDs', async t => {
   const { agent, hist, store, network } = await fixture(t);

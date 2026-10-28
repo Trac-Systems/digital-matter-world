@@ -1,0 +1,2220 @@
+{
+  "source": "Public batch and receipt-certificate data for deterministic verification tests.",
+  "network": "dmw-mainnet",
+  "receiptSigners": [
+    {
+      "encryption": "f9a5ba7712b55745114910f8fa43b08c5238eed4d32f8275125784eaea879a69",
+      "id": "operator1",
+      "identity": "8ae28e09badb67a0903f77054f9e2267eecc8925f9d591da497c7bd68d23c2cc",
+      "url": "http://127.0.0.1:58330"
+    },
+    {
+      "encryption": "39f97b93dfa37111d5836bd8ae69237b980c99694f1706d84743985e1d647b09",
+      "id": "operator2",
+      "identity": "79651ec97caf6ad6e6a63af0e20b012dc0bbc24fb410318e586d15e406ac3ed5",
+      "url": "http://127.0.0.1:58331"
+    },
+    {
+      "encryption": "d023d83a2dca918a73d7d8ba80a891d288358bf179e2d2e042fd66a5b139810f",
+      "id": "operator3",
+      "identity": "4ed5280aeaef17a2d6b85cf0c4e07a76c880a992cc6630c77f5056f5812e251d",
+      "url": "http://127.0.0.1:58332"
+    },
+    {
+      "encryption": "00cc986efc8188c2b40fb5e61b21b023faa289bb0eeb3abea5ac8d8220b8ff79",
+      "id": "operator4",
+      "identity": "635da5ed7316f53ec26db69972e1e02fd8df69c098eed16b948b5bf156585309",
+      "url": "http://127.0.0.1:58333"
+    },
+    {
+      "encryption": "abedf217bd3e9346b3d27aed3166f2c5813355f969c2347c74097aa927abbe75",
+      "id": "operator5",
+      "identity": "ceaf32610d748ccdd619c64c7b23a4d47814fde07ee5c1aff1cfdebb51b9b72e",
+      "url": "http://127.0.0.1:58334"
+    }
+  ],
+  "batch": {
+    "v": 1,
+    "epoch": 0,
+    "n": 43,
+    "from": 973440,
+    "to": 973447,
+    "deadline": 973453,
+    "root": "a737a5c8c693c4182ab747c38cce46d8e4d5a5effe983d9f586a0c875adf274b",
+    "ops": [
+      {
+        "op": "kv",
+        "key": "finds/batch/17",
+        "value": "a40f168c7d47d3d06c2feaa8ce4d37671102602186ebee1fa54e2c5257741f09"
+      },
+      {
+        "op": "kv",
+        "key": "receipt/batch/17",
+        "value": "03666ebba5557eb1bda8b2dd37d033f0afdbc7fcdca549f87860ddb53118d3ad"
+      }
+    ]
+  },
+  "files": [
+    {
+      "v": 4,
+      "observation": 1427,
+      "previousHeight": 973439,
+      "height": 973439,
+      "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+      "tip": 973439,
+      "tipHash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+      "confirmed": 973439,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "sequence": 16,
+          "move": "1029512c079b3f6b119c98b726445e1caf071ef6d2032eadca8d36cd6734c5bb",
+          "sig": "f4ee3db14d5d8b87a3567b798d3080ed6e000da4baa8660ace43d65fd160436d3b89c2c37d4fdebfe55982796b8e2645382b8d681359fdc9c675b30d9da2b000"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973439,
+        "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+        "count": 1,
+        "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+        "sig": "fc6545db203359aee622e3f45ca0c5b2ae38b69a6f919df9b02c61583384763006fd9f604f4b970130ac285c637d73b6c36fb5414b851f98879cb29c90da7501"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "99b2ec26e03a2b412662048bbb57db11c117adc34bc5512477795712ef7068a4d8be8fe88124e887d7df5ce1dbd78cbc1de73a35a7dbfeffca74e88bac4b4609"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "3109635c0da9464a7619bc11710bcae775a74eb6abdd5dfadd693899416ca35f1ac4f65f0c3a6e94f6a2e9b0dc80726d7e378771beb99d80dfbbb5cad4f8b405"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "52873630d6a2d3519b4c0c1dbfae7cec794de6c39a3e10d8bf7b6142e399028d149b03c297c3a17424f30b1892a504827a73995e773ce855e69d6f41b2f6d400"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "ecb1ecd7e8c2b1a304a9b123454dae8b45737fbec589ee516e8f25776d9e977bfe989f1afb3d96ee86038b2d0a8dbb71cbb1d9ae15ae2b25c622dd4be3263407"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "d5f8330a95ebf8309dd0ca41023682a3856b420f34482c5684beebfe6f1b9798748a38df2786ae1a4b296cceb86070e9d9b992d9729caced82c89c3f186d0504"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "752ecf794c3c2a044efb632624e42a259a21eba2f1b0bdbadd7bccc1b6a84939",
+            "b": 973437,
+            "h": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+            "network": "dmw-mainnet",
+            "p": {
+              "proposal": {
+                "dt": "n",
+                "fld": 10,
+                "name": "dmwflorite",
+                "pat": "0123"
+              },
+              "salt": "bbe2adae979723f76874ecc123b9631ddc4318cd4e3ddb3c67fd7222185e91da"
+            },
+            "sig": "8f064248e22075583a3885578ad3b386dbd079ae52adfceed32a99f697df241197ef3177e8a89517491877b1f557e5a4eeaadf1edd358c7da678f1afc742c10b",
+            "t": "discovery-reveal",
+            "v": 1,
+            "w": "3a4"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 3,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv3z",
+          "value": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1428,
+      "previousHeight": 973439,
+      "height": 973440,
+      "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+      "tip": 973440,
+      "tipHash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+      "confirmed": 973440,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973440,
+        "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "afaabc0682e71410fa2e941e8aad3431aeec26b4c1a1a836e72eb28357c6ae563fd57af4d37480ab6754d8868c320944fe4a82dc32962d5a08afeeb3f8f22803"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973438,
+          "void": false,
+          "seed": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 3,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv40",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1429,
+      "previousHeight": 973440,
+      "height": 973440,
+      "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+      "tip": 973440,
+      "tipHash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+      "confirmed": 973440,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "sequence": 17,
+          "move": "316d110cc1cbdd903f3dcb48ab9c4b9cfc2693518df308827686cb03575749cc",
+          "sig": "195dd56741e76a2df81dc82683c2d825a14dfaa7c42f0af9ed2987dccd581c0b3fb0dd7ec8b8eed2ba183cecd65bb74b2c58bc4d3a49d66e2555b5ff9657600e"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973440,
+        "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+        "count": 1,
+        "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+        "sig": "16f094ba54617817e083c2144aacd6657badb92151e4e35ad88f1fec35f50bcf41f7ddb64678a45ae349d4b2a196301e6377607ee34a2eae3e3e615357c95a0d"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "bf85bd21a69eaa40c2ba89fd563f284df73aca2660973e0829c0abd23202a9e8cc715c48f0f6a22df8545ea60ac84c3883d3ce1028a5fce0ac97301632072c05"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "4a3aea401c1d9ca58cf4f648a7a1467ac585cc20721f0fad1310d56b8655abb64469565e54a25c9d7fd5776ca4fb869cf02034c99000538c2a64190dcd6e0608"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "71c510e99e79123f5db2b1fca59d2b0aa6ebc233a81f734d64b4e6c8d0d1ecd4518bd9fc5bd27237d05f5276a885053a04d53eb1f60edbad1e685e93ebe8d902"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "c425c2960470c53d5d3cf001c56e83d199ac1b6d073cfba42288948fd82dfeb16e8ccb0256f30c69c2e4bb3bd82faf7318d1cc1d70fcb1e10baa6abb4449840c"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "85981fd40d7a376d6ea8ff24d2efcc2a587d3bb9ad4efce69448c128081777fe9c5d6f287926177f880b41c49377b682075ff3fde8d4a24350c14aa9ccd3750e"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "752ecf794c3c2a044efb632624e42a259a21eba2f1b0bdbadd7bccc1b6a84939",
+            "b": 973440,
+            "h": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+            "network": "dmw-mainnet",
+            "p": {
+              "proposal": {
+                "dt": "h",
+                "fld": 11,
+                "name": "dmwkelpian",
+                "pat": "[a-f]{4}"
+              },
+              "salt": "c0a9a447422b8b94bdb40ed1931d8faaf6a8e3ae315691b8ff8abdfdd4bd75aa"
+            },
+            "sig": "bb66891053bb274529d0a70a84049ad6ae9232a04588adf8d33cd0ad87bb20eabc77583e8f4514e30d45570f5e9b1f32f39ee6e9150b1f7be06ba04916453309",
+            "t": "discovery-reveal",
+            "v": 1,
+            "w": "67"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv40",
+          "value": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1430,
+      "previousHeight": 973440,
+      "height": 973441,
+      "hash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+      "tip": 973441,
+      "tipHash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+      "confirmed": 973441,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973441,
+        "hash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "fe9617ad87c383d6817deae5b46165cfa26035bd5986ead0357262f72c5c3d04a6c3a39fa35151aee73de31e9c3010efa6a67d43aa3f497b595e4dc2061c0f06"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973439,
+          "void": false,
+          "seed": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv41",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1431,
+      "previousHeight": 973441,
+      "height": 973441,
+      "hash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+      "tip": 973441,
+      "tipHash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+      "confirmed": 973441,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973441,
+        "hash": "00000000000000000001c152469d2e494fd6b3595b53e2a80540e50e8ce22f1f",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "fe9617ad87c383d6817deae5b46165cfa26035bd5986ead0357262f72c5c3d04a6c3a39fa35151aee73de31e9c3010efa6a67d43aa3f497b595e4dc2061c0f06"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv41",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1432,
+      "previousHeight": 973441,
+      "height": 973442,
+      "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+      "tip": 973442,
+      "tipHash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+      "confirmed": 973442,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973442,
+        "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "1377cf067ea9c0c8344e809830db5c531bf0b4b41b28a2e55ddfca87d248d66f5c583ee29880fee6d0c64565ea88397ca0b0336c55c2b74bc787aead98784a05"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973440,
+          "void": false,
+          "seed": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv42",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1433,
+      "previousHeight": 973442,
+      "height": 973442,
+      "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+      "tip": 973442,
+      "tipHash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+      "confirmed": 973442,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "sequence": 18,
+          "move": "d6c58d3da8f2834d8a6bbcc113b76e1969fe0ab88895b81bb8bddc8b9c4baa56",
+          "sig": "2e6081517c319dc61ce823655fe207848b1cb022fe1b4313e8ad14ebe1f1d6d1df41cedd3a7dc8478357ae7603f4d362176d6dc5fd4f4647be9f2e25c7728601"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "sequence": 19,
+          "move": "85b382a3cd4db3a42eabcfa33b08b69f869256a263a00f033e5747169aeb57c8",
+          "sig": "7ff387504040f16a7ca93c588291a5ab797454ccd49cff8ec6a896a9678b468cb48dd5198869e1540ce88ae0054eee4583b9164aa066757b6750c61ec41f1000"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "sequence": 20,
+          "move": "83327ac5b5a2d7d9976f0295646cf7a9a2c1b9f93775244ece5491172aeaf7c5",
+          "sig": "d6d1f961c30fd09591e89834b56bc1a3a61fcd1044807dd4e113e46a697c996b34b66588e86ff168f065de8dba68c9a14100305bc2b39ec40398f66f8c934b04"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "sequence": 21,
+          "move": "93c85e4461dc58d97ec2f493e82499dedc3ab069bbabc69c4ce3c3021e46128f",
+          "sig": "9f215e4839e4cabe10805a09eabaebd8a86ea4851099d9e51e0b9e7a227d1aba8274993a60ece5850a3cd89904ba080ed104915b7e3fdb6d29b4a515c2fd6100"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973442,
+        "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+        "count": 4,
+        "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+        "sig": "7a4ecda7e3906aa13b799f6d3adcc1ed5cddd66e3415a69d5cd0016edbc1875623d4d1122f8557f6d0081f391568de12135ec417499a0a9993af58692a331f08"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "bd09fb0b09f83c729e2fa80e202e72814e33035e60b57388e773284c786ee345a3d6dc6225c438414a6e19af9a7d7bbb3956bd86cd379298f756a4a76c5d6003"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "fe0c1562e7dd0c5de0a6c909f056486c35ba9424b589367750d9d6f567d0056f43694d1b73eb571bf131cf637be4179c530f77973d2b606a729516611e53ba0d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "0846f40dc37533d2d9ea219b5d2f4b95b6d756574a8f58c9aef2845865e3c8a36503daac606799d68a599424757264ebb52252335ced8bbaa9a747d515a05009"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "e4c23af8f1ce438feffe84b943b27b280213a38d58226910c1c086e00d8f5c6e6067945c2a7211bc7f06c2feb577932e06da1659ca38a3d69480082000f0d80d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "25bf172346fdf4a6a0e16c3f32e05e2c33f901e12c5a7a5bef308a95e1f1f0d8851bac2fb37f9de3f3d63b78c5e304f89f69a1a00a41978222eb83737a3a100a"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973442,
+            "h": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+            "network": "dmw-mainnet",
+            "p": {
+              "height": 973442,
+              "raw": "00e000201f2fe28c0ee54005a8e2535b59b3d64f492e9d4652c101000000000000000000a2c91090d5575855816735b5f71bc1ed407b922755bc1e828f779cb5177534a5feece06a930002179be4b16f"
+            },
+            "sig": "c625283a4458d48ba63cb45ad7694f7066f2f3505bf3310e0e4155f3de5c15c88841630214c90a3d42cee0c103498360c3c9f5c08a6a05f844d8b8c9aa808704",
+            "t": "header",
+            "v": 1,
+            "w": "20e1"
+          },
+          "reason": "accepted"
+        },
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973442,
+            "h": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+            "network": "dmw-mainnet",
+            "p": {
+              "commitment": "4e18831f7781cb63af902057dcf636ce45b8a2748412f65165333fcdcdf5b2a5"
+            },
+            "sig": "5c7e3e36e3f66bc690429fab3553eb59be9c33317fb3e3b756bd95153741ae92ea5aca59b494c05c5be4c3e811c1e9a80677b8e2e00da08b22f33dd0f1331502",
+            "t": "discovery-commit",
+            "v": 1,
+            "w": "172"
+          },
+          "reason": "accepted"
+        },
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973442,
+            "h": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+            "network": "dmw-mainnet",
+            "p": {
+              "commitment": "ebcd055615003ea562c5363933d25972d1c87796814119ba3d1b2ae79394e747"
+            },
+            "sig": "93efb4e30c0725d6b5384478325baa0fc02ba0342c718df0e9059dc2da26b1a285db9fb56c8c4fcada1f34c6ebacfe0ef6bcd32841a24e825a2d18fc6dcbce07",
+            "t": "discovery-commit",
+            "v": 1,
+            "w": "406c"
+          },
+          "reason": "accepted"
+        },
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973442,
+            "h": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+            "network": "dmw-mainnet",
+            "p": {
+              "commitment": "455a1956d1d91ddb76fc467738e33475fc0765eac6a39e4b144f003673a14e57"
+            },
+            "sig": "2beec63e887871dab28a1f50f4637125f2f9c972722d84bcb60e3d6f78f42933e8e662a352852adc35d1b5691f00ed56f8b8e55dce9b1867ca470dacd773db0a",
+            "t": "discovery-commit",
+            "v": 1,
+            "w": "19a6"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv42",
+          "value": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1434,
+      "previousHeight": 973442,
+      "height": 973443,
+      "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+      "tip": 973443,
+      "tipHash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+      "confirmed": 973443,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973443,
+        "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "5b18e6da9be8a4056dc6e852d155506d5268cc2ff81618f38eddf01fbf76d583df7a13d939cd402ec23322f3d36055be1fe129385ebdbe1bbea919135e778000"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973441,
+          "void": false,
+          "seed": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv43",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1435,
+      "previousHeight": 973443,
+      "height": 973443,
+      "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+      "tip": 973443,
+      "tipHash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+      "confirmed": 973443,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "sequence": 22,
+          "move": "bcbc76dcad977b4dbe52704874562b7af86b5d7cb2929759e1c46714fb7456b7",
+          "sig": "0165591037d487924ed413486f24c283490d1a12802f927b0d36f4be434a1813768b836347b8b971784931787f84efb60a4c207801cc8657b09beeccb4e04209"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973443,
+        "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+        "count": 1,
+        "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+        "sig": "0543bbfbd2124591754be3895a62b85133e22941a18a62b26f4df50108a2fce5f5d528ae25c11330c9df82b0d6e468c259f6296d6fa1d3426c17860dc393a103"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "2d6e7876dd86dd9ed050217e4efc1e6426c659ccbb10a6323117bf0c8adcb2ae200193dc55d864dea1838a455e15d3d9a07e535ad55f02c541781fd36091730d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "dc67fa045be8ea8ecf06bf1e1b3b31142c6cb2011bc7579ea2f141af290ca209a9218a9d040cec20d2a8229f0bed8db1569f28d8651cb7acdd405b21f42dc801"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "ac9ca894c0cc3d5395b1994101848306e84033140e2539105c5f9593838c910dac1f7339aae9aaf43cf201e11a8ea89504880eaad34c5f1e9f802cc1b7796902"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "2b4952a69f127454fc3c75512b882898e6a62cd045cef8cd67912f1ad76363ab4fcd4f01a071e51f87603b50d27880355ea7f6d80c182f903dcdd7d27838f80a"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "ab6f4adea5bdcc911b93b21740356bd0883a514215db4f12e2b1a5f122692a3ad2790d202264a2c6e80695c6fb2af62ed1d061aaa7aa04de04ef016d4842400d"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973443,
+            "h": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+            "network": "dmw-mainnet",
+            "p": {
+              "height": 973443,
+              "raw": "00800d207b3e94f9d1ba9633281fed73342d69ac79b7a87368d30100000000000000000090ec0d1e1d98eedf6af0d64cee155d26420a1781f3f5286f10ccfc2f3e87e7584af5e06a930002172f956ae5"
+            },
+            "sig": "9580d972c93576b3f0e9b9a1d670486d7efb21ad67909981eb2ce3c4e2ddfab92a57161f77882f3cb571cfb7016ab5d5612569d4a2e558653478c5182d3c120d",
+            "t": "header",
+            "v": 1,
+            "w": "52d"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv43",
+          "value": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1436,
+      "previousHeight": 973443,
+      "height": 973444,
+      "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+      "tip": 973444,
+      "tipHash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+      "confirmed": 973444,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973444,
+        "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "28eb10c4801bb7d6e8ffc10690b80024a9068d3a23bd630ea679ebf3bfb8a1fd00f726739ebec7cd9d14341c2a1f9cedf70d8911679d542077517121bfe0790c"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973442,
+          "void": false,
+          "seed": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv44",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1437,
+      "previousHeight": 973444,
+      "height": 973444,
+      "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+      "tip": 973444,
+      "tipHash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+      "confirmed": 973444,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "sequence": 23,
+          "move": "c4480fb165c9049fe28e9c2ac28a819cf46eea581afae786fa3158d6fd1ec651",
+          "sig": "93b7926b179918810524e9b7609983df968b8035729691c7b04c31ae9d565f02ecef4cf5f63367c6db3eb621d415d3da75eb0579430b9dca3673cbf38570b00a"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973444,
+        "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+        "count": 1,
+        "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+        "sig": "1427fdbdfeee23898b2c261bb66e5bc0a121a495a24d23bc7771ec46384bc1d2cf3bcf260564d9b52108e02d0f93e457da0fae344b32fdfeb3a5a629a841810e"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "83c9ef9d7ceb0446944d754ed9eacb16efa8f4495c5a03e58b60be6d0b57cd53ebe8b3462f189586a0156a89cfca842dcfa77089049390bb35629ecb43eb7e0a"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "153f11a21c9feec9958c9ad38bcc4887a88f7f372effa84db0abdd1fd1fdc4aedc64c747ad2d1f3123d2d501bc486ea4341850dad643f469bae278512ca78c0e"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "3585a6dc7aa3676b2daf7b89f5e313bdd23f42960395774d3f4dfb72feeaaa7db0d5ff3b95b66a8870498be969102f2f506e7893495c14ed692aade1f09e3408"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "f990ae7818505ed6acfffff555ddefe3d3823a548c2a42c698c8a7acf7c7bef1e85d1329bd7bfe77c69217311fa8ff06ad816088982d419411f41234040bc60b"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "87d5b6787f2fa1b02951268c404955257c1b8889be698042fbccc97cd750af41192e21c54d806a45119db487bec86f82e67c23c22574cae8bdf884deda07430f"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973444,
+            "h": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+            "network": "dmw-mainnet",
+            "p": {
+              "height": 973444,
+              "raw": "0040df25f2ef40228cc431fd6ff4c0c6a83b26ed968bfcf6e31d000000000000000000002a540a388108e652e51fb7e0d2f54b55e8f1546140681a7b9076aab7a127ef5724f6e06a9300021703949bd7"
+            },
+            "sig": "938b034e73ce40486b06b95735171546cece20e2ed12d979e722175e7d9e354f0d07dc596082440422caeca6d4800cdf36c889aeb9d4a3efd70d5301a0007d0a",
+            "t": "header",
+            "v": 1,
+            "w": "6e"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv44",
+          "value": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1438,
+      "previousHeight": 973444,
+      "height": 973445,
+      "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+      "tip": 973445,
+      "tipHash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+      "confirmed": 973445,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973445,
+        "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "a575bafffdcfb1e32e1f773f48fe98fe4158ad85caaab541137d76bb359cdfd495f8efdfaf255ea3bc4636e476becd88ffa73103feb5b83045e7e273d4f3de0f"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973443,
+          "void": false,
+          "seed": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv45",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1439,
+      "previousHeight": 973445,
+      "height": 973445,
+      "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+      "tip": 973445,
+      "tipHash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+      "confirmed": 973445,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "sequence": 24,
+          "move": "b2ae03f94cf767e83eb1be252e9eb4d391e3001d20b2033ddf5fbd2c5d0fb978",
+          "sig": "106f1f4827738f9d28ff7813e9d7d1ad6d50a738dd3d182b75eb760eb2bd4cc88bccec28d1c4f7b42443568b7a15c6697d657e3723898cfed6fbab4af7659400"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973445,
+        "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+        "count": 1,
+        "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+        "sig": "1ccf1932ec1ceb0ae7688692c5a5a6696b165f47b4938428c19648e5c8b901b190287fc7ab45469487c9b1f1e9c3ea1a4a6916ac0493d539580e26b8c0ee7b02"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "e9bb406fd3aabd7e6d058582dd12a4dad82617135dae4b6ce80670cfa238dd9eb842da3ccb252e6fadd6ea8f76f02368182bb44f7d3bbdf1c35dcb1950288608"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "a6f9c7e6eba8b632cc36919d55fd835e388f0c967b0c28eb2781e73b26f60dc44924a87b41a298ed42c3a12094c10bb6f8dbab7cc85839ab08573b576e46ab05"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "73ab1bf0f8efa3f9a7ab49f79d5c7b0cf6f68cfb57eb92bc764947ecd37cf44f5e1587e80b518c39f2b6ecd9d08cfd493949ba1c11b6e27c3f903fcff035e407"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "0e7f2ada861c023519c7676990bab1b292cae75ec21cc5214166530c222cd10f0ab821fcfc15506d0544d6b4af99ff41bf4414385c8172252a33464eac182405"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "642c4555f074bbe31164c8cc48c41ab3771cc9c13ccdf6d5862030bfb86f7dd73bf58bb64fc81ef195a9f9d6bcbef433a03a61726cb5abd5cd993cc0996baf08"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973445,
+            "h": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+            "network": "dmw-mainnet",
+            "p": {
+              "height": 973445,
+              "raw": "0080b02158d8dc9202527de703d599403e55f187f84dd9ed0fe6010000000000000000001ab7b5966267a130bf564aa0f4f1281b1c1e98537e54dbfc12620e80c01a05734cf8e06a93000217874c92df"
+            },
+            "sig": "7dabeda211dfe68b362f5b725751180b0db2d0ecba4e1ae481432657518b0558a4d6efec25518d71f6b447362d1929356301aae99a4e8814cd1257c68596830c",
+            "t": "header",
+            "v": 1,
+            "w": "409"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv45",
+          "value": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1440,
+      "previousHeight": 973445,
+      "height": 973446,
+      "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+      "tip": 973446,
+      "tipHash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+      "confirmed": 973446,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973446,
+        "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "9f0e1dfa0ebb4e68e34d2d6da485d30a3e81d16d1e11805544337f84d932a86d93ed51d142485f5da7503df26f74a4bbec993e33f47ebe00d960e3d1c131d105"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973444,
+          "void": false,
+          "seed": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv46",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1441,
+      "previousHeight": 973446,
+      "height": 973446,
+      "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+      "tip": 973446,
+      "tipHash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+      "confirmed": 973446,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "sequence": 25,
+          "move": "22845a87441974b33857cfc995f7bcf7c923ed61d948a0a042ca65916416eb0e",
+          "sig": "5149dbd69bf3862d4dc9ad26465541a613e43aaba0159c63a5fe4903a0e849a81cc204891d1724f2e98b2deb70285905176a880ed227b3fe4585ec3ed48a550f"
+        }
+      ],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973446,
+        "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+        "count": 1,
+        "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+        "sig": "3e5142179844d2a89430476c2fc8717ab9acb5887c70d085771a8e7610bc63ad197ce8a8436fd54a5240d4e018d90f2270b3ce4c2805e06cff02792f4ac09f00"
+      },
+      "rootAttestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "5ede2f45054bbc0c77f719c92f38118cddf43ba17d55f8ed22634f371da8dfe3a70c4940aaf035088f603fc7200978df42d1caae2218f1ba63e3d6cb22da2702"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "3b0007394ace723cbed5d6b933e9eacdbd5c3ab03c7bc54c4e976967fff8dbb952484bbb31a9dc36e35994ee9ca32b969028e3e67f7dcfc54a65ce9fea80eb00"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "29d3ff8c53d0e4f46e4135ee0d282a6064c7d26fc858e5f89bec188b5fd310978477022bb6e6c33a9a5891f41aba11ee7018380d2f6314b882a42984ed1d580d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "23ccb9c66977905187027d269b0d5451b5b43b10757ac6f4de61077f271d33af431d4dea9e9c30ff0963b2d35cb380ead4030d8fde38e61b870b02edc6098c06"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "7856f7a0642fd1faa514d4d8b39c034174497b558f35f309b4f23684cd3f6feaa01bb08c90c6b19811357b7819761167521e9cffe1af5334b7426cffd67da606"
+        }
+      ],
+      "receiptReference": null,
+      "moves": [
+        {
+          "move": {
+            "a": "38085b808dc53c2f2a9ee667624780a78add19537ce44c6c118927b2934026cd",
+            "b": 973446,
+            "h": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+            "network": "dmw-mainnet",
+            "p": {
+              "height": 973446,
+              "raw": "0040a52247b57dec009b04623fb1c5125fd724fb45dd19ecc910010000000000000000008c6f66ae1b6c8bf064f7b676736135d04945ed6d8194f2e0fbe7b151d2678e013dfae06a9300021788fcd3b9"
+            },
+            "sig": "e3c5f4de99c419354b9c92214f98e38ec971bb133135e1469705d083e2ba0580faf364e87e1c04603957069548d54d74197f834b86bf4ccd8237c35d3b83a109",
+            "t": "header",
+            "v": 1,
+            "w": "3495"
+          },
+          "reason": "accepted"
+        }
+      ],
+      "settlements": [],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv46",
+          "value": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54"
+        }
+      ]
+    },
+    {
+      "v": 4,
+      "observation": 1442,
+      "previousHeight": 973446,
+      "height": 973447,
+      "hash": "000000000000000000009267609987575582685d63a9df28a08ad1647bb2d938",
+      "tip": 973447,
+      "tipHash": "000000000000000000009267609987575582685d63a9df28a08ad1647bb2d938",
+      "confirmed": 973447,
+      "mintOperations": [],
+      "mintOutcomes": [],
+      "linkOperations": [],
+      "linkOutcomes": [],
+      "commissions": [],
+      "receipts": [],
+      "receiptRoot": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973447,
+        "hash": "000000000000000000009267609987575582685d63a9df28a08ad1647bb2d938",
+        "count": 0,
+        "root": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+        "sig": "cfea59af898f121756308787c6cc9d59445cf07fdae3f66ac9c3fcff222e299c351da4d6aa48669aa6e6b52ee6128e5cf4530e56368aa2f148cf6f5a2cfd0200"
+      },
+      "rootAttestations": [],
+      "receiptReference": null,
+      "moves": [],
+      "settlements": [
+        {
+          "winners": [],
+          "claims": [],
+          "rejected": 0,
+          "window": 973445,
+          "void": false,
+          "seed": "000000000000000000009267609987575582685d63a9df28a08ad1647bb2d938",
+          "complete": true,
+          "credited": 0,
+          "total": 0,
+          "headerFinds": 0
+        }
+      ],
+      "discovery": {
+        "work": 4096,
+        "queued": 4,
+        "rejected": []
+      },
+      "discoveries": [],
+      "crafts": [],
+      "ops": [
+        {
+          "op": "kv",
+          "key": "receipt/kv47",
+          "value": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        }
+      ]
+    }
+  ],
+  "certificates": {
+    "973435/00000000000000000001bb593c507aae98323762f1869d5801d267d5ba63729e": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973435,
+        "hash": "00000000000000000001bb593c507aae98323762f1869d5801d267d5ba63729e",
+        "count": 12,
+        "root": "4bb8407ac93833626f523c515920a912e2c9d839b9875570129ecd518e43e9dd",
+        "sig": "0311fcd48a56ed8cc19da7ef52dd823eec763d5f151526ec90e23ebae5231140deec0881fc45aae94d3844ac31ad53a5714532a9cc2d64661743473789f3960d"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973435,
+          "hash": "00000000000000000001bb593c507aae98323762f1869d5801d267d5ba63729e",
+          "root": "4bb8407ac93833626f523c515920a912e2c9d839b9875570129ecd518e43e9dd",
+          "count": 12,
+          "observedTip": 973436,
+          "sig": "bacb330fc262520a4554ca9253bd30729380460ef740b594c6586ce81cc6000c464593d46693766efab249cc743b47f536a8d479aa848a342d261146449fc30c"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973435,
+          "hash": "00000000000000000001bb593c507aae98323762f1869d5801d267d5ba63729e",
+          "root": "4bb8407ac93833626f523c515920a912e2c9d839b9875570129ecd518e43e9dd",
+          "count": 12,
+          "observedTip": 973436,
+          "sig": "00287d584b686fe6141cf828794222e07a4b34e4f9820fddaa28ff05b1dc0086ee4c30cce191154931b247d7279bae6bdcc31c1d5625ff0a45d4e88881481600"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973435,
+          "hash": "00000000000000000001bb593c507aae98323762f1869d5801d267d5ba63729e",
+          "root": "4bb8407ac93833626f523c515920a912e2c9d839b9875570129ecd518e43e9dd",
+          "count": 12,
+          "observedTip": 973436,
+          "sig": "36a49e8101e16dff1bbcf4f81afbd7f775106bbb3bbdcd25c644a2526e92e20c65eee903e38670d7edb401c27698dda47078370bf7cc3fd8fb35a036f4408c0f"
+        }
+      ]
+    },
+    "973437/000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973437,
+        "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+        "count": 2,
+        "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+        "sig": "2f207dd6f9c87273adb9f19c5cecd3439498268c7e082e56df9379a4c700b57fd5a3d68c72d39b5eed02000f69d05630b4bf094200526bfc1f62f4f4c1812102"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973437,
+          "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+          "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+          "count": 2,
+          "observedTip": 973438,
+          "sig": "01fc75f463dc61658859409b4c8f2e4d7454c02994e50fc0d7afcb1d303b3735218a00fbd9d4298e59ab47e48428e59e4afa9fbfe53cbd2612c464dfd9ab5008"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973437,
+          "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+          "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+          "count": 2,
+          "observedTip": 973438,
+          "sig": "8fb14f8c88dbcbd342f8953010f07bbb08df656ab7613e760e3ba96c2c9632efa6e48652cfedf1c0d958d89dc4502a1eece2bfaca48af95809039b3a96fbd20e"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973437,
+          "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+          "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+          "count": 2,
+          "observedTip": 973438,
+          "sig": "1d643afbfaa37ef3e7beb34e687ab60b7cde36391162926425126e6b4ee2090a572d992ed731f475dac51722d4ba21fa2d7e4d554e89e8aff9c72fb2bebcad09"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973437,
+          "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+          "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+          "count": 2,
+          "observedTip": 973438,
+          "sig": "51b5f96da3dee4e5afb3ee029a875e5e7a7a3ecce8a883a58f099f8cc3a358ed23e9ec7225b9f967664999d3783fe5d9658e11cab83fb91b00ff578005574507"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973437,
+          "hash": "000000000000000000002b307cf5dfbdbf905bd064ca1b0fabe8d66b4746b9c0",
+          "root": "3ec0a4bec60524cc8ae437cd0bc06de872a2d7cd7ae87b5546d69d8ffb0eaf68",
+          "count": 2,
+          "observedTip": 973438,
+          "sig": "a8b0c87b1f4e252091c3dbc7dafaf244c553e7ecfefc9675b426caefc5c983aabea920744bf7b36ac71d4c1ca9c235ca6fb720fb56b8f54e9c83c7bf63260600"
+        }
+      ]
+    },
+    "973438/00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973438,
+        "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+        "count": 1,
+        "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+        "sig": "fc4f02c3cbb84f1c9556be1b924a7adddbf537d8b8f3f940393b6aa251214a29af290dc9e2c1b7963c26056892bc9d67002388e51f2150097ed24f86450b360f"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973438,
+          "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+          "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+          "count": 1,
+          "observedTip": 973439,
+          "sig": "9d5d14fc6bab5aefb489485012990716586bab22bdd6914b68009327259eeaf7d7144c9b693432503243c3d448ec3a8f8e366afb21a384e58fb9352dd05d080b"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973438,
+          "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+          "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+          "count": 1,
+          "observedTip": 973439,
+          "sig": "00bac813daffc81a6f04beb60facb50f59cdb7d42321b810158e4d562dacc0d9b904529b77cd75e8074be09b442099569d1c0ddb809c721a4dbdb851d8a59105"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973438,
+          "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+          "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+          "count": 1,
+          "observedTip": 973439,
+          "sig": "c6dea95c0968894670b9f276503d6aaf3ebc3d9690ab23b717168e84b25604c8f49cfe1b6d2d6977418dd0717470aaaec25124c9ddb253644c94523790483c07"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973438,
+          "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+          "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+          "count": 1,
+          "observedTip": 973439,
+          "sig": "fd0a64f37bf99a6b8ffe477301dd19331749c60b71051c9ab98eda0cc5a664d8c82a065379f323ad1e48fdffa1e56667dabf63d75f6e68a382e43ed0d7f1b000"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973438,
+          "hash": "00000000000000000001452f033daaa06638682d7cf0da74afa2e2ae03d1a58f",
+          "root": "cbc37a66de8a81192cfdb70c50ddaaac6b907aed913f0ed7b00ce8756031a3cf",
+          "count": 1,
+          "observedTip": 973439,
+          "sig": "ea64a4eb759a030f4ea96df8387457d7edf3efe1e0a472b1761cbf7d804f5745f81f238ad3bfec886ca52819641ed1a4f437862d0c5fb5b489a939e597dd6b05"
+        }
+      ]
+    },
+    "973439/000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973439,
+        "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+        "count": 1,
+        "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+        "sig": "fc6545db203359aee622e3f45ca0c5b2ae38b69a6f919df9b02c61583384763006fd9f604f4b970130ac285c637d73b6c36fb5414b851f98879cb29c90da7501"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "99b2ec26e03a2b412662048bbb57db11c117adc34bc5512477795712ef7068a4d8be8fe88124e887d7df5ce1dbd78cbc1de73a35a7dbfeffca74e88bac4b4609"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "3109635c0da9464a7619bc11710bcae775a74eb6abdd5dfadd693899416ca35f1ac4f65f0c3a6e94f6a2e9b0dc80726d7e378771beb99d80dfbbb5cad4f8b405"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "52873630d6a2d3519b4c0c1dbfae7cec794de6c39a3e10d8bf7b6142e399028d149b03c297c3a17424f30b1892a504827a73995e773ce855e69d6f41b2f6d400"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "ecb1ecd7e8c2b1a304a9b123454dae8b45737fbec589ee516e8f25776d9e977bfe989f1afb3d96ee86038b2d0a8dbb71cbb1d9ae15ae2b25c622dd4be3263407"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973439,
+          "hash": "000000000000000000007061ed05ad6bdc60cc03d97a472a1fd44553486a32ad",
+          "root": "f616d161282e2fde977eb296a7d8f5279000b257adb08637f11d33fa3f10d971",
+          "count": 1,
+          "observedTip": 973440,
+          "sig": "d5f8330a95ebf8309dd0ca41023682a3856b420f34482c5684beebfe6f1b9798748a38df2786ae1a4b296cceb86070e9d9b992d9729caced82c89c3f186d0504"
+        }
+      ]
+    },
+    "973440/00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973440,
+        "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+        "count": 1,
+        "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+        "sig": "16f094ba54617817e083c2144aacd6657badb92151e4e35ad88f1fec35f50bcf41f7ddb64678a45ae349d4b2a196301e6377607ee34a2eae3e3e615357c95a0d"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "bf85bd21a69eaa40c2ba89fd563f284df73aca2660973e0829c0abd23202a9e8cc715c48f0f6a22df8545ea60ac84c3883d3ce1028a5fce0ac97301632072c05"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "4a3aea401c1d9ca58cf4f648a7a1467ac585cc20721f0fad1310d56b8655abb64469565e54a25c9d7fd5776ca4fb869cf02034c99000538c2a64190dcd6e0608"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "71c510e99e79123f5db2b1fca59d2b0aa6ebc233a81f734d64b4e6c8d0d1ecd4518bd9fc5bd27237d05f5276a885053a04d53eb1f60edbad1e685e93ebe8d902"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "c425c2960470c53d5d3cf001c56e83d199ac1b6d073cfba42288948fd82dfeb16e8ccb0256f30c69c2e4bb3bd82faf7318d1cc1d70fcb1e10baa6abb4449840c"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973440,
+          "hash": "00000000000000000001162179f4b91bdeb359a09c40c757b53d6bc0a85b9502",
+          "root": "d7d419d1a5a455c33d36076db94b7ec8c4b40fa26a38c40fbcd08938ed75ee42",
+          "count": 1,
+          "observedTip": 973441,
+          "sig": "85981fd40d7a376d6ea8ff24d2efcc2a587d3bb9ad4efce69448c128081777fe9c5d6f287926177f880b41c49377b682075ff3fde8d4a24350c14aa9ccd3750e"
+        }
+      ]
+    },
+    "973442/00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973442,
+        "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+        "count": 4,
+        "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+        "sig": "7a4ecda7e3906aa13b799f6d3adcc1ed5cddd66e3415a69d5cd0016edbc1875623d4d1122f8557f6d0081f391568de12135ec417499a0a9993af58692a331f08"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "bd09fb0b09f83c729e2fa80e202e72814e33035e60b57388e773284c786ee345a3d6dc6225c438414a6e19af9a7d7bbb3956bd86cd379298f756a4a76c5d6003"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "fe0c1562e7dd0c5de0a6c909f056486c35ba9424b589367750d9d6f567d0056f43694d1b73eb571bf131cf637be4179c530f77973d2b606a729516611e53ba0d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "0846f40dc37533d2d9ea219b5d2f4b95b6d756574a8f58c9aef2845865e3c8a36503daac606799d68a599424757264ebb52252335ced8bbaa9a747d515a05009"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "e4c23af8f1ce438feffe84b943b27b280213a38d58226910c1c086e00d8f5c6e6067945c2a7211bc7f06c2feb577932e06da1659ca38a3d69480082000f0d80d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973442,
+          "hash": "00000000000000000001d36873a8b779ac692d3473ed1f283396bad1f9943e7b",
+          "root": "8d93294bfb7ed2dcb5e2e4de6885abc8379870d69ccd839dcb3a7555c1507ae2",
+          "count": 4,
+          "observedTip": 973443,
+          "sig": "25bf172346fdf4a6a0e16c3f32e05e2c33f901e12c5a7a5bef308a95e1f1f0d8851bac2fb37f9de3f3d63b78c5e304f89f69a1a00a41978222eb83737a3a100a"
+        }
+      ]
+    },
+    "973443/000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973443,
+        "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+        "count": 1,
+        "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+        "sig": "0543bbfbd2124591754be3895a62b85133e22941a18a62b26f4df50108a2fce5f5d528ae25c11330c9df82b0d6e468c259f6296d6fa1d3426c17860dc393a103"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "2d6e7876dd86dd9ed050217e4efc1e6426c659ccbb10a6323117bf0c8adcb2ae200193dc55d864dea1838a455e15d3d9a07e535ad55f02c541781fd36091730d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "dc67fa045be8ea8ecf06bf1e1b3b31142c6cb2011bc7579ea2f141af290ca209a9218a9d040cec20d2a8229f0bed8db1569f28d8651cb7acdd405b21f42dc801"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "ac9ca894c0cc3d5395b1994101848306e84033140e2539105c5f9593838c910dac1f7339aae9aaf43cf201e11a8ea89504880eaad34c5f1e9f802cc1b7796902"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "2b4952a69f127454fc3c75512b882898e6a62cd045cef8cd67912f1ad76363ab4fcd4f01a071e51f87603b50d27880355ea7f6d80c182f903dcdd7d27838f80a"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973443,
+          "hash": "000000000000000000001de3f6fc8b96ed263ba8c6c0f46ffd31c48c2240eff2",
+          "root": "8fa59693dceab1de681f68bf3ab7a070014e39701d86b81c9dd2ba1b957eb838",
+          "count": 1,
+          "observedTip": 973444,
+          "sig": "ab6f4adea5bdcc911b93b21740356bd0883a514215db4f12e2b1a5f122692a3ad2790d202264a2c6e80695c6fb2af62ed1d061aaa7aa04de04ef016d4842400d"
+        }
+      ]
+    },
+    "973444/00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973444,
+        "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+        "count": 1,
+        "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+        "sig": "1427fdbdfeee23898b2c261bb66e5bc0a121a495a24d23bc7771ec46384bc1d2cf3bcf260564d9b52108e02d0f93e457da0fae344b32fdfeb3a5a629a841810e"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "83c9ef9d7ceb0446944d754ed9eacb16efa8f4495c5a03e58b60be6d0b57cd53ebe8b3462f189586a0156a89cfca842dcfa77089049390bb35629ecb43eb7e0a"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "153f11a21c9feec9958c9ad38bcc4887a88f7f372effa84db0abdd1fd1fdc4aedc64c747ad2d1f3123d2d501bc486ea4341850dad643f469bae278512ca78c0e"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "3585a6dc7aa3676b2daf7b89f5e313bdd23f42960395774d3f4dfb72feeaaa7db0d5ff3b95b66a8870498be969102f2f506e7893495c14ed692aade1f09e3408"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "f990ae7818505ed6acfffff555ddefe3d3823a548c2a42c698c8a7acf7c7bef1e85d1329bd7bfe77c69217311fa8ff06ad816088982d419411f41234040bc60b"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973444,
+          "hash": "00000000000000000001e60fedd94df887f1553e4099d503e77d520292dcd858",
+          "root": "45acae5fd18f5d8a99b3ac505d9ccac5a009c08952c44e28f1cb7a3311cbe7d9",
+          "count": 1,
+          "observedTip": 973445,
+          "sig": "87d5b6787f2fa1b02951268c404955257c1b8889be698042fbccc97cd750af41192e21c54d806a45119db487bec86f82e67c23c22574cae8bdf884deda07430f"
+        }
+      ]
+    },
+    "973445/0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973445,
+        "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+        "count": 1,
+        "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+        "sig": "1ccf1932ec1ceb0ae7688692c5a5a6696b165f47b4938428c19648e5c8b901b190287fc7ab45469487c9b1f1e9c3ea1a4a6916ac0493d539580e26b8c0ee7b02"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "e9bb406fd3aabd7e6d058582dd12a4dad82617135dae4b6ce80670cfa238dd9eb842da3ccb252e6fadd6ea8f76f02368182bb44f7d3bbdf1c35dcb1950288608"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "a6f9c7e6eba8b632cc36919d55fd835e388f0c967b0c28eb2781e73b26f60dc44924a87b41a298ed42c3a12094c10bb6f8dbab7cc85839ab08573b576e46ab05"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "73ab1bf0f8efa3f9a7ab49f79d5c7b0cf6f68cfb57eb92bc764947ecd37cf44f5e1587e80b518c39f2b6ecd9d08cfd493949ba1c11b6e27c3f903fcff035e407"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "0e7f2ada861c023519c7676990bab1b292cae75ec21cc5214166530c222cd10f0ab821fcfc15506d0544d6b4af99ff41bf4414385c8172252a33464eac182405"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973445,
+          "hash": "0000000000000000000110c9ec19dd45fb24d75f12c5b13f62049b00ec7db547",
+          "root": "824e5ca445d3136597556b6cdae1a2da5cfa6cdc4bc809be2462c4350af1744e",
+          "count": 1,
+          "observedTip": 973446,
+          "sig": "642c4555f074bbe31164c8cc48c41ab3771cc9c13ccdf6d5862030bfb86f7dd73bf58bb64fc81ef195a9f9d6bcbef433a03a61726cb5abd5cd993cc0996baf08"
+        }
+      ]
+    },
+    "973446/0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79": {
+      "seal": {
+        "v": 1,
+        "network": "dmw-mainnet",
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "tip": 973446,
+        "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+        "count": 1,
+        "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+        "sig": "3e5142179844d2a89430476c2fc8717ab9acb5887c70d085771a8e7610bc63ad197ce8a8436fd54a5240d4e018d90f2270b3ce4c2805e06cff02792f4ac09f00"
+      },
+      "attestations": [
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator1",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "5ede2f45054bbc0c77f719c92f38118cddf43ba17d55f8ed22634f371da8dfe3a70c4940aaf035088f603fc7200978df42d1caae2218f1ba63e3d6cb22da2702"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator2",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "3b0007394ace723cbed5d6b933e9eacdbd5c3ab03c7bc54c4e976967fff8dbb952484bbb31a9dc36e35994ee9ca32b969028e3e67f7dcfc54a65ce9fea80eb00"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator3",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "29d3ff8c53d0e4f46e4135ee0d282a6064c7d26fc858e5f89bec188b5fd310978477022bb6e6c33a9a5891f41aba11ee7018380d2f6314b882a42984ed1d580d"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator4",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "23ccb9c66977905187027d269b0d5451b5b43b10757ac6f4de61077f271d33af431d4dea9e9c30ff0963b2d35cb380ead4030d8fde38e61b870b02edc6098c06"
+        },
+        {
+          "v": 1,
+          "network": "dmw-mainnet",
+          "signer": "operator5",
+          "tip": 973446,
+          "hash": "0000000000000000000127eee374a08de990a8d76dca63648b1296af2fb4fb79",
+          "root": "4b3af5ae0f853cbb4a49aaa70966bf129992b229f5c2e1b5517a4dad51fa3d54",
+          "count": 1,
+          "observedTip": 973447,
+          "sig": "7856f7a0642fd1faa514d4d8b39c034174497b558f35f309b4f23684cd3f6feaa01bb08c90c6b19811357b7819761167521e9cffe1af5334b7426cffd67da606"
+        }
+      ]
+    }
+  }
+}

@@ -437,10 +437,10 @@ test('empty table discovery, first claim, wallet element/deploy, paid permit and
   await page.exposeBinding('walletCall', async (_, method, args) => {
     if (method === 'requestAccounts' || method === 'getAccounts') return [web.local.address];
     if (method === 'getNetwork') return 'regtest';
-    if (method === 'getPublicKey') return web.local.publicKey;
+    if (method === 'getPublicKey') return hex(secp256k1.getPublicKey(web.key, true));
     if (method === 'getBitcoinUtxos') return (await web.source.utxos()).map(c => ({ txid: c.txid, vout: c.vout, satoshi: Number(c.value), scriptPk: c.script, height: 1, inscriptions: [], isSpent: false }));
     if (method === 'singleTxTransfer') throw Error('No payment before deployment');
-    if (method === 'signPsbt') { psbtSigns++; const tx = btc.Transaction.fromPSBT(unhex(args[0])); tx.sign(web.key); tx.finalize(); return hex(tx.toPSBT(0)); }
+    if (method === 'signPsbt') { psbtSigns++; const tx = btc.Transaction.fromPSBT(unhex(args[0])); assert.deepEqual(args[1], { autoFinalized: true, inputForSigns: Array.from({ length: tx.inputsLength }, (_, index) => ({ index, address: web.local.address })) }); tx.sign(web.key); tx.finalize(); return hex(tx.toPSBT(0)); }
     if (method === 'pushPsbt' || method === 'pushTx') {
       pushes++; const tx = method === 'pushPsbt' ? btc.Transaction.fromPSBT(unhex(args[0])) : btc.Transaction.fromRaw(unhex(args[0]), { allowUnknownInputs: true });
       const result = await web.source.broadcast(tx.hex, tx.id);

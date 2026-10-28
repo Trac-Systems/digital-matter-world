@@ -1,3 +1,4 @@
+import { supportedNode } from '../node-version.mjs';
 import { rules } from './src/rules.mjs';
 import { evidencePublisher } from './prod/evidence.mjs';
 import { createOperator } from './src/operator.mjs';
@@ -24,13 +25,15 @@ import { cachePublicReads } from './src/public-cache.mjs';
 import { createPublicAPI } from './src/public-api.mjs';
 import { diskCheck, check, atomicWrite } from './src/util.mjs';
 import { Bindings } from './src/bindings.mjs';
+import { withBackgroundReads, withClockReads, withPublicReads } from './prod/http.mjs';
 import { WorkerStatus } from './src/worker-status.mjs';
 
 export async function start(config) {
-  check(process.version === 'v23.11.0', 'node_version'); await diskCheck();
+  check(supportedNode(), 'node_version'); await diskCheck();
   const store = await Store.open(config.data), history = new History(store), files = new Files(join(config.data, 'static'));
-  let pipeline, http, adapters, timer, safetyTimer, safetyWork = Promise.resolve(), closed = false, work = Promise.resolve();
-  const close = async () => { if (closed) return; closed = true; clearTimeout(timer); clearTimeout(safetyTimer); await safetyWork.catch(() => {}); await http?.close(); await work.catch(() => {}); await pipeline?.close(); await adapters?.close?.(); await store.close(); };
+  const scheduled = [];
+  let pipeline, http, adapters, timer, closed = false, work = Promise.resolve();
+  const close = async () => { if (closed) return; closed = true; clearTimeout(timer); for (const task of scheduled) clearTimeout(task.timer); await Promise.allSettled(scheduled.map(task => task.work)); await http?.close(); await work.catch(() => {}); await pipeline?.close(); await adapters?.close?.(); await store.close(); };
   try {
     const secret = Buffer.from((await readFile(config.gatewayKey, 'utf8')).trim(), 'hex'); check(secret.length === 32, 'gateway_key');
     const module = await import(pathToFileURL(config.adapter).href);
@@ -59,19 +62,30 @@ export async function start(config) {
     http = await serve({ evidence, web, operator, intake, files, headers, mints, links: adapters.links, publicAPI, bindings, ...config.listen });
     await atomicWrite(join(config.data, 'process.json'), JSON.stringify({ pid: process.pid }));
     const workerStatus = new WorkerStatus(store), recordError = (e, worker) => workerStatus.failed(e, worker);
-    const publicTasks = [['public_status', () => publicCache.status.refresh()], ['public_catalog', () => publicCache.catalog.refresh()],
-      ['public_records', () => publicCache.records.refresh()], ['public_pages', () => publicViews.readIndex.sync()]];
+    const independent = [
+      ['paid_work', async () => { await workerStatus.run('pipeline', () => pipeline.tick()); await workerStatus.run('mints', () => mints?.tick()); }],
+      ['feeds', () => withBackgroundReads(() => feeds.tick())],
+      ['public_reads', () => withPublicReads(() => publicIndex.tick())], ['operator', () => withBackgroundReads(() => operator?.tick())],
+      ['public_catalog', () => withPublicReads(() => publicCache.catalog.refresh())],
+      ['public_records', () => withPublicReads(() => publicCache.records.refresh())], ['public_pages', () => withPublicReads(() => publicViews.readIndex.sync())]
+    ];
+    const schedule = (name, run) => {
+      const task = {}; scheduled.push(task);
+      const tick = async () => { if (closed) return; await workerStatus.run(name, run); if (!closed) task.timer = setTimeout(() => { task.work = tick(); }, config.pollMs ?? 1000); };
+      task.work = tick();
+    };
     const poll = async () => {
       if (closed) return;
       try {
         await diskCheck();
         // Relay before reading observations: a reorg can temporarily leave the
         // contract tip off the source branch, but must not stop header delivery.
-        await adapters.relayHeaders?.(outbox);
+        const clock = await withClockReads(() => adapters.pollClock?.());
+        await adapters.relayHeaders?.(outbox, clock);
         await outbox.tick();
         // The adapter verifies the local chain and provides every intermediate
         // tip, including the actual confirmed height after a reorganization.
-        for await (const observation of await adapters.observations(intake.head)) {
+        for await (const observation of await adapters.observations(intake.head, clock)) {
           check(observation.chain === (config.mode === 'prod' ? 'main' : 'regtest'), 'configured_chain_required');
           const sealed = await intake.observe(observation);
           if (sealed) await files.json(`receipts/${sealed.id}.json`, sealed.receiptRoot, { immutable: true });
@@ -80,15 +94,14 @@ export async function start(config) {
         }
         await adapters.afterObserve?.(intake);
         await workerStatus.succeeded('observations');
-        for (const [name, task] of [['pipeline', () => pipeline.tick()], ['outbox', () => outbox.tick()], ['mints', () => mints?.tick()], ['feeds', () => feeds.tick()], ['public_reads', () => publicIndex.tick()], ['operator', () => operator?.tick()]]) { try { await task(); await workerStatus.succeeded(name); } catch (e) { await recordError(e, name); } }
+        await workerStatus.run('public_status', () => publicCache.status.refresh(clock));
       } catch (e) {
         await recordError(e, 'observations');
+        publicCache.status.error = e;
       }
-      // Refresh even when observation processing or public audit replay failed.
-      // Each projection fails independently, so a catalog error cannot stall status.
-      for (const [name, task] of publicTasks) await workerStatus.run(name, task);
       if (!closed) timer = setTimeout(() => { work = poll(); }, config.pollMs ?? 1000);
     };
+    for (const [name, run] of independent) schedule(name, run);
     work = poll(); return { ...http, close, intake, pipeline, mints, adapters, store, operator };
   } catch (e) { await close(); throw e; }
 }

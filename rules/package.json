@@ -12,5 +12,5 @@
     "simulate": "node scripts/simulate.mjs"
   },
   "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0", "@scure/btc-signer": "1.8.1" },
-  "engines": { "node": ">=23.11.0" }
+  "engines": { "node": ">=24.22.1 <25" }
 }

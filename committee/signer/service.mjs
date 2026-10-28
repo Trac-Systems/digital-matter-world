@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Policy } from './policy.mjs';
 import { Journal } from './journal.mjs';
-import { canonicalJSON, check, isHex, safeEqual, seal } from './crypto.mjs';
+import { canonicalJSON, check, isHex, safeEqual, seal, sha256 } from './crypto.mjs';
+import { signerError } from './errors.mjs';
 import { attestMintResult, verifyMintCertificate, verifyMintResult } from './certificate.mjs';
 import { rpc } from '../tss.mjs';
 import { rules } from './adapter.mjs';
@@ -36,7 +37,7 @@ export async function createSigner(config, secrets, reads) {
       await rpc(config.sidecar, secrets.sidecarToken, '/abort');
     }
     reads.verifyPayoutSnapshot = (snapshot, payouts) => verifyPayoutSnapshot(snapshot, payouts, { bindings: reads.bindings, journal });
-    replay = new BatchReplay(); await replay.ready;
+    replay = new BatchReplay({ timeoutMs: config.replayTimeoutMs }); await replay.ready;
     const policy = new Policy({ network: config.network, publicKey: status.public, reads, escrow: config.escrow, replayBatch: (...args) => replay.run(...args),
       authorizedMint: async id => {
         const prior = journal.slots.get(`mint/request/${id}`);
@@ -54,9 +55,19 @@ export async function createSigner(config, secrets, reads) {
       return details;
     };
     let active = null, queue = Promise.resolve(), closed = false;
+    const uncertainPreparations = new Set();
     const perform = async (path, body) => {
       check(!closed, 'signer_closed');
       if (path === '/health') return { id: config.id, network: config.network, publicKey: status.public, epoch: config.epoch };
+      if (path === '/batch-ready') {
+        const counted = await reads.counted(), clock = await reads.tip();
+        return { id: config.id, network: config.network, epoch: config.epoch, counted, tip: clock.tip };
+      }
+      if (path === '/preparation-state') {
+        check(isHex(body.id), 'ceremony_id');
+        const reserved = uncertainPreparations.has(body.id) || journal.records.some(r => r.type === 'reserve' && r.session === body.id);
+        return { id: body.id, reserved, retired: journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id) };
+      }
       if (!['/health', '/status', '/relay', '/round', '/abort', '/finish'].includes(path)) await reads.refreshEvidence?.();
       if (path === '/attest-deployment') return operatorAttestation(config, secrets.identity, status.public, body.challenge);
       if (path === '/attest-roster') {
@@ -97,7 +108,7 @@ export async function createSigner(config, secrets, reads) {
         check(body.network === config.network && isHex(body.id), 'ceremony_id');
         // Serialize with prepare and durably fence late requests. An absent
         // status alone cannot prove a timed-out preparation will never reserve.
-        check(!journal.records.some(r => r.type === 'reserve' && r.session === body.id), 'ceremony_reserved');
+        check(!uncertainPreparations.has(body.id) && !journal.records.some(r => r.type === 'reserve' && r.session === body.id), 'ceremony_reserved');
         if (!journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id))
           await journal.append('retired-preparation', { session: body.id });
         return { id: body.id, status: 'retired-unprepared' };
@@ -119,7 +130,7 @@ export async function createSigner(config, secrets, reads) {
         check(ceremony?.epoch === config.epoch && isHex(ceremony.id) && Array.isArray(ceremony.peers) && ceremony.peers.length === 3 && ceremony.peers.some(p => p.id === config.id) && new Set(ceremony.peers.map(p => p.id)).size === 3, 'ceremony_members');
         check(ceremony.peers.every(p => config.members.some(m => canonicalJSON(p) === canonicalJSON(m))), 'ceremony_roster');
         check(!journal.records.some(r => r.type === 'retired-preparation' && r.session === ceremony.id), 'ceremony_retired');
-        check(!journal.records.some(r => r.type === 'reserve' && r.session === ceremony.id), 'ceremony_reused');
+        check(!uncertainPreparations.has(ceremony.id) && !journal.records.some(r => r.type === 'reserve' && r.session === ceremony.id), 'ceremony_reused');
         let approval;
         approval = await policy.approve(body.proposal);
         if (approval.batch) for (const [slot, old] of journal.slots) {
@@ -135,7 +146,11 @@ export async function createSigner(config, secrets, reads) {
           check(result, 'permit_recovery_required');
           return { id: saved.session, digest: saved.digest, recovered: true };
         }
+        // A write/sync error is ambiguous even if the in-memory journal was
+        // not updated. Only a successful journal reload can resolve it.
+        uncertainPreparations.add(ceremony.id);
         await journal.reserve(approval.slots, approval.digest, ceremony.id, approval.details);
+        uncertainPreparations.delete(ceremony.id);
         const peers = config.thresholdMembers ? ceremony.peers.map(p => { const member = config.thresholdMembers.find(m => m.signer === p.id); check(member, 'threshold_roster'); return member.peer; }) : ceremony.peers;
         const start = { id: ceremony.id, kind: 'sign', network: config.network, epoch: config.tssEpoch ?? config.epoch, digest: approval.digest, peers, newPeers: [], timeout: 180 };
         await rpc(config.sidecar, secrets.sidecarToken, '/prepare', start);
@@ -176,7 +191,29 @@ export async function createSigner(config, secrets, reads) {
       if (path === '/abort') { check(active?.id === body.id, 'ceremony_id'); await rpc(config.sidecar, secrets.sidecarToken, '/abort'); await journal.append('aborted', { session: body.id, reason: 'operator_abort' }); active = null; return { ok: true }; }
       throw Error('route');
     };
-    const handle = (path, body) => { const result = queue.then(() => perform(path, body)); queue = result.catch(() => {}); return result; };
+    const handle = (path, body) => {
+      const result = queue.then(async () => {
+        try {
+          const result = await (reads.withAction ? reads.withAction(() => perform(path, body)) : perform(path, body));
+          if (path === '/status') {
+            const reservation = journal.records.findLast(r => r.type === 'reserve' && r.session === body.id);
+            return { ...result, id: body.id, ...(reservation ? { digest: reservation.digest } : {}) };
+          }
+          return result;
+        }
+        catch (error) {
+          // Still inside the serialized request: a failed sidecar call AFTER
+          // reserve must never receive a no-reservation proof.
+          delete error.unreserved;
+          if (path === '/prepare' && isHex(body?.ceremony?.id) && body.proposal
+            && !uncertainPreparations.has(body.ceremony.id) && !journal.records.some(r => r.type === 'reserve' && r.session === body.ceremony.id)
+            && !journal.records.some(r => r.type === 'retired-preparation' && r.session === body.ceremony.id))
+            error.unreserved = { id: body.ceremony.id, proposalHash: sha256(JSON.stringify(body.proposal)) };
+          throw error;
+        }
+      });
+      queue = result.catch(() => {}); return result;
+    };
     return { handle, async close() { closed = true; await queue; if (active) await rpc(config.sidecar, secrets.sidecarToken, '/abort').catch(() => {}); await replay.close(); await journal.close(); await lock.close(); await unlink(lockPath); } };
   } catch (error) { await replay?.close(); await journal?.close(); await lock.close(); await unlink(lockPath); throw error; }
 }
@@ -197,7 +234,7 @@ export async function serveSigner(configPath) {
       for await (const chunk of req) { length += chunk.length; check(length <= 4 << 20, 'body_limit'); chunks.push(chunk); }
       const body = JSON.parse(Buffer.concat(chunks).toString());
       const result = await signer.handle(req.url, body); res.end(JSON.stringify(result));
-    } catch (error) { res.statusCode = error.message === 'authentication' ? 403 : 409; res.end(JSON.stringify({ error: error.message })); }
+    } catch (error) { res.statusCode = error.message === 'authentication' ? 403 : 409; res.end(JSON.stringify(signerError(error))); }
   });
   server.requestTimeout = 30000; server.headersTimeout = 5000; server.maxConnections = 32;
   const [host, port] = config.listen.split(':');

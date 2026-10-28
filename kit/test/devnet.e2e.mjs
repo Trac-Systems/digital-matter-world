@@ -25,7 +25,7 @@ import { diskSpace } from '../lib/check.mjs';
 import { temp, cleanup } from './helpers.mjs';
 
 test('local Trac/MSB, gateway and kit: own-account TNK, transfer, craft and mint', { timeout: 120000 }, async t => {
-  await diskSpace(); const dir = await temp(t);
+  const dir = await temp(t); await diskSpace(join(dir, 'peers'), 0);
   await writeFile(join(dir, 'process.json'), JSON.stringify({ pid: process.pid, purpose: 'local-kit-devnet' }));
   const local = await localNetwork({ directory: join(dir, 'peers') }); cleanup(t, () => local.close());
   const validator = await local.msb(), bus = await local.client(validator);

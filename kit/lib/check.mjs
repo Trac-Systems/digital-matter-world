@@ -34,9 +34,17 @@ export async function atomicWrite(path, bytes) {
   const parent = await open(dirname(resolve(path)), 'r');
   try { await parent.sync(); } finally { await parent.close(); }
 }
-export async function diskSpace() {
-  const stat = await statfs('/');
-  check(BigInt(stat.bavail) * BigInt(stat.bsize) >= 100000000000n, 'Less than 100 GB free disk space');
+export async function diskSpace(output, expectedBytes, { statfsImpl = statfs } = {}) {
+  check(typeof output === 'string' && output.length > 0 && integer(expectedBytes), 'Expected output path and write size');
+  const directory = dirname(resolve(output));
+  const stat = await statfsImpl(directory, { bigint: true });
+  const available = BigInt(stat.bavail) * BigInt(stat.bsize);
+  // Budget the additional files at their peak, plus 10% and 512 MiB for
+  // metadata and concurrent activity. Never demand a node-sized startup disk.
+  const needed = (BigInt(expectedBytes) * 11n + 9n) / 10n + 512n * 1024n * 1024n;
+  const mib = bytes => `${(bytes + 1048575n) / 1048576n} MiB`;
+  check(available >= needed, `Not enough free disk space in ${directory}: need ${mib(needed)}, available ${mib(available)} for ${resolve(output)}`);
+  return { directory, needed, available };
 }
 export function localOrigin(value) {
   let u; try { u = new URL(value); } catch { throw new Error('Invalid local endpoint'); }

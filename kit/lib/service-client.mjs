@@ -2,7 +2,7 @@ import { validateTracAddress, publicIdentities } from '../../rules/src/trac-addr
 import { stableJSON, decodeBinary, verifyReceiptRoot, verifyReceipt, verifyRootAttestations, verifyMerkle, moveId, claimWindow } from '../../rules/src/index.js';
 import { check, gatewayOrigin, hex32, integer, sha256 } from './check.mjs';
 import { presentRead, readQuery, publicRoute } from './reads.mjs';
-import { serviceError, safeCode } from './errors.mjs';
+import { serviceError, safeCode, isMoveRefusal } from './errors.mjs';
 
 // All gateway HTTP routes live here. No private key or wallet enters this client.
 export class ServiceClient {
@@ -48,7 +48,8 @@ export class ServiceClient {
     const bytes = Buffer.concat(chunks);
     if (!response.ok) {
       let code; try { const body = JSON.parse(bytes); code = body.code ?? body.error; } catch {}
-      throw failure(safeCode(code, 'http_error'), 'request refused', response.status);
+      const refusedBeforeAcceptance = method === 'POST' && path === '/moves' && isMoveRefusal(response.status, code);
+      throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance), { refusedBeforeAcceptance });
     }
     if (binary) return bytes;
     try { return JSON.parse(bytes); }

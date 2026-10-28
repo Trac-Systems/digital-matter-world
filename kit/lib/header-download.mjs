@@ -68,6 +68,7 @@ async function gzipTransfer({ partial, manifest, source, signal, onProgress }) {
     if (saved.path === descriptor.path && saved.sha256 === descriptor.sha256 && saved.bytes === descriptor.bytes) offset = (await stat(path)).size;
   } catch (e) { absent(e); }
   check(offset <= descriptor.bytes, 'Partial compressed header file exceeds manifest');
+  await diskSpace(partial, descriptor.bytes - offset + manifest.bytes);
   await atomicWrite(metadata, JSON.stringify(descriptor));
   const progress = bytes => onProgress({ phase: 'downloading', count: Math.floor(manifest.count * bytes / descriptor.bytes), target: manifest.count, bytes, totalBytes: descriptor.bytes });
   progress(offset);
@@ -92,7 +93,7 @@ export async function downloadArchive({ output, source, independent, network = '
   check(['mainnet', 'regtest'].includes(network), 'Invalid header network');
   check(network !== 'mainnet' || typeof independent?.hash === 'function', 'An independent mainnet tip source is required');
   check(!source.origin || !independent?.origin || source.origin !== independent.origin, 'Use a different origin for the independent tip source');
-  await diskSpace(); signal?.throwIfAborted();
+  signal?.throwIfAborted();
   const path = resolve(output), partial = path + '.part', metadata = partial + '.json';
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const unlock = await lock(path + '.lock');
@@ -125,6 +126,8 @@ export async function downloadArchive({ output, source, independent, network = '
       if (saved.path !== manifest.path && (saved.height > manifest.height || await source.hash(saved.height, { signal }) !== saved.tip)) offset = 0;
     } else offset = 0;
     let transferredBytes = 0, compressed = false;
+    if (offset || done || !manifest.gzip || !preferGzip)
+      await diskSpace(partial, offset ? manifest.bytes - offset : Math.max(manifest.bytes, done?.bytes.length ?? 0));
     if (!offset && !done && manifest.gzip && preferGzip) {
       compressed = true;
       transferredBytes = await gzipTransfer({ partial, manifest, source, signal, onProgress }); offset = manifest.bytes;

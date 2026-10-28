@@ -5,16 +5,12 @@ import { localReads } from './reads.mjs';
 import { MintOperations } from '../src/operations.mjs';
 import { ethereumPayments } from '../src/ethereum.mjs';
 import { check, atomicWrite } from '../src/util.mjs';
-import { FeeQuotes } from '../src/fees.mjs';
+import { FeeQuotes, issueFeeTerms } from '../src/fees.mjs';
 
 export async function createAdapters({ config, store, history }) {
   const reads = await localReads(config, store), { client, trac, ethRPC } = reads;
   if (config.gatewayKey) reads.feeQuotes = new FeeQuotes({ network: config.network, secret: Buffer.from((await readFile(config.gatewayKey, 'utf8')).trim(), 'hex'), registry: reads.registry });
-  const feeTerms = kind => async (id, until, counted) => {
-    const policy = (await reads.registry())[kind]; check(policy, kind + '_unconfigured');
-    const scope = `${kind}/${id}`, quote = await reads.feeQuotes.issue(scope, counted);
-    return { ...policy, baseFee: quote.baseFee, feeAuthorization: await reads.feeQuotes.accept(quote, scope, id, until, counted) };
-  };
+  const feeTerms = kind => (id, until, counted) => issueFeeTerms(reads, kind, id, until, counted);
   await mkdir(config.local.contexts, { recursive: true, mode: 0o700 });
   const operations = new MintOperations({ store, network: config.network, reads });
   const eth = ethereumPayments({ rpc: ethRPC, escrow: config.local.escrow });

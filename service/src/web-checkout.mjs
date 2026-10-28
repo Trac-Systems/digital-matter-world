@@ -2,7 +2,7 @@ import { createPublicKey, verify } from 'node:crypto';
 import { check, serial } from './util.mjs';
 import { rules } from './rules.mjs';
 import { publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
-import { verifyBip322Simple, payoutAddress } from '../../rules/src/payout-bindings.mjs';
+import { verifyTapMessage, payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { calldata, TYPES, expectedEscrowSplit, escrowSplitForItems } from '../../committee/signer/escrow.mjs';
 import { publicMint } from './mints.mjs';
 import { createRecordHighlights } from './web-records.mjs';
@@ -52,7 +52,7 @@ export class WebCheckout {
   prepareLink(id, { paymentHash, walletSignature }) { return this.gate(async () => {
     const saved = this.intents.get('webLinkIntents', id); check(saved, 'request_not_found', 404);
     check(rules.hex(paymentHash, 32), 'payment_hash');
-    verifyBip322Simple(linkWalletMessage(this.target.network, id, paymentHash), saved.body.payer, walletSignature, this.target.bitcoinNetwork);
+    verifyTapMessage(linkWalletMessage(this.target.network, id, paymentHash), saved.body.payer, walletSignature, this.target.bitcoinNetwork);
     const holder = await this.reads.bitmap(saved.body.request.height);
     check(holder.agent === saved.body.request.owner && holder.address === saved.body.payer, 'link_owner');
     check(!saved.paymentHash || saved.paymentHash === paymentHash, 'link_terms_conflict', 409);
@@ -60,6 +60,26 @@ export class WebCheckout {
     if (!saved.paymentHash) await this.intents.put('webLinkIntents', id, { ...saved, paymentHash });
     return this.post('/link/request', { ...saved.body, paymentHash });
   }); }
+  async linkLock(id, paymentId) {
+    check(rules.hex(id, 32) && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*):0$/.test(paymentId ?? ''), 'payment_request');
+    const row = this.store.get('linkIntents', id); check(row, 'request_not_found', 404);
+    let payment;
+    try { payment = await this.reads.linkLockPayment({ ...row, id, paymentId }); }
+    catch (error) {
+      if (['payment_lock_missing', 'payment_unconfirmed', 'payment_consume_unconfirmed'].includes(error.message)) return { ready: false };
+      throw error;
+    }
+    const price = rules.feeFor('link', row.terms.baseFee, 1, row.terms.feeSettings), split = rules.splitFee(price, { kind: 'link' });
+    check(payment.id === paymentId && payment.requestId === id && payment.payer === row.terms.payer && payment.kind === 'tap' &&
+      payment.tick === 'tap' && payment.lockKind === 'htlc' && payment.conditionType === 'hashlock' && payment.hash === row.terms.hash &&
+      payment.refund === row.terms.payer && payment.claim === row.terms.treasury && payment.total === price && payment.base === split.treasury &&
+      rules.stableJSON(payment.allocations) === rules.stableJSON(rules.tapPaymentAllocations(split, {}, 'link', this.target.bitcoinNetwork)) &&
+      payment.refundAfter === (row.refundAfter ?? row.request.until + 144), 'link_tap');
+    check(Number.isSafeInteger(payment.confirmations) && payment.confirmations >= 1 && typeof payment.consumed === 'boolean' &&
+      Number.isSafeInteger(payment.verifiedHeight) && payment.verifiedHeight >= 0 && payment.verifiedHeight <= row.request.until &&
+      Number.isSafeInteger(payment.eventIndex) && payment.eventIndex >= 0, 'link_payment');
+    return { ready: !payment.consumed, consumed: payment.consumed, paymentId };
+  }
   async plan(type, id) {
     check(['mint', 'link'].includes(type) && rules.hex(id, 32), 'payment_request');
     const row = this.store.get(type === 'mint' ? 'mints' : type + 'Intents', id);
@@ -76,13 +96,13 @@ export class WebCheckout {
     if (mint) { state = row.state; payment = row.paymentId; }
     else { state = this.store.get('linkStatus', id)?.state ?? 'waiting_payment'; payment = this.store.get('linkRequests', id)?.paymentId; }
     if (state === 'waiting_payment' && counted > (mint ? row.expiry : row.request.until)) state = 'expired';
-    const quote = mint ? row.quote : { price: rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), baseFee: row.terms.baseFee,
+    const quote = mint ? row.quote : { price: rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), baseFee: row.terms.baseFee, feeSettings: row.terms.feeSettings ?? rules.FEE_DEFAULTS,
       destinations: { treasury: row.terms.treasury }, split: rules.splitFee(rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), { kind: type }) };
     const payer = mint ? row.payer : row.terms.payer, refundAfter = mint ? row.expiry + 144 : row.refundAfter ?? row.request.until + 144;
     const plan = { id, type, kind, state, payer, owner: row.request.owner, receiver: row.receiver ?? null,
       asset: row.request.asset ?? null, block: row.request.block ?? row.request.height ?? null, amount: row.request.amount ?? null,
       target: this.target, counted, deadline: mint ? row.expiry : row.request.until, refundAfter,
-      price: quote.price, baseFee: quote.baseFee, unit: rules.TAP_UNIT, split: quote.split, destinations: quote.destinations,
+      price: quote.price, baseFee: quote.baseFee, feeSettings: quote.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, split: quote.split, destinations: quote.destinations,
       payment: payment ?? null, inscription: row.observation?.inscription ?? null, reason: row.reason ?? null,
       networkFee: mint ? { address: row.networkFeeAddress, sats: quote.networkFeeSats } : null,
       submit: `/${type}/payment`, walletPreparation: false };
@@ -92,7 +112,7 @@ export class WebCheckout {
       plan.redeem = { items: row.kind === 'tap' && !plan.blocked.length ? rules.walletFeeItems(plan.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] };
     } else if (kind === 'tap' && row.terms.hash) {
       plan.redeem = { items: [], data: id, actions: [rules.tapPaymentLock({ split: quote.split, destinations: quote.destinations,
-        payer, hash: row.terms.hash, expiry: refundAfter, kind: type })] };
+        payer, hash: row.terms.hash, expiry: refundAfter, kind: type, bitcoinNetwork: this.target.bitcoinNetwork })] };
     }
     if (kind === 'ethereum') {
       const eth = this.target.ethereum, depositFees = row.payment?.depositFees ?? quote.fees;

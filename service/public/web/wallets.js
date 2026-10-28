@@ -1,3 +1,4 @@
+import { ensureTapAuthority, tapOrderResult, requireAuthorityAPI } from '../../../kit/lib/tap-wallet-actions.mjs';
 export const wait = ms => new Promise(r => setTimeout(r, ms));
 export const hex = bytes => Array.from(bytes, n => n.toString(16).padStart(2, '0')).join('');
 export async function sha256(bytes) { return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))); }
@@ -13,7 +14,7 @@ export async function tapAccount(target, expected) {
   const network = await tap.getNetwork();
   if (network !== target.bitcoinNetwork) await tap.switchNetwork(target.bitcoinNetwork);
   if (await tap.getNetwork() !== target.bitcoinNetwork) fail('Switch TAP wallet to Bitcoin, then try again.');
-  const accounts = await tap.requestAccounts(), address = accounts[0];
+  const accounts = await tap.requestAccounts(), address = accounts?.[0];
   if (!(target.bitcoinNetwork === 'regtest' ? /^bcrt1p/ : /^bc1p/).test(address ?? '')) fail('Select a Bitcoin Taproot wallet.');
   if (expected && address !== expected) fail('Select the TAP payer wallet shown in this request.');
   return { tap, address };
@@ -45,37 +46,31 @@ export async function receipt(eth, tx) {
   }
   fail('Transaction is still pending. Resume to check it again.');
 }
-export async function orderResult(tap, result) {
-  if (/^[0-9a-f]{64}i\d+$/.test(result?.inscriptionId ?? '') && !result.pending) return result.inscriptionId;
-  if (!result?.orderId) fail('Wallet did not return an inscription order. Inspect the wallet before retrying.');
-  for (let i = 0; i < 90; i++) {
-    const r = await tap.getTapActionOrderResult(result.orderId);
-    if (/^[0-9a-f]{64}i\d+$/.test(r?.inscriptionId ?? '') && !r.pending) return r.inscriptionId;
-    await wait(2000);
+export const orderResult = tapOrderResult;
+// TAP Wallet 1.0.48 exposes these APIs. Older providers may lack them.
+// Do not substitute singleTxTransfer: it cannot encode locks or claims.
+export function requireTapActions(tap) {
+  if (typeof tap?.redeemTapActions !== 'function') {
+    fail('This TAP Wallet cannot pay Bitmap links: it does not support TAP locks and releases. No payment was sent.');
   }
-  fail('Inscription order is pending. Resume after it confirms.');
+  requireAuthorityAPI(tap);
 }
 // Durable per-step checkpoints avoid resending after cancellation or a reload.
 // An unresolved provider call is deliberately not silently retried.
 export class WalletJournal {
   constructor(key) { this.key = 'dmw-web-v1/' + key; this.data = JSON.parse(localStorage.getItem(this.key) ?? '{}'); this.save(); }
   save() { localStorage.setItem(this.key, JSON.stringify(this.data)); }
-  async step(name, action) {
+  getStep(name) { return this.data[name]; }
+  async step(name, action, { definitelyNotSent = () => false } = {}) {
     const old = this.data[name];
     if (old?.state === 'done') return old.result;
     if (old?.state === 'sending') fail('Wallet response was interrupted. Inspect the wallet transaction before any new payment.');
     this.data[name] = { state: 'sending' }; this.save();
     try { const result = await action(); this.data[name] = { state: 'done', result }; this.save(); return result; }
-    catch (e) { if (e.code === 4001) { delete this.data[name]; this.save(); } throw e; }
+    catch (e) { if (definitelyNotSent(e)) { delete this.data[name]; this.save(); } throw e; }
   }
 }
-export async function authority(tap, address, journal, notify) {
-  let active = await tap.getCurrentAuthority();
-  if (/^[0-9a-f]{64}i\d+$/.test(active?.ins ?? '') && Array.isArray(active.auth) && (!active.auth.length || active.auth.includes('tap'))) return active.ins;
-  notify('Approve a TAP authority, then its activation in your wallet.');
-  const order = await journal.step('authority-order', () => tap.createTapAuthority('tap'));
-  const ins = await orderResult(tap, order);
-  await journal.step('authority-activation', () => tap.sendInscription(address, ins));
-  for (let i = 0; i < 90; i++) { active = await tap.getCurrentAuthority(); if (active?.ins === ins) return ins; await wait(2000); }
-  fail('Authority activation is pending. Resume after confirmation.');
+export async function authority(tap, address, journal, notify, checkAccount) {
+  requireTapActions(tap);
+  return ensureTapAuthority(tap, address, journal, { notify, checkAccount });
 }

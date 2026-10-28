@@ -10,7 +10,12 @@ export const BUILD = resolve(process.env.DMW_BUILD_ROOT || resolve(ROOT, '../bui
 export const DATA = `${BUILD}/data`;
 export const CURRENT = `${DATA}/current.json`;
 export const ORD = `${BUILD}/target/release/ord`;
-export const PORTS = Object.freeze({ bitcoin: 18443, ord: 55888, gateway: 55999, ethereum: 58545 });
+const portBase = process.env.DMW_LOCAL_PORT_BASE;
+if (portBase !== undefined && (!/^\d+$/.test(portBase) || Number(portBase) < 1024 || Number(portBase) > 65532))
+  throw new Error('DMW_LOCAL_PORT_BASE must be an integer from 1024 through 65532');
+export const PORTS = Object.freeze(portBase === undefined
+  ? { bitcoin: 18443, ord: 55888, gateway: 55999, ethereum: 58545 }
+  : { bitcoin: Number(portBase), ord: Number(portBase) + 1, gateway: Number(portBase) + 2, ethereum: Number(portBase) + 3 });
 export const run = promisify(execFile);
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const jsonFile = async path => JSON.parse(await readFile(path, 'utf8'));

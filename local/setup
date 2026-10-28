@@ -3,7 +3,7 @@ set -euo pipefail
 local_dir=$(cd "$(dirname "$0")" && pwd)
 build=${DMW_BUILD_ROOT:-"$(cd "$(dirname "$0")/../.." && pwd)/build"}
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 export npm_config_cache="$build/npm-cache"
 df -h /

@@ -313,7 +313,7 @@ From the repository root, after the [local setup](../README.md):
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node --test local/test/*.test.mjs
 ```

@@ -1,6 +1,6 @@
 # Pay-first verification
 
-Use Node 23.11.0 and installed lockfile dependencies to verify the player-paid
+Use Node 24.22.1 and installed lockfile dependencies to verify the player-paid
 protocol on isolated local chains.
 
 Run these suites with unused loopback ports and disposable state:

@@ -1,3 +1,4 @@
+import { supportedNode } from '../node-version.mjs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -27,9 +28,9 @@ export async function preflight(target, { fetchEndpoint = endpoint, ...options }
   }
   const t = target;
   await check('Local tools and disk', async () => {
-    need(process.version === 'v23.11.0', 'Node version'); await diskCheck(t.paths.output);
-    return 'Node 23.11.0 and at least 100 GiB free in the existing build workspace.';
-  }, 'Use Node 23.11.0 and keep at least 100 GiB free; do not wipe the running playground.');
+    need(supportedNode(), 'Node version'); await diskCheck(t.paths.output);
+    return 'Node 24.22.1 and at least 100 GiB free in the existing build workspace.';
+  }, 'Use Node 24.22.1 or newer 24.x and keep at least 100 GiB free; do not wipe the running playground.');
   await check('Local chain, fee and quorum policy', () => {
     need(t.bitcoin.chain === 'regtest' && t.ethereum.chainId === '31337' && t.ethereum.signing === 'unlocked-local', 'chain');
     need(/^[a-zA-Z0-9._:-]{1,96}$/.test(t.network) && t.committee.threshold === 3 && t.committee.epoch === 1, 'policy');

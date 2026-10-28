@@ -5,9 +5,9 @@ import { check, heightKey } from '../src/util.mjs';
 // that have not yet accumulated enough work to become the contract's best chain.
 export class HeaderRelay {
   constructor({ reads, store }) { Object.assign(this, { reads, store }); }
-  async tick(outbox) {
+  async tick(outbox, observation) {
     const { client, views, trac } = this.reads;
-    const tip = await client.tip(), branch = await views.view(tip.height, tip.hash);
+    const tip = observation ? { height: observation.tip, hash: observation.tipHash } : await client.tip(), branch = observation?.branch ?? await views.view(tip.height, tip.hash);
     const head = await trac('head'), { beacon } = await trac('deployment');
     check(branch.hashAt(beacon.checkpoint.height) === beacon.checkpoint.hash, 'bitcoin_relay_checkpoint');
     const floor = Math.max(beacon.checkpoint.height, head.counted - Math.max(beacon.params.interval, beacon.params.branchDepth, beacon.params.confirmations));

@@ -9,7 +9,7 @@ fixed-format requirements before choosing launch identities.
 
 ## Run locally
 
-Use Node 23.11.0. The dependency lock preserves the tested RESET dependency graph,
+Use Node 24.22.1. The dependency lock preserves the tested RESET dependency graph,
 including these exact source commits:
 
 - trac-peer: `2e6f458cb1baa075bc52230c6eb9a3a349d91421`
@@ -18,7 +18,7 @@ including these exact source commits:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 cd contract
 npm ci

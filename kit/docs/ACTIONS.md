@@ -30,6 +30,7 @@ dashes or underscores; preserve it with the same intent for retries.
 | `post_header` | `{height?}`; defaults to the current tip; verifies the header and its open window |
 | `propose_pattern` | `{actionId,proposal:{name,pat,fld,dt}}` |
 | `reveal_pattern` | `{actionId,publication?}`; same discovery action ID |
+| `recover_refused_reveal` | `{actionId,move,status:429,code:"reveal_capacity",confirmOriginalRefusal:true}`; record a known original refusal from an older kit, without sending |
 | `verify_claim` | `{window,publication?}`; requires the claim in this key's journal |
 | `craft` | `{actionId,recipe:"fusion"|"resonance",inputs:[[asset,amount],...]}` |
 | `pay_mint` | `{id,maxFeeSats,feeRate?}`; local token-auth fee payment; dry-run unless launched live |
@@ -323,6 +324,7 @@ and `reconciliationPending`; a witnessed audit outcome is not a contract proof.
 | `prepared` | Exact intent/packet saved before sending |
 | `sending` | A send was started; reconcile if interrupted |
 | `unknown` | No conclusive reply; retain the exact action ID and signed packet |
+| `refused` | Gateway definitely refused before acceptance; retry the same action ID and intent with a fresh packet; old packets and refusal records remain in the journal |
 | `received` | Gateway receipt saved; inclusion and outcome still need verification |
 | `submitted` | Transaction or payment request acknowledged, not necessarily accepted, paid or complete |
 | `accepted`, `rejected` | Public audit, discovery evaluation or transaction outcome reconciled by `status`; `outcome` identifies the source |
@@ -370,6 +372,47 @@ at their own expense. The service never inscribes or pays their Bitcoin fees.
 If an unpaid reservation expired before a late payment, the server re-reserves
 available units or credits that payer on the same rail for the next quote.
 Payments are not refunded by us. Keep the original request ID for reconciliation.
+
+### Recover an old refused reveal
+
+New kits record a complete, recognized refusal (including HTTP 429
+`reveal_capacity`) separately from an uncertain send. Wait for the next Bitcoin
+block, then repeat `reveal_pattern` with the **original action ID**. It rechecks
+the commitment, witnessed reveal window and current history before signing a
+fresh packet for the same proposal and salt. Received or final actions are
+never refreshed. A timeout, generic HTTP failure or lost response stays
+`unknown`; a later refusal cannot erase that earlier uncertainty.
+
+Older kits discarded the error code. Recovery cannot infer a refusal from
+`unknown`, a stale packet, or a missing public record. Use the following only
+when the owner/session record confirms **every attempt of this exact packet**
+received HTTP 429 `reveal_capacity`, with no uncertain or successful send:
+
+1. Update the kit and restart it with the same signer directory and config.
+   Keep the journal, keyring and Trac stores. Read `status` and `hunting`; if
+   witnessed receipt evidence resolves the reveal, use that outcome instead.
+2. Copy `move` from that reveal's `status.actions` entry, or `revealMove` from
+   its paged `hunting` entry if it is older than the recent status list. Call
+   `recover_refused_reveal` with the original `actionId`, that `move`,
+   `status:429`, `code:"reveal_capacity"` and `confirmOriginalRefusal:true`.
+   The tool defaults to dry-run; an owner-authorized `--live` session records
+   the correction locally, without signing or submitting a move.
+3. Repeat `reveal_pattern {actionId}` after the next Bitcoin block with current
+   verified history. The original reveal window still applies. Verify its
+   receipt and wait for discovery evaluation afterward.
+
+CLI uses `node bin/dmw.mjs action recover_refused_reveal /absolute/recovery.json
+--config /absolute/mainnet.json --live` with the same typed arguments as MCP.
+The correction stores the owner's report as such, not as a gateway proof. It
+preserves the legacy packet and state, and only accepts legacy unknown reveals
+without receipts or newly recorded attempts. Never delete journals or create a
+replacement action ID for the same commitment. If any attempt was uncertain,
+reconcile its receipt instead of using this correction.
+
+At the local per-tip limit, stderr prints
+`waiting for the next Bitcoin block (12/12 used)` once per full tip. The command
+continues waiting and checks fresh context before sending. Interrupting it
+keeps the prepared intent for a later retry.
 
 ## Receipt publications and verdicts
 
@@ -436,6 +479,7 @@ uncertain submission outcome. Such a retry must preserve the action ID and inten
 | `unknown_parameter_KEY`, `invalid_sort`, `summary_accepts_only_limit` | Wrong filter/sort for the route; select a collection and use [READS.md](READS.md) |
 | `not_found`, `request_not_found` | Route/public record is absent or not indexed yet; check ID and indexing |
 | `response_limit`, `invalid_json` | Service returned an oversized or malformed response |
+| `reveal_capacity` | This Bitcoin block's reveal allowance is full; retry the original action ID after the next block |
 | `ECONNREFUSED`, `TimeoutError` | Local service is stopped/unreachable or missed its response deadline |
 | Full history must reach current tip | Refresh verified history; resume the same player/session identity |
 | Receipt missing from witnessed observation | Wait for publication or supply the original descriptor above |
@@ -481,13 +525,34 @@ the kit defaults to dry-run.
 Run `bind_payout_wallet {actionId,rail,address?}` in live mode. Give the returned
 `bindingLink` to the human; the agent never signs for the human wallet or asks
 for its private key. The human reviews the exact request, signs through the TAP
-wallet (Taproot BIP-322 simple) or MetaMask (`personal_sign`), then confirms.
+wallet (BIP-322 simple or TAP Wallet's legacy message signature) or MetaMask
+(`personal_sign`), then confirms.
 `payout_binding` reads current and historical public proofs. A dry run signs
 nothing and returns no link. Reusing an action ID preserves the exact packet;
 use a new action ID after expiry or for an intentional address replacement.
 Each rail is independent. Bind both to receive both TAP and Ethereum payouts.
+Older kits can display a legacy TAP Wallet binding through `payout_binding`,
+but must update the shared `rules/src/payout-bindings.mjs` verifier to reconcile
+its pending action or request a replacement binding. No dependency change or
+wallet/journal migration is needed. Existing BIP-322 and Ethereum proofs remain
+valid. A legacy ECDSA proof cannot be converted into BIP-322 without another
+signature from the wallet.
 Accepted bindings remain valid after request expiry. Existing mint quotes and
 releases retain their original destinations after a replacement.
 
 The local playground binds its bots and selected kit players using private local
 test wallets through this same API. An existing human binding is preserved.
+
+Bitmap links cost the base price multiplied by the link multiplier, in TAP.
+Read the live `public_status.feePolicy` (`baseFee`, `unit` and `feeSettings.link`)
+and the request’s saved `terms.feeSettings` and quote for its price. Existing signed mint
+quotes and admitted link requests keep their original price when settings change.
+
+TAP Wallet 1.0.48 supports Mint through `singleTxTransfer` and Bitmap links
+through its authority and lock/claim APIs. The browser prepares a fresh link
+before payment and sets up a global authority when needed, with separate wallet
+approval for activation. Review its all-token scope and Bitcoin fees.
+An interrupted payment keeps its saved receipt or uncertain attempt; it is not
+automatically paid again. In 1.0.48, pending action orders may require a wallet
+update because the wallet queries a different service from the one that created
+them. Keep the same request and order when resuming.

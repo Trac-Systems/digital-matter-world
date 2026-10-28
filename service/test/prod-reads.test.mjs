@@ -19,16 +19,22 @@ import { bytesToHex, requestDigest } from '../../contract/signing.js';
 import { TapReader } from '../prod/tap.mjs';
 
 let active;
-mock.module('../prod/bitcoin.mjs', { namedExports: {
-  createBitcoin: async () => ({}), BitcoinViews: class { close() {} }
+mock.module('../prod/bitcoin.mjs', { exports: {
+  createBitcoin: async () => ({ tip: async () => ({ height: active.head.tip.height, hash: active.head.tip.hash }) }),
+  BitcoinViews: class { async view() {} close() {} }
 } });
-mock.module('../prod/tap.mjs', { namedExports: { createTap: async () => ({
+mock.module('../prod/tap.mjs', { exports: { createTap: async () => ({
+  async stamp() {
+    active.stamps = (active.stamps ?? 0) + 1;
+    this.observedTip = { height: active.head.tip.height, hash: active.head.tip.hash, checkedAt: Date.now() };
+    return { height: this.observedTip.height, hash: this.observedTip.hash };
+  },
   tap: path => active.tap(path), at: (_view, read) => read()
 }) } });
-mock.module('../prod/ethereum.mjs', { namedExports: { createEthereum: async () => ({
+mock.module('../prod/ethereum.mjs', { exports: { createEthereum: async () => ({
   rpc: (...args) => active.rpc(...args), escrow: { deposit: async () => active.deposit }
 }) } });
-mock.module('../prod/trac.mjs', { namedExports: { configuredTrac: async () => {
+mock.module('../prod/trac.mjs', { exports: { configuredTrac: async () => {
   const f = active, trac = async (method, args = []) => {
     f.calls.push([method, ...args]);
     if (method === 'head') return f.head;
@@ -59,6 +65,21 @@ async function fixture(t, adapter = false) {
   };
   return f;
 }
+
+test('unchanged and lower verified tips do not rewrite the durable highest tip', async t => {
+  const f = await fixture(t), before = f.store.sequence;
+  assert.equal((await f.reads.tip()).highestTip, 1000006);
+  assert.equal(f.store.sequence, before + 1);
+  await f.reads.tip(); assert.equal(f.store.sequence, before + 1);
+  f.head.tip.height--;
+  assert.deepEqual(await f.reads.tip(), { tip: 1000005, tipHash: f.head.tip.hash, highestTip: 1000006 });
+  assert.equal(f.store.sequence, before + 1);
+  f.head.tip.height += 2;
+  assert.equal((await f.reads.tip()).highestTip, 1000007);
+  assert.equal(f.store.sequence, before + 2);
+  await f.reads.close(); f.reads = await productionReads(f.config, f.store);
+  await f.reads.tip(); assert.equal(f.store.sequence, before + 2);
+});
 
 test('production supply matches balances plus mint escrow and locks, with exact integer burns and restart', async t => {
   const f = await fixture(t), id = '01'.repeat(32), large = 9007199254740993n;
@@ -165,6 +186,7 @@ test('production transaction indexing accepts empty and non-transfer pages befor
 test('production bitmaps use the configured TAP reader and filter historical transfers', async t => {
   const f = await fixture(t);
   assert.deepEqual(await f.reads.bitmaps('unbound'), []);
+  assert.equal(f.stamps, undefined, 'unbound agents never check the TAP/Bitcoin tip');
   f.reads.bindings.current = () => ({ request: { address: 'wallet' } });
   await f.store.put('links', heightKey(2), { block: 2 });
   const rows = { 'getBitmapWalletHistoricListLength/wallet': 3, 'getBitmapWalletHistoricList/wallet?offset=0&max=500': ['a', 'b', 'c'],
@@ -172,6 +194,11 @@ test('production bitmaps use the configured TAP reader and filter historical tra
     'getBitmapByInscription/c': { ownr: 'wallet', ins: 'c', bm: 0 } };
   f.tap = path => { assert.ok(Object.hasOwn(rows, path), path); return rows[path]; };
   assert.deepEqual(await f.reads.bitmaps('owner'), [{ height: 0, inscription: 'c', linked: false }, { height: 2, inscription: 'a', linked: true }]);
+  assert.equal(f.stamps, 2);
+  f.tap = () => assert.fail('cached wallet must not call TAP');
+  const snapshot = await f.reads.bitmapSnapshot('owner');
+  assert.equal(snapshot.bitmapContext.cached, true); assert.equal(f.stamps, 2);
+  assert.deepEqual(snapshot.bitmapContext.tip, f.head.tip);
 });
 
 test('production public treasury reads configured unique addresses and token with integer precision', async t => {
@@ -247,7 +274,7 @@ test('production public escrow uses the configured deployment start and rejects 
   canonical = false; await assert.rejects(f.reads.publicEscrow(payer, id), /escrow_event_reorg/);
 });
 
-test('production public list failures log their cause and recover through the cached A1 reader', async t => {
+test('production public list failures log their cause and recover through the cached production reader', async t => {
   const f = await fixture(t), { store, reads } = f, files = new Files(join(store.directory, 'static'));
   f.rpc = async () => '0x0';
   const { assetSupply, publicTreasury } = reads;

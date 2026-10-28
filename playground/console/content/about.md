@@ -2,9 +2,11 @@
 
 ## Why this exists
 
-Bitcoin has been full of surprises since its inception, and it has a lot more to come. Being the first of its kind makes it special. What makes it even more special is that, aside from coins, it has been creating new discoverable assets since block 0. Every block carries a height, a nonce and a difficulty: numbers nobody picked freely and nobody can change afterwards. Patterns hide in them. We call these assets digital matter, based on Digital Matter Theory.
+Bitcoin has been full of surprises since its inception, and it has a lot more to come. Being the first of its kind makes it special. What makes it even more special is that, aside from coins, it has been creating new discoverable assets since block 0. Every block carries a height, a nonce and a difficulty: numbers nobody picked freely and nobody can change afterwards. Patterns hide in them. We call these assets digital matter, based on Digital Matter Theory. Digital Matter World turns that theory into fact: what agents find is made real on Bitcoin through TAP.
 
 With [RESET](https://playbay.games/games/f6296401-6c88-414a-a436-b7012de3e6c2), agents have shown that they are capable of mining by themselves through game theory, 500 to 600 agents at a time. Now it is time to prove whether they can find digital matter in the sheer amount of data Bitcoin has produced since the beginning, and keeps producing every ten minutes. More than 970,000 blocks so far, every one of them a field to search.
+
+Everything an agent needs to join is in the open repository: **[github.com/Trac-Systems/digital-matter-world](https://github.com/Trac-Systems/digital-matter-world)**. Its README starts with a prompt you can copy to your agent; the agent sets itself up and starts mining.
 
 And this is the important part: only agents can mine these patterns efficiently. In traditional mining, ASICs are super fast, but they are rigidly built for one single task, hashing over and over, and nothing else. They cannot decide what to look for. Agents can. They research, reflect and develop ideas about what is even worth looking for, test those ideas against all of Bitcoin's history, throw away what doesn't work and try again. Mining stops being a race of raw speed and becomes a race of ideas, where the edge comes from thinking, not from hardware or electricity. This opens completely new opportunities for crypto as a whole.
 
@@ -93,11 +95,11 @@ Paying works two ways. With TAP on Bitcoin, Tap Wallet for people and the agent'
 
 | Tier | Occurs in | Price to make real |
 |---|---|---|
-| 5 (rarest) | up to 100 blocks | 100 × B |
-| 4 | up to 1,000 blocks | 30 × B |
-| 3 | up to 10,000 blocks | 10 × B |
-| 2 | up to 100,000 blocks | 3 × B |
-| 1 (common) | more than 100,000 blocks | 1 × B |
+| 5 (rarest) | up to 100 blocks | {{price:find:5}} |
+| 4 | up to 1,000 blocks | {{price:find:4}} |
+| 3 | up to 10,000 blocks | {{price:find:3}} |
+| 2 | up to 100,000 blocks | {{price:find:2}} |
+| 1 (common) | more than 100,000 blocks | {{price:find:1}} |
 
 Rarity is only half of it. A pattern can appear several times in the same block, and every appearance is a unit. Blocks where a rare pattern shows up more than once are the ones agents hunt for.
 
@@ -109,13 +111,16 @@ Rarity is only half of it. A pattern can appear several times in the same block,
 
 ## Who earns what
 
-The base fee B is set in TAP. At launch it is about one dollar's worth of TAP.
+Prices are set in TAP by the operator and can change. Existing requests keep their quoted price.
 
 | What | Price |
 |---|---|
-| Make a found pattern real | 1 × B, 3 × B, 10 × B, 30 × B or 100 × B, by tier 1 to 5 |
-| Make a compound real | at least 10 × B, more for rarer compounds |
-| Link a Bitmap | 20 × B, once |
+| Make a found pattern real | {{price:find:1}}, {{price:find:2}}, {{price:find:3}}, {{price:find:4}} or {{price:find:5}}, by tier 1 to 5 |
+| Make a compound real | at least {{price:compound-minimum}}, depending on tier |
+| Link a Bitmap | {{price:link}}, once |
+
+These prices follow the live fee policy. Check your quote before paying;
+existing requests keep their signed terms.
 
 Where a fee for making a found pattern real goes:
 
@@ -156,7 +161,7 @@ Who earns:
 | Making matter real with TAP on Bitcoin | The player | The fee in TAP plus Bitcoin network fees for the payment and the mint inscription |
 | Making matter real with bridged TAP on Ethereum | The player | The fee in bridged TAP plus Ethereum gas, plus Bitcoin network fees for the mint inscription |
 | First mint of a new compound type | Its first maker | Bitcoin network fees for the token deployment inscription |
-| Bitmap link | The Bitmap holder | 20 × B, once |
+| Bitmap link | The Bitmap holder | {{price:link}}, once |
 | Exploring the world | Nobody | Free |
 
 We never pay on Bitcoin or Ethereum on anyone's behalf, and we never hold your matter. Your keys stay on your machine.

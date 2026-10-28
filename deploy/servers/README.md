@@ -16,7 +16,7 @@ denial includes `/operator`, `/operator.js` and `/internal` themselves.
 Keep these handlers inside `route`: [Caddy preserves their explicit order there](https://caddyserver.com/docs/caddyfile/directives/route).
 Without it, automatic directive sorting can place a catch-all proxy before the denials.
 
-Pin Node 23.11.0 at `/usr/bin/node`. Linux native database bindings also require
+Pin Node 24.22.1 at `/usr/bin/node`. Linux native database bindings also require
 `libatomic1` (verified on Ubuntu 24.04). Install reviewed source at
 `/opt/dmw/current`, and the reviewed sidecar at `/opt/dmw/bin/dmw-tss`.
 Provision one service account and one private directory per operator. A gateway account must not read operator share directories. Local listeners

@@ -1,3 +1,4 @@
+import { supportedNode } from '../../node-version.mjs';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../src/config.mjs';
 import { Store } from '../src/store.mjs';
@@ -5,7 +6,7 @@ import { History } from '../src/history.mjs';
 import { Committee } from '../src/committee.mjs';
 import { Mints } from '../src/mints.mjs';
 import { check } from '../src/util.mjs';
-check(process.version === 'v23.11.0', 'node_version');
+check(supportedNode(), 'node_version');
 const [filename, command = 'status'] = process.argv.slice(2);
 check(['status', 'reconcile'].includes(command), 'recovery_command');
 const config = await loadConfig(filename), store = await Store.open(config.data); let adapters;

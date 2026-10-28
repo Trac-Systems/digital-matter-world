@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { supportedNode } from '../node-version.mjs';
 import { publicIdentities, encodeTracAddress } from '../rules/src/trac-address.js';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ async function printLogin() {
   console.log(`http://127.0.0.1:${PORTS.control}/?t=${encodeURIComponent(token)}`);
 }
 async function main() {
-  check(process.version==='v23.11.0','Use Node 23.11.0');
+  check(supportedNode(),'Use Node 24.22.1 or newer 24.x');
   const [action]=process.argv.slice(2);
   if(action==='link'){const m=await maybe(join(DATA,'manifest.json'));check(m?.supervisor&&await identity(m.supervisor.pid)===m.supervisor.identity&&m.state==='ready','Playground is not ready; run node playground/run.mjs up');await printLogin();return;}
   if(action==='status') { const m=await maybe(join(DATA,'manifest.json')); if(!m){console.log(JSON.stringify({state:'absent'}));return;} const live=m.supervisor && await identity(m.supervisor.pid)===m.supervisor.identity; console.log(JSON.stringify(publicIdentities({...m,state:live?m.state:m.state==='failed'?'failed':'stopped'}),null,2));return; }

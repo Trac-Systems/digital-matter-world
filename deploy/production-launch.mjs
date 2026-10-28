@@ -19,7 +19,7 @@ import { rpc as sidecarRPC } from '../committee/tss.mjs';
 import { connectRuntime } from '../service/prod/runtime.mjs';
 import { msbIdentity } from '../service/prod/mainnet.mjs';
 import { MAINNET_PARAMS, GENESIS } from '../contract/beacon/bitcoin.js';
-import { createFeePolicy } from '../service/src/fees.mjs';
+import { createFeePolicy, LAUNCH_FEE_SETTINGS } from '../service/src/fees.mjs';
 import { publicTarget } from './public-target.mjs';
 import { rules } from '../service/src/rules.mjs';
 import { createRequire } from 'node:module';
@@ -40,7 +40,7 @@ export async function launchConfirmed(read, ids, confirmations) {
 }
 
 export function initialProductionRegistry(target) {
-  return { feePolicy: createFeePolicy(target.policy.baseFeeAtoms),
+  return { feePolicy: createFeePolicy(target.policy.baseFeeAtoms, 0, LAUNCH_FEE_SETTINGS),
     link: { treasury: target.bitcoin.treasuryAddress },
     assets: {},
     operator: { provisioning: { confirmations: target.policy.confirmations,

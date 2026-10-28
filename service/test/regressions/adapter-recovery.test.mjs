@@ -10,7 +10,7 @@ import { fixtureHistory } from '../helpers.mjs';
 const fixture = fixtureHistory(30); let rawTip = 8, tracTip = 6, failRelay = true, relayCalls = 0;
 const client = { network: 'regtest', tip: async () => ({ height: rawTip, hash: fixture.hashAt(rawTip) }), blockHash: async n => fixture.hashAt(n),
   header: async hash => fixture.raw(Array.from({ length: fixture.length }, (_, i) => i).find(n => fixture.hashAt(n) === hash)) };
-mock.module('../../local/reads.mjs', { namedExports: { localReads: async () => ({ client, manifest: { bitcoin: client }, counted: async () => tracTip - 5, close() {},
+mock.module('../../local/reads.mjs', { exports: { localReads: async () => ({ client, manifest: { bitcoin: client }, counted: async () => tracTip - 5, close() {},
   trac: async (method, args) => {
     if (method === 'head') return { counted: tracTip - 5, tip: { height: tracTip, hash: fixture.hashAt(tracTip) } };
     if (method === 'deployment') return { beacon: { checkpoint: { height: 6, hash: fixture.hashAt(6) } } };

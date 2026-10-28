@@ -66,7 +66,7 @@ export const lists = {
 };
 
 const labStatus = { version: 1, state: 'ready', network: 'dmw-regtest', tip: 2401, counted: 2401, batch: { n: 344, to: 2401 }, units: { tap: 18, bridgedTap: 18, bitcoin: 8, ethereum: 18, matter: 0 },
-    mining: { enabled: false, intervalMs: 30000 }, bots: { count: 1, intervalMs: 60000, paused: true }, feePolicy: { baseFee: TAP(22.6), unit: U, revision: HASH },
+    mining: { enabled: false, intervalMs: 30000 }, bots: { count: 1, intervalMs: 60000, paused: true }, feePolicy: { baseFee: TAP(22.6), feeSettings: { link: 3, tierMultipliers: [1,3,10,30,100], compoundMinimum: 10 }, unit: U, revision: HASH },
     components: [{ name: 'bitcoind', state: 'ready' }, { name: 'gateway', state: 'ready' }], history: { kind: 'regtest', seedBlocks: 2048 }, player: { address: ME } };
 export const reads = {
   'lab/status': labStatus,

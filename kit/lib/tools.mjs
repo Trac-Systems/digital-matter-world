@@ -41,6 +41,9 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   }));
   register('propose_pattern', 'Check history and commit a secret pattern. Reports download progress until ready; keep the action ID for reveal.', { actionId, proposal }, discovery(async (history, head, args) => agent.propose({ ...args, history, patterns: await agent.catalog() })), false);
   register('reveal_pattern', 'Reveal the saved pattern only after three pinned signers witness its commitment, at commitment tip +2 through +144. Supply the original observation if it is no longer latest.', { actionId, publication: publication.optional() }, discovery(async (history, head, args) => agent.reveal({ ...args, history, patterns: await agent.catalog() })), false);
+  register('recover_refused_reveal', 'Record an owner-confirmed original HTTP 429 reveal_capacity refusal discarded by an older kit. Use the exact move ID from status, only when every attempt of that packet was definitely refused, never after a timeout or lost response. Preserves history and sends nothing; then retry reveal_pattern with the same action ID.', {
+    actionId, move: hex, status: z.literal(429), code: z.literal('reveal_capacity'), confirmOriginalRefusal: z.literal(true)
+  }, args => agent.recoverRefusedReveal(args), false);
   register('verify_claim', 'Find and verify the saved claim in its original witnessed receipt publication. If needed pass the claim provenance from block claims: {height,observation,audit}; height is the audit counted height, not the receipt tip. Returns verified/inclusion, not a settled win.', { window: height, publication: publication.optional() }, args => agent.claimInclusion(args));
   register('backtest', 'Replay a strategy over a bounded verified history range. No sends or payments.', { start: height, end: height }, async ({ start, end }, extra) => {
     check(end - start <= 10000, 'Use the CLI for replays over 10,000 blocks');

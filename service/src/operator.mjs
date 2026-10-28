@@ -3,15 +3,18 @@ import { join } from 'node:path';
 import { check, atomicWrite } from './util.mjs';
 import { rules } from './rules.mjs';
 import { createProvisioner } from './provisioning.mjs';
+import { currentFee } from './fees.mjs';
 
 export async function createOperator({ config, store, files, reads, committee }) {
   const provisioner = await createProvisioner({ config, store, reads });
   const inbox = join(config.data, 'operator-inbox'), outbox = join(config.data, 'operator-results');
   await mkdir(inbox, { recursive: true, mode: 0o700 }); await mkdir(outbox, { recursive: true, mode: 0o700 });
   const status = async () => {
+    const fee = currentFee(await reads.registry());
     const jobs = store.list('provisioning', { limit: 4096 }).map(({ value: j }) => ({ asset: j.asset, displayLabel: j.displayLabel, state: j.state, reason: j.reason ?? null,
       actualTicker: j.entry?.tick ?? null, deploymentId: j.entry?.id ?? null, generation: j.generation, attempts: j.attempts.length, spentSats: j.spentSats, nextRetry: j.nextRetry ?? null }));
     return { network: config.network, provisioning: jobs, payment: 'player_paid_direct',
+      feePolicy: { baseFee: fee.baseFee, feeSettings: fee.feeSettings ?? rules.FEE_DEFAULTS, revision: fee.id, unit: rules.TAP_UNIT },
       committee: { healthy: (await committee.healthy()).map(s => s.id), threshold: 3, total: 5, members: config.committee.map(s => s.peer), rosterHistory: config.rosterHistory ?? [], transitions: config.rosterTransitions ?? [] },
       inscription: { payer: 'player', mode: 'wallet_content' } };
   };

@@ -1,23 +1,38 @@
-import { readFile, mkdir, rmdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config.mjs';
-import { changeBaseFee } from '../src/fees.mjs';
-import { atomicWrite, check } from '../src/util.mjs';
+import { changeFeePolicy, currentFee } from '../src/fees.mjs';
+import { check } from '../src/util.mjs';
 import { rules } from '../src/rules.mjs';
 import { updateRegistry } from '../src/registry.mjs';
 
 export async function reloadBaseFee(filename, decimalTap) {
-  const baseFee = rules.parseTapAmount(decimalTap);
-  check(baseFee !== '0', 'base_fee');
-  const config = await loadConfig(filename), path = config.local?.registry;
+  return reloadFees(filename, { baseFee: rules.parseTapAmount(decimalTap) });
+}
+export async function reloadFees(filename, changes, { registryFile = false, at = Date.now() } = {}) {
+  const config = registryFile ? null : await loadConfig(filename), path = registryFile ? filename : config.prod?.registry ?? config.local?.registry;
   check(typeof path === 'string' && path.startsWith('/'), 'fee_registry_path');
   // Serialize operator changes; readers see one complete document via rename.
-  const updated = await updateRegistry(path, registry => changeBaseFee(registry, baseFee));
-  return { baseFee, unit: rules.TAP_UNIT, revision: updated.feePolicy.current };
+  const updated = await updateRegistry(path, registry => changeFeePolicy(registry, changes, at)), fee = currentFee(updated);
+  return { baseFee: fee.baseFee, feeSettings: fee.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, revision: fee.id };
+}
+export function feeArguments(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+    'base-fee': { type: 'string' }, link: { type: 'string' }, 'tier-multipliers': { type: 'string' }, 'compound-minimum': { type: 'string' },
+    registry: { type: 'boolean' }, at: { type: 'string' }
+  } });
+  check(positionals.length === 1 || positionals.length === 2 && !Object.keys(values).length, 'fee_usage');
+  const number = s => { check(typeof s === 'string' && /^[1-9][0-9]*$/.test(s) && Number.isSafeInteger(Number(s)), 'fee_integer'); return Number(s); };
+  const base = positionals[1] ?? values['base-fee'], changes = {};
+  if (base !== undefined) changes.baseFee = rules.parseTapAmount(base);
+  if (values.link !== undefined) changes.link = number(values.link);
+  if (values['compound-minimum'] !== undefined) changes.compoundMinimum = number(values['compound-minimum']);
+  if (values['tier-multipliers'] !== undefined) changes.tierMultipliers = values['tier-multipliers'].split(',').map(number);
+  check(Object.keys(changes).length > 0, 'fee_changes');
+  return [positionals[0], changes, { registryFile: values.registry, ...(values.at ? { at: number(values.at) } : {}) }];
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    check(process.argv.length === 4, 'usage_base_fee_config_absolute_path_decimal_tap');
-    console.log(JSON.stringify(await reloadBaseFee(process.argv[2], process.argv[3])));
-  } catch { console.error('Base-fee update failed; verify the local configuration, amount and update lock.'); process.exitCode = 1; }
+    console.log(JSON.stringify(await reloadFees(...feeArguments(process.argv.slice(2)))));
+  } catch { console.error('Fee update failed. Usage: node service/scripts/base-fee.mjs /absolute/config.json [--base-fee TAP] [--link N] [--tier-multipliers 1,3,10,30,100] [--compound-minimum N]. Use --registry for a registry file; --at fixes the shared revision time.'); process.exitCode = 1; }
 }

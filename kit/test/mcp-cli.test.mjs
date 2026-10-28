@@ -22,7 +22,7 @@ test('MCP exposes typed game tools, rejects malformed amounts and cannot enable 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair(), client = new Client({ name: 'kit-test', version: '1' }); cleanup(t, () => client.close());
   await server.connect(serverTransport); await client.connect(clientTransport);
   const tools = await client.listTools();
-  assert.deepEqual(tools.tools.map(t => t.name).sort(), ['rules', 'address', 'status', 'balance', 'transaction_status', 'mine_once', 'post_header', 'search_patterns', 'propose_pattern', 'reveal_pattern', 'verify_claim', 'backtest', 'compound_idea', 'craft', 'mint_idea', 'mint_on_chain', 'mint_status', 'link_bitmap', 'transfer',
+  assert.deepEqual(tools.tools.map(t => t.name).sort(), ['rules', 'address', 'status', 'balance', 'transaction_status', 'mine_once', 'post_header', 'search_patterns', 'propose_pattern', 'reveal_pattern', 'recover_refused_reveal', 'verify_claim', 'backtest', 'compound_idea', 'craft', 'mint_idea', 'mint_on_chain', 'mint_status', 'link_bitmap', 'transfer',
     'public_status', 'world', 'patterns', 'compounds', 'finds', 'receipts', 'pattern_matches', 'block', 'mint_rights', 'mint_quote', 'events', 'event', 'results', 'agents', 'agent_profile', 'hunting', 'read_page', 'bind_payout_wallet', 'payout_binding', 'bitcoin_wallet', 'pay_mint', 'poll_mint', 'inscribe_mint', 'inscribe_deployment', 'register_deployment'].sort());
   for (const name of ['propose_pattern', 'reveal_pattern', 'verify_claim', 'link_bitmap']) assert.ok(tools.tools.some(t => t.name === name));
   assert.ok(tools.tools.every(t => !/secret|password|unlock|sign_bytes|admin|live_mode/.test(t.name)));

@@ -1,10 +1,11 @@
+import { supportedNode } from '../../node-version.mjs';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.mjs';
 import { Store } from '../src/store.mjs';
 import { Files } from '../src/files.mjs';
 import { Payouts } from '../src/payouts.mjs';
 import { check } from '../src/util.mjs';
-check(process.version === 'v23.11.0', 'node_version');
+check(supportedNode(), 'node_version');
 const [filename, command, beneficiary, amount, txid, reference] = process.argv.slice(2);
 check(command === 'record' || command === 'publish', 'payout_command');
 const config = await loadConfig(filename), store = await Store.open(config.data);

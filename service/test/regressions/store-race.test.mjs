@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import { join } from 'node:path';
 let target, entered, resume;
 const reached = new Promise(r => entered = r), release = new Promise(r => resume = r);
-mock.module('node:fs/promises', { namedExports: { ...Object.fromEntries(Object.entries(fs).filter(([key]) => key !== 'default')),
+mock.module('node:fs/promises', { exports: { ...Object.fromEntries(Object.entries(fs).filter(([key]) => key !== 'default')),
   unlink: async path => { if (path === target) { entered(); await release; } return fs.unlink(path); }
 } });
 const { Store } = await import('../../src/store.mjs');

@@ -60,14 +60,16 @@ Bitmap linking retains the existing pay-before-publication rule. If an agent's
 signed request as `awaiting_wallet`. On the page, the wallet signs
 `dmw-link-payment-v1\nNETWORK\nREQUEST_ID\nPAYMENT_HASH`. The browser chooses a random
 preimage and retains it locally; `POST /web-api/link/ID/prepare` accepts only the
-payer's valid BIP-322 proof, pins the hash, and submits the existing link request
+payer's valid BIP-322 or TAP Wallet legacy message proof, pins the hash, and
+submits the existing link request
 for ordinary admission. The user then reviews fixed fees, approves the lock and
 its release. No preimage is sent to the gateway. Older agent-managed hashlocks
 must be finished in their original payment client; this page refuses to invent
 a release secret or spend against an unknown one.
 
 Payout bindings use the existing double-signed request and five-member committee
-route. TAP uses BIP-322, MetaMask uses personal_sign. Wrong accounts, cancellation,
+route. TAP accepts BIP-322 and legacy Bitcoin message signatures tied to the
+exact BIP86 Taproot address; MetaMask uses personal_sign. Wrong accounts, cancellation,
 expiry and accepted retries are handled without pasting signatures.
 
 ## Running beside an existing playground
@@ -82,7 +84,7 @@ their same request paths can be opened on the web listener. The integrated
 `service/run.mjs` serves these pages on the normal gateway listener at its next
 ordinary startup.
 
-Checks (Node 23.11.0):
+Checks (Node 24.22.1):
 
 ```
 node --test service/test/web-pages.test.mjs service/test/web-wallets.test.mjs

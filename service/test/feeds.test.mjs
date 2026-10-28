@@ -31,3 +31,15 @@ test('feed backfill covers history, refreshes indexed mint status, ranks records
     assert.equal(page.rows.find(r => r.block === 100).minted, 'ab'.repeat(32) + 'i0'); assert.equal(store.count('feedPages'), 0);
   } finally { await store.close(); }
 });
+
+test('an unchanged single-pattern cursor is not rewritten on every tick', async () => {
+  const directory = await temp(), store = await Store.open(directory), files = new Files(join(directory, 'static')), history = fixtureHistory(100);
+  const feeds = new Feeds({ store, files, history, reads: { balance: async () => '23' } });
+  try {
+    await store.put('meta', 'patterns', [patterns[0]]);
+    for (let i = 0; i < 3; i++) await feeds.tick();
+    const before = store.sequence;
+    for (let i = 0; i < 3; i++) await feeds.tick();
+    assert.equal(store.sequence, before);
+  } finally { await store.close(); }
+});

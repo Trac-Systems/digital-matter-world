@@ -1,5 +1,5 @@
 import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
-import { stableJSON, validatePayload, patternCount, compound, patternProperties, patternAsset, pendingId, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS } from '../../rules/src/index.js';
+import { stableJSON, validatePayload, patternCount, compound, patternProperties, patternAsset, pendingId, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
 import { check, sha256, nonce, integer, hex32, gatewayOrigin } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signMove, signOwnerRequest, signPaymentIntent, signPlotRequest, mintExpiry, paymentPayer } from './signing.mjs';
@@ -33,7 +33,7 @@ export class Agent {
   }
   async reconcileAction(id) {
     const row = this.journal.get(id);
-    if (!row || ['prepared', 'accepted', 'rejected'].includes(row.state)) return;
+    if (!row || ['prepared', 'refused', 'accepted', 'rejected'].includes(row.state)) return;
     if (id.startsWith('payout/')) {
       const value = wireIdentities(await this.service.payoutBinding(this.address, row.body.request.rail));
       if (value.binding) {
@@ -93,6 +93,9 @@ export class Agent {
     const actions = this.journal.recent().map(row => {
       const kind = row.id.split('/')[0], digest = { mint: pendingId, link: linkId }[kind];
       const evidence = this.journal.evidence(row.id);
+      const savedMove = this.journal.get(row.id);
+      if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: moveId(savedMove.body),
+        ...(row.state === 'refused' ? { refusal: savedMove.result, retry: 'Retry the original action ID and intent; the kit will refresh the refused packet.' } : {}) };
       if (kind.startsWith('bitcoin-')) {
         const saved = this.journal.get(row.id), plan = saved.body.plan, deploy = kind === 'bitcoin-deploy';
         return { ...row, ...evidence, requestId: saved.body.requestId, ...(deploy ? { asset: saved.body.asset } : {}),
@@ -162,7 +165,7 @@ export class Agent {
     const head = await this.trac.head(), page = this.journal.hunting(options), items = [];
     for (const row of page.items) {
       if (row.type === 'discovery') {
-        items.push({ ...row, phase: row.revealState ? 'check_reveal' : row.receiptTip === null ? 'receipt_unknown' : head.tip.height < row.revealFrom ? 'sealed' : head.tip.height > row.revealUntil ? 'expired' : 'reveal_window' });
+        items.push({ ...row, phase: row.revealState && row.revealState !== 'refused' ? 'check_reveal' : row.receiptTip === null ? 'receipt_unknown' : head.tip.height < row.revealFrom ? 'sealed' : head.tip.height > row.revealUntil ? 'expired' : 'reveal_window' });
         continue;
       }
       let settlement = this.journal.evidence(row.id).settlement;
@@ -223,24 +226,54 @@ export class Agent {
     const head = await this.trac.head(); await validate(head);
     if (this.dryRun) return { state: 'dry-run', action: type, payload, tip: head.tip, signed: false };
     let row = old;
-    if (!row) {
+    const prepare = async head => {
       const move = await signMove(this.wallet, { network: this.network, type, payload, tip: head.tip }, { puzzleBits: this.puzzleBits, ...this.work });
       const fresh = await this.trac.head();
       check(fresh.tip.height === head.tip.height && fresh.tip.hash === head.tip.hash, 'Tip changed while solving; retry with fresh context');
-      await validate(fresh); row = this.journal.reserve(id, intent, move);
-    }
-    const move = row.body;
+      await validate(fresh);
+      row = row ? this.journal.renewMove(id, intent, move, row) : this.journal.reserve(id, intent, move);
+    };
+    if (!row || row.state === 'refused') await prepare(head);
     await this.journal.waitTurn(async () => {
       const fresh = await this.trac.head(); await validate(fresh);
-      check(move.b <= fresh.tip.height && move.b >= fresh.tip.height - 2 && await this.trac.hashAt(move.b) === move.h, 'Saved move is stale; retain its receipt history and wait for another event');
-      if (type === 'claim') check(claimWindow(move.p.window, fresh.tip.height), 'Claim window is closed');
+      const move = row.body;
+      if (!(move.b <= fresh.tip.height && move.b >= fresh.tip.height - 2 && await this.trac.hashAt(move.b) === move.h)) {
+        check(row.state === 'prepared', 'Saved move is stale and its delivery is unknown; retain the journal and reconcile its receipt. Only a recorded refusal can be refreshed.');
+        await prepare(fresh);
+      }
+      if (type === 'claim') check(claimWindow(row.body.p.window, fresh.tip.height), 'Claim window is closed');
       return fresh;
     });
     this.journal.mark(id, 'sending');
     try {
-      const receipt = await this.service.submit(move, { hashAt: h => this.trac.hashAt(h) }); this.journal.mark(id, 'received', receipt);
+      const receipt = await this.service.submit(row.body, { hashAt: h => this.trac.hashAt(h) }); this.journal.mark(id, 'received', receipt);
       return { state: 'received', receipt, inclusion: 'unverified' };
-    } catch (e) { this.journal.mark(id, 'unknown'); throw e; } finally { this.journal.finishTurn(); }
+    } catch (e) {
+      // A refusal on a retry cannot settle an earlier ambiguous attempt.
+      const refused = e.refusedBeforeAcceptance === true && row.state === 'prepared';
+      const refusal = e.refusedBeforeAcceptance === true ? { status: e.status, code: e.code, source: 'gateway_response', move: moveId(row.body) } : null;
+      this.journal.mark(id, refused ? 'refused' : 'unknown', refused ? refusal : null);
+      if (refused) e.message += '; refused, not accepted by the gateway; retry the same action ID and intent with a fresh packet';
+      throw e;
+    } finally { this.journal.finishTurn(); }
+  }
+  recoverRefusedReveal({ actionId, move, status, code, confirmOriginalRefusal }) {
+    return this.exclusive(async () => {
+      this.actionId(actionId);
+      check(status === 429 && code === 'reveal_capacity' && confirmOriginalRefusal === true,
+        'Confirm the original HTTP 429 reveal_capacity response for this exact packet; never use recovery for a timeout or lost response');
+      const id = `discovery/${actionId}/reveal`, row = this.journal.get(id);
+      check(row?.body.t === 'discovery-reveal' && hex32(move) && moveId(row.body) === move, 'Saved reveal packet does not match the supplied move ID');
+      const parent = this.journal.get(`discovery/${actionId}`), commit = this.journal.get(`discovery/${actionId}/commit`);
+      check(parent && commit && stableJSON(row.body.p) === stableJSON(parent.body) &&
+        discoveryCommitment(parent.body.proposal, parent.body.salt, this.owner) === commit.body.p.commitment, 'Saved discovery commitment mismatch');
+      check(row.state === 'unknown' && !row.result && this.journal.moveHistory(id).length === 0,
+        'Recovery requires a legacy unknown reveal without a receipt or recorded attempts');
+      if (this.dryRun) return { state: 'dry-run', actionId, move, sent: false, changed: false };
+      this.journal.recoverLegacyRefusal(id, row, { status, code, move, source: 'owner_confirmed_original_response' });
+      return { state: 'refused', actionId, move, sent: false, next: { tool: 'reveal_pattern', arguments: { actionId } },
+        message: 'Original packet and refusal record preserved. Retry reveal_pattern with this same action ID after the next Bitcoin block.' };
+    });
   }
   headers({ height, raw, history }) {
     return this.exclusive(() => this.sendMove(`header/${height}`, 'header', { height, raw }, { validate: async head => {
@@ -463,7 +496,7 @@ export class Agent {
   async runOnce({ history, source, strategy = chooseClaims }) {
     const head = await this.trac.head(), patterns = await this.catalog();
     const sendHeader = () => this.postHeader({ height: head.tip.height, history, source });
-    if (!patterns.length) return { state: 'discovery_needed', message: 'The table is empty. Search, propose and reveal the first pattern before claiming.',
+    if (!patterns.length) return { state: 'discovery_needed', message: 'No patterns have been accepted into the public table yet, so there is nothing to mine. Test a pattern against verified history, commit it, wait at least two Bitcoin blocks and for witnessed inclusion, then reveal it and wait for evaluation to accept it. A local search success or gateway receipt is not an accepted pattern. This pass can still submit a free header.',
       next: [{ tool: 'search_patterns', arguments: {} }, { tool: 'propose_pattern' }, { tool: 'reveal_pattern' }], header: await sendHeader() };
     // Headers can be sent immediately while the archive needed for the all-history
     // hunt is still loading. Never mistake a handful of headers for full history.

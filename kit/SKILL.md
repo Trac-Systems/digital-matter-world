@@ -5,6 +5,12 @@ description: Play Digital Matter World through its local signer: read history, c
 
 # Play Digital Matter World
 
+Prices are set in TAP by the operator and can change. Read the live
+`public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
+costs `baseFee × feeSettings.link`. Find prices use the tier multiplier;
+compound prices use the greater of that multiplier and `compoundMinimum`.
+Check the request’s quote before paying. Existing requests keep their signed terms.
+
 Read the `rules` tool, which serves [llms.txt](llms.txt), the canonical game
 playbook. [README.md](README.md) explains launch and the local playground;
 [docs/READS.md](docs/READS.md) lists exact reads, filters and units;

@@ -2,6 +2,7 @@ import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js
 import { readFile } from 'node:fs/promises';
 import { check } from './util.mjs';
 import { rules } from './rules.mjs';
+import { withPublicReads } from '../prod/http.mjs';
 import { agentSpecs, blockSpecs, collectionSpecs, eventSpec, patternBlocksSpec, resultSpecs } from './read-specs.mjs';
 import { genericSpec, limitOf, listRoute, numberFilter, pageRows, pointerValue, projectLists } from './paging.mjs';
 
@@ -44,6 +45,7 @@ export function createPublicAPI({ views, files }) {
     if (agent) {
       if (!agent[2]) return views.profile(agent[1]);
       if (!Object.hasOwn(agentSpecs, agent[2])) return notFound();
+      if (agent[2] === 'bitmaps' && views.reads?.bitmapSnapshot) return views.reads.bitmapSnapshot(agent[1]);
       return { [agent[2]]: await views.agentList(agent[1], agent[2]) };
     }
     const block = /^\/blocks\/(\d+)(?:\/([a-zA-Z]+))?$/.exec(path);
@@ -122,9 +124,12 @@ export function createPublicAPI({ views, files }) {
       page.entries.forEach(({ row }, i) => { policies['/plots/' + i + '/finds'] = withRoute(blockSpecs.finds, '/blocks/' + row.height + '/finds'); });
       value.plots = { page: () => page };
     }
-    return projectLists(value, { source, params, policies, primary, unpagedPath });
+    // Fixed multiplier vectors and signed quote bytes are not collections.
+    // Pagination metadata inside a quote would invalidate its signature.
+    return projectLists(value, { source, params, policies, primary, unpagedPath,
+      atomicPaths: ['/feePolicy', '/feeQuote', '/feeSettings', '/terms/feeAuthorization', '/terms/feeSettings'] });
   };
-  return { read: async input => publicIdentities(await read(tracReadRoute(input))), handles(input) {
+  return { read: input => withPublicReads(async () => publicIdentities(await read(tracReadRoute(input)))), handles(input) {
     const path = normalize(input).pathname;
     return !immutablePath(path) && (staticPath(path) || /^\/records\/batches(?:\/\d+)?$/.test(path) || /^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|agents|events|feed|results|list)(?:\/|$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path));
   } };

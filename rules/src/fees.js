@@ -18,6 +18,8 @@ export function formatTapAmount(value) {
   const atoms = tapAtoms(value), fraction = (atoms % TAP_SCALE).toString().padStart(TAP_DECIMALS, '0').replace(/0+$/, '');
   return (atoms / TAP_SCALE).toString() + (fraction ? '.' + fraction : '');
 }
+// Legacy fallback only: configured multipliers travel with signed/stored terms.
+// Keep these values stable so pre-configuration quotes and installed kits agree.
 export const FEE_DEFAULTS = Object.freeze({ tierMultipliers: Object.freeze([1, 3, 10, 30, 100]), compoundMinimum: 10, link: 20 });
 function amount(v) { assert(typeof v === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(v), 'amount'); return BigInt(v); }
 export function feeFor(kind, base, tier = 1, settings = {}) {

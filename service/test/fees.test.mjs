@@ -1,7 +1,7 @@
 import { localReads } from '../local/reads.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FeeQuotes, changeBaseFee, currentFee, mintFeeScope, QUOTE_MILLISECONDS, createFeePolicy, validateFeePolicy } from '../src/fees.mjs';
+import { FeeQuotes, changeBaseFee, changeFeePolicy, currentFee, mintFeeScope, QUOTE_MILLISECONDS, createFeePolicy, validateFeePolicy } from '../src/fees.mjs';
 import { Mints, payerDigest } from '../src/mints.mjs';
 import { Store } from '../src/store.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -17,7 +17,8 @@ function setup() {
   let registry = { feePolicy: createFeePolicy('100') }, now = 1000;
   const read = async () => structuredClone(registry);
   return { issuer: new FeeQuotes({ network, secret, registry: read, now: () => now }), verifier: new FeeQuotes({ network, gateway, registry: read }),
-    change: value => { registry = changeBaseFee(registry, value, ++now); }, time: value => now = value, read };
+    change: value => { registry = changeBaseFee(registry, value, ++now); },
+    settings: value => { registry = changeFeePolicy(registry, value, ++now); }, time: value => now = value, read };
 }
 
 test('HTTP and kit presentation preserve signed fee quotes and payout identities byte for byte', async () => {
@@ -148,5 +149,29 @@ test('mint admission requires a quote issuer and persists signed authorization f
     const row = store.get('mints', f.id), scope = mintFeeScope(body.request.asset, body.request.block, body.kind);
     assert.deepEqual(await fees.verifier.accepted(row.feeAuthorization, scope, f.id, body.request.expires), { baseFee: '100' });
     await assert.rejects(fees.verifier.accepted(undefined, scope, f.id, body.request.expires), /fee_quote_signature/);
+  } finally { await store.close(); }
+});
+
+for (const kind of ['dmt', 'compound']) test(`${kind}: configured multipliers remain fixed through gateway payment and committee approval`, async () => {
+  const fees = setup(), f = fixture(kind), store = await Store.open(await temp('multiplier-mints-'));
+  const settings = { link: 3, tierMultipliers: [2, 6, 20, 60, 200], compoundMinimum: 12 };
+  fees.settings(settings); f.data.context.feeSettings = settings; f.reprice();
+  const reads = { ...f.reads, feeQuotes: fees.issuer, balance: async () => '100' };
+  const mints = new Mints({ store, network, reads, operations: { supportsMintBatches: true }, payments: { mint: async () => f.data.payment } });
+  try {
+    const input = { asset: f.proposal.request.asset, block: f.proposal.request.block, kind: 'tap' };
+    const quote = await mints.quote(input);
+    assert.deepEqual(quote.feeQuote.feeSettings, settings);
+    fees.settings({ tierMultipliers: [3, 9, 30, 90, 300], compoundMinimum: 25 });
+    // Even a newly read context must not override the admitted quote's settings.
+    f.data.context.feeSettings = (await fees.read()).feePolicy.revisions.at(-1).feeSettings;
+    const body = { ...f.proposal, kind: 'tap', payer: f.data.payer, feeQuote: quote.feeQuote }; body.authorization = signEd(payerDigest(network, body), f.secret);
+    const accepted = await mints.request(body); assert.equal(accepted.price, quote.price);
+    f.reads.mintFeeTerms = async id => fees.verifier.accepted(store.get('mints', id).feeAuthorization, mintFeeScope(input.asset, input.block, input.kind), id, body.request.expires);
+    const row = store.get('mints', f.id);
+    await store.put('mints', f.id, { ...row, state: 'waiting_payment', expiry: body.request.expires });
+    await mints.payment({ id: f.id, paymentId: f.data.payment.id });
+    assert.equal((await f.policy.mint(f.proposal)).details.price, quote.price);
+    assert.notEqual((await mints.quote(input)).price, quote.price);
   } finally { await store.close(); }
 });

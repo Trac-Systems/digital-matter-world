@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { readFile, writeFile, stat } from 'node:fs/promises';
-import { stableJSON, discoveryCommitment } from '../../rules/src/index.js';
+import { stableJSON, discoveryCommitment, moveId } from '../../rules/src/index.js';
+import { signMove } from '../lib/signing.mjs';
+import { runTool } from '../lib/tools.mjs';
 import { Agent } from '../lib/agent.mjs';
 import { ServiceClient } from '../lib/service-client.mjs';
 import { Journal } from '../lib/journal.mjs';
@@ -14,7 +16,7 @@ const proposal = { name: 'dmwnewdigits', pat: '[12]', fld: 4, dt: 'n' };
 async function fixture(t) {
   const dir = await temp(t), raw = Buffer.from((await readFile(new URL('./fixtures/mainnet-64.hex', import.meta.url), 'utf8')).trim(), 'hex');
   const histories = {};
-  for (const count of [62, 63, 64]) { const path = join(dir, `history-${count}.bin`); await writeFile(path, raw.subarray(0, count * 80)); histories[count - 1] = await loadHistory(path); }
+  for (const count of [59, 61, 62, 63, 64]) { const path = join(dir, `history-${count}.bin`); await writeFile(path, raw.subarray(0, count * 80)); histories[count - 1] = await loadHistory(path); }
   const history = histories[63], network = 'dmw-kit-test', fake = new FakeService({ network, history }), wallet = testWallet();
   const { trac, state } = fakeTrac({ get: h => history.get(h), hashAt: h => history.get(h)?.hash }, { network, tip: 61 });
   const service = new ServiceClient({ network, gateway: fake.gateway, receiptSigners: fake.witness.members, fetchImpl: fake.fetch });
@@ -105,4 +107,93 @@ test('reveal refuses a reorg or expiry and dry-run does not create secrets or se
   await assert.rejects(f.agent.reveal({ actionId: 'window' }), /reorganized/);
   assert.equal(f.fake.entries.size, 1);
   assert.equal(stableJSON(await f.agent.status()).includes(f.agent.journal.get('discovery/window').body.salt), false);
+});
+
+async function sealedAt58(t) {
+  const f = await fixture(t); f.advance(58);
+  f.fake.state = { lastTip: 57, counted: 57 };
+  await f.agent.propose({ actionId: 'capacity', proposal, history: f.histories[58], patterns: [] });
+  const { publication } = f.fake.observe();
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', publication, history: f.histories[58], patterns: [] }), /not yet open/);
+  f.advance(60);
+  return f;
+}
+test('a definite HTTP reveal refusal survives restart and retries a stale packet with the same commitment and intent', async t => {
+  const f = await sealedAt58(t), id = 'discovery/capacity/reveal';
+  const parent = f.agent.journal.get('discovery/capacity').body;
+  const commit = f.agent.journal.get('discovery/capacity/commit').body;
+  f.service.fetchImpl = async (url, options) => new URL(url).pathname === '/moves'
+    ? Response.json({ error: 'reveal_capacity' }, { status: 429 }) : f.fake.fetch(url, options);
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', history: f.histories[60], patterns: [] }), /refused, not accepted/);
+  const refused = f.agent.journal.get(id);
+  assert.equal(refused.state, 'refused'); assert.equal(refused.result.code, 'reveal_capacity');
+  assert.equal((await f.agent.hunting()).items[0].phase, 'reveal_window');
+  assert.equal(f.fake.entries.size, 1);
+  await f.restart(); f.advance(63); f.service.fetchImpl = f.fake.fetch;
+  assert.equal((await f.agent.reveal({ actionId: 'capacity', history: f.histories[63], patterns: [] })).state, 'received');
+  const sent = f.agent.journal.get(id);
+  assert.equal(sent.body.b, 63); assert.notEqual(moveId(sent.body), moveId(refused.body));
+  assert.deepEqual(sent.body.p, refused.body.p); assert.equal(sent.fingerprint, refused.fingerprint);
+  assert.deepEqual(f.agent.journal.get('discovery/capacity').body, parent);
+  assert.deepEqual(f.agent.journal.get('discovery/capacity/commit').body, commit);
+  assert.ok(f.agent.journal.moveHistory(id).some(r => r.state === 'refused' && r.result.code === 'reveal_capacity' && stableJSON(r.body) === stableJSON(refused.body)));
+  assert.equal(f.fake.entries.size, 2);
+  assert.equal((await f.agent.reveal({ actionId: 'capacity' })).replayed, true);
+});
+test('legacy stale refusals have a typed dry-run-safe recovery that preserves the original packet and action ID', async t => {
+  const f = await sealedAt58(t), id = 'discovery/capacity/reveal', parent = f.agent.journal.get('discovery/capacity');
+  const body = await signMove(f.agent.wallet, { network: f.agent.network, type: 'discovery-reveal', payload: parent.body, tip: f.histories[60].get(60) }, { puzzleBits: 0 });
+  f.agent.journal.reserve(id, parent.body, body);
+  // Model the older kit's on-disk schema: unknown, no saved refusal or attempts.
+  f.agent.journal.db.prepare("UPDATE actions SET state='unknown' WHERE scope=? AND id=?").run(f.agent.journal.scope, id);
+  await f.restart(); f.advance(63);
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', history: f.histories[63], patterns: [] }), /stale/);
+  const args = { actionId: 'capacity', move: moveId(body), status: 429, code: 'reveal_capacity', confirmOriginalRefusal: true };
+  const hunting = await f.agent.hunting();
+  assert.equal(hunting.items[0].revealMove, args.move);
+  assert.equal(JSON.stringify(hunting).includes(parent.body.salt), false);
+  const recover = input => runTool({ agent: f.agent }, 'recover_refused_reveal', input);
+  await assert.rejects(recover({ ...args, move: '00'.repeat(32) }), /does not match/);
+  await assert.rejects(recover({ ...args, code: 'request_failed' }));
+  await assert.rejects(recover({ ...args, confirmOriginalRefusal: false }));
+  await assert.rejects(runTool({ agent: f.agent }, 'recover_refused_reveal', args, { readOnly: true }), /Use action/);
+  f.agent.dryRun = true; assert.equal((await recover(args)).state, 'dry-run');
+  assert.equal(f.agent.journal.get(id).state, 'unknown'); assert.equal(f.agent.journal.moveHistory(id).length, 0);
+  f.agent.dryRun = false; const recovered = await recover(args);
+  assert.equal(recovered.sent, false); assert.equal(recovered.state, 'refused'); assert.equal(f.fake.entries.size, 1);
+  assert.deepEqual(f.agent.journal.get(id).body, body);
+  assert.equal((await f.agent.hunting()).items[0].revealRefusal.source, 'owner_confirmed_original_response');
+  assert.deepEqual(f.agent.journal.moveHistory(id).map(r => r.state), ['unknown', 'refused']);
+  await f.restart();
+  assert.equal((await f.agent.reveal({ actionId: 'capacity', history: f.histories[63], patterns: [] })).state, 'received');
+  assert.deepEqual(f.agent.journal.get(id).body.p, parent.body);
+  assert.equal(f.agent.journal.get(id).body.b, 63);
+  assert.ok(f.agent.journal.moveHistory(id).some(r => r.state === 'unknown' && stableJSON(r.body) === stableJSON(body)));
+  await assert.rejects(recover(args), /does not match/);
+  await assert.rejects(recover({ ...args, move: moveId(f.agent.journal.get(id).body) }), /legacy unknown/);
+});
+test('ambiguous delivery is never refreshed, even after a later refusal; legacy recovery cannot override new attempts', async t => {
+  const f = await sealedAt58(t), id = 'discovery/capacity/reveal'; f.fake.lose = '/moves';
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', history: f.histories[60], patterns: [] }), /unknown/);
+  const original = f.agent.journal.get(id).body;
+  f.service.fetchImpl = async () => Response.json({ error: 'reveal_capacity' }, { status: 429 });
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', history: f.histories[60], patterns: [] }), /reveal_capacity/);
+  assert.equal(f.agent.journal.get(id).state, 'unknown');
+  await assert.rejects(f.agent.recoverRefusedReveal({ actionId: 'capacity', move: moveId(original), status: 429, code: 'reveal_capacity', confirmOriginalRefusal: true }), /legacy unknown/);
+  f.advance(63);
+  await assert.rejects(f.agent.reveal({ actionId: 'capacity', history: f.histories[63], patterns: [] }), /stale/);
+  assert.deepEqual(f.agent.journal.get(id).body, original);
+});
+test('only a complete response with an allowlisted pre-acceptance code is a refusal', async () => {
+  for (const [status, code, refused] of [[429, 'reveal_capacity', true], [400, 'invalid_move', true], [503, 'tip_transition', true],
+    [429, 'other', false], [400, 'request_failed', false], [500, 'reveal_capacity', false], [404, 'not_found', false]]) {
+    const service = new ServiceClient({ fetchImpl: async () => Response.json({ error: code }, { status }) });
+    await assert.rejects(service.request('/moves', { value: {} }), error => error.refusedBeforeAcceptance === refused);
+  }
+  for (const response of [() => new Response('<html>proxy</html>', { status: 429 }), () => new Response(new ReadableStream({ start(c) {
+    c.enqueue(Buffer.from('{"error":"reveal_capacity"')); c.error(Error('interrupted'));
+  } }), { status: 429 })]) {
+    const service = new ServiceClient({ fetchImpl: async () => response() });
+    await assert.rejects(service.request('/moves', { value: {} }), error => !error.refusedBeforeAcceptance);
+  }
 });

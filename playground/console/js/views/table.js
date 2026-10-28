@@ -3,6 +3,7 @@ import { get, bus, store, site } from '../api.js';
 import { mineral, title, symbol, fieldName, FIELDS, who, assetName } from '../words.js';
 import { compoundMintFlow } from '../flows.js';
 import { pagedTable } from '../paged.js';
+import { feePrice } from '../money.js';
 
 export function mount(root, params = {}) {
   let mode = 'grid', pick = null, pickC = null, selectionSeq = 0;
@@ -96,7 +97,7 @@ export function mount(root, params = {}) {
         ['Rule', h('code', {}, p.pat), 'TAP\'s regular-expression form, matched against one header field. Each match is one unit.'],
         ['Field', fieldName(p)],
         ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
-        ['Tier', `${p.tier} of 5 · price ${[1, 3, 10, 30, 100][p.tier - 1] ?? '–'}x B`],
+        ['Tier', `${p.tier} of 5 · price ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
         ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],

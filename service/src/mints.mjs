@@ -14,7 +14,7 @@ export function publicMint(r) {
     fees: r.quote.fees, fullFees: r.quote.fullFees ?? r.quote.fees, payableAmount: r.quote.payableAmount ?? r.quote.price, missing: r.missing ?? r.quote.fees, payBy: { rail: r.kind, untilBlock: r.expiry ?? r.request.expires },
     payable: r.state !== 'reserving' && !['expired', 'permit_issued', 'minted'].includes(r.state),
     reservation: r.state === 'reserving' ? 'pending' : r.unitsConsumed ? 'consumed' : r.paymentSeen ? 'held' : r.state === 'expired' ? 'expired' : 'reserved',
-    price: r.quote.price, split: r.quote.split, baseFee: r.quote.baseFee, unit: rules.TAP_UNIT, feeQuote: r.quote.feeQuote,
+    price: r.quote.price, split: r.quote.split, baseFee: r.quote.baseFee, feeSettings: r.quote.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, feeQuote: r.quote.feeQuote,
     displayLabel: r.quote.displayLabel, actualTicker: r.quote.actualTicker, deploymentId: r.quote.deploymentId,
     generation: r.quote.generation, jobState: r.quote.jobState, created: r.created ?? null, expiry: r.expiry ?? r.request.expires,
     networkFeeSats: '0', networkFeeAddress: null, payment: r.paymentIds ?? [],
@@ -36,10 +36,11 @@ export function verifyPayer(network, body) {
 export function paymentTerms(row) { const { confirmations, ...terms } = row; return terms; }
 export class Mints {
   constructor({ store, network, reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', committee, operations, payments, pendingBlocks = 432, capacity = 256 }) {
-    Object.assign(this, { store, network, reads, bitcoinNetwork, committee, operations, payments, pendingBlocks, capacity }); this.gate = serial();
+    Object.assign(this, { store, network, reads, bitcoinNetwork, committee, operations, payments, pendingBlocks, capacity }); this.gate = serial(); this.quoteEvidence = new WeakMap();
   }
-  async quote(input) {
-    if (input.request) return this.request(input);
+  snapshot(read) { return this.reads.withSnapshot ? this.reads.withSnapshot(undefined, read) : read(); }
+  quote(input) { return input.request ? this.request(input) : this.snapshot(() => this.quoteDetails(input)); }
+  async quoteDetails(input) {
     const { asset, block, amount, kind = 'tap', receiver = null, payer = null } = input;
     let { feeQuote } = input;
     check(['tap', 'ethereum'].includes(kind) && rules.assetId(asset), 'quote_input');
@@ -48,31 +49,34 @@ export class Mints {
     check(this.reads.feeQuotes, 'fee_quotes_unavailable', 503);
     const scope = mintFeeScope(asset, block, kind);
     if (feeQuote) await this.reads.feeQuotes.validate(feeQuote, scope);
-    const context = await this.reads.assetContext(asset, block, kind, feeQuote), d = context?.deployment;
+    const context = await this.reads.assetContext(asset, block, kind, feeQuote, undefined, input.sourceLocators), d = context?.deployment;
     check(d?.active && ['dmt', 'compound'].includes(d.kind) && (d.kind === 'dmt') === Number.isSafeInteger(block), 'deployment');
     check(d.kind !== 'dmt' || context.find?.finder, 'mint_no_find');
-    const holder = context.link ? await this.reads.bitmap(block) : null;
+    const holder = context.link ? context.bitmapHolder ?? await this.reads.bitmap(block) : null;
     check(!context.link || holder?.agent && holder.address, 'bitmap_unavailable', 503);
     const feeKind = d.kind === 'dmt' ? 'find' : 'compound', counted = await this.reads.counted();
-    feeQuote ??= await this.reads.feeQuotes.issue(scope, counted, context.payouts, d.id, hash(rules.stableJSON({ bitmap: holder, link: context.link ?? null })));
+    feeQuote ??= await this.reads.feeQuotes.issue(scope, counted, context.payouts, d.id, hash(rules.stableJSON({ bitmap: holder, link: context.link ?? null })), input.sourceLocators ?? context.sourceLocators);
     await this.reads.feeQuotes.validate(feeQuote, scope);
     if (context.payouts) check(same(context.payouts, feeQuote.payouts), 'binding_snapshot_missing');
     if (feeQuote.mintOwnershipHash) check(feeQuote.mintOwnershipHash === hash(rules.stableJSON({ bitmap: holder, link: context.link ?? null })), 'quote_recipient_changed');
-    const baseFee = feeQuote.baseFee, price = rules.feeFor(feeKind, baseFee, context.tier, context.feeSettings);
+    const baseFee = feeQuote.baseFee, price = rules.feeFor(feeKind, baseFee, context.tier, feeQuote.feeSettings ?? context.feeSettings);
     const split = rules.splitFee(price, { kind: feeKind, linked: !!holder, discovered: !!context.discoverer });
     const unitsUsed = d.kind === 'dmt' ? String(context.find.count) : amount ?? '1';
     check(typeof unitsUsed === 'string' && /^[1-9][0-9]{0,19}$/.test(unitsUsed) && BigInt(unitsUsed) <= 18446744073709551615n && (amount === undefined || amount === unitsUsed), 'quote_amount');
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
       landowner: kind === 'ethereum' ? context.landownerAddress ?? null : holder?.address ?? null, discoverer: context.discoverer ?? null };
     const fees = rules.mintFeeItems(split, destinations, null, payer, kind, this.bitcoinNetwork);
-    return { requestId: null, receiver, asset, amount: unitsUsed, fees, payBy: { rail: kind, untilBlock: counted + this.pendingBlocks }, payable: false,
+    const quote = { requestId: null, receiver, asset, amount: unitsUsed, fees, payBy: { rail: kind, untilBlock: counted + this.pendingBlocks }, payable: false,
       displayLabel: context.displayLabel ?? asset, actualTicker: d.tick, deploymentId: d.id, generation: d.generation ?? 1, jobState: 'registered',
-      ...(block === undefined ? {} : { block }), kind, baseFee, unit: rules.TAP_UNIT, feeQuote, price, split, networkFeeSats: '0',
+      ...(block === undefined ? {} : { block }), kind, baseFee, feeSettings: feeQuote.feeSettings ?? context.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, feeQuote, price, split, networkFeeSats: '0',
       networkFeePayment: 'player_wallet', destinations, counted, unitsUsed, matterUnit: { asset, denomination: 'units', decimals: 0 },
       feeDestinations: Object.fromEntries(fees.map(f => [f.role, { amount: f.amount, to: f.to, settlement: f.role === 'burn' ? 'burn' : 'direct' }])) };
+    this.quoteEvidence.set(quote, { context, holder }); return quote;
   }
   async deploymentNeeded(asset, details = {}) {
     if (!this.provisioner) return null;
+    const registered = (await this.reads.registry?.())?.assets?.[asset];
+    if (registered && !registered.suspended) return null;
     const definition = (this.store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset) ?? this.store.get('types', asset);
     check(definition, 'asset_unknown');
     const deployment = await this.provisioner.request(asset, definition);
@@ -83,6 +87,13 @@ export class Mints {
       deployment, deploymentPath: '/mint/deployment/' + asset };
   }
   request(body) { return this.gate(async () => {
+    const savedId = rules.pendingId(this.network, body.request), saved = this.store.get('mints', savedId);
+    if (saved) {
+      check(verifyPayer(this.network, body), 'payer_authorization');
+      check(saved.payer === body.payer && saved.kind === body.kind && saved.receiver === body.receiver && same(saved.request, body.request) && saved.signature === body.signature, 'request_conflict', 409);
+      return publicMint(saved);
+    }
+    const prepared = await this.snapshot(async () => {
     const { request, signature, receiver, payer, kind } = body, counted = await this.reads.counted();
     check(typeof receiver === 'string' && receiver.length > 0 && receiver.length <= 128 && hash(receiver) === request?.receive, 'receiver_binding');
     check(typeof payer === 'string' && payer.length > 0 && payer.length <= 128 && verifyPayer(this.network, body), 'payer_authorization');
@@ -92,15 +103,15 @@ export class Mints {
     check(request.expires - counted >= SETTING_BOUNDS.pending_blocks[0] && request.expires - counted <= SETTING_BOUNDS.pending_blocks[1], 'request_expiry');
     check(this.operations.supportsMintBatches === true, 'mint_batch_replay_unavailable', 503);
     check(this.store.count('activeMints') < this.capacity, 'mint_capacity', 503);
-    const quote = await this.quote({ asset: request.asset, block: request.block, amount: request.amount, kind, feeQuote: body.feeQuote });
+    const quote = await this.quote({ asset: request.asset, block: request.block, amount: request.amount, kind, feeQuote: body.feeQuote, sourceLocators: body.sourceLocators });
     if (quote.deploymentNeeded) return quote;
     quote.fullFees = rules.mintFeeItems(quote.split, quote.destinations, id, null, kind, this.bitcoinNetwork);
     quote.fees = rules.mintFeeItems(quote.split, quote.destinations, id, payer, kind, this.bitcoinNetwork);
     quote.payableAmount = quote.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString();
     const feeAuthorization = await this.reads.feeQuotes.accept(quote.feeQuote, mintFeeScope(request.asset, request.block, kind), id, request.expires, counted);
-    const context = await this.reads.assetContext(request.asset, request.block, kind, quote.feeQuote), compound = context.deployment.kind === 'compound';
+    const { context, holder } = this.quoteEvidence.get(quote), compound = context.deployment.kind === 'compound';
     check(compound || context.find?.finder, 'mint_no_find');
-    const holder = context.link ? await this.reads.bitmap(request.block) : null, key = compound ? null : `${request.asset}/${request.block}`;
+    const key = compound ? null : `${request.asset}/${request.block}`;
     const hold = key ? this.store.get('holds', key) : null;
     check(!hold || counted > hold.expiry && hold.safeToReplace === true, 'block_pending', 409);
     const reserved = this.store.list('activeMints', { limit: this.capacity }).map(r => this.store.get('mints', r.id)).filter(r => r.state === 'reserving' && r.request.owner === request.owner && r.request.asset === request.asset).reduce((n, r) => n + BigInt(r.request.amount), 0n);
@@ -111,24 +122,32 @@ export class Mints {
       !this.store.get('creditClaims', sourceId) && value.items.some(item => quote.fees.some(fee => rules.sameFee(fee, item)))).slice(0, 32).map(r => r.id);
     const row = { id, request, signature, receiver, payer, kind, authorization: body.authorization, requestedFeeQuote: body.feeQuote ?? null,
       quote, context, feeAuthorization, key, state: 'reserving', acceptedAt: counted, deadline: request.until, op: accepted.op, paymentIds: [], creditIds };
+    return { row, creditIds, key, request, id };
+    });
+    if (!prepared.row) return prepared;
+    const { row, creditIds, key, request, id } = prepared;
     await this.store.transact([{ space: 'mints', id, value: row }, { space: 'activeMints', id, value: true },
       ...creditIds.map(sourceId => ({ space: 'creditClaims', id: sourceId, value: id })),
       ...(key ? [{ space: 'holds', id: key, value: { id, expiry: request.expires, safeToReplace: false } }] : [])]);
     return publicMint(row);
   }); }
-  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.gate(async () => {
+  payment({ id, requestId, paymentId, paymentIds = [], inscription, mintLocator, paymentEvidence = {} }) { return this.gate(async () => {
     id ??= requestId;
     const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(inscription), 'mint_inscription');
-      await this.save({ ...row, mintInscription: inscription }); return this.public(id);
+      await this.save({ ...row, mintInscription: inscription, ...(mintLocator ? { mintLocator } : {}) }); return this.public(id);
     }
     check(row.state !== 'reserving' && !row.permit, 'payment_state', 409);
-    check(Array.isArray(paymentIds) && paymentIds.length <= 64, 'payment_ids');
+    const maxItems = this.reads.sourcePolicy?.maxItems ?? 64;
+    check(Array.isArray(paymentIds) && paymentIds.length <= maxItems, 'payment_ids');
     const ids = [...new Set([...(row.paymentIds ?? []), ...(paymentId ? [paymentId] : []), ...paymentIds])];
-    check(ids.length <= 64 && ids.every(p => typeof p === 'string' && p.length > 0 && p.length <= 160), 'payment_id');
-    const candidate = { ...row, paymentIds: ids }, payment = await this.payments.mint(candidate);
-    check(payment.receipts.some(p => p.accepted), 'payment_unseen');
+    check(ids.length <= maxItems && ids.every(p => typeof p === 'string' && p.length > 0 && p.length <= 160), 'payment_id');
+    check(paymentEvidence && typeof paymentEvidence === 'object' && !Array.isArray(paymentEvidence) && Object.keys(paymentEvidence).every(key => ids.includes(key)), 'payment_evidence');
+    const candidate = { ...row, paymentIds: ids, paymentEvidence: { ...row.paymentEvidence, ...paymentEvidence } }, payment = await this.payments.mint(candidate);
+    // Keep named submissions even before they confirm; retries and late credit
+    // recovery must not depend on wallet-history discovery.
+    check(payment.receipts.some(p => p.accepted) || this.reads.namedSources && ids.length > 0, 'payment_unseen');
     await this.save(candidate); await this.refresh(candidate, await this.reads.counted(), payment);
     return this.public(id);
   }); }

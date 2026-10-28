@@ -41,3 +41,38 @@ test('durable intake -> audit file -> committee proposal -> contract credits, wi
     assert.deepEqual(store.get('meta', 'ruleState').finds, {});
   } finally { await pipeline.close(); await store.close(); }
 });
+
+test('backlog with empty tip openings and later certified receipts remains signable after draft reload', async () => {
+  const { fixture } = await import('../../committee/test/fixture.mjs');
+  const path = await temp('receipt-backlog-'), history = fixtureHistory(30), store = await Store.open(path);
+  const intake = new Intake({ store, network, secret, hashAt: history.hashAt, puzzleBits: 0 });
+  const committee = { async attestRoot(seal) {
+    const attestations = await attestRoot(seal);
+    await store.put('receiptCertificates', `${seal.tip}/${seal.hash}`, { seal, attestations }); return attestations;
+  } };
+  const pipeline = new Pipeline({ store, files: new Files(join(path, 'static')), history, intake, committee,
+    reads: { batchLast: async () => ({ n: 0, to: 0 }), committeeEpoch: async () => 0, counted: async () => 8 },
+    settings: { puzzleBits: 0, receiptSigners } });
+  try {
+    // Production afterObserve seals an empty opening immediately. Intake then
+    // collects receipts until the next tip. A stall puts both in one batch.
+    for (let tip = 6; tip <= 14; tip++) {
+      await intake.observe({ tip, hash: history.hashAt(tip), counted: tip - 5, confirmed: tip - 5 });
+      if (tip === 14) break;
+      await intake.seal();
+      if (![7, 13].includes(tip)) await intake.accept(rules.stableJSON(makeMove(history, tip, agent(), 'header')));
+    }
+    const draft = await pipeline.build(), proposal = structuredClone(draft.proposal);
+    assert.deepEqual(draft.items.map(i => i.output.file.receipts.length), [0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0]);
+    const certificates = store.list('receiptCertificates'); assert.equal(certificates.length, 6);
+    const saved = await pipeline.loadDraft(); assert.deepEqual(saved.proposal, proposal);
+    const f = fixture(); f.data.counted = saved.execution;
+    f.reads.batchContext = async () => ({ last: saved.last, counted: saved.execution, state: saved.startState, patterns: saved.startPatterns,
+      gateway: intake.gateway, settings: saved.settings, limits: saved.limits, headers: saved.headers,
+      inputs: saved.items.map(i => i.input), history, hashAt: history.hashAt });
+    f.reads.receiptCertificate = async (tip, hash) => store.get('receiptCertificates', `${tip}/${hash}`);
+    assert.equal((await f.policy.approve(saved.proposal)).digest, Buffer.from(rules.batchDigest(network, proposal.batch)).toString('hex'));
+    assert.deepEqual(store.list('receiptCertificates'), certificates);
+    assert.deepEqual((await pipeline.loadDraft()).proposal, proposal);
+  } finally { await pipeline.close(); await store.close(); }
+});

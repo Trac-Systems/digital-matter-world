@@ -5,6 +5,12 @@ Anvil chain. All listeners bind to `127.0.0.1`. Each start creates a new run und
 `data/` in the external build directory configured by `local/common.mjs`; stopped runs remain available for
 inspection. No chain is resumed automatically.
 
+For a disposable test stack beside a running stack, set `DMW_BUILD_ROOT` to a
+separate build directory and `DMW_LOCAL_PORT_BASE` to four unused consecutive
+loopback ports (Bitcoin, ord, gateway, Anvil). The base must be 1024–65532;
+omitting it preserves the usual ports. The separate build directory needs the
+existing ord and Solidity binaries at their documented paths.
+
 See [Compound minting and Bitcoin payments](docs/PAYMENTS.md) for ordinary
 privileged token mints, the payer wallet payload, native payment splits and burns,
 and independent HTLC refunds. Run those proofs with `node local/prove-payments.mjs`
@@ -22,7 +28,7 @@ One-time setup on this Apple Silicon machine:
 ```
 
 Prerequisites are Bitcoin Core **29.0.0**, Foundry **1.7.1**, Rust **1.89.0**,
-Python **3.11.15**, Ninja, Xcode command-line tools, Node **23.11.0** under nvm,
+Python **3.11.15**, Ninja, Xcode command-line tools, Node **24.22.1** under nvm,
 and the existing Solidity **0.8.26** compiler at `~/.svm/0.8.26/solc-0.8.26`.
 The read-only ord-tap source is pinned to
 `b8f6ea35cf6b9d405d4db7c58555e3c8ab33e8cd` in the shared build directory.
@@ -66,7 +72,7 @@ Block making and the protocol proof:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node local/stack.mjs mine 10
 node local/stack.mjs mine 1 2
@@ -149,7 +155,7 @@ Run all checks with the stack stopped:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node --test local/test/*.test.mjs
 cd eth

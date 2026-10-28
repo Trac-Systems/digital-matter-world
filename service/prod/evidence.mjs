@@ -4,8 +4,9 @@ import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { rules } from '../src/rules.mjs';
 import { check, atomicWrite, hash, serial } from '../src/util.mjs';
-import { endpoint } from './config.mjs';
+import { endpoint, evidenceSnapshotPolicy } from './config.mjs';
 import { HttpSource } from './http.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const EVIDENCE_LIMIT = 8_000_000;
 const MAX_ROWS = 4096, MAX_AGE = 30000;
@@ -17,7 +18,7 @@ export function verifyEvidence(value, signature, key) {
 }
 const pick = (row, keys) => row === null ? null : Object.fromEntries(keys.filter(k => row[k] !== undefined).map(k => [k, row[k]]));
 const projections = {
-  mints: ['id','request','signature','receiver','payer','kind','authorization','requestedFeeQuote','quote','context','feeAuthorization','paymentId','paymentIds','creditIds','permit','mintInscription'],
+  mints: ['id','request','signature','receiver','payer','kind','authorization','requestedFeeQuote','quote','context','feeAuthorization','paymentId','paymentIds','paymentEvidence','creditIds','permit','mintInscription','mintLocator','admissionBatch'],
   batches: ['batch','publications'], receiptObservations: ['seal','receipts','archive'],
   linkRequests: ['id','request','sig','terms','paymentId'],
   payoutBindings: ['id','request','agentSignature','walletSignature','acceptedAt','attestations'],
@@ -53,6 +54,7 @@ async function boundedFile(root, path, limit) {
 }
 export function evidencePublisher({ config, store, reads, secret, now = Date.now }) {
   const gate = serial(), used = new Map();
+  const { retries, backoffMs } = evidenceSnapshotPolicy(config.prod.evidenceSnapshot);
   return request => gate(async () => {
     const { signature, ...challenge } = request;
     check(Object.keys(challenge).sort().join(',') === 'epoch,member,network,nonce,time,version' && challenge.version === 1 && challenge.network === config.network && challenge.epoch === config.epoch, 'evidence_domain');
@@ -61,35 +63,48 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
     check(/^[0-9a-f]{64}$/.test(challenge.nonce) && Number.isSafeInteger(challenge.time) && challenge.time <= now() + 1000 && now() - challenge.time <= MAX_AGE, 'evidence_challenge');
     for (const [nonce, expiry] of used) if (expiry < now()) used.delete(nonce);
     check(!used.has(challenge.nonce) && used.size < 1024, 'evidence_replay'); used.set(challenge.nonce, now() + MAX_AGE);
-    const stamp = await reads.trac('stamp'), revision = store.sequence, rows = [], archives = {}, contexts = {};
-    let size = 0;
-    const budget = value => { size += Buffer.byteLength(JSON.stringify(value)); check(size < EVIDENCE_LIMIT - 10000, 'evidence_capacity'); };
-    for (const space of spaces) {
-      const page = store.list(space, { limit: MAX_ROWS }); check(page.length < MAX_ROWS, 'evidence_row_limit');
-      for (const { id, value } of page) {
-        const projected = projectEvidence(space, id, value); if (projected === undefined) continue;
-        noSecrets(projected); const row = { space, id, value: projected }; budget(row); rows.push(row); check(rows.length < MAX_ROWS, 'evidence_row_limit');
+    // Authentication and nonce consumption happen once. Each retry discards all
+    // rows, files and context from the failed attempt; writers remain unblocked.
+    for (let attempt = 0; ; attempt++) {
+      check(now() - challenge.time <= MAX_AGE, 'evidence_challenge');
+      try {
+        const revision = store.sequence, stamp = await reads.trac('stamp'), rows = [], archives = {}, contexts = {};
+        let size = 0;
+        const budget = value => { size += Buffer.byteLength(JSON.stringify(value)); check(size < EVIDENCE_LIMIT - 10000, 'evidence_capacity'); };
+        for (const space of spaces) {
+          const page = store.list(space, { limit: MAX_ROWS }); check(page.length < MAX_ROWS, 'evidence_row_limit');
+          for (const { id, value } of page) {
+            const projected = projectEvidence(space, id, value); if (projected === undefined) continue;
+            noSecrets(projected); const row = { space, id, value: projected }; budget(row); rows.push(row); check(rows.length < MAX_ROWS, 'evidence_row_limit');
+          }
+        }
+        for (const row of rows.filter(r => r.space === 'payoutCurrent')) {
+          const space = 'payoutHistory/' + row.id, page = store.list(space, { limit: MAX_ROWS });
+          check(page.length < MAX_ROWS && rows.length + page.length < MAX_ROWS, 'evidence_row_limit');
+          for (const r of page) { const entry = { space, ...r }; noSecrets(entry); budget(entry); rows.push(entry); }
+        }
+        for (const row of rows) {
+          const files = row.space === 'batches' ? row.value.publications?.map(p => p.audit) ?? [] : row.space === 'receiptObservations' && row.value.archive ? [row.value.archive] : [];
+          for (const file of files) if (!archives[file.path]) {
+            const bytes = await boundedFile(join(config.data, 'static'), file.path.replace(/^\//, ''), 1500000);
+            check(hash(bytes) === file.hash, 'evidence_archive_hash');
+            archives[file.path] = bytes.toString('base64'); budget(archives[file.path]);
+          }
+        }
+        const sequence = stamp.last.n + 1;
+        try { const bytes = await boundedFile(config.prod.contexts, sequence + '.json', EVIDENCE_LIMIT); contexts[sequence] = JSON.parse(bytes); noSecrets(contexts[sequence]); budget(contexts[sequence]); }
+        catch (e) { if (e.code !== 'ENOENT') throw e; }
+        const finalStamp = await reads.trac('stamp');
+        // Compare both only after the last await, with no yield before signing.
+        check(store.sequence === revision && text(stamp) === text(finalStamp), 'evidence_snapshot_changed');
+        check(now() - challenge.time <= MAX_AGE, 'evidence_challenge');
+        const payload = { version: 1, network: config.network, epoch: config.epoch, member: challenge.member, nonce: challenge.nonce, observedAt: now(), stamp, revision, rows, archives, contexts };
+        return { payload, signature: signEvidence(payload, secret) };
+      } catch (error) {
+        if (!['evidence_snapshot_changed', 'trac_snapshot_changed'].includes(error.message) || attempt >= retries) throw error;
+        if (backoffMs) await delay(backoffMs);
       }
     }
-    for (const row of rows.filter(r => r.space === 'payoutCurrent')) {
-      const space = 'payoutHistory/' + row.id, page = store.list(space, { limit: MAX_ROWS });
-      check(page.length < MAX_ROWS && rows.length + page.length < MAX_ROWS, 'evidence_row_limit');
-      for (const r of page) { const entry = { space, ...r }; noSecrets(entry); budget(entry); rows.push(entry); }
-    }
-    for (const row of rows) {
-      const files = row.space === 'batches' ? row.value.publications?.map(p => p.audit) ?? [] : row.space === 'receiptObservations' && row.value.archive ? [row.value.archive] : [];
-      for (const file of files) if (!archives[file.path]) {
-        const bytes = await boundedFile(join(config.data, 'static'), file.path.replace(/^\//, ''), 1500000);
-        check(hash(bytes) === file.hash, 'evidence_archive_hash');
-        archives[file.path] = bytes.toString('base64'); budget(archives[file.path]);
-      }
-    }
-    const sequence = stamp.last.n + 1;
-    try { const bytes = await boundedFile(config.prod.contexts, sequence + '.json', EVIDENCE_LIMIT); contexts[sequence] = JSON.parse(bytes); noSecrets(contexts[sequence]); budget(contexts[sequence]); }
-    catch (e) { if (e.code !== 'ENOENT') throw e; }
-    check(store.sequence === revision && text(stamp) === text(await reads.trac('stamp')), 'evidence_snapshot_changed');
-    const payload = { version: 1, network: config.network, epoch: config.epoch, member: challenge.member, nonce: challenge.nonce, observedAt: now(), stamp, revision, rows, archives, contexts };
-    return { payload, signature: signEvidence(payload, secret) };
   });
 }
 
@@ -118,10 +133,15 @@ export class EvidenceStore {
     }
     await atomicWrite(join(this.config.directory, 'evidence.json'), JSON.stringify(envelope));
     this.rows = rows; this.payload = p;
+    this.batchesByHeight = new Map();
+    for (const r of p.rows.filter(r => r.space === 'batches')) {
+      const list = this.batchesByHeight.get(r.value.batch.to) ?? []; list.push(r.value); this.batchesByHeight.set(r.value.batch.to, list);
+    }
   }); }
   ready() { check(this.payload && this.now() - this.payload.observedAt < MAX_AGE, 'evidence_missing_or_stale'); }
   get(space, id) { this.ready(); return this.rows.get(text([space, String(id)])) ?? null; }
   list(space, { after = '', limit = 1000 } = {}) { this.ready(); check(Number.isInteger(limit) && limit > 0 && limit <= MAX_ROWS, 'evidence_page'); return this.payload.rows.filter(r => r.space === space && r.id > after).sort((a,b) => a.id < b.id ? -1 : 1).slice(0,limit).map(({id,value}) => ({id,value})); }
+  batchAt(height) { this.ready(); return this.batchesByHeight.get(height) ?? []; }
   context(n) { this.ready(); const c = this.payload.contexts[n]; check(c, 'evidence_context_missing'); return c; }
   archive(path) { this.ready(); const a = this.payload.archives[path]; check(a, 'evidence_archive_missing'); return Buffer.from(a, 'base64'); }
   close() { this.payload = null; this.identity?.fill(0); }

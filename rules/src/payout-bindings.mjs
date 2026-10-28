@@ -67,6 +67,29 @@ export function verifyBip322Simple(message, address, signature, chain) {
   assert(schnorr.verify(sig.subarray(0, 64), sign.preimageWitnessV1(0, [script], hashType, [0n]), pubkey), 'binding_wallet_signature');
   return true;
 }
+// TAP Wallet's signMessage ignores the requested BIP-322 type and returns a
+// legacy Bitcoin Signed Message compact signature of its untweaked account key.
+// Prove control of that key's BIP86 output, never a P2PKH/P2WPKH alternative.
+export function verifyTapMessage(message, address, signature, chain) {
+  assert(typeof signature === 'string' && signature.length <= 96, 'binding_wallet_signature');
+  const bytes = Buffer.from(signature, 'base64');
+  if (bytes.length !== 65) return verifyBip322Simple(message, address, signature, chain);
+  try {
+    assert(bytes.toString('base64') === signature && bytes[0] >= 27 && bytes[0] <= 34, 'signature');
+    assert(typeof message === 'string' && message.length <= 4096, 'message');
+    const body = utf8(message);
+    assert(body.length <= 4096, 'message');
+    payoutAddress('tap', address, chain);
+    const digest = hashBytes(hashBytes(Buffer.concat([
+      Buffer.from('\x18Bitcoin Signed Message:\n'), btc.CompactSize.encode(body.length), body,
+    ])));
+    const sig = secp256k1.Signature.fromCompact(bytes.subarray(1));
+    assert(!sig.hasHighS(), 'signature');
+    const key = sig.addRecoveryBit((bytes[0] - 27) & 3).recoverPublicKey(digest).toRawBytes(true);
+    assert(btc.p2tr(key.subarray(1), undefined, bitcoinNetwork(chain)).address === address, 'signature');
+    return true;
+  } catch { throw Error('binding_wallet_signature'); }
+}
 export function verifyWalletBinding(envelope, options) {
   const message = verifyAgentBinding(envelope, options), { request: r, walletSignature: signature } = envelope;
   assert(typeof signature === 'string' && signature.length <= 512, 'binding_wallet_signature');
@@ -80,7 +103,7 @@ export function verifyWalletBinding(envelope, options) {
       const pub = s.addRecoveryBit(v >= 27 ? v - 27 : v).recoverPublicKey(personalMessageHash(message)).toRawBytes(false);
       assert('0x' + Buffer.from(keccak_256(pub.subarray(1))).subarray(12).toString('hex') === r.address, 'signature');
     } else {
-      verifyBip322Simple(message, r.address, signature, options.bitcoinNetwork);
+      verifyTapMessage(message, r.address, signature, options.bitcoinNetwork);
     }
   } catch { throw Error('binding_wallet_signature'); }
   return hash(message);

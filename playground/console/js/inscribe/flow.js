@@ -5,6 +5,7 @@ import { pagedTable } from '../paged.js';
 import { assetName } from '../words.js';
 import { tap } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal } from './wallet.js';
+import { walletError } from '../wallet-errors.js';
 
 const LABELS = { awaiting_payment: 'Awaiting payment', partly_paid: 'Partly paid', paid: 'Payment confirmed', permit_issued: 'Permit ready — you can inscribe', minted: 'Minted on Bitcoin', expired: 'Expired before payment' };
 const publicId = result => result?.requestId ?? result?.request?.requestId ?? result?.request?.id;
@@ -30,7 +31,7 @@ export function savedMintRequests() {
 export function playerMintFlow({ asset, block, amount, id, compound = false, resumeIntent } = {}) {
   const s = sheet('Mint from your wallet', 'Pay the fee items, wait for your permit, then inscribe to your Bitcoin address. You pay your own Bitcoin fees.');
   const network = site.public ? 'mainnet' : 'regtest';
-  const wallet = new TapWalletMint({ readStatus, network, readPaymentPlan: id => get(`/gateway/web-api/mint/${id}`) });
+  const wallet = new TapWalletMint({ readStatus, network, readPaymentPlan: id => get(`/gateway/web-api/mint/${id}`), notify: text => clear(note, text) });
   const ethereum = new EthereumMint({ readStatus, network, journal: new BrowserMintJournal(),
     readTarget: () => get('/gateway/web-api/target'), readPlan: id => get(`/gateway/web-api/mint/${id}`) });
   const intent = resumeIntent ?? { asset, block, amount, compound, actionId: `web-${crypto.randomUUID()}` };
@@ -40,7 +41,7 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
   const setBusy = value => { busy = value; s.body.setAttribute('aria-busy', String(value)); for (const el of s.foot.querySelectorAll('button')) el.disabled = value; };
   const attempt = async fn => {
     if (busy) return; setBusy(true); clear(note, 'Working…');
-    try { await fn(); } catch (error) { clear(note, h('div.note.bad', {}, error.message)); }
+    try { await fn(); } catch (error) { clear(note, h('div.note.bad', {}, walletError(error))); }
     finally { setBusy(false); }
   };
   const connect = async () => { if (!connected) { await wallet.connect(); connected = true; } };
@@ -53,7 +54,7 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
     clearTimeout(timer);
     timer = setTimeout(async () => {
       if (!s.body.isConnected || status?.state === 'minted') return;
-      if (!busy) try { await refresh(); } catch (error) { clear(note, 'Status unavailable. Keep this request ID and retry: ', error.message); }
+      if (!busy) try { await refresh(); } catch (error) { clear(note, 'Status unavailable. Keep this request ID and retry: ', walletError(error)); }
       poll();
     }, 3000);
   };

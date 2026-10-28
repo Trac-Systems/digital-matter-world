@@ -22,10 +22,13 @@ import { rules } from '../src/rules.mjs';
 import { verifyPayer } from '../src/mints.mjs';
 import { check, hash, heightKey, serial } from '../src/util.mjs';
 import { AcceptedAssetSupply } from './asset-supply.mjs';
-import { walletBitmaps } from '../src/bitmaps.mjs';
+import { installNamedReads } from './named-reads.mjs';
+import { actionScope } from './source-cache.mjs';
+import { withPaidReads, withClockReads } from './http.mjs';
+import { BitmapCache } from './bitmap-cache.mjs';
 import { publicTreasury, publicEscrow, bitmapOwner } from './public-reads.mjs';
 
-import { FeeQuotes, validateFeePolicy, mintFeeScope } from '../src/fees.mjs';
+import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms } from '../src/fees.mjs';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 function recovered(digest, signature) {
@@ -40,30 +43,30 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const state = suppliedStore ?? await Store.open(config.prod.readerData);
   let trac, views, store, closed = false;
   try {
-  const client = await createBitcoin(config.prod.bitcoin, config.prod.http);
+  const client = await createBitcoin(config.prod.bitcoin, config.prod.http, { readsPolicy: config.prod.sourceReads });
   trac = await configuredTrac(config, state, runtime);
-  const indexer = await createTap(config.prod.tap, client, config.prod.http);
+  const indexer = await createTap(config.prod.tap, client, config.prod.http, config.prod.sourceReads);
   const ethereum = await createEthereum(config.prod.ethereum, config.prod.http);
   const manifest = { bitcoin: client };
-  store = suppliedStore ?? await EvidenceStore.open({ config: config.prod.evidence, identity, gateway, clock: async () => { const tip = await client.tip(); return { tip: tip.height, tipHash: tip.hash }; }, stamp: () => trac('stamp') });
+  store = suppliedStore ?? await EvidenceStore.open({ config: config.prod.evidence, identity, gateway, clock: async () => { return reads.tip(); }, stamp: () => trac('stamp') });
   const clockGate = serial();
   views = new BitcoinViews(client, join(config.prod.readerData, 'bitcoin.sqlite'), { maxHeadersPerView: config.prod.maxHeadersPerView });
+  indexer.history = (height, hash) => views.view(height, hash);
   if (config.prod.headersFile) await views.seed(config.prod.headersFile);
   const ethRPC = ethereum.rpc, escrow = ethereum.escrow;
-  const quotedTerms = async (kind, row) => {
-    const configured = (await registry())[kind]; check(configured, kind + '_unconfigured');
-    const { payer, hash, feeAuthorization, ...policy } = row.terms;
-    const fee = await reads.feeQuotes.accepted(feeAuthorization, `${kind}/${row.id}`, row.id, row.request.until);
-    check(same(policy, { ...configured, baseFee: fee.baseFee }), kind + '_policy');
-    return row.terms;
-  };
-  const tap = path => path === 'getPrivilegeAuthList' || path.startsWith('getMintedList/') ? indexer.all(path) : indexer.tap(path);
+  const quotedTerms = (kind, row) => validateQuotedTerms(reads, kind, row);
+  const tap = path => indexer.tap(path);
   const content = id => indexer.content(id);
   const request = id => {
     const row = store.get('mints', id); check(row && verifyPayer(config.network, { request: row.request, receiver: row.receiver, payer: row.payer, kind: row.kind, feeQuote: row.requestedFeeQuote, authorization: row.authorization }), 'payer_authorization');
     check(rules.verifyRequest('rq', config.network, row.request, row.signature, row.request.until) && rules.pendingId(config.network, row.request) === id, 'owner_signature'); return row;
   };
   const chainView = async view => {
+    const scope = indexer.scope?.();
+    if (scope) {
+      check(!view || view.tip === scope.stamp.height && view.tipHash === scope.stamp.hash, 'tap_historical_snapshot_unavailable');
+      return { tip: scope.stamp.height, tipHash: scope.stamp.hash };
+    }
     if (view) return view;
     const head = await trac('head');
     check(await client.blockHash(head.tip.height) === head.tip.hash, 'bitcoin_beacon_disagreement');
@@ -112,8 +115,11 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   };
   const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: 'mainnet', rosterHistory: config.rosterHistory, members: config.committee?.map(s => s.peer) });
   const supply = new AcceptedAssetSupply({ store, state, trac });
+  const bitmaps = new BitmapCache({ indexer, bindings, store, policy: config.prod.bitmapCache });
   const reads = {
     bindings,
+    withSnapshot: (view, read) => indexer.at(view, read),
+    withAction: read => withPaidReads(() => actionScope.run({ reader: client, started: Date.now() }, read)),
     refreshEvidence: store instanceof EvidenceStore ? () => { auditCache.clear(); return store.refresh(); } : undefined,
     feeQuotes: new FeeQuotes({ network: config.network, gateway, registry }),
     validateFeeTerms: quotedTerms,
@@ -125,12 +131,23 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       return { seal: r.seal, receipts: rules.decodeBinary(bytes).receipts };
     },
     receiptCertificate: async (tip, hash) => store.get('receiptCertificates', `${tip}/${hash}`),
-    tip: () => clockGate(async () => { const chain = await client.tip(); await views.view(chain.height, chain.hash); const tip = chain.height, highestTip = Math.max(tip, state.get('prodBitcoin', 'highestTip') ?? 0); await state.put('prodBitcoin', 'highestTip', highestTip); return { tip, tipHash: chain.hash, highestTip }; }),
+    tip: () => {
+      const action = actionScope.getStore();
+      if (action?.reader === client && action.clock) { check(Date.now() - action.started <= (indexer.policy?.maxScopeMs ?? 120000), 'clock_scope_expired'); return action.clock; }
+      const result = withClockReads(() => clockGate(async () => {
+      const chain = await client.tip(); await views.view(chain.height, chain.hash);
+      const tip = chain.height, previous = state.get('prodBitcoin', 'highestTip'), highestTip = Math.max(tip, previous ?? 0);
+      if (highestTip !== previous) await state.put('prodBitcoin', 'highestTip', highestTip);
+      return { tip, tipHash: chain.hash, highestTip };
+      }));
+      if (action?.reader === client) action.clock = result;
+      return result;
+    },
     mintCertificate: async id => store.get('ceremonies', 'mint/' + id)?.result.certificate,
     manifest, store, trac, views, tap, content, included, registry, ethRPC, escrow, indexer, client,
     head: () => trac('head'), assetSupply: () => supply.read(),
-    bitmaps: owner => indexer.at(undefined, () => walletBitmaps({ reads, store }, owner,
-      (_manifest, address, offset) => tap('getBitmapWalletHistoricList/' + encodeURIComponent(address) + '?offset=' + offset + '&max=500'))),
+    bitmaps: async owner => (await bitmaps.snapshot(owner)).bitmaps,
+    bitmapSnapshot: owner => bitmaps.snapshot(owner),
     publicEscrow: (payer, id) => publicEscrow({ escrow, ethRPC, ethereum: config.prod.ethereum }, payer, id),
     async publicTransactions(after, limit) {
       check(Number.isSafeInteger(after) && after >= 0 && Number.isSafeInteger(limit) && limit > 0 && limit <= 200, 'transaction_page');
@@ -161,13 +178,11 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const histories = []; for (const input of context.inputs) histories.push(await views.view(input.tip, input.tipHash));
       return { ...context, history: histories[0], hashAt: histories[0].hashAt, views: histories.map(history => ({ history, hashAt: history.hashAt })) };
     },
-    async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId) {
+    async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId, sourceLocators) {
       const registrations = await registry(), current = registrations.assets[asset];
       const registered = payoutSnapshot?.deploymentId ? [current, ...(registrations.generations?.[asset] ?? [])].find(e => e?.id === payoutSnapshot.deploymentId) : current; check(registered, 'asset_unregistered');
       const indexTick = registered.indexTick ?? registered.tick;
-      const { deployment, authority } = await verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });
-      const auth = await content(registered.privilege), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), publicKey = recovered(authorityHash, auth.sig);
-      check(auth.hash === authorityHash && publicKey === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
+      const { deployment, authorityKey: publicKey } = await verifyDeployment(reads, { ...registered, sourceLocators: sourceLocators ?? registered.sourceLocators ?? payoutSnapshot?.sourceLocators }, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });
       const found = registered.kind === 'dmt' ? await find(asset, block, registered.pattern, typeof viewOrKind === 'object' ? viewOrKind : undefined) : null;
       const live = store.list('activeMints', { limit: 256 }).map(r => store.get('mints', r.id)).filter(r => r.request.asset === asset && r.request.block === block);
       const kinds = new Set(live.map(r => r.kind));
@@ -198,7 +213,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const holder = link ? admission ? admission.bitmap : await reads.bitmap(block) : null;
       if (payoutSnapshot?.mintOwnershipHash) check(payoutSnapshot.mintOwnershipHash === hash(rules.stableJSON({ bitmap: holder, link })), 'quote_recipient_changed');
       const landownerAddress = holder ? kind === 'ethereum' ? payout(holder.agent, 'landowner') : holder.address : null;
-      return { deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: deployment.dec,
+      return { sourceLocators: sourceLocators ?? registered.sourceLocators ?? payoutSnapshot?.sourceLocators, ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: deployment.dec,
         remaining: await tap('getMintTokensLeft/' + indexTick), limit: deployment.lim ?? '0' }, find: found, link, bitmapHolder: holder,
         landownerAddress, displayLabel: registered.displayLabel ?? registered.pattern?.name ?? asset, discoverer, payouts, tier: registered.pattern?.tier ?? 1, treasury: destinations.treasury,
         finderAddress: found?.finder ? address : null, firstMakerAddress: registered.kind === 'compound' ? address : null };
@@ -224,7 +239,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
         txid: consumed.ins.slice(0, 64), confirmations: inclusion?.confirmations ?? 0 } };
     },
     async isMinted(deployment, tick, block, view) {
-      const d = await tap('getDeployment/' + encodeURIComponent('dmt-' + tick)); check(d?.ins === deployment, 'deployment_binding');
+      const d = await reads.indexedDeployment('dmt-' + tick); check(d?.ins === deployment, 'deployment_binding');
       const r = await tap('getDmtMintHolderByBlock/' + encodeURIComponent('dmt-' + tick) + '/' + block);
       if (!r) return false; check(await included(r.ins, view), 'indexed_mint_unconfirmed'); return true;
     },
@@ -259,16 +274,18 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   };
   // REST exposes current ownership and lock state. Historical financial reads
   // fail closed unless the indexed snapshot is precisely the requested branch.
-  for (const name of ['bitmap', 'isMinted', 'mint', 'cancellation', 'assetContext', 'linkPayment']) {
+  for (const name of ['bitmap', 'isMinted', 'mint', 'assetContext', 'linkPayment', 'linkLockPayment']) {
     const original = reads[name];
-    const atIndex = { bitmap: 1, isMinted: 3, mint: 1, cancellation: 1, assetContext: 2, linkPayment: 1 }[name];
+    const atIndex = { bitmap: 1, isMinted: 3, mint: 1, cancellation: 1, assetContext: 2, linkPayment: 1, linkLockPayment: 1 }[name];
     reads[name] = (...args) => indexer.at(typeof args[atIndex] === 'object' ? args[atIndex] : undefined, () => original(...args));
   }
-  const originalPayment = reads.payment; reads.payment = (...args) => indexer.at(undefined, () => originalPayment(...args));
   reads.tapPayment = (id, binding, at) => indexer.at(at, () => payment(id, binding, at));
   const originalPreflight = reads.preflight;
   reads.preflight = async (...args) => { const before = await trac('stamp'), result = await originalPreflight(...args); check(same(before, await trac('stamp')), 'trac_snapshot_changed'); return result; };
   installMintPayments(reads, { request, network: config.network, escrow: config.prod.ethereum, confirmations: config.prod.ethereum.confirmations });
+  const originalMintPayment = reads.mintPayment;
+  reads.mintPayment = (...args) => indexer.at(undefined, () => originalMintPayment(...args));
+  installNamedReads(reads, indexer);
   reads.paymentUsed = key => trac('paymentUsed', [key]);
   reads.bitcoinTransaction = id => client.transaction(id);
   const mintEth = ethereumPayments({ rpc: ethRPC, escrow: config.prod.ethereum });

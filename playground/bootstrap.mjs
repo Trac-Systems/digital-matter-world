@@ -11,7 +11,7 @@ import { CancellableInscriber } from '../local/cancellable-inscriber.mjs';
 import { sendInscription } from '../local/inscriber.mjs';
 import { authority, testKey } from '../local/protocol.mjs';
 import { rules } from '../service/src/rules.mjs';
-import { createFeePolicy } from '../service/src/fees.mjs';
+import { createFeePolicy, LAUNCH_FEE_SETTINGS } from '../service/src/fees.mjs';
 import { tracClient } from '../service/local/trac.mjs';
 import { init } from '../kit/lib/keyring.mjs';
 import { localOrigin } from '../deploy/target.mjs';
@@ -70,7 +70,7 @@ export async function boot(directory,base,processes,progress) {
       return until(()=>evm.rpc('eth_getTransactionReceipt',[tx]),'escrow deployment');
     }});
     const table = [];
-    const registry = { feePolicy:createFeePolicy(TARGET.policy.baseFeeAtoms), link:{treasury:addresses.treasury}, assets:{} };
+    const registry = { feePolicy:createFeePolicy(TARGET.policy.baseFeeAtoms, 0, LAUNCH_FEE_SETTINGS), link:{treasury:addresses.treasury}, assets:{} };
     const registryPath=join(directory,'registry.json'); await save(registryPath,registry);
     await progress('history');
     const historyHeight=TARGET.local.playground.historyHeight;

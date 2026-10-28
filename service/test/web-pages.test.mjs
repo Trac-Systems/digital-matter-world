@@ -46,6 +46,8 @@ test('gateway serves HTML to navigation and retains JSON for clients, with secur
   const json = await fetch(web.url + '/agents', { headers: { accept: 'application/json' } }); assert.deepEqual(await json.json(), { agents: [] });
   assert.equal((await fetch(web.url + '/web/../../run.mjs')).status, 404);
   assert.equal((await fetch(web.url + '/web/amount-format.js')).status, 200);
+  const errors = await fetch(web.url + '/web/console/js/wallet-errors.js');
+  assert.equal(errors.status, 200); assert.match(await errors.text(), /Your wallet's signature was not accepted/);
 });
 
 test('production targets require Ethereum 1 and never fall back to local configuration', () => {

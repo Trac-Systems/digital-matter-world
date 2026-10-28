@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
-import { schnorr } from '@noble/curves/secp256k1';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1';
 import * as btc from '@scure/btc-signer';
 import { chromium } from 'playwright';
 import { createWallet, wipeWallet, publicAddress } from '../lib/keyring.mjs';
@@ -22,7 +22,9 @@ import { runTool } from '../lib/tools.mjs';
 import { Journal } from '../lib/journal.mjs';
 import { ServiceClient } from '../lib/service-client.mjs';
 import { buildInscription, signCommit, hex, unhex, networkFor, transferItems } from '../lib/inscription-core.mjs';
-import { authority, tokenMintPermit } from '../../local/protocol.mjs';
+import { authority, tokenMintPermit, redeem, sha256 } from '../../local/protocol.mjs';
+
+import { tapPaymentLock, splitFee, TAP_BURN } from '../../rules/src/index.js';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const ports = { bitcoin: 59730, ord: 59731, web: 59732, cdp: 9481 };
@@ -33,7 +35,7 @@ const until = async (fn, label, ms = 30000) => {
   throw Error(`Timed out: ${label}${last ? ': ' + last.message : ''}`);
 };
 
-test('isolated kit and browser players pay address-only fixture fees and inscribe real indexed mints', { timeout: 240000 }, async t => {
+test('isolated fresh browser wallet activates authority, pays fees, inscribes mints, and verifies native lock burns', { timeout: 240000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'dmw-player-mint-')), children = [], wallets = [], journals = [];
   let server, browser, browserLocked = false;
   const browserLock = join(root, '.local/browser.lock');
@@ -115,18 +117,20 @@ test('isolated kit and browser players pay address-only fixture fees and inscrib
     await who.source.broadcast(plan.commitHex, plan.commitTxid); await who.source.broadcast(plan.revealHex, plan.revealTxid); await mine();
     return plan.inscriptionId;
   };
-  const activate = async (who, payload) => {
-    const id = await write(who, payload), input = await rpc('gettxout', [id.slice(0, 64), 0]);
+  const selfSend = async (who, id) => {
+    const input = await rpc('gettxout', [id.slice(0, 64), 0]);
     const tx = new btc.Transaction();
     tx.addInput({ txid: id.slice(0, 64), index: 0, witnessUtxo: { script: unhex(input.scriptPubKey.hex), amount: 1000n }, tapInternalKey: schnorr.getPublicKey(who.key) });
     tx.addOutputAddress(who.local.address, 700n, net); tx.sign(who.key); tx.finalize();
-    await rpc('sendrawtransaction', [tx.hex]); await mine(); return id;
+    await rpc('sendrawtransaction', [tx.hex]); await mine(); return tx.id;
   };
+  const activate = async (who, payload) => { const id = await write(who, payload); await selfSend(who, id); return id; };
   const privilege = await activate(committee, authority(committee.key, { privilege: true }));
   assert.ok((await tap('getPrivilegeAuthList')).some(a => a.ins === privilege));
   await write(committee, { p: 'tap', op: 'token-deploy', tick: 'tap', max: '1000', dec: '18' });
   for (const who of [kit, web]) {
     await write(who, { p: 'tap', op: 'token-mint', tick: 'tap', amt: '100' });
+    if (who === web) continue; // The browser must onboard a fresh global authority.
     const auth = await activate(who, authority(who.key));
     who.local.close(); who.local = localBitcoinWallet({ wallet: who.trac, network: 'regtest', source: who.source, authority: auth });
     assert.ok((await tap(`getAccountAuthList/${who.local.address}`)).some(a => a.ins === auth));
@@ -236,21 +240,39 @@ test('isolated kit and browser players pay address-only fixture fees and inscrib
   }
   browser = await chromium.launch({ headless: true, args: [`--remote-debugging-port=${ports.cdp}`, '--remote-debugging-address=127.0.0.1'] });
   const page = await browser.newPage(); let paymentCalls = 0, psbtSigns = 0, pushes = 0, loseRevealReply = false;
-  const pushedReveals = [];
+  const pushedReveals = []; let deferredPayment, webAuthority;
   await page.exposeBinding('walletCall', async (_, method, args) => {
     if (method === 'requestAccounts' || method === 'getAccounts') return [web.local.address];
     if (method === 'getNetwork') return 'regtest';
-    if (method === 'getPublicKey') return web.local.publicKey;
+    if (method === 'getCurrentAuthority') return (await tap(`getAccountAuthList/${web.local.address}`)).find(a => a.auth.length === 0) ?? null;
+    if (method === 'getAuthorityStatus') return { currentAuthority: null, readyToTap: null, pendingAuthority: null };
+    if (method === 'getPublicKey') return hex(secp256k1.getPublicKey(web.key, true));
+    if (method === 'createGlobalTapAuthority') {
+      webAuthority = await write(web, authority(web.key));
+      const reveal = await rpc('getrawtransaction', [webAuthority.slice(0, 64), true]);
+      return { orderId: 'fixture-authority', paymentTxid: reveal.vin[0].txid, txid: webAuthority.slice(0, 64), inscriptionId: webAuthority, pending: false };
+    }
+    if (method === 'getInscriptions') return { list: webAuthority ? [{ inscriptionId: webAuthority }] : [], total: webAuthority ? 1 : 0 };
+    if (method === 'sendInscription') {
+      assert.deepEqual(args, [web.local.address, webAuthority]);
+      const txid = await selfSend(web, webAuthority);
+      web.local.close(); web.local = localBitcoinWallet({ wallet: web.trac, network: 'regtest', source: web.source, authority: webAuthority });
+      return txid;
+    }
     if (method === 'getBitcoinUtxos') return (await web.source.utxos()).map(c => ({ txid: c.txid, vout: c.vout, satoshi: Number(c.value), scriptPk: c.script, height: 1, inscriptions: [], isSpent: false }));
     if (method === 'singleTxTransfer') {
       paymentCalls++; assert.deepEqual(args[0], transferItems(await statusFor(web.id)));
-      const inscription = await write(web, web.local.redeem(await statusFor(web.id)));
-      // TAP Wallet resolves singleTxTransfer with its funding transaction ID.
-      const reveal = await rpc('getrawtransaction', [inscription.slice(0, 64), true]);
-      return { txid: reveal.vin[0].txid };
+      assert.ok((await tap(`getAccountAuthList/${web.local.address}`)).some(a => a.auth.length === 0), 'No authority found');
+      const payload = web.local.redeem(await statusFor(web.id));
+      const plan = web.local.signCommit(buildInscription({ text: typeof payload === 'string' ? payload : JSON.stringify(payload), receiver: web.local.address, publicKey: web.local.publicKey, network: 'regtest', utxos: await web.source.utxos(), feeRate: 2, maxFeeSats: '100000' }));
+      await web.source.broadcast(plan.commitHex, plan.commitTxid);
+      deferredPayment = plan;
+      return { txid: plan.commitTxid };
     }
     if (method === 'signPsbt') {
-      psbtSigns++; const tx = btc.Transaction.fromPSBT(unhex(args[0])); tx.sign(web.key); tx.finalize(); return hex(tx.toPSBT(0));
+      psbtSigns++; const tx = btc.Transaction.fromPSBT(unhex(args[0]));
+      assert.deepEqual(args[1], { autoFinalized: true, inputForSigns: Array.from({ length: tx.inputsLength }, (_, index) => ({ index, address: web.local.address })) });
+      tx.sign(web.key); tx.finalize(); return hex(tx.toPSBT(0));
     }
     if (method === 'pushPsbt' || method === 'pushTx') {
       pushes++; const tx = method === 'pushPsbt' ? btc.Transaction.fromPSBT(unhex(args[0])) : btc.Transaction.fromRaw(unhex(args[0]), { allowUnknownInputs: true });
@@ -264,7 +286,7 @@ test('isolated kit and browser players pay address-only fixture fees and inscrib
     throw Error('Unsupported provider method: ' + method);
   });
   await page.addInitScript(() => {
-    window.tapprotocol = Object.fromEntries(['requestAccounts', 'getAccounts', 'getNetwork', 'getPublicKey', 'getBitcoinUtxos', 'singleTxTransfer', 'signPsbt', 'pushPsbt', 'pushTx'].map(method => [method, (...args) => window.walletCall(method, args)]));
+    window.tapprotocol = Object.fromEntries(['requestAccounts', 'getAccounts', 'getNetwork', 'getPublicKey', 'getBitcoinUtxos', 'singleTxTransfer', 'signPsbt', 'pushPsbt', 'pushTx', 'getCurrentAuthority', 'getAuthorityStatus', 'createGlobalTapAuthority', 'getTapActionOrderResult', 'getInscriptions', 'sendInscription'].map(method => [method, (...args) => window.walletCall(method, args)]));
   });
   await page.route('https://mempool.space/api/v1/fees/recommended', route => route.fulfill({ json: { halfHourFee: 2 } }));
   await page.goto(origin + '/deployment');
@@ -278,8 +300,10 @@ test('isolated kit and browser players pay address-only fixture fees and inscrib
   assert.equal(registered.state, 'registered'); assert.equal((await tap('getDeployment/dmwcwebproof')).prv, privilege);
   await page.goto(origin); await page.getByRole('button', { name: 'Pay missing items', exact: true }).click();
   await page.getByRole('button', { name: 'Pay from my wallet', exact: true }).click();
-  await until(() => paymentCalls === 1, 'browser wallet payment');
-  await until(async () => (await statusFor(web.id)).state === 'partly_paid', 'indexed browser fee item');
+  await until(() => !!deferredPayment, 'browser wallet funding response');
+  assert.equal((await statusFor(web.id)).state, 'awaiting_payment');
+  await web.source.broadcast(deferredPayment.revealHex, deferredPayment.revealTxid); await mine();
+  await until(async () => (await statusFor(web.id)).state === 'permit_issued', 'indexed browser fee item and permanent permit');
   await mine(5);
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.getByRole('button', { name: 'Inscribe mint', exact: true }).click();
@@ -303,7 +327,18 @@ test('isolated kit and browser players pay address-only fixture fees and inscrib
   assert.equal(paymentCalls, 1); assert.equal(psbtSigns, 2);
   await browser.close(); browser = null; await rmdir(browserLock); browserLocked = false;
   assert.equal((await rpc('getnetworkinfo')).connections, 0);
-  const proof = { fixture: 'player mint API; address-only fee subset; real Bitcoin and TAP indexing; no production burn proof',
+  // Native burn allocations use ord-tap's canonical literal even on regtest.
+  const kitAuth = (await tap(`getAccountAuthList/${kit.local.address}`)).find(a => a.auth.length === 0).ins;
+  const preimage = '31'.repeat(32), hash = sha256(Buffer.from(preimage, 'hex'));
+  const lock = tapPaymentLock({ split: splitFee('2000000000000000000', { kind: 'link' }), destinations: { treasury: committee.local.address }, payer: kit.local.address, hash, expiry: (await rpc('getblockcount')) + 100, kind: 'link', bitcoinNetwork: 'regtest' });
+  assert.equal(lock.al[0].to, TAP_BURN);
+  const lockInscription = await write(kit, redeem(kitAuth, [lock], kit.key, { data: 'link-proof' }));
+  assert.ok(await tap('getLock/' + lockInscription + ':0'), 'ord-tap accepts the global authority and native burn lock');
+  const claim = await write(kit, redeem(kitAuth, [{ op: 'claim', lock: lockInscription + ':0', preimage }], kit.key));
+  const consumedLock = await tap('getLockConsume/' + lockInscription + ':0');
+  assert.equal(consumedLock.ins, claim); assert.equal(consumedLock.action, 'claim');
+  assert.equal(consumedLock.al[0].to, TAP_BURN);
+  const proof = { fixture: 'player mint API; fresh global authority; deferred address fee items; native lock burn and claim; real regtest indexing',
     compoundDeploy: deployId, kit: { payment: payment.inscriptionId, mint: made.inscriptionId, units: '2' },
     web: { compoundDeploy: webDeployId, recoveredLostRevealReply: true, mint: (await statusFor(web.id)).inscription, units: '3', paymentCalls, psbtSigns }, processesStoppedByTestCleanup: true };
   t.diagnostic(JSON.stringify(proof));

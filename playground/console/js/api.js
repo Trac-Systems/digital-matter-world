@@ -151,8 +151,12 @@ export const store = {
   // Public status (tip, fees, units) merged with the Lab status (mining, bots, components, player).
   async refreshStatus() {
     const [pub, lab] = await Promise.allSettled([get('/status'), get('/lab/status')]);
+    if (pub.status === 'rejected') {
+      this.status = { ...this.status, feePolicy: null };
+      bus.emit('status', this.status);
+    }
     if (pub.status === 'rejected' && lab.status === 'rejected') throw pub.reason;
-    const p = pub.status === 'fulfilled' ? pub.value : {}, l = lab.status === 'fulfilled' ? lab.value : {};
+    const p = pub.status === 'fulfilled' ? pub.value : { feePolicy: null }, l = lab.status === 'fulfilled' ? lab.value : {};
     this.status = { ...l, ...p, mining: l.mining ?? p.mining, bots: l.bots ?? p.bots, components: l.components ?? p.components, player: l.player ?? p.player, state: l.state ?? p.state, units: p.units ?? l.units };
     bus.emit('status', this.status); return this.status;
   },

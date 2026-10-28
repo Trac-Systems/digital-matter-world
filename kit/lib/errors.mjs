@@ -13,6 +13,8 @@ export const errorMeanings = Object.freeze({
   list_path_missing: 'The JSON pointer has no such position in the returned source page; preserve its filters, order, cursor and limit.',
   invalid_cursor: 'The cursor does not match this route, filters or ordering, or the gateway restarted; restart the traversal.',
   request_rate: 'The gateway is pacing requests; wait before retrying the same action.',
+  reveal_capacity: 'The gateway reveal allowance is full for this Bitcoin block. Retry the same discovery action ID after the next block; a receipt is still needed.',
+  sender_rate: 'The gateway is pacing this player; wait before retrying the same action ID.',
   not_found: 'The requested public record or route is unavailable.',
   request_not_found: 'No mint request with this ID is known to this gateway.',
   insufficient_balance: 'The wallet lacks enough spendable units for this action.',
@@ -26,6 +28,12 @@ export const errorMeanings = Object.freeze({
   binding_transition: 'A wallet replacement is awaiting committee endorsements; retry its saved request.',
   binding_quorum_unavailable: 'Fewer than three committee signers endorsed this binding; retry the saved request.',
 });
+// Only errors known to occur before /moves acceptance qualify. A generic
+// HTTP failure, proxy response or interrupted body is not refusal evidence.
+const moveRefusals = Object.freeze({ request_rate: 429, sender_rate: 429, reveal_capacity: 429, craft_capacity: 429,
+  audit_capacity: 429, body_limit: 413, content_type: 415, move_type: 400, invalid_move: 400,
+  tip_transition: 503, receipt_window_sealed: 503, discovery_history_adapter_required: 503, pending_capacity: 503 });
+export const isMoveRefusal = (status, code) => Object.hasOwn(moveRefusals, code) && moveRefusals[code] === status;
 export function safeCode(value, fallback = 'transport_error') {
   if (Number.isSafeInteger(value)) return String(value);
   return typeof value === 'string' && /^(?:[a-zA-Z][a-zA-Z0-9_]{0,80}|-?[0-9]{1,12})$/.test(value) ? value : fallback;

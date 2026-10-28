@@ -67,7 +67,7 @@ indexes and physical encoding account for most of the remaining bytes.
 
 ## Reproduce
 
-Use Node 23.11.0 and the committed dependency lock, then run from `contract/`:
+Use Node 24.22.1 and the committed dependency lock, then run from `contract/`:
 
 ```sh
 npm run measure

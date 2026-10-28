@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "23.11.0"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "start": "node run.mjs",
     "test": "node --experimental-test-module-mocks --test test/*.test.mjs",
+    "test:regressions": "node --experimental-test-module-mocks --test test/regressions/*.test.mjs",
+    "test:prod": "node --experimental-test-module-mocks --test --test-concurrency=1 prod/test/*.test.mjs",
     "load": "node --expose-gc scripts/load.mjs",
     "measure": "node scripts/measure-devnet.mjs 1000"
   },

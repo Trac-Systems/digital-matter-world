@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { supportedNode } from '../../node-version.mjs';
 import { encodeTracAddress, publicIdentities } from '../../rules/src/trac-address.js';
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
@@ -50,6 +51,7 @@ async function ask(prompt) {
   try { return await new Promise(resolve => rl.question(prompt, resolve)); } finally { rl.close(); }
 }
 async function main() {
+  check(supportedNode(), 'Use Node 24.22.1 or newer 24.x');
   const command = args[0] ?? 'help';
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
   if (opts.help || command === 'help') { process.stdout.write('dmw setup|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
@@ -117,12 +119,12 @@ async function main() {
     const session = ['mcp', 'once'].includes(command);
     const source = adapter.source ?? (config.headerCookie ? regtestSource({ origin: opts.source ?? config.headerSource, cookiePath: config.headerCookie }) : headerSource(opts.source ?? config.headerSource));
     let history = adapter.history;
-    if (!history && (command === 'mcp' || historyTool)) {
+    if (!history && (session || historyTool)) {
       if (source.manifest && (production || config.headerSource || opts.source)) {
         historySync = new HistorySync({ output: opts.headers ?? config.headers ?? join(directory, 'headers.bin'), source,
           network: agent.bitcoinNetwork, independent: agent.bitcoinNetwork === 'mainnet' ? headerSource('https://blockstream.info') : null });
         historySync.start();
-        if (command !== 'mcp') await historySync.pending;
+        if (command !== 'mcp') { await historySync.pending; history = historySync.available(); }
       } else if (opts.headers ?? config.headers) history = await (agent.bitcoinNetwork === 'regtest' ? loadRegtestHistory : loadHistory)(opts.headers ?? config.headers);
     }
     const strategies = (session || strategyTool) && (opts.strategy ?? config.strategy) ? await import(pathToFileURL(resolve(opts.strategy ?? config.strategy))) : {};

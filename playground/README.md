@@ -4,7 +4,7 @@ Run from the repository root with the existing local toolchain:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 export DMW_BUILD_ROOT=/path/to/your/build
 node playground/run.mjs up
@@ -27,7 +27,7 @@ it and deletes only this playground's marked data and test wallets. The tour
 pauses mining and bots and leaves them paused; use the console or control API to
 resume. Fresh games auto-mine every 30 seconds, with one bot tick each minute.
 
-Prerequisites are the same installed tools as the local soak: Node 23.11.0,
+Prerequisites are the same installed tools as the local soak: Node 24.22.1,
 Bitcoin Core, Anvil, the built ord-tap binary and TSS sidecar, installed
 `contract/`, `kit/`, `service/` dependencies, and the compiled `LocalTap` and
 `DmwEscrow` artifacts under `$DMW_BUILD_ROOT/target`. Without `DMW_BUILD_ROOT`,

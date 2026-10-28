@@ -11,7 +11,39 @@ import { createRequire } from 'node:module';
 import { signTestPayout } from './payout-wallets.mjs';
 import { createServer } from 'node:http';
 import { Committee } from '../src/committee.mjs';
+import { signTapWalletMessage } from '../../rules/test/tap-wallet-signing.mjs';
 const { ed25519 } = createRequire(new URL('../../rules/package.json', import.meta.url))('@noble/curves/ed25519');
+
+for (const bitcoinNetwork of ['mainnet', 'regtest']) test(`TAP Wallet legacy binding survives committee acceptance, history, quote use and restart (${bitcoinNetwork})`, async t => {
+  const directory = await temp('tap-wallet-binding-'); let store = await Store.open(directory), now = Date.now();
+  t.after(() => store.close());
+  const f = bindingFixture(store, { bitcoinNetwork, now: () => now }), who = agent(81);
+  const packet = f.packet(who, 'tap', who.secret.toString('hex'), '1');
+  const { walletSignature: unused, ...body } = packet, pending = await f.bindings.request(body);
+  const walletSignature = signTapWalletMessage(pending.message, who.secret);
+  const accepted = await f.bindings.complete({ id: pending.id, walletSignature });
+  assert.equal(accepted.walletSignature, walletSignature, 'attest the exact wallet bytes, without rewriting');
+  assert.equal(accepted.attestations.length, 5);
+  assert.deepEqual(await f.bindings.complete({ id: pending.id, walletSignature }), accepted);
+  for (let i = 0; i < 5; i++) {
+    assert.equal(f.journals[i].records.length, 1);
+    assert.deepEqual(await f.endorse(f.journals[i].records[0].record, i), accepted.attestations[i]);
+  }
+  const route = `/payout-bindings/${encodeTracAddress(who.address)}/tap`, snapshot = { issuedAt: now, payouts: { finder: accepted.id } };
+  assert.equal(f.bindings.read(route).binding.id, accepted.id);
+  assert.equal(f.bindings.read(route + '/history').bindings[0].walletSignature, walletSignature);
+  assert.deepEqual(f.bindings.owners(accepted.request.address), [who.address]);
+  const anotherValidSignature = signTapWalletMessage(pending.message, who.secret, false);
+  assert.throws(() => verifyBinding({ ...accepted, walletSignature: anotherValidSignature }, f.bindings.options()), /binding_attestation/);
+  now += 10;
+  const replacement = await f.bind(who, 'tap', agent(82).secret.toString('hex'), '2');
+  now += 86400000; await store.close(); store = await Store.open(directory);
+  const reopened = new Bindings({ store, network: f.bindings.network, bitcoinNetwork, members: f.members, now: () => now });
+  assert.equal(reopened.current(who.address, 'tap').id, replacement.id);
+  assert.deepEqual(reopened.proof(accepted.id), accepted);
+  assert.equal(reopened.resolve(who.address, 'tap', snapshot, 'finder').id, accepted.id);
+  assert.equal(reopened.read(route + '/history').total, 2);
+});
 
 for (const rail of ['tap', 'ethereum']) test(`${rail} hex-message signatures never establish a binding, even with a quorum`, async t => {
   const store = await Store.open(await temp('binding-format-')); t.after(() => store.close());

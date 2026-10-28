@@ -1,3 +1,4 @@
+import { supportedNode } from '../node-version.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, open, unlink } from 'node:fs/promises';
@@ -39,7 +40,7 @@ export async function build() {
   await exec('go', ['build', '-trimpath', '-o', resolve(buildRoot, 'dmw-tss'), '.'], { cwd: resolve(root, 'tss'), env, maxBuffer: 2 << 20 });
 }
 export async function up() {
-  if (process.version !== 'v23.11.0') throw Error('node_23_11_0_required');
+  if (!supportedNode()) throw Error('node_24_22_1_or_newer_24_required');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const launchLock = await open(resolve(directory, 'launcher.lock'), 'wx', 0o600);
   const children = []; let complete = false;

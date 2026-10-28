@@ -9,7 +9,7 @@ import { History } from '../../src/history.mjs';
 import { harness, deployment } from '../../../contract/tests/helpers/harness.mjs';
 import { REGTEST_PARAMS, parseHeader, workFor } from '../../../contract/beacon/bitcoin.js';
 let source, trac, loseResponse = false;
-mock.module('../../local/reads.mjs', { namedExports: { localReads: async () => ({ client: source, manifest: { bitcoin: source }, close() {}, counted: async () => (await trac('head')).counted,
+mock.module('../../local/reads.mjs', { exports: { localReads: async () => ({ client: source, manifest: { bitcoin: source }, close() {}, counted: async () => (await trac('head')).counted,
   trac: async (method, args) => { const value = await trac(method, args); if (method === 'headers' && loseResponse) { loseResponse = false; throw Error('lost_header_response'); } return value; }
 }) } });
 const { createAdapters } = await import('../../local/adapter.mjs');

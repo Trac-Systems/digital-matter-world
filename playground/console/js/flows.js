@@ -82,18 +82,20 @@ export async function compoundMintFlow(asset) {
   return (await import('./inscribe/flow.js')).playerCompoundMintFlow(asset);
 }
 
-// Fixed-price actions: B times a multiple, split between burn and treasury.
+// Fixed-price actions: base price times the link multiplier, split between burn and treasury.
 export function feeTerms(kind) {
-  const B = store.status?.feePolicy?.baseFee;
-  if (!B) return null;
-  const total = (BigInt(B) * 20n).toString();
+  const baseFee = store.status?.feePolicy?.baseFee;
+  if (!baseFee) return null;
+  const multiplier = store.status?.feePolicy?.feeSettings?.link;
+  if (!Number.isSafeInteger(multiplier) || multiplier < 1) return null;
+  const total = (BigInt(baseFee) * BigInt(multiplier)).toString();
   const burn = (BigInt(total) * 50n / 100n).toString();
-  return { total, split: { burn, treasury: (BigInt(total) - BigInt(burn)).toString() } };
+  return { total, multiplier, split: { burn, treasury: (BigInt(total) - BigInt(burn)).toString() } };
 }
 export async function linkFlow(height) {
   const terms = feeTerms('link');
   if (!await confirmModal({ title: `Link Bitmap ${fmtInt(height)}?`, lead: 'Paid once; the link stays with the Bitmap. Its holder earns the Bitmap holder share of mint fees here.',
-    rows: [['Plot', fmtInt(height)], ['Price', terms ? tap(terms.total) : '20x B'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: 'Link and pay' })) return false;
+    rows: [['Plot', fmtInt(height)], ['Price', terms ? tap(terms.total) : 'Read the current quote'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: 'Link and pay' })) return false;
   try { const req = await run('Bitmap link', '/player/link', { height }); await payWhenReady(requestId(req), 'link'); return true; }
   catch { return false; }
 }

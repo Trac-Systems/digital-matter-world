@@ -20,7 +20,7 @@ are decimal strings in atomic units; DMT/compound units have zero decimals.
 | `agentAddress(o)` | Exported `dmwAgentAddress(o)` |
 | `pendingAcceptance(id)` | Verified accepted `rq` event `{id,created,expiry}` |
 | `assetContext(asset,block?,at?,payoutSnapshot?)` | Registered deployment and independently indexed rules/fee context below, resolving the binding IDs in the fixed quote |
-| `mintFeeTerms(id)` | Verified `{baseFee,payoutSnapshot}` from the mandatory signed quote, request-bound admission, agent payment intent and retained global `feePolicy` revision |
+| `mintFeeTerms(id)` | Verified `{baseFee,feeSettings?,payoutSnapshot}` from the mandatory signed quote, request-bound admission, agent payment intent and retained global `feePolicy` revision |
 | `mintPayoutSnapshot(id)` | The same verified signed quote for batch admission |
 | `isMinted(deployment,tick,block)` | Strict boolean, true if the deployment/block was minted |
 | `bitmap(block)` | Current indexed holder `{agent,address}`; verify the Bitcoin-holder/Trac-agent link |
@@ -69,8 +69,10 @@ The current Bitmap holder is read separately on every authorization.
 
 Player payout addresses come only from the public double-signed binding ledger.
 The authenticated `POST /bind-payout` endpoint independently verifies the exact
-agent Ed25519 signature and the wallet's Taproot BIP-322 simple or Ethereum
-EIP-191 proof. It journals a strictly increasing agent/rail nonce before returning
+agent Ed25519 signature and the wallet's Taproot BIP-322 simple, TAP Wallet legacy
+Bitcoin message, or Ethereum EIP-191 proof. Legacy Bitcoin proofs must recover
+the internal key of the exact requested BIP86 Taproot address, with low-S and a
+valid compact header. It journals a strictly increasing agent/rail nonce before returning
 an identity attestation. New endorsements require a live request and an acceptance
 time within the preceding minute; exact journaled retries return the same vote.
 See the [binding protocol](../../service/docs/READS.md#payout-wallet-bindings).

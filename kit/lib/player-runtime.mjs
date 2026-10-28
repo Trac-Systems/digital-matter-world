@@ -6,6 +6,7 @@ import { check, privateDirectory } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { validatePlayerConfig, validateLocalConfig } from './network.mjs';
 import { validateDeployment } from '../../contract/state.js';
+import { loadPlayerPeer } from './player-peer.mjs';
 
 const require = createRequire(new URL('../../contract/package.json', import.meta.url));
 const dependency = name => import(pathToFileURL(require.resolve(name)).href);
@@ -52,7 +53,7 @@ export async function openPlayerRuntime({ wallet, config }) {
   const directory = await privateDirectory(join(config.directory, production ? 'trac-mainnet' : 'trac-regtest'));
   const [{ Peer, createConfig, ENV, ensureTextCodecs }, { MainSettlementBus }, { createConfig: msbConfig, ENV: MSB_ENV },
     { default: Contract }, { default: Protocol }] = await Promise.all([
-    dependency('trac-peer'), dependency('trac-msb/src/index.js'), dependency('trac-msb/src/config/env.js'),
+    loadPlayerPeer(pathToFileURL(require.resolve('trac-peer')).href), dependency('trac-msb/src/index.js'), dependency('trac-msb/src/config/env.js'),
     import('../../contract/contract.js'), import('../../contract/protocol.js'),
   ]);
   await ensureTextCodecs();

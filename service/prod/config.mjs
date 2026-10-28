@@ -9,6 +9,8 @@ import { requireValue, AdapterError } from './http.mjs';
 import { validateDeployment } from '../../contract/state.js';
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { rules } from '../src/rules.mjs';
+import { sourcePolicy } from './source-cache.mjs';
+import { bitmapCachePolicy } from './bitmap-cache.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const within = (root, path) => path === root || path.startsWith(root + sep);
@@ -79,12 +81,21 @@ export async function tapEndpoint(spec) {
   return {url,headers};
 }
 const integer = (v, min, max) => Number.isSafeInteger(v) && v >= min && v <= max;
+export function evidenceSnapshotPolicy(value = {}) {
+  requireValue(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(k => ['retries', 'backoffMs'].includes(k)), 'evidence_snapshot_policy');
+  const { retries = 3, backoffMs = 50 } = value;
+  requireValue(integer(retries, 0, 5) && integer(backoffMs, 0, 1000), 'evidence_snapshot_policy');
+  return { retries, backoffMs };
+}
 export async function validateConfig(config, { committee = false } = {}) {
   requireValue(config?.version === 1 && config.mode === 'prod' && /^[a-zA-Z0-9._:-]{1,96}$/.test(config.network) && !/regtest|localhost/i.test(config.network), 'config_network');
   requireValue(config.listen?.host === '127.0.0.1' && integer(config.listen.port, 1024, 65535), 'config_listen');
   requireValue(config.adapter === resolve(repo, 'service/prod/adapter.mjs'), 'config_adapter');
   requireValue(config.claimsPerWindow === undefined || integer(config.claimsPerWindow, 1, rules.MAX_CLAIMS_PER_WINDOW), 'claim_budget_config');
   const p = config.prod; requireValue(p && !config.endpoints && !config.local, 'config_production');
+  evidenceSnapshotPolicy(p.evidenceSnapshot);
+  bitmapCachePolicy(p.bitmapCache);
+  sourcePolicy(p.sourceReads);
   await privatePath(config.data, { directory: true });
   for (const name of ['contexts', 'readerData']) await privatePath(p[name], { directory: true });
   const registry = await readPrivateJSON(p.registry, { maxBytes: 2000000 }), deployment = await readPrivateJSON(p.deployment);
@@ -94,7 +105,9 @@ export async function validateConfig(config, { committee = false } = {}) {
   requireValue(deployment.network === config.network && rules.stableJSON(deployment.beacon?.params) === rules.stableJSON(MAINNET_PARAMS) && deployment.beacon.checkpoint.height % 2016 === 0, 'config_deployment');
   if (p.http) {
     const h = p.http;
+    requireValue((h.clockMaxQueue === undefined || integer(h.clockMaxQueue, 1, 1024)) && (h.backgroundMaxQueue === undefined || integer(h.backgroundMaxQueue, 1, 1024)) && (h.backgroundRequestsPerSecond === undefined || Number.isFinite(h.backgroundRequestsPerSecond) && h.backgroundRequestsPerSecond > 0 && h.backgroundRequestsPerSecond <= 100), 'http_background_policy');
     requireValue((h.requestsPerSecond === undefined || Number.isFinite(h.requestsPerSecond) && h.requestsPerSecond > 0 && h.requestsPerSecond <= 100) && (h.timeoutMs === undefined || integer(h.timeoutMs, 1, 60000)) && (h.retries === undefined || integer(h.retries, 0, 5)) && (h.backoffMs === undefined || integer(h.backoffMs, 0, 10000)) && (h.maxQueue === undefined || integer(h.maxQueue, 1, 1024)), 'http_policy');
+    requireValue((h.publicRequestsPerSecond === undefined || Number.isFinite(h.publicRequestsPerSecond) && h.publicRequestsPerSecond > 0 && h.publicRequestsPerSecond <= 100) && (h.publicMaxQueue === undefined || integer(h.publicMaxQueue, 1, 1024)), 'http_public_policy');
   }
   requireValue(p.bitcoin?.kind === 'ord' && !p.bitcoin.authFile && !p.bitcoin.tokenFile, 'bitcoin_source');
   const bitcoinSource = await tapEndpoint(p.bitcoin);

@@ -1,11 +1,12 @@
 import { api } from './data.js';
+import { walletError } from './console/js/wallet-errors.js';
 import { mount as mintPage } from './console/js/inscribe/public.js';
 import { presentation } from './console/js/api.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, tabs, field, input, select, table, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc } from './console/js/money.js';
 import { assetName, mineral } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
-import { tapAccount, ethAccount, receipt, orderResult, authority, WalletJournal, wait, hex, sha256, unhex, fail } from './wallets.js';
+import { tapAccount, ethAccount, receipt, orderResult, authority, requireTapActions, WalletJournal, wait, hex, sha256, unhex, fail } from './wallets.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -35,7 +36,7 @@ export function moneyPage(root, { type, id }, navigate) {
   async function load() {
     let target;
     try { target = await api('/web-api/target'); }
-    catch (e) { if (!stopped) app.append(h('div.note.bad', {}, `Unable to load: ${e.message}.`)); return; }
+    catch (e) { if (!stopped) app.append(h('div.note.bad', {}, `Unable to load: ${walletError(e)}.`)); return; }
     if (stopped) return;
     side.append(panel('Payment contracts', kv([
       target.ethereum ? ['Bridged TAP token', hashEl(target.ethereum.token)] : null,
@@ -45,7 +46,7 @@ export function moneyPage(root, { type, id }, navigate) {
       if (!id) return await introduction(app, type, target);
       if (type === 'bind-payout') return await binding(app, id, target);
       await request(app, type, id, target);
-    } catch (e) { if (!stopped) app.append(h('div.note.bad', { role: 'alert' }, `Unable to load: ${e.message}. `, h('a', { href: location.pathname + location.search }, 'Retry'))); }
+    } catch (e) { if (!stopped) app.append(h('div.note.bad', { role: 'alert' }, `Unable to load: ${walletError(e)}. `, h('a', { href: location.pathname + location.search }, 'Retry'))); }
   }
   void load();
   return () => { stopped = true; };
@@ -85,7 +86,7 @@ async function request(app, type, id, target) {
         plan.amount ? ['Units used up', h('span.mono', {}, fmtInt(plan.amount))] : null,
         plan.kind ? ['Paid with', plan.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'] : null,
         plan.price ? ['Price', h('strong.mono', {}, formatTap(plan.price, unit?.decimals))] : null,
-        plan.baseFee ? ['Base fee B', h('span.mono', {}, formatTap(plan.baseFee, unit?.decimals))] : null,
+        plan.baseFee ? ['Base price', h('span.mono', {}, formatTap(plan.baseFee, unit?.decimals))] : null,
         plan.networkFee && BigInt(plan.networkFee.sats ?? 0) > 0n ? ['Bitcoin inscription fee', h('span.mono', {}, `${btc(plan.networkFee.sats)} · ${fmtInt(plan.networkFee.sats)} sats`)] : null,
         ['Payer', hashEl(plan.payer)],
         plan.owner ? ['Agent', hashEl(plan.owner)] : null,
@@ -118,11 +119,12 @@ async function request(app, type, id, target) {
         if (!lock) fail('This payment is open in another tab. Continue there.');
         journal.data = JSON.parse(localStorage.getItem(journal.key) ?? '{}'); await fn();
       });
-    } catch (e) { notify(e.code === 4001 ? 'Wallet request cancelled. You can resume without repeating completed payments.' : e.message); }
+    } catch (e) { notify(e.code === 4001 ? 'Wallet request closed. If a payment step was started, its result may be uncertain. Inspect TAP Wallet; saved payment attempts will not be sent again.' : walletError(e)); }
     finally { busy = false; refresh.disabled = refund.disabled = false; pay.disabled = !mayPay(); receipts(); }
   }
   async function prepare() {
     const { tap } = await tapAccount(target, plan.payer);
+    requireTapActions(tap);
     if (!journal.data.linkSecret) { journal.data.linkSecret = hex(crypto.getRandomValues(new Uint8Array(32))); journal.save(); }
     const paymentHash = await sha256(unhex(journal.data.linkSecret));
     const message = `dmw-link-payment-v1\n${target.network}\n${id}\n${paymentHash}`;
@@ -133,6 +135,7 @@ async function request(app, type, id, target) {
   async function sendPayment() {
     await load();
     if (complete.has(plan.state)) return;
+    if (type === 'link' && plan.walletPreparation) return prepare();
     if (type === 'mint') return sendMintPayment();
     if (type === 'link') {
       if (!journal.data.linkSecret) fail('This link was prepared elsewhere. Continue in the browser that prepared it, or ask your agent for a new link request.');
@@ -140,16 +143,27 @@ async function request(app, type, id, target) {
     }
     const { tap, address } = await tapAccount(target, plan.kind === 'tap' ? plan.payer : undefined);
     if (plan.kind === 'tap') {
-      const auth = await authority(tap, address, journal, notify);
+      const checkAccount = () => tapAccount(target, plan.payer);
+      const auth = await authority(tap, address, journal, notify, checkAccount);
       await tapAccount(target, plan.payer);
       notify('Approve the TAP payment lock in your wallet.');
       const order = await journal.step('lock', () => tap.redeemTapActions({ ...plan.redeem, auth }, { label: `Digital Matter World ${type}` }));
       journal.data.paymentId = await orderResult(tap, order) + ':0'; journal.save();
       if (type === 'link') {
-        await tapAccount(target, plan.payer); notify('Approve release of the Bitmap link fee to the displayed split.');
-        const released = await journal.step('link-release', () => tap.redeemTapActions({ auth, items: [], data: id,
-          actions: [{ op: 'claim', lock: journal.data.paymentId, preimage: journal.data.linkSecret }] }, { label: 'Release Bitmap link fee' }));
-        await orderResult(tap, released);
+        notify('Waiting for the payment lock to be confirmed and accepted before releasing the fee.');
+        let verified;
+        for (let i = 0; i < 90; i++) {
+          verified = await api(`/web-api/link/${id}/lock?paymentId=${encodeURIComponent(journal.data.paymentId)}`);
+          if (verified.ready || verified.consumed) break;
+          await wait(2000);
+        }
+        if (!verified?.ready && !verified?.consumed) fail('Payment lock is not verified yet. Resume to check again; the saved payment will not be repeated.');
+        if (!verified.consumed) {
+          await tapAccount(target, plan.payer); notify('Approve release of the Bitmap link fee to the displayed split.');
+          const released = await journal.step('link-release', () => tap.redeemTapActions({ auth, items: [], data: id,
+            actions: [{ op: 'claim', lock: journal.data.paymentId, preimage: journal.data.linkSecret }] }, { label: 'Release Bitmap link fee' }));
+          await orderResult(tap, released);
+        }
       }
     } else {
       const { eth } = await ethAccount(target, plan.payer);
@@ -179,10 +193,11 @@ async function request(app, type, id, target) {
     if (!mayPay()) fail('This request is not ready for a wallet payment. Refresh its status.');
     if (plan.kind === 'tap') {
       if (plan.blocked?.length) fail('This payment is not currently available.');
-      const { tap } = await tapAccount(target, plan.payer);
+      const { tap, address } = await tapAccount(target, plan.payer);
       if (typeof tap.singleTxTransfer !== 'function') fail('This wallet does not support direct TAP fee items.');
+      await authority(tap, address, journal, notify, () => tapAccount(target, plan.payer));
       const batch = await sha256(new TextEncoder().encode(JSON.stringify(plan.missing)));
-      const result = await journal.step('fees/' + batch, () => tap.singleTxTransfer(plan.redeem.items));
+      const result = await journal.step('fees/' + batch, () => tap.singleTxTransfer(plan.redeem.items), { definitelyNotSent: e => e?.message === 'No authority found' });
       const paymentId = typeof result === 'string' ? result : result.inscriptionId;
       if (/^[0-9a-f]{64}i[0-9]+$/.test(paymentId ?? '')) await api(plan.submit, { id, paymentId });
     } else {
@@ -213,11 +228,11 @@ async function request(app, type, id, target) {
       await receipt(eth, tx);
     } else {
       if (plan.counted < plan.refundAfter) fail('The refund height has not been reached.');
-      const { tap, address } = await tapAccount(target, plan.payer), auth = await authority(tap, address, journal, notify);
+      const { tap, address } = await tapAccount(target, plan.payer), auth = await authority(tap, address, journal, notify, () => tapAccount(target, plan.payer));
       const result = await journal.step('refund', () => tap.redeemTapActions({ auth, items: [], data: id, actions: [{ op: 'refund', lock: plan.payment ?? journal.data.paymentId }] }, { label: 'Refund Digital Matter World payment' }));
       await orderResult(tap, result);
     }
-    notify('Refund transaction confirmed by the wallet. Refresh for the gateway result.');
+    notify(plan.kind === 'tap' ? 'Refund inscription submitted; waiting for verification.' : 'Refund transaction confirmed. Refresh for the gateway result.');
   });
   await load();
 }
@@ -243,7 +258,7 @@ async function binding(app, id, target) {
       const accepted = await api('/payout-bindings/complete', { id, walletSignature });
       pending.state = 'accepted'; draw();
       app.append(panel('Accepted binding receipt', kv([['Binding', hashEl(accepted.id ?? id)], ['Accepted', accepted.acceptedAt ? h('span.mono', {}, new Date(accepted.acceptedAt).toLocaleString()) : null], ['Wallet', hashEl(accepted.request?.address)]]), { flush: true, actions: inspectBtn('Accepted binding', accepted) }));
-    } catch (e) { status.textContent = e.code === 4001 ? 'Signature cancelled. You can retry.' : e.message; button.disabled = false; }
+    } catch (e) { status.textContent = e.code === 4001 ? 'Signature cancelled. You can retry.' : walletError(e); button.disabled = false; }
   }; draw();
 }
 async function introduction(app, type, target) {
@@ -252,7 +267,7 @@ async function introduction(app, type, target) {
   const connected = [];
   for (const rail of type === 'link' ? ['tap'] : ['tap', 'ethereum']) {
     const b = h('button.btn', { type: 'button' }, rail === 'tap' ? 'Connect TAP wallet' : 'Connect MetaMask');
-    b.onclick = async () => { b.disabled = true; try { const found = await (rail === 'tap' ? tapAccount(target) : ethAccount(target)); connected.push([rail === 'tap' ? 'TAP wallet' : 'MetaMask', hashEl(found.address)]); clear(wallets, kv(connected)); status.textContent = 'Connected. Your agent uses this wallet address when creating the signed request.'; } catch (e) { status.textContent = e.code === 4001 ? 'Connection cancelled.' : e.message; } finally { b.disabled = false; } }; controls.append(b);
+    b.onclick = async () => { b.disabled = true; try { const found = await (rail === 'tap' ? tapAccount(target) : ethAccount(target)); connected.push([rail === 'tap' ? 'TAP wallet' : 'MetaMask', hashEl(found.address)]); clear(wallets, kv(connected)); status.textContent = 'Connected. Your agent uses this wallet address when creating the signed request.'; } catch (e) { status.textContent = e.code === 4001 ? 'Connection cancelled.' : walletError(e); } finally { b.disabled = false; } }; controls.append(b);
   }
   app.append(h('section.panel', {}, h('header', {}, h('h2', {}, 'Connected wallets')),
     h('div.body', {}, h('div.stack', { style: { gap: '10px' } }, h('p', { style: { margin: 0 } }, type === 'bind-payout' ? 'Open the payout-binding link issued by your agent. The link identifies a signed request; your wallet completes it here.' : 'Open the payment link issued by your agent to approve its signed request. The agent authorizes the matter or plot; your connected wallet approves the payment.'), controls, status)),
@@ -276,13 +291,13 @@ async function introduction(app, type, target) {
           q.amount !== undefined && q.block === undefined ? ['Units', h('span.mono', {}, fmtInt(q.amount))] : null,
           ['Paid with', q.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'],
           ['Price', h('strong.mono', {}, formatTap(q.price))],
-          ['Base fee B', h('span.mono', {}, formatTap(q.baseFee))],
+          ['Base price', h('span.mono', {}, formatTap(q.baseFee))],
           q.networkFeeSats ? ['Bitcoin inscription fee', h('span.mono', {}, `${btc(q.networkFeeSats)} · ${fmtInt(q.networkFeeSats)} sats`)] : null,
           q.feeQuote?.validUntil ? ['Price holds', h('span', {}, `until block ${fmtInt(q.feeQuote.validUntil)}`)] : null,
         ]),
         q.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(q.split, q.destinations ?? {}, q.kind, q.unit))] : null,
         h('div.body.small.muted', {}, 'This quote does not reserve units. Your agent creates the signed request and payment link for your connected wallets.')));
     }
-    catch (e) { clear(output, h('div.note.bad', { role: 'alert' }, `Quote unavailable: ${e.message}`)); } };
+    catch (e) { clear(output, h('div.note.bad', { role: 'alert' }, `Quote unavailable: ${walletError(e)}`)); } };
   app.append(panel('Quote', form), output);
 }

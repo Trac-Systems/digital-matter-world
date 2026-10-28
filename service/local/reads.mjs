@@ -20,7 +20,7 @@ import { rules } from '../src/rules.mjs';
 import { verifyPayer } from '../src/mints.mjs';
 import { check, hash, heightKey } from '../src/util.mjs';
 import { tracClient } from './trac.mjs';
-import { FeeQuotes, validateFeePolicy, mintFeeScope } from '../src/fees.mjs';
+import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms } from '../src/fees.mjs';
 import { calldata } from '../../committee/signer/escrow.mjs';
 import { walletBitmaps } from './bitmaps.mjs';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
@@ -48,13 +48,7 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
   const viewDirectory = config.local.contexts ?? config.data ?? dirname(config.local.manifest); await mkdir(viewDirectory, { recursive: true, mode: 0o700 });
   const store = suppliedStore ?? new ReadStore(config.data), trac = tracClient(config.endpoints.trac, config.local.tracToken), views = new BitcoinViews(client, join(viewDirectory, `bitcoin-ord-${suppliedStore ? 'gateway' : (config.local.readerId ?? process.pid)}.sqlite`));
   const ethRPC = rpcClient(config.endpoints.ethereum), escrow = createEscrowReader({ rpc: ethRPC, ...config.local.escrow });
-  const quotedTerms = async (kind, row) => {
-    const data = await registry(), configured = data[kind]; check(configured, kind + '_unconfigured');
-    const { payer, hash, feeAuthorization, ...policy } = row.terms;
-    const fee = await reads.feeQuotes.accepted(feeAuthorization, `${kind}/${row.id}`, row.id, row.request.until);
-    check(same(policy, { ...configured, baseFee: fee.baseFee }), kind + '_policy');
-    return row.terms;
-  };
+  const quotedTerms = (kind, row) => validateQuotedTerms(reads, kind, row);
   const tap = async path => { const value = await client.source.request('/r/tap/' + path); check(value && Object.hasOwn(value, 'result'), 'tap_response'); return value.result; };
   const content = async id => {
     check(/^[0-9a-f]{64}i[0-9]+$/.test(id), 'inscription_id');
@@ -202,7 +196,7 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
       const holder = link ? admission ? admission.bitmap : await reads.bitmap(block) : null;
       if (payoutSnapshot?.mintOwnershipHash) check(payoutSnapshot.mintOwnershipHash === hash(rules.stableJSON({ bitmap: holder, link })), 'quote_recipient_changed');
       const landownerAddress = holder ? kind === 'ethereum' ? payout(holder.agent, 'landowner') : holder.address : null;
-      return { deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: deployment.dec,
+      return { ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: deployment.dec,
         remaining: await tap('getMintTokensLeft/' + indexTick), limit: deployment.lim ?? '0' }, find: found, link, bitmapHolder: holder,
         landownerAddress, displayLabel: registered.displayLabel ?? registered.pattern?.name ?? asset, discoverer, payouts, tier: registered.pattern?.tier ?? 1, treasury: destinations.treasury,
         finderAddress: found?.finder ? address : null, firstMakerAddress: registered.kind === 'compound' ? address : null };

@@ -16,13 +16,28 @@ export class Policy {
     const authority = await this.reads.authority();
     check(authority?.network === this.network && authority.committee === this.publicKey && uint(authority.epoch), 'batch_authority');
     check(uint(proposal.batch?.epoch) && proposal.batch.epoch === authority.epoch, 'batch_epoch');
-    const context = await this.reads.batchContext(proposal.batch?.n);
+    let context = await this.reads.batchContext(proposal.batch?.n);
+    check(proposal.batch.to <= context.counted, 'batch_uncounted');
     const counted = await this.reads.counted();
+    check(uint(counted) && counted >= proposal.batch.to && counted >= context.counted, 'signer_not_caught_up');
     check(uint(proposal.batch.deadline) && proposal.batch.deadline >= counted && proposal.batch.deadline - counted <= rules.MAX_BATCH_HORIZON, 'batch_deadline');
+    // A free observation can be replayed at a newer execution snapshot. Always
+    // compare the rebuilt proposal AND every file byte before reserving. Craft,
+    // mint and link inputs retain their original execution-height checks.
+    if (proposal.batch.ops.every(op => op.op === 'kv') && !proposal.batch.hx?.length && context.inputs.every(input =>
+      !input.mintOperations?.length && !input.linkOperations?.length && input.entries.every(e => e.move.t !== 'craft')))
+      context = { ...context, counted };
     const approval = await this.replayBatch(this.network, proposal, { ...context, authority });
-    for (const file of approval.files) {
+    for (const [index, file] of approval.files.entries()) {
       const root = await this.reads.receiptCertificate(file.tip, file.tipHash);
-      check(root === null ? file.receipts.length === 0 && file.rootAttestations.length === 0 : (file.receiptReference === root.seal.root || equal(root.seal, file.receiptRoot)) && rules.verifyRootAttestations(root.seal, root.attestations, context.settings?.receiptSigners), 'receipt_certificate_read');
+      // A tip's first observation can precede intake and its certified seal.
+      // Backlog replay may include both in one batch. Only an empty, unattested
+      // precursor may defer to a later file, whose exact seal AND receipt bytes
+      // have already passed replay. Never defer to a certificate alone: that
+      // would permit omission of the certified receipts from this batch.
+      const sealedLater = root !== null && file.receipts.length === 0 && file.rootAttestations.length === 0 && file.receiptReference === null &&
+        approval.files.slice(index + 1).some(later => later.tip === file.tip && later.tipHash === file.tipHash && later.rootAttestations.length > 0 && equal(later.receiptRoot, root.seal));
+      check(root === null ? file.receipts.length === 0 && file.rootAttestations.length === 0 : (file.receiptReference === root.seal.root || equal(root.seal, file.receiptRoot) || sealedLater) && rules.verifyRootAttestations(root.seal, root.attestations, context.settings?.receiptSigners), 'receipt_certificate_read');
     }
     const financial = approval.files.some(f => f.mintOperations.length || f.linkOperations.length);
     let stamp;

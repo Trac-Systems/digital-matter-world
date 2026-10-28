@@ -42,6 +42,15 @@ test('pacing waits across the interval and a full tip, using a fresh head before
   assert.equal((await journal.waitTurn(getHead, wait)).tip.height, 21);
   assert.deepEqual(delays, [10, 10, 250]);
 });
+test('the twelve-send limit prints one clear waiting message and resumes on the next Bitcoin block', async t => {
+  const journal = await Journal.open(await temp(t), 'twelve', { intervalMs: 0 }); cleanup(t, () => journal.close());
+  for (let n = 0; n < 12; n++) journal.take(20);
+  let tip = 20, waits = 0; const output = [];
+  t.mock.method(process.stderr, 'write', message => { output.push(message); return true; });
+  const head = await journal.waitTurn(async () => ({ tip: { height: tip } }), async () => { if (++waits === 3) tip++; });
+  assert.equal(head.tip.height, 21);
+  assert.deepEqual(output, ['waiting for the next Bitcoin block (12/12 used)\n']);
+});
 
 test('simultaneous SDK actions queue and respect pacing without rejecting the second action', async t => {
   const wallet = testWallet(), { trac, state } = fakeTrac(history()), network = trac.network;

@@ -1,9 +1,10 @@
 # Local gateway
 
-Node **23.11.0**, ESM. Install the
+Node **24 LTS (24.22.1 or newer 24.x)**, ESM. Install the
 `rules/`, `contract/`, `committee/` and `local/` dependencies first. Rules imports
-pass through [src/rules.mjs](src/rules.mjs). SQLite is experimental in this Node
-version. This package runs against loopback regtest services.
+pass through [src/rules.mjs](src/rules.mjs). The built-in `node:sqlite` API needs
+no flag and emits no experimental warning on 24.22.1. This package runs against
+loopback regtest services.
 
 Run `npm --prefix service ci --ignore-scripts` for its browser test dependency,
 then `cd service && npx --no-install playwright install chromium` once. See the
@@ -25,7 +26,7 @@ committee epoch; the TSS share epoch remains a separate configuration field.
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node --experimental-test-module-mocks --test service/test/*.test.mjs
 node --experimental-test-module-mocks --test service/test/regressions/*.test.mjs
@@ -34,6 +35,9 @@ node service/run.mjs /absolute/private/gateway.json
 ```
 
 The pay-first regression suites use independent reader fixtures and contract replay.
+Node 24 still requires `--experimental-test-module-mocks`; mocks use the current
+`exports` option. `npm test`, `npm run test:regressions` and `npm run test:prod`
+include that flag.
 See [rehearsal checks](../deploy/REHEARSAL.md). No live TAP burn proof is claimed.
 
 The load harness sends 500 bundled header/claim moves and 1,200 viewer requests
@@ -88,7 +92,7 @@ ledgers are private operator-controlled local records, not signing-request HTTP
 fields. The deployment registry and those records remain part of the trusted
 adapter boundary. Keep all data and credentials private.
 
-## Live base fee
+## Live fees
 
 The operator supplies B to the command as a positive decimal TAP amount, with
 at most 18 fractional digits. For example, `22.6` stores `22600000000000000000`
@@ -96,28 +100,34 @@ atomic TAP units. B represents $1 worth of TAP at the operator's chosen rate;
 the service does not fetch a market price. Both payment routes use that same
 atomic integer for finds, compounds and links.
 
-Gateway and signers must point to the same `local.registry` file. Change B with:
+Gateway and signers must read identical policy revisions from `local.registry`
+or `prod.registry`. Change any settings in one command:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
-node service/scripts/base-fee.mjs /absolute/private/gateway.json 22.6
+node service/scripts/base-fee.mjs /absolute/private/gateway.json --base-fee 22.6 --link 3 --tier-multipliers 1,3,10,30,100 --compound-minimum 10
 ```
 
-The command atomically replaces the registry. New quotes use the new B on the
+The command atomically replaces the registry. New quotes use the new B and multipliers on the
 next read, with no restart, signal, waiting period or scheduled activation.
 The operator registry must contain one global `feePolicy` with `current` and
 `revisions`. Startup fails if it is missing or invalid. Initialize it with
-`createFeePolicy(parseTapAmount('22.6'))`, importing `createFeePolicy` from
+`createFeePolicy(parseTapAmount('22.6'), 0, LAUNCH_FEE_SETTINGS)`, importing `createFeePolicy` and `LAUNCH_FEE_SETTINGS` from
 `src/fees.mjs` and `parseTapAmount` from `rules/src/index.js`; each revision contains
-`{id, baseFee, activeFrom, retiredAt}`. Asset and link configuration
+`{id, baseFee, activeFrom, retiredAt, feeSettings?}`.
+`feeSettings` contains `link`, five `tierMultipliers`, and `compoundMinimum`;
+all must be integers in 1..10000, and every resulting price must fit TAP amounts.
+Launch settings select link 3 (67.8 TAP at B = 22.6), tiers 1/3/10/30/100 and
+compound minimum 10. The unconfigured legacy fallback keeps link 20; never
+change it to reprice existing requests. Asset and link configuration
 contains destinations and asset metadata only. Retain every revision when
 editing unrelated registry data so admitted requests remain verifiable.
 The update command only reads and atomically replaces the registry file.
 
 `/mint/quote` returns `baseFee` and a signed `feeQuote` containing the policy
-revision, scope, issuance time, admission expiry and Bitcoin height bounds.
+revision, fee settings, scope, issuance time, admission expiry and Bitcoin height bounds.
 Send that `feeQuote` in `/mint/request` to retain its rate and payout bindings
 across a change. The agent payment-intent signature includes the exact quote
 (or explicit null when requesting current terms), preventing quote substitution.
@@ -375,4 +385,14 @@ activate the binding. Public history retains both signatures and the quorum.
 The operator registry contains deployment and treasury policy, not player payout
 addresses. Quote snapshots are signed by the gateway and reverified against the
 wallet proofs, accepted history, and each signer's locally remembered nonces.
-TAP signatures use BIP-322 simple key-path Taproot; Ethereum uses EIP-191.
+TAP signatures use BIP-322 simple key-path Taproot or TAP Wallet's legacy Bitcoin
+message signature, verified against the recovered key's exact BIP86 address.
+Ethereum uses EIP-191. Gateway and signer processes must share the updated
+verifier before accepting legacy TAP proofs.
+
+The positional base-fee command remains supported. Omitted flags retain their
+previous values. `--registry /absolute/registry.json` updates a registry directly;
+`--at MILLISECONDS` gives independently updated copies the same revision ID.
+The `/status` and `/operator/status` pages expose the live multipliers.
+Retain existing policy revisions and deployment pins when updating configured
+registry copies.

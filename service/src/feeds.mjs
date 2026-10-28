@@ -83,7 +83,8 @@ export class Feeds {
       await this.events();
       const patterns = this.store.get('meta', 'patterns') ?? [];
       if (patterns.length) {
-        let next = this.store.get('meta', 'feedPatternCursor') ?? 0;
+        const cursor = this.store.get('meta', 'feedPatternCursor') ?? 0;
+        let next = cursor;
         for (let i = 0; i < Math.min(this.pagesPerTick, patterns.length); i++) {
           const p = patterns[next++ % patterns.length], asset = rules.patternAsset(p), page = this.store.get('feedCoverage', asset) ?? 0;
           if (page * 256 < this.history.length) {
@@ -92,7 +93,8 @@ export class Feeds {
           await this.files.json(`patterns/${asset}/index.json`, { asset, pages: Math.ceil(this.history.length / 256), availableThroughPage: (this.store.get('feedCoverage', asset) ?? 0) - 1,
             pageSize: 256, template: '{page}.json', observedAt: Date.now() });
         }
-        await this.store.put('meta', 'feedPatternCursor', next % patterns.length);
+        // An unchanged cursor (e.g. a single pattern) must not churn the store every tick.
+        if (next % patterns.length !== cursor) await this.store.put('meta', 'feedPatternCursor', next % patterns.length);
       }
       for (const { id, value } of this.store.list('feedPages', { limit: this.pagesPerTick })) {
         await patternPage({ ...this, ...value }); await this.store.transact([{ space: 'feedPages', id }]);

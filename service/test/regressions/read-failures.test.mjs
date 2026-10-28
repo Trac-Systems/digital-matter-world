@@ -22,5 +22,5 @@ const client = { kind: 'ord', network: 'regtest', params: REGTEST_PARAMS, genesi
     return { result: { owner: payer, total: '100', tick: 'tap', kind: 'htlc', condition: { type: 'hashlock', hash: hash('test-preimage') }, refund: payer, claim: 'treasury', amt: '60', al: [], refund_after: '300' } };
   } }
 };
-mock.module('../../prod/bitcoin.mjs', { namedExports: { BitcoinViews, createBitcoin: async () => client } });
+mock.module('../../prod/bitcoin.mjs', { exports: { BitcoinViews, createBitcoin: async () => client } });
 const { localReads } = await import('../../local/reads.mjs');

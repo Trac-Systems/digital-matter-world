@@ -1,6 +1,6 @@
 # Production adapters
 
-Node 23.11.0; ESM; no additional dependencies. The pinned Bitcoin and secp256k1
+Node 24.22.1; ESM; no additional dependencies. The pinned Bitcoin and secp256k1
 libraries are resolved through `local/package.json`; Trac uses the installed
 `contract/` dependencies. Nothing connects at module import time.
 
@@ -8,7 +8,7 @@ Run the offline checks from the repository root:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node --test service/prod/test/*.test.mjs deploy/production-evidence.test.mjs
 ```
@@ -28,6 +28,13 @@ payment readers, links, observations and cleanup methods.
 the trusted public identity and `identity` is that operator's own signing seed.
 Each signer needs its own owned connection files, `prod.readerData` and the
 required authenticated `prod.evidence` endpoint.
+The gateway accepts `prod.evidenceSnapshot: { "retries": 3, "backoffMs": 50 }`
+(defaults shown). Retries may be 0–5 and the fixed delay 0–1000 ms. Each retry
+rebuilds the entire envelope after a store revision or Trac stamp change;
+authentication, replay, file-hash and capacity failures are never retried.
+The original nonce stays consumed, including on exhaustion. Persistent churn
+still fails closed with HTTP 400 `evidence_snapshot_changed`; signer HTTP
+clients do not retry this POST. A request may not outlive its 30-second challenge.
 Each configured signer verifies header history and transaction inclusion using
 its own reader state and configured ord + ord-tap source.
 
@@ -72,11 +79,45 @@ for a private HTTP origin.
 | `startTip` | First observation height, explicitly configured |
 | `maxHeadersPerView` | Bounded live header catch-up; seed history before this is exceeded |
 | `http` | Per-source pacing, timeout, retry/backoff and queue settings |
+| `bitmapCache` | Public wallet snapshot memory, lifetime and tip-check settings (below) |
 | `bitcoin` | `kind:"ord"` and `urlFile`; no RPC, wallet, alternate source or auth fields |
 | `tap` | Exactly one endpoint with `agreement:1`, matching the Bitcoin source origin |
 | `ethereum` | Endpoint, decimal `chainId`, lowercase `address`/`token`, deployment `fromBlock`, confirmation depth, `maxLogRange`, `maxLogPages` |
 | `trac` | Expected `bootstrap`, `msbBootstrap`, `networkId`, private `runtimeConfig`; optional private `runtimeModule` override |
 | `committeeRotation` | Optional independently approved rotation JSON file; absent means no authorization |
+
+Public reads share the source's total `http.requestsPerSecond` budget (default
+2), with lower priority than game reads at every dispatch. Their separate
+`http.publicRequestsPerSecond` cap defaults to 1 and `http.publicMaxQueue` to 16;
+they cannot consume the game's `maxQueue` slots. A game request may wait for
+one already-running public request (bounded by `timeoutMs`) and the shared
+pacing interval, but never for a public backlog or its retries. Continuous game
+traffic can delay public reads. This budget is per process, as before.
+
+Agent summaries return `bitmaps: null` and `bitmapStatus: {state: "deferred",
+route: "/agents/<address>/bitmaps"}`. The page renders immediately and fetches
+that route separately for its existing inspector. The bitmap route includes
+`bitmapContext` with the verified TAP tip height/hash, tip `checkedAt`, snapshot
+`loadedAt` (Unix milliseconds), and `cached`. Ownership is as of that tip, not a
+claim about an unobserved latest block. An unbound agent returns an empty list
+with `state: "unbound", tip: null` without contacting TAP or Bitcoin.
+
+`prod.bitmapCache` defaults to `maxEntries: 128`, `maxRows: 10000` retained
+across wallets, `maxInscriptions: 10000` per scan, `maxConcurrentLoads: 2`,
+`ttlMs: 600000`, and `tipMaxAgeMs: 5000`. Tip observations are reused for at
+most five seconds. When a tip check is due, a retained snapshot returns
+immediately with its original tip/check time, `tipCheckDue: true`, and
+`refreshing` indicating whether a background canonical check is running.
+This reuses the same public queue and scan budget; a check failure never advances
+the snapshot's tip or check time. An expired snapshot itself is never served.
+Any newly observed height or hash invalidates a wallet's old snapshot on read,
+including same-height reorganizations. Each new scan also checks the tip after
+completion and rejects a mid-scan change. Concurrent reads of the same wallet
+share the scan; excess distinct scans fail with `bitmap_cache_busy`. Wallets
+above the configured inscription bound fail with `bitmap_count`; snapshots
+above the retained-row budget are returned without caching. Expired/LRU entries
+are evicted. Links are projected from current local records on every response.
+These caches do not change payment, consensus or mint-ownership checks.
 
 The registry requires one global `feePolicy:{current,revisions}` initialized
 with `createFeePolicy(B)` from `service/src/fees.mjs`. Startup validates every
@@ -205,7 +246,7 @@ Wallets pay the full list in one `singleTxTransfer`, or only missing items on a
 top-up. Ethereum continues to use the escrow token's burn function.
 
 The isolated live reader test is `service/test/ord-only.e2e.mjs`. Run it with
-`DMW_BUILD_ROOT` pointing to the existing local ord build and Node 23.11.0 under
+`DMW_BUILD_ROOT` pointing to the existing local ord build and Node 24.22.1 under
 `nice -n 20`. It owns loopback ports 59750–59752 and shuts down only its children.
 Its Core process creates the disposable chain and wallet inscriptions; gateway
 and committee readers are denied access to that process. A local contract
@@ -213,3 +254,105 @@ harness applies the real Bitcoin beacon rules without opening DHT sockets.
 The test checks mempool retention evidence, final fee items, mint inclusion and
 reorg rejection. Regtest ord rejects the fixed mainnet burn recipient: that item
 remains unpaid in the live test; exact burn matching is covered by unit tests.
+
+Fee multipliers are global operator settings alongside B, retained per revision
+and signed into quotes. Launch configuration uses link 3, tiers 1/3/10/30/100
+and compound minimum 10. Use `service/scripts/base-fee.mjs` with `--link`,
+`--tier-multipliers`, `--compound-minimum` and/or `--base-fee`; new quotes change
+immediately after the coordinated registry update. Both gateway and all signers
+need the revision-aware reader code; installed player kits need no update.
+
+### Named paid evidence and source budgets
+
+Paid production reads verify named items. `sourceLocators` is an optional request
+field and is included in newly issued signed fee quotes. Its shape is
+`{element:{id,offset},authority:{id,offset}}`: the element ID must equal the
+registered element, and the authority ID must equal the registered privilege.
+Offsets select one row (`max=1`) in `getDmtElementsList` and
+`getPrivilegeAuthList`. Both values are untrusted hints: every reader checks the
+returned ID, indexed semantics, inscription contents, inclusion and current
+cancellation. Registration accepts the same object at `POST /mint/deployment`.
+A submitted element may reuse an existing matching pattern/field pair; the
+player must locate it. The service no longer searches the global catalog for
+absence or an alternative name. An ignored element/name collision needs a new
+named winner from the player; submitting IDs does not grant authority.
+
+Payment submissions retain `paymentIds` and optionally
+`paymentEvidence: {"<payment inscription>": {authority:{id,offset},
+transfers:[{id,offset}]}}`. The authority position belongs to the payer's
+`getAccountAuthList`; transfer positions belong to that inscription's
+transaction's `getTransferredList`. Transfer offsets are also the permanent
+receipt item indices. A submitted mint uses `inscription` and optional
+`mintLocator:{id,offset}` in `POST /mint/payment`, selecting `getMintedList` for
+its transaction. No wallet redeem/mint/auth history is searched in production.
+An unconfirmed payment without an authority locator stays pending until it can
+be verified from confirmed transfers. Confirmed named transactions without
+positions retain the compatible one-page transaction read; transactions larger
+than `sourceReads.pageSize` require exact positions. There is no wallet-age
+cutoff, and the original request, submitted IDs, credits and detached permit
+remain available for retries and correction of locators. A compound mint must
+be reported by inscription ID.
+
+Before upgrading a registry without these coordinates, run the explicit
+operator import while admission is closed and application processes are stopped:
+
+```
+node service/scripts/import-source-locators.mjs /absolute/runtime.json /absolute/import-progress.json 16
+```
+
+Exit 75 means a bounded slice completed; repeat with the same progress file.
+There is no lifetime row ceiling. The cursor survives interruption, resets on a
+changed canonical branch, and every matched position is read again before the
+registry update. This administrative import is never invoked by an action or
+poll. It changes only lookup hints, preserving IDs, generations, approvals,
+fees and destinations. Carry the same registry coordinates to each independent
+signer.
+
+`prod.sourceReads` controls source work and caches (defaults below). Cache byte
+budgets may be zero to disable retention. Retention is LRU, in memory, per
+independent reader; eviction only repeats verification. Inclusion metadata is
+cached with the verified block proof, while current inscription addresses are
+read within each action. Raw transaction witness data is cached only after
+matching the fully verified block, keyed by block hash and txid.
+
+| Setting | Default |
+| --- | ---: |
+| `contentBytes` | 8000000 |
+| `transactionBytes` | 16000000 |
+| `blockBytes` (includes verified headers) | 32000000 |
+| `proofBytes` (includes inclusion metadata) | 8000000 |
+| `indexedBytes` | 4000000 |
+| `scopeBytes` | 8000000 |
+| `contentMaxBytes` | 200000 |
+| `tapMaxBytes` | 2000000 |
+| `bitcoinMaxBytes` | 16000000 |
+| `maxScopeMs` | 120000 |
+| `pageSize` | 500 |
+| `maxItems` | 64 |
+
+Only indexed rows and inscription content anchored to a verified ancestor are
+reused; a txid does not by itself bind inscription witness bytes. Each financial
+scope has one outer before/after TAP height and canonical-hash pair; nested
+reads share it and reject a different requested view. A changed or expired
+scope fails before new mint admission is persisted. It never combines data
+from different snapshots. There is no TTL-based reuse of mutable financial
+state. Each action rechecks cancellations, receiver ownership, supply, bitmap
+ownership and the winning mint as applicable.
+
+`prod.http` uses a public queue and one total pacing rate. The dispatch
+order is clock, paid, background, public. New settings are `clockMaxQueue=8`,
+`backgroundMaxQueue=16`, `backgroundRequestsPerSecond=1`; paid capacity remains
+`maxQueue=64`, public capacity remains `publicMaxQueue=16` and public rate
+`publicRequestsPerSecond=1`. Identical outstanding GETs share a request; a
+queued read is promoted if a higher-priority caller needs it. In-flight HTTP
+requests are not preempted. Timeout, retry and total rate settings still apply
+to all lanes. These are per-process budgets: operators must account for the
+sum across the gateway and five signers when setting provider capacity.
+
+The gateway obtains one verified clock observation for relay, observation
+processing and status per poll. Paid processing, provisioning and public
+projection refreshes run independently; a long projection cannot block the
+next clock poll. A failed clock is reported as unavailable rather than stamped
+as fresh. Signer evidence refresh and receipt checks share one verified clock
+within the signer action. Accepted monetary batches still independently verify
+Trac state, payouts and all required source evidence.

@@ -14,7 +14,7 @@ import { deployment, signedBatch } from '../../../contract/tests/helpers/harness
 import { EvidenceStore, evidencePublisher } from '../evidence.mjs';
 
 let activeReads;
-mock.module('../reads.mjs', { namedExports: { productionReads: async () => activeReads } });
+mock.module('../reads.mjs', { exports: { productionReads: async () => activeReads } });
 const { createAdapters } = await import('../adapter.mjs');
 
 test('production adapter advances the checkpoint, clears its queued observation and restores exact signer evidence', async t => {

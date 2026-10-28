@@ -1,4 +1,6 @@
 import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent } from './inscription-core.mjs';
+import { ensureTapAuthority, noAuthority } from './tap-wallet-actions.mjs';
+export { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, GLOBAL_AUTHORITY_NOTICE, noAuthority } from './tap-wallet-actions.mjs';
 
 export class BrowserMintJournal {
   constructor(name = 'dmw-player-inscriptions-v1') { this.name = name; }
@@ -31,8 +33,8 @@ export class BrowserMintJournal {
 }
 
 export class TapWalletMint {
-  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, journal = new BrowserMintJournal(), fetchImpl = fetch }) {
-    Object.assign(this, { provider, readStatus, readPaymentPlan, network, journal });
+  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
+    Object.assign(this, { provider, readStatus, readPaymentPlan, network, journal, notify });
     this.fetchImpl = (...args) => fetchImpl(...args);
   }
   async connect() {
@@ -71,9 +73,44 @@ export class TapWalletMint {
       // The extension builds its own redeem. If its reply is lost, we cannot
       // reconstruct that transaction; never create a second payment blindly.
       if (saved.payment) return { ...status, localState: 'payment_pending', payment: saved.payment, message: 'A payment was already requested. Wait for its indexed items; inspect the wallet if the result is uncertain.' };
-      await this.journal.put(key, { ...saved, payment: { state: 'sending', items } });
+      // Share authority recovery between requests for this account. A fresh
+      // payment cannot be marked as sending until setup and identity checks pass.
+      const authorityKey = `${this.network}/${this.address}/authority`;
+      await this.journal.lock(authorityKey, async () => {
+        const steps = {
+          getStep: async name => (await this.journal.get(authorityKey))?.[name],
+          step: async (name, action, { definitelyNotSent = () => false } = {}) => {
+            const data = await this.journal.get(authorityKey) ?? {}, old = data[name];
+            if (old?.state === 'done') return old.result;
+            ensure(!old, 'Authority wallet response was interrupted. Inspect TAP Wallet before creating another authority.');
+            await this.journal.put(authorityKey, { ...data, [name]: { state: 'sending' } });
+            try {
+              const result = await action();
+              await this.journal.put(authorityKey, { ...data, [name]: { state: 'done', result } }); return result;
+            } catch (error) { if (definitelyNotSent(error)) await this.journal.put(authorityKey, data); throw error; }
+          },
+        };
+        await ensureTapAuthority(this.provider, this.address, steps, { notify: this.notify, checkAccount: () => this.checkAccount() });
+      });
       await this.checkAccount();
-      const result = await this.provider.singleTxTransfer(items);
+      // Re-read after authority setup: the reservation/fees may have changed.
+      const latest = await this.status(id);
+      ensure(latest.receiver === this.address && (latest.payer ?? paymentPlan.payer) === this.address &&
+        ['awaiting_payment', 'partly_paid'].includes(latest.state) && latest.payable !== false &&
+        JSON.stringify(transferItems(latest, this.network)) === JSON.stringify(items), 'Payment changed during authority setup. Refresh the request before continuing.');
+      await this.checkAccount();
+      await this.journal.put(key, { ...saved, payment: { state: 'sending', items } });
+      let result;
+      try { result = await this.provider.singleTxTransfer(items); }
+      catch (error) {
+        // This exact 1.0.48 prerequisite error occurs before payment approval.
+        // A generic 4001 can arrive after broadcast and must remain uncertain.
+        if (noAuthority(error)) {
+          await this.journal.put(key, saved);
+          throw Error('TAP Wallet found no active authority. No payment was sent. Resume to check authority setup again.');
+        }
+        throw Error('TAP Wallet did not return a payment receipt. The payment may have been sent. Keep this request and inspect the wallet; another payment will not be sent automatically.');
+      }
       await this.journal.put(key, { ...saved, payment: { state: 'submitted', items, result } });
       return { ...await this.status(id), localState: 'payment_submitted' };
     });
@@ -122,7 +159,7 @@ export class TapWalletMint {
       if (!await confirm({ requestId: id, receiver: plan.receiver, feeRate: plan.feeRate, feeSats: plan.feeSats, postage: plan.postage, resume: !!plan.signedCommitPsbt })) return { state: 'cancelled_locally', requestId: id };
       await this.checkAccount();
       if (!plan.signedCommitPsbt) {
-        const signed = await this.provider.signPsbt(plan.commitPsbt, { autoFinalized: true, toSignInputs: plan.inputs.map((_, index) => ({ index, address: this.address })) });
+        const signed = await this.provider.signPsbt(plan.commitPsbt, { autoFinalized: true, inputForSigns: plan.inputs.map((_, index) => ({ index, address: this.address })) });
         plan = acceptSignedCommit(plan, signed);
         await this.journal.put(key, { ...saved, [field]: plan });
       }

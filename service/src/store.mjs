@@ -40,6 +40,7 @@ export class Store {
     this.db = new DatabaseSync(join(this.directory, 'index.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-4096; PRAGMA temp_store=FILE; CREATE TABLE IF NOT EXISTS records (space TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(space,id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS progress (id INTEGER PRIMARY KEY,sequence INTEGER NOT NULL); INSERT OR IGNORE INTO progress VALUES(1,0)');
     readIndexSchema(this.db);
+    this.db.exec("CREATE INDEX IF NOT EXISTS batch_execution_height ON records(json_extract(value,'$.batch.to')) WHERE space='batches'");
     this.getStmt = this.db.prepare('SELECT value FROM records WHERE space=? AND id=?');
     this.putStmt = this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(space,id) DO UPDATE SET value=excluded.value');
     this.delStmt = this.db.prepare('DELETE FROM records WHERE space=? AND id=?');
@@ -69,6 +70,9 @@ export class Store {
   list(space, { after = '', limit = 100 } = {}) {
     check(Number.isSafeInteger(limit) && limit >= 1 && limit <= 4096, 'page_limit');
     return this.listStmt.all(space, after, limit).map(row => ({ id: row.id, value: JSON.parse(row.value) }));
+  }
+  batchAt(height) {
+    return this.db.prepare("SELECT value FROM records WHERE space='batches' AND json_extract(value,'$.batch.to')=? ORDER BY id").all(height).map(row => JSON.parse(row.value));
   }
   count(space) { return this.countStmt.get(space).n; }
   apply(rows) {

@@ -1,3 +1,4 @@
+import { supportedNode } from '../node-version.mjs';
 // Import references to an ALREADY RUNNING playground. No process lifecycle,
 // transaction, mining, wallet creation or change to a running config occurs.
 import { readFile, mkdir, open, realpath, lstat } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import { localBalances } from './local-balances.mjs';
 import { currentFee } from '../service/src/fees.mjs';
 const require = createRequire(new URL('../contract/package.json', import.meta.url));
 async function main() {
-  need(process.argv.length === 2 && process.version === 'v23.11.0', 'Use Node 23.11.0 with no arguments');
+  need(process.argv.length === 2 && supportedNode(), 'Use Node 24.22.1 or newer 24.x with no arguments');
   const filename = DEFAULT_TARGET;
   let exists = false;
   try { const s = await lstat(filename); need(s.isFile() && !s.isSymbolicLink(), 'Local target must be a regular file'); exists = true; }
@@ -102,4 +103,4 @@ async function main() {
   try { await fd.chmod(0o600); await fd.writeFile(JSON.stringify(t, null, 2) + '\n'); } finally { await fd.close(); }
   console.log('Refreshed ignored deploy/targets/regtest.local.json and private endpoint files. The public template and running services are unchanged. Run preflight next.');
 }
-main().catch(() => { console.error('Refresh stopped. Check Node 23.11.0, the ready playground, private files and DMW_COSTS_FILE on first use. No private values are printed.'); process.exitCode = 1; });
+main().catch(() => { console.error('Refresh stopped. Check Node 24.22.1, the ready playground, private files and DMW_COSTS_FILE on first use. No private values are printed.'); process.exitCode = 1; });

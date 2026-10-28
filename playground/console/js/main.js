@@ -1,6 +1,6 @@
 import { h, clear, installTooltips, fmtInt, short, pill, hashEl, logo } from './dom.js';
 import { get, bus, stream, labStream, store } from './api.js';
-import { tap } from './money.js';
+import { tap, feePolicyTip } from './money.js';
 
 const ROUTES = {
   world: { label: 'World', load: () => import('./views/world.js') },
@@ -60,7 +60,8 @@ async function boot() {
   stream.start(); labStream.start();
   bus.on('event-stream', drawConn); drawConn(stream.state);
   bus.on('status', drawStrip);
-  await Promise.allSettled([store.refreshStatus(), store.refreshPatterns(), store.refreshPlayer(), store.refreshBots()]);
+  const ready = Promise.allSettled([store.refreshStatus(), store.refreshPatterns(), store.refreshPlayer(), store.refreshBots()]);
+  if (location.hash.split('?')[0] !== '#/about') await ready;
   addEventListener('hashchange', route);
   route();
   setInterval(() => store.refreshStatus().catch(() => {}), 15000);
@@ -85,7 +86,7 @@ function drawStrip(s) {
     cell('Counted', fmtInt(s.counted), 'Blocks the Trac contract has counted. Finder windows and refunds run on counted blocks.'),
     cell('Batch', s.batch ? `#${fmtInt(s.batch.n)} → ${fmtInt(s.batch.to)}` : '–', 'Last committee batch applied on Trac and the counted block it covers.'),
     cell('Mining', s.mining?.enabled ? `every ${secs(s.mining.intervalMs)}` : 'paused', 'Automatic block making. Change it in the Lab.'),
-    cell('Base fee B', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), 'Every price is a multiple of B. Changes apply immediately to new quotes.'),
+    cell('Base price', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)),
     cell('Bots', s.bots ? `${fmtInt(s.bots.count)}${s.bots.paused ? ' · paused' : ` · every ${secs(s.bots.intervalMs)}`}` : '–', 'Bot agents playing alongside you.'),
     cell('Components', bad.length ? h('span', { style: { color: 'var(--bad)' } }, `${bad.length} not ready`) : `${(s.components ?? []).length} ready`, bad.length ? bad.map(c => `${c.name}: ${c.state}`).join('\n') : 'Every local service is answering.'),
     cell('You', s.player?.address ? hashEl(s.player.address, short(s.player.address, 6, 4)) : '–', 'Your player key on the local Trac network.'));

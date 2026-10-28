@@ -15,6 +15,7 @@ export function readRows(store, space) {
 const ownerKey = owner => check(/^[0-9a-f]{64}$/.test(owner), 'agent_key');
 const sum = (rows, get) => rows.reduce((n, row) => n + BigInt(get(row) ?? 0), 0n).toString();
 const batchProvenance = batch => batch ? { batch, manifest: '/records/batches/' + batch } : null;
+const deferredBitmaps = owner => ({ bitmaps: null, bitmapStatus: { state: 'deferred', route: '/agents/' + owner + '/bitmaps' } });
 
 export class PublicViews {
   constructor({ store, history, reads, mints, network, bitcoinNetwork = reads?.bindings?.bitcoinNetwork ?? 'mainnet', claimsPerWindow = rules.CLAIM_DEFAULTS.claimsPerWindow }) { Object.assign(this, { store, history, reads, mints, network, bitcoinNetwork, claimsPerWindow }); this.readIndex=publicReadIndex(this); }
@@ -55,7 +56,7 @@ export class PublicViews {
       const specs = profile ? agentSpecs : blockSpecs;
       const base = path,
         values = await Promise.all(
-          Object.keys(specs).map(async (key) => {
+          Object.keys(specs).filter(key => !profile || key !== 'bitmaps').map(async (key) => {
             const route = base + '/' + key + (owner ? '?owner=' + owner : ''),
               url = new URL(route, 'http://local');
             url.searchParams.set('limit', params.get('limit') ?? '50');
@@ -75,6 +76,7 @@ export class PublicViews {
           ...row,
           scores: { finds: row.finds, discoveries: row.discoveries, crafts: row.crafts, mints: row.mints },
           ...Object.fromEntries(values),
+          ...deferredBitmaps(profile[1]),
         };
       }
       const height = Number(blockSummary[1]);
@@ -164,9 +166,9 @@ export class PublicViews {
     if (this.reads.head) return this.reads.head();
     return { tip: { height: this.history.length - 1 }, counted: await this.reads.counted() };
   }
-  async status() {
+  async status(clock) {
     const head = await this.head(), batch = await this.reads.batchLast(), fee = currentFee(await this.reads.registry());
-    const observed = this.store.get('meta', 'head'), bitcoinTip = (await this.reads.tip()).tip;
+    const observed = this.store.get('meta', 'head'), bitcoinTip = (clock ?? await this.reads.tip()).tip;
     const processedObservation = Number(this.store.get('meta', 'publicObservation') ?? 0), latest = this.store.get('meta', 'latest');
     const indexed = this.store.get('publishedObservations', heightKey(processedObservation));
     const processedBatch = Number(this.store.get('meta', 'publicBatch') ?? 0), indexedBatch = this.store.get('batches', heightKey(processedBatch));
@@ -174,7 +176,7 @@ export class PublicViews {
     return { version: 1, state: 'ready', network: this.network, unit: rules.TAP_UNIT,
       units: { tap: 18, bridgedTap: 18, bitcoin: 8, ethereum: 18, matter: 0 }, tip: head.tip.height, counted: head.counted, batch, bitcoinTip,
       catchingUp: observed?.tip !== bitcoinTip || head.tip.height !== bitcoinTip || batch.to !== head.counted,
-      feePolicy: { baseFee: fee.baseFee, revision: fee.id, unit: rules.TAP_UNIT }, settings: await this.reads.settings(),
+      feePolicy: { baseFee: fee.baseFee, feeSettings: fee.feeSettings ?? rules.FEE_DEFAULTS, revision: fee.id, unit: rules.TAP_UNIT }, settings: await this.reads.settings(),
       publicIndex: { processedObservation, latestObservation, observationLag, indexedHeight: indexed?.height ?? null, indexedTip: indexed?.tip ?? null,
         latestHeight: latest?.height ?? null, latestTip: latest?.tip ?? null, processedBatch, latestBatch: batch.n, batchLag,
         indexedBatchHeight: indexedBatch?.batch.to ?? null, eventSequence: this.store.get('meta', 'publicSequence') ?? 0,
@@ -346,15 +348,15 @@ export class PublicViews {
       const state = this.store.get('meta', 'ruleState') ?? {};
       return [...this.patterns().filter(p => p.discoverer === owner).map(p => ({ ...p, asset: rules.patternAsset(p), state: 'accepted' })),
         ...(state.discoveryQueue ?? []).filter(c => c.agent === owner).map(c => ({ ...c.proposal, state: 'revealed', opensAt: c.tip + 2 })),
-        ...(state.discoveryCommits ?? []).filter(c => c.agent === owner).map(c => ({ state: 'sealed', exists: true, opensAt: c.tip + 2 }))];
+        ...(state.discoveryCommits ?? []).filter(c => c.agent === owner).map(c => ({ state: 'sealed', exists: true, opensAt: c.tip + 2, revealUntil: c.tip + rules.DISCOVERY_LIMITS.lifetime }))];
     }
     check(false, 'collection_not_found', 404);
   }
   async profile(owner) {
     ownerKey(owner); const output = { ...(this.agents().find(a => a.address === owner) ?? { address: owner, finds: 0, discoveries: 0, crafts: 0, mints: 0 }) };
     output.scores = { finds: output.finds, discoveries: output.discoveries, crafts: output.crafts, mints: output.mints };
-    for (const key of ['balances', 'bitmaps', 'finds', 'discoveries', 'history', 'mintRights']) output[key] = await this.agentList(owner, key);
-    return output;
+    const lists = await Promise.all(['balances', 'finds', 'discoveries', 'history', 'mintRights'].map(async key => [key, await this.agentList(owner, key)]));
+    return { ...output, ...Object.fromEntries(lists), ...deferredBitmaps(owner) };
   }
   async resultList(kind) {
     if (kind === 'mints') return this.rows('mints').map(r => ({ ...this.mints.public(r.id), asset: r.request.asset, block: r.request.block, amount: r.request.amount, kind: r.kind, owner: r.request.owner }));

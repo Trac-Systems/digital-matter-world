@@ -2,7 +2,7 @@
 
 This ESM library runs in Node and browsers. It contains no network client in its
 runtime graph. Header download, benchmark, simulation and export commands live in
-`scripts/`. Node commands use 23.11.0; dependencies are pinned in `package-lock.json`.
+`scripts/`. Node commands use 24.22.1; dependencies are pinned in `package-lock.json`.
 
 ## Fungible matter and all-history claims
 
@@ -357,7 +357,7 @@ from cryptographic chain validation.
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 cd rules
 npm test
@@ -486,7 +486,7 @@ in the last observation. A signature cannot extend an owner's deadline.
 `{owner,height,nonce,until}`; use `signLink` / `linkId`, domain `dmw-link-v1`.
 `verifyLinkInput` in `link-payments.js` verifies the signed request, independently
 read `{baseFee,treasury,payer,hash,feeSettings?}` terms and rail-specific payment.
-Ethereum also binds chainId, contract and token. Pricing uses `feeFor("link")`,
+Ethereum also binds chainId, contract and token. Pricing uses `feeFor("link", baseFee, 1, terms.feeSettings)`,
 50% burn and the remainder to treasury. Links require a completed payment, not just a refundable funded lock: `payment.consumed:true` and `settlement:{accepted:true,refund:false,paymentId,txid,confirmations}` with one confirmation. The independent reader verifies the actual release, all recipients and burn, and refuses refunds as payment. The verified current Bitmap holder must match the owner;
 the permanent link must not already exist. Independent signer reads verify the
 holder, prior link, terms and payment. Accepted links emit `link/<base36 block>`
@@ -511,3 +511,16 @@ a found pattern's current mintable capacity below issued supply. Excess units
 remain on Trac; no clawback or unconditional backing guarantee applies.
 Serialization rejects isolated UTF-16 surrogates in keys and values. UTF-8 binary
 decoding preserves leading U+FEFF, including in object keys.
+
+
+### Operator fee settings
+
+The revisioned global fee policy carries `feeSettings:{link,tierMultipliers,compoundMinimum}`
+in signed quotes and admitted terms. Launch settings are link **3**, tiers
+**1,3,10,30,100**, compound minimum **10**. A link is 67.8 TAP at B = 22.6 TAP
+(about $3 at the October 27 reference rate); it is not pegged to USD.
+All multipliers and B may change for new quotes. Verify saved terms against
+their retained revision, never the current revision.
+`FEE_DEFAULTS` remains the legacy fallback (including link 20) solely for
+unconfigured historical terms and installed verifier compatibility. The link
+split remains half burn, half treasury, with integer rounding as before.

@@ -15,7 +15,7 @@ const privilege = 'ac'.repeat(32) + 'i0', deployment = 'ad'.repeat(32) + 'i0', k
 const auth = { auth: { fixture: true }, salt: 'local' }; auth.hash = hash(JSON.stringify(auth.auth) + auth.salt);
 const signature = secp256k1.sign(auth.hash, key); auth.sig = { r: signature.r.toString(), s: signature.s.toString(), v: signature.recovery };
 const publicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
-mock.module('../../prod/bitcoin.mjs', { namedExports: { BitcoinViews, createBitcoin: async () => ({ kind: 'ord', network: 'regtest', source: { request: async path => {
+mock.module('../../prod/bitcoin.mjs', { exports: { BitcoinViews, createBitcoin: async () => ({ kind: 'ord', network: 'regtest', source: { request: async path => {
   if (path.startsWith('/content/')) return JSON.stringify(auth);
   return { result: path.includes('getDeployment/') ? { ins: deployment, prv: privilege, dec: 0 } : path.includes('getPrivilegeAuthList') ? [{ ins: privilege }] : '100' };
 } } }) } });

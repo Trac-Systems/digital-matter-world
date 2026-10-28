@@ -8,7 +8,7 @@ import { configFixture } from './helpers.mjs';
 
 let branch, tip, counted;
 const client = { blockHash: async height => branch.hashAt(height) };
-mock.module('../reads.mjs', { namedExports: { productionReads: async () => ({
+mock.module('../reads.mjs', { exports: { productionReads: async () => ({
   client, manifest: { bitcoin: client }, views: { view: async () => branch }, close() {},
   trac: async method => {
     assert.equal(method, 'head'); return { tip: { height: tip, hash: branch.hashAt(tip) }, counted };

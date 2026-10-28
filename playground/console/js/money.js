@@ -18,6 +18,26 @@ function shown(v, d) {
 export function tap(v, unit) {
   return formatTap(v, tapDecimals(unit));
 }
+// Display the current operator policy, with the same integer math as rules feeFor.
+// Missing settings must never fall back to legacy or launch prices.
+export function feePrice(policy, kind, tier = 1) {
+  const settings = policy?.feeSettings;
+  if (typeof policy?.baseFee !== 'string' || !/^(0|[1-9]\d*)$/.test(policy.baseFee) ||
+      !Array.isArray(settings?.tierMultipliers) || settings.tierMultipliers.length !== 5 ||
+      ![...settings.tierMultipliers, settings.compoundMinimum, settings.link].every(n => Number.isSafeInteger(n) && n > 0) ||
+      !Number.isInteger(tier) || tier < 1 || tier > 5) return 'current price';
+  let multiplier;
+  if (kind === 'find') multiplier = settings.tierMultipliers[tier - 1];
+  else if (kind === 'compound') multiplier = Math.max(settings.compoundMinimum, settings.tierMultipliers[tier - 1]);
+  else if (kind === 'compound-minimum') multiplier = Math.max(settings.compoundMinimum, Math.min(...settings.tierMultipliers));
+  else if (kind === 'link') multiplier = settings.link;
+  else return 'current price';
+  return tap((BigInt(policy.baseFee) * BigInt(multiplier)).toString(), policy.unit);
+}
+export function feePolicyTip(policy) {
+  const tiers = Array.from({ length: 5 }, (_, i) => feePrice(policy, 'find', i + 1)).join(', ');
+  return `Changes apply to new quotes. Link: ${feePrice(policy, 'link')}; tiers: ${tiers}; compounds from: ${feePrice(policy, 'compound-minimum')}.`;
+}
 // Decimal TAP text (for example "22.6") from atoms, without grouping, for editable fields.
 export function tapText(v, unit) {
   const d = tapDecimals(unit), s = String(v ?? '');

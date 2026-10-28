@@ -161,7 +161,7 @@ The Lab feed separately retains 2,000 local diagnostic events.
 
 | Method/path | Response |
 | --- | --- |
-| `GET /api/lab/status` | `{version:1,state:"ready",network,tip:2100,counted:2100,batch:{n,to},mining:{enabled,intervalMs},bots:{count,intervalMs,paused},feePolicy:{baseFee,unit,revision},components:[{name,state,pid?,url?}],history:{kind:"regtest",seedBlocks:2048},player:{address},consoleOrigin}` |
+| `GET /api/lab/status` | `{version:1,state:"ready",network,tip:2100,counted:2100,batch:{n,to},mining:{enabled,intervalMs},bots:{count,intervalMs,paused},feePolicy:{baseFee,feeSettings:{link,tierMultipliers,compoundMinimum},unit,revision},components:[{name,state,pid?,url?}],history:{kind:"regtest",seedBlocks:2048},player:{address},consoleOrigin}` |
 | `GET /api/status` | Public network, tip, counted height, batch, fee policy, settings, units and public-index progress; identical to gateway `/status`. |
 | `GET /api/player` | `{address,discoveries:[],balances:[{asset,amount}],items:[],bitmaps:[{height,inscription,linked}],pendingPayments:[],mintRights:[],history:[],wallets:{bitcoin:{address,btc,tap},ethereum:{address,rpc,chainId:31337,token,balance}}}`. Matter is fungible; `items` is empty. |
 | `GET /api/world?from=0&to=255` | `{tip,counted,from,to,plots:[{height,x,y,region,halving,hash,found,linked,minted,finds:[]}],total,next,…}`. Inclusive range, paged. |

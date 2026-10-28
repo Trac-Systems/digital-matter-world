@@ -3,7 +3,7 @@ import { open, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { check, privateDirectory, sha256 } from './check.mjs';
-import { stableJSON, DISCOVERY_LIMITS } from '../../rules/src/index.js';
+import { stableJSON, DISCOVERY_LIMITS, moveId } from '../../rules/src/index.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 // One durable intent per logical action; ambiguous sends retain the exact packet.
@@ -17,6 +17,8 @@ export class Journal {
     const db = new DatabaseSync(path);
     db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS actions (scope TEXT NOT NULL, id TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL, result TEXT, state TEXT NOT NULL, PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS rates (scope TEXT PRIMARY KEY, tip INTEGER NOT NULL, count INTEGER NOT NULL, at INTEGER NOT NULL);');
     db.exec('CREATE TABLE IF NOT EXISTS action_outcomes (scope TEXT NOT NULL, id TEXT NOT NULL, outcome TEXT, settlement TEXT, PRIMARY KEY(scope,id));');
+    db.exec('CREATE TABLE IF NOT EXISTS move_history (sequence INTEGER PRIMARY KEY, scope TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL, result TEXT);');
+    db.exec('CREATE INDEX IF NOT EXISTS move_history_action ON move_history(scope,id,sequence);');
     return new Journal(db, scope, { now, intervalMs, perTip });
   }
   constructor(db, scope, options) { this.db = db; this.scope = scope; Object.assign(this, options); }
@@ -41,15 +43,24 @@ export class Journal {
       const at = this.now(), old = this.db.prepare('SELECT * FROM rates WHERE scope=?').get(this.scope);
       if (old && at < old.at + this.intervalMs) throw Object.assign(Error('Local rate limit; retry later'), { retryAfterMs: old.at + this.intervalMs - at });
       const count = old?.tip === tip ? old.count + 1 : 1;
-      if (count > this.perTip) throw Object.assign(Error('Local per-tip move limit reached'), { retryAfterMs: 250 });
+      if (count > this.perTip) throw Object.assign(Error(`Local per-tip move limit: waiting for the next Bitcoin block (${old.count}/${this.perTip} used)`),
+        { retryAfterMs: 250, code: 'waiting_for_bitcoin_block', used: old.count, limit: this.perTip, tip });
       this.db.prepare('INSERT OR REPLACE INTO rates VALUES(?,?,?,?)').run(this.scope, tip, count, at); this.db.exec('COMMIT');
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   async waitTurn(getHead, wait = sleep) {
+    let reportedTip;
     for (;;) {
       const head = await getHead();
       try { this.take(head.tip.height); return head; }
-      catch (error) { if (error.retryAfterMs === undefined) throw error; await wait(error.retryAfterMs); }
+      catch (error) {
+        if (error.retryAfterMs === undefined) throw error;
+        if (error.code === 'waiting_for_bitcoin_block' && reportedTip !== error.tip) {
+          reportedTip = error.tip;
+          process.stderr.write(`waiting for the next Bitcoin block (${error.used}/${error.limit} used)\n`);
+        }
+        await wait(error.retryAfterMs);
+      }
     }
   }
   finishTurn() {
@@ -58,8 +69,49 @@ export class Journal {
     if (this.intervalMs > 0) this.db.prepare('UPDATE rates SET at=MAX(at,?) WHERE scope=?').run(this.now(), this.scope);
   }
   mark(id, state, result = null) {
-    check(['sending', 'unknown', 'received', 'submitted', 'accepted', 'rejected'].includes(state), 'Invalid journal state');
-    this.db.prepare('UPDATE actions SET state=?,result=? WHERE scope=? AND id=?').run(state, result === null ? null : stableJSON(result), this.scope, id);
+    check(['sending', 'unknown', 'refused', 'received', 'submitted', 'accepted', 'rejected'].includes(state), 'Invalid journal state');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.get(id);
+      if (row?.body.t) this.archiveMove({ ...row, state, result });
+      this.db.prepare('UPDATE actions SET state=?,result=? WHERE scope=? AND id=?').run(state, result === null ? null : stableJSON(result), this.scope, id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  archiveMove(row) {
+    this.db.prepare('INSERT INTO move_history(scope,id,at,body,state,result) VALUES(?,?,?,?,?,?)')
+      .run(this.scope, row.id, this.now(), JSON.stringify(row.body), row.state, row.result === null ? null : stableJSON(row.result));
+  }
+  moveHistory(id) {
+    return this.db.prepare('SELECT * FROM move_history WHERE scope=? AND id=? ORDER BY sequence').all(this.scope, id)
+      .map(row => ({ ...row, body: JSON.parse(row.body), result: row.result ? JSON.parse(row.result) : null }));
+  }
+  renewMove(id, intent, body, previous) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.get(id);
+      check(row && ['prepared', 'refused'].includes(row.state) && row.state === previous.state &&
+        stableJSON(row.body) === stableJSON(previous.body), 'Saved move changed; retry the same action');
+      check(row.fingerprint === sha256(stableJSON(intent)) && row.body.t === body.t &&
+        stableJSON(row.body.p) === stableJSON(body.p), 'Conflicting action refused; use the saved intent');
+      this.archiveMove(row);
+      this.db.prepare("UPDATE actions SET body=?,state='prepared',result=NULL WHERE scope=? AND id=?")
+        .run(JSON.stringify(body), this.scope, id);
+      this.db.exec('COMMIT'); return this.get(id);
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  recoverLegacyRefusal(id, previous, refusal) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.get(id);
+      check(row?.state === 'unknown' && !row.result && row.body.t === 'discovery-reveal' &&
+        stableJSON(row.body) === stableJSON(previous.body) && this.moveHistory(id).length === 0,
+      'Recovery requires an unchanged legacy unknown reveal without a receipt or recorded attempts');
+      this.archiveMove(row);
+      this.archiveMove({ ...row, state: 'refused', result: refusal });
+      this.db.prepare("UPDATE actions SET state='refused',result=? WHERE scope=? AND id=?").run(stableJSON(refusal), this.scope, id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   evidence(id) {
     const row = this.db.prepare('SELECT outcome,settlement FROM action_outcomes WHERE scope=? AND id=?').get(this.scope, id);
@@ -115,7 +167,8 @@ export class Journal {
       const witnessed = parent?.result?.receipt, tip = receipt?.tip ?? witnessed?.tip ?? null;
       return { type: 'discovery', actionId, state: row.state, sealed: true, commitment: body.p.commitment,
         receiptTip: tip, revealFrom: tip === null ? null : tip + 2, revealUntil: tip === null ? null : tip + DISCOVERY_LIMITS.lifetime,
-        witnessRecorded: !!witnessed, revealState: reveal?.state ?? null };
+        witnessRecorded: !!witnessed, revealState: reveal?.state ?? null, revealMove: reveal ? moveId(reveal.body) : null,
+        revealRefusal: reveal?.state === 'refused' ? reveal.result : null };
     });
     const total = this.db.prepare(`SELECT count(*) AS n FROM actions a WHERE ${where}`).get(this.scope).n;
     return { items, total, limit, next: rows.length > limit ? Buffer.from(JSON.stringify({ scope, before: selected.at(-1).position })).toString('base64url') : null,

@@ -91,7 +91,7 @@ test('public limits, filtering, nested pages, immutable artifacts, HEAD and ETag
   assert.equal(profile.discoveries.length, 1); assert.equal(profile.counts.discoveries, 2);
   assert.equal(JSON.stringify(profile).includes('never-public'), false);
   const sealed = await f.get(`/agents/${encodeTracAddress(f.owner)}/discoveries?state=sealed`);
-  assert.deepEqual(sealed.discoveries[0], { state: 'sealed', exists: true, opensAt: 32 });
+  assert.deepEqual(sealed.discoveries[0], { state: 'sealed', exists: true, opensAt: 32, revealUntil: 174 });
   const block = await f.get('/blocks/1?limit=1');
   assert.deepEqual(block.claimWindow, { window: 30, closesAt: 32, drawAt: 32, settlesAt: 32, claimable: true, claimsPerWindow: rules.CLAIM_DEFAULTS.claimsPerWindow });
   const nested = block.claims[0].pages.patterns;
@@ -339,4 +339,14 @@ test('regtest quotes and public burn totals use the configured eater encoding', 
   row.payment.receipts[0].to = rules.TAP_BURN;
   await f.store.put('mints', row.id, row);
   assert.equal((await f.get('/results')).burn.tap, '0');
+});
+
+test('public status exposes the live fee multipliers and exact price unit', async t => {
+  const f = await fixture(t);
+  const { changeFeePolicy } = await import('../src/fees.mjs');
+  f.registry.feePolicy = changeFeePolicy(f.registry, { link: 3, compoundMinimum: 12, tierMultipliers: [2, 4, 12, 40, 120] }, 1000).feePolicy;
+  const status = await f.get('/status?limit=1');
+  assert.deepEqual(status.feePolicy.feeSettings, { link: 3, compoundMinimum: 12, tierMultipliers: [2, 4, 12, 40, 120] });
+  assert.equal(status.feePolicy.revision, f.registry.feePolicy.current);
+  assert.equal(status.feePolicy.unit.decimals, 18);
 });

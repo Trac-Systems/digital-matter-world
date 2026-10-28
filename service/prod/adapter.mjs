@@ -6,7 +6,7 @@ import { readSecret } from './config.mjs';
 import { MintOperations } from '../src/operations.mjs';
 import { ethereumPayments } from '../src/ethereum.mjs';
 import { check, atomicWrite, hash } from '../src/util.mjs';
-import { FeeQuotes } from '../src/fees.mjs';
+import { FeeQuotes, issueFeeTerms } from '../src/fees.mjs';
 import { HeaderRelay } from './header-relay.mjs';
 
 export async function createAdapters({ config, store, history, runtime }) {
@@ -14,11 +14,7 @@ export async function createAdapters({ config, store, history, runtime }) {
   try {
   const gatewaySecret = Buffer.from(await readSecret(config.gatewayKey), 'hex');
   try { reads.feeQuotes = new FeeQuotes({ network: config.network, secret: gatewaySecret, registry: reads.registry }); } finally { gatewaySecret.fill(0); }
-  const feeTerms = kind => async (id, until, counted) => {
-    const policy = (await reads.registry())[kind]; check(policy, kind + '_unconfigured');
-    const scope = `${kind}/${id}`, quote = await reads.feeQuotes.issue(scope, counted);
-    return { ...policy, baseFee: quote.baseFee, feeAuthorization: await reads.feeQuotes.accept(quote, scope, id, until, counted) };
-  };
+  const feeTerms = kind => (id, until, counted) => issueFeeTerms(reads, kind, id, until, counted);
   await mkdir(config.prod.contexts, { recursive: true, mode: 0o700 });
   const operations = new MintOperations({ store, network: config.network, reads });
   const eth = ethereumPayments({ rpc: ethRPC, escrow: config.prod.ethereum });
@@ -44,13 +40,14 @@ export async function createAdapters({ config, store, history, runtime }) {
   const links = new Links({ store, network: config.network, reads, terms: feeTerms('link') });
   const relay = new HeaderRelay({ reads, store });
   return { reads, transport, operations, payments, links,
-    relayHeaders: outbox => relay.tick(outbox),
-    async observations(previous) {
+    async pollClock() { const tip = await reads.tip(); return { ...tip, branch: await reads.views.view(tip.tip, tip.tipHash) }; },
+    relayHeaders: (outbox, clock) => relay.tick(outbox, clock),
+    async observations(previous, clock) {
       const queued = store.list('relayObservations', { limit: 64 }).map(r => r.value);
       if (queued.length) { newObservations = true; return queued; }
       const head = await trac('head'), tip = head.tip;
-      check(await reads.client.blockHash(tip.height) === tip.hash, 'bitcoin_beacon_disagreement');
-      const branch = await reads.views.view(tip.height, tip.hash);
+      check(clock ? clock.branch.hashAt(tip.height) === tip.hash : await reads.client.blockHash(tip.height) === tip.hash, 'bitcoin_beacon_disagreement');
+      const branch = clock && clock.tip === tip.height && clock.tipHash === tip.hash ? clock.branch : await reads.views.view(tip.height, tip.hash);
       let common = Math.min(history.length - 1, tip.height);
       while (common >= 0 && history.hashAt(common) !== branch.hashAt(common)) common--;
       check(common >= 0 || history.length === 0, 'bitcoin_history_genesis');

@@ -12,10 +12,10 @@ export class PublicSnapshot {
     check(this.value !== undefined, 'public_snapshot_pending', 503);
     return this.value;
   }
-  async refresh() {
+  async refresh(...args) {
     if (this.pending) return this.pending;
     this.pending = (async () => {
-      try { const value = await this.load(); this.value = value; this.error = null; return value; }
+      try { const value = await this.load(...args); this.value = value; this.error = null; return value; }
       catch (error) { this.error = error; throw error; }
     })();
     try { return await this.pending; } finally { this.pending = null; }

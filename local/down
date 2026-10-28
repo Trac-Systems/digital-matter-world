@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source ~/.nvm/nvm.sh
-nvm use 23.11.0 >/dev/null
+nvm use 24.22.1 >/dev/null
 export npm_config_userconfig=/dev/null
 exec node "$(cd "$(dirname "$0")" && pwd)/stack.mjs" down "$@"

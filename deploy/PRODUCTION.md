@@ -1,5 +1,8 @@
 # Production launch and evidence protocol
 
+DMW uses Node 24 LTS (24.22.1 or newer 24.x). Configure the application services
+to use that runtime.
+
 The runner operates on existing services. It does not install hosts, use SSH,
 generate production role keys, run DKG on behalf of operators, or publish a
 repository. The production path is explicit:

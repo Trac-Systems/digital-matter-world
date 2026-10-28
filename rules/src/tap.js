@@ -3,16 +3,19 @@ import { assert, utf8, hashBytes, bytesToHex, hex, stableJSON, hash } from './co
 import { amount, verifyRequest, pendingId } from './operations.js';
 import { mintTiming } from './mint-rights.js';
 import { formatTapAmount, treasuryPayment } from './fees.js';
-import { tapBurnAddress } from './tap-burn.js';
+import { TAP_BURN, tapBurnAddress } from './tap-burn.js';
 export { TAP_BURN, tapBurnAddress } from './tap-burn.js';
 
 // Indexed allocations are atomic. Only the inscription boundary renders TAP.
 export function tapPaymentAllocations(split, destinations, kind = 'find', bitcoinNetwork = 'mainnet') {
   assert(['find', 'compound', 'link'].includes(kind), 'fee_kind');
+  tapBurnAddress(bitcoinNetwork); // Validate the requested network.
   const roles = kind === 'find' ? [['finder', 'of'], ['landowner', 'sr'], ['burn', 'bn']] :
     kind === 'compound' ? [['firstMaker', 'of'], ['burn', 'bn']] : [['burn', 'bn']];
   return roles.filter(([role]) => split[role] !== '0').map(([role, rl]) => ({
-    tt: role === 'burn' ? 'b' : 'a', to: role === 'burn' ? tapBurnAddress(bitcoinNetwork) : destinations[role], amt: split[role], rl,
+    // ord-tap's native allocation parser requires this literal on every
+    // network (auth.rs:3069). Address-transfer burn items use network encoding.
+    tt: role === 'burn' ? 'b' : 'a', to: role === 'burn' ? TAP_BURN : destinations[role], amt: split[role], rl,
   }));
 }
 export function tapPaymentLock({ split, destinations, payer, hash: paymentHash, expiry, kind = 'find', bitcoinNetwork = 'mainnet' }) {

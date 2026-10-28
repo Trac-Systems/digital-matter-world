@@ -8,11 +8,11 @@ The implementation is local: all listeners and peer destinations require
 
 ## Run
 
-Use Go 1.26.x and Node 23.11.0. From the repository root:
+Use Go 1.26.x and Node 24.22.1. From the repository root:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 cd committee
 npm ci --ignore-scripts
@@ -156,7 +156,7 @@ authorized by the independent operator approval read.
 
 ## Tests
 
-From `committee/` with Node 23.11.0 and `npm_config_userconfig=/dev/null`:
+From `committee/` with Node 24.22.1 and `npm_config_userconfig=/dev/null`:
 
 ```sh
 npm test
@@ -231,3 +231,22 @@ Fairness is per public key, with no identity system. Bitcoin miners can influenc
 Settled events remain final through deeper reorgs; excess units whose mintable
 capacity disappears remain on Trac without clawback. These are accepted limits,
 not properties repaired by threshold signing.
+# Batch replay operations
+
+Set `replayTimeoutMs` in each signer's JSON configuration (the file passed to
+`committee/signer/service.mjs`). The default is 120000 milliseconds. It bounds
+worker startup and each replay; use a positive integer no greater than Node's
+timer maximum, 2147483647. Restart the configured signer after changing it.
+
+Production replay reads the signer's own validated header database read-only,
+loads a hash-bound branch once, and shares that snapshot between observations
+with the same ancestry. It never trusts a header path supplied by a proposal.
+Custom in-memory read adapters retain the synchronous history interface.
+Timeouts and worker crashes fail the current preparation before reservation;
+the next request starts a replacement worker. Keep deployed release directories
+immutable so replacement workers load the same rules as the running signer.
+
+The gateway currently allows 60000 milliseconds for `/prepare`. A replay
+timeout above that is a local computation ceiling, not a longer gateway HTTP
+deadline. If a request outlives HTTP, preserve the ceremony and use its status
+and reservation checks; an HTTP timeout alone never permits another reservation.

@@ -10,7 +10,7 @@ import { diskSpace } from '../lib/check.mjs';
 import { temp, cleanup } from './helpers.mjs';
 
 test('real isolated Bitcoin regtest supplies linked PoW headers without public peers', { timeout: 60000 }, async t => {
-  await diskSpace(); const dir = await temp(t), probe = createServer();
+  const dir = await temp(t), probe = createServer(); await diskSpace(join(dir, 'regtest'), 0);
   await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve)); const port = probe.address().port;
   await new Promise(resolve => probe.close(resolve));
   const child = spawn(process.env.DMW_BITCOIND ?? 'bitcoind', [`-datadir=${dir}`, '-regtest', '-server=1', '-listen=0', '-discover=0', '-dnsseed=0', '-fixedseeds=0', '-connect=0', '-rpcbind=127.0.0.1', '-rpcallowip=127.0.0.1', `-rpcport=${port}`, '-printtoconsole=0'], { stdio: 'ignore' });

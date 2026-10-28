@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, stat } from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -37,6 +39,21 @@ async function fixture(t, { tip = 63 } = {}) {
   const independent = { hash: async h => history.hashAt(h) }, output = join(dir, 'headers.bin');
   return { dir, bytes, full, history, state, source, independent, output, headers, preferGzip: false };
 }
+
+test('archive download checks the output directory, allows a small disk and skips the check for a verified cache hit', async t => {
+  const f = await fixture(t), checked = []; let available = 600n * 1024n * 1024n;
+  t.mock.method(fsPromises, 'statfs', async path => { checked.push(path); return { bavail: available, bsize: 1n }; });
+  syncBuiltinESMExports(); t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  await downloadHeaders({ ...f, preferGzip: true });
+  assert.deepEqual(checked, [f.dir]); assert.deepEqual(await readFile(f.output), f.bytes);
+  available = 0n;
+  assert.equal((await downloadHeaders(f)).downloaded, 0); assert.equal(checked.length, 1);
+  const output = join(f.dir, 'small.bin'), requests = f.state.requests.length;
+  await assert.rejects(downloadHeaders({ ...f, output }), /Not enough free disk space/);
+  assert.equal(f.state.requests.length, requests);
+  await assert.rejects(stat(output), { code: 'ENOENT' });
+  await assert.rejects(stat(output + '.lock'), { code: 'ENOENT' });
+});
 test('bulk download verifies one file from genesis and transfers only the appended bytes on refresh', async t => {
   const f = await fixture(t, { tip: 31 }); let verified;
   const first = await downloadHeaders({ ...f, onHistory: h => { verified = h; } });

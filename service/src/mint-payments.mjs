@@ -51,15 +51,17 @@ async function pages(reads, path, countPath, { recent = false, maxRows = 1000000
   return rows;
 }
 async function tapReceipts(reads, row, paymentIds) {
-  const receipts = [], prefix = `dmw-pay-v2|${row.id}|`;
-  const recent = await pages(reads, 'getAccountRedeemList/' + encodeURIComponent(row.payer), 'getAccountRedeemListLength/' + encodeURIComponent(row.payer), { recent: true });
-  const ids = new Set([...paymentIds, ...recent.filter(r => r.rdm?.items?.some(i => i.dta?.startsWith(prefix))).map(r => r.ins)]);
-  check(ids.size <= 64, 'payment_item_limit');
+  const receipts = [];
+  const ids = new Set(paymentIds); // Discovery belongs to the submitting wallet, including detached/old payments.
+  check(ids.size <= (reads.sourcePolicy?.maxItems ?? 64), 'payment_item_limit');
   for (const id of ids) {
     check(inscription(id), 'payment_id');
     let inclusion;
     try { inclusion = await reads.included(id); } catch (e) { if (notFound(e)) continue; throw e; }
     if (!inclusion) {
+      // An ID without an authority locator is retained and checked again when
+      // confirmed. Never search the payer's authorization history.
+      if (reads.namedSources && !row.paymentEvidence?.[id]?.authority) continue;
       let tx;
       try { tx = await reads.bitcoinTransaction(id.slice(0, 64)); }
       catch (e) { if (notFound(e)) continue; throw e; }
@@ -69,7 +71,7 @@ async function tapReceipts(reads, row, paymentIds) {
       const authId = payload.redeem.auth; check(inscription(authId), 'payment_authority');
       const auth = await reads.content(authId);
       check(recovered(payload, 'redeem') === recovered(auth, 'auth'), 'payment_signature');
-      const authorities = await pages(reads, 'getAccountAuthList/' + encodeURIComponent(row.payer), 'getAccountAuthListLength/' + encodeURIComponent(row.payer));
+      const authorities = reads.paymentAuthority ? [await reads.paymentAuthority(row.payer, authId, row.paymentEvidence?.[id]?.authority)] : await pages(reads, 'getAccountAuthList/' + encodeURIComponent(row.payer), 'getAccountAuthListLength/' + encodeURIComponent(row.payer));
       check(authorities.some(a => a.ins === authId && a.addr === row.payer) && await reads.tap('getAuthCancelled/' + authId) === false, 'payment_authority');
       for (const [index, item] of payload.redeem.items.entries()) {
         const fee = row.quote.fees.find(f => f.tt === 'a' && f.dta === item.dta && f.to === item.address && f.ticker === item.tick);
@@ -80,8 +82,8 @@ async function tapReceipts(reads, row, paymentIds) {
     }
     const payload = await reads.content(id);
     check(payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items), 'payment_redeem');
-    const transfers = await pages(reads, 'getTransferredList/' + id.slice(0, 64), 'getTransferredListLength/' + id.slice(0, 64), { maxRows: 1000 });
-    for (const [index, transfer] of transfers.entries()) {
+    const transfers = reads.paymentTransfers ? await reads.paymentTransfers(id, row.paymentEvidence?.[id]?.transfers) : (await pages(reads, 'getTransferredList/' + id.slice(0, 64), 'getTransferredListLength/' + id.slice(0, 64), { maxRows: 1000 })).map((transfer, index) => ({ index, transfer }));
+    for (const { index, transfer } of transfers) {
       if (transfer.ins !== id || transfer.fail !== false || transfer.int !== true || transfer.addr !== row.payer) continue;
       // The burn fee matches only the exact configured burn address, amount,
       // payer and request-bound data, just like every other direct TAP item.
@@ -125,7 +127,7 @@ export function installMintPayments(reads, { request, escrow, network, confirmat
     };
     for (const source of sources) {
       const ids = source.paymentIds ?? (source.paymentId ? [source.paymentId] : []);
-      check(ids.length <= 64 && new Set(ids).size === ids.length, 'payment_id_limit');
+      check(ids.length <= (reads.sourcePolicy?.maxItems ?? 64) && new Set(ids).size === ids.length, 'payment_id_limit');
       if (source.kind === 'tap') receipts.push(...await tapReceipts(reads, source, ids));
       else {
         if (source.id === id) {

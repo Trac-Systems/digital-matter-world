@@ -24,7 +24,7 @@ const client = { kind: 'ord', network: 'regtest', params: REGTEST_PARAMS, genesi
     return { result: path.includes('getBitmap/') ? bitmap : path.includes('getLockConsume/') ? consumed : path.includes('getLock/') ? lock : null };
   } }
 };
-mock.module('../../prod/bitcoin.mjs', { namedExports: { BitcoinViews, createBitcoin: async () => client } });
+mock.module('../../prod/bitcoin.mjs', { exports: { BitcoinViews, createBitcoin: async () => client } });
 const { localReads } = await import('../../local/reads.mjs');
 
 test('independent link reads follow current Bitmap ownership and bind every actual release allocation', async () => {

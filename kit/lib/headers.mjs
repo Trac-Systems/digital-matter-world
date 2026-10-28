@@ -160,7 +160,7 @@ export async function downloadHeaders({ output, source = headerSource('https://d
     const { downloadArchive } = await import('./header-download.mjs');
     return downloadArchive({ output, source, independent, end, signal, onProgress, network, ...options });
   }
-  await diskSpace(); check(integer(delayMs) && delayMs <= 60000, 'Invalid request delay');
+  check(integer(delayMs) && delayMs <= 60000, 'Invalid request delay');
   const path = resolve(output); await mkdir(dirname(path), { recursive: true });
   const target = end ?? await source.height(); check(integer(target) && target <= 0xffffffff, 'Invalid final height');
   let done;
@@ -175,6 +175,8 @@ export async function downloadHeaders({ output, source = headerSource('https://d
   const partial = path + '.part';
   let history;
   try { history = await loadHistory(partial); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  check((history?.length ?? 0) <= target + 1, 'Partial download is ahead of requested end');
+  await diskSpace(partial, (target + 1 - (history?.length ?? 0)) * 80);
   const fd = await open(partial, 'a+', 0o600);
   let count = history?.length ?? 0, previous = history?.get(count - 1).hash, downloaded = 0;
   try {

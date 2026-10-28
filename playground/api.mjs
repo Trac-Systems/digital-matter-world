@@ -189,7 +189,8 @@ function controlReadAPI({ views, engine, jobs, events, paymentPlan }) {
     }
     // A TAP redeem document is an executable wallet instruction. Metadata or a
     // sliced allocation vector would change the transaction the wallet signs.
-    return projectLists(value, { source, params, policies, primary, atomicPaths: path.startsWith('payment-plan/') ? ['/redeem'] : [] });
+    return projectLists(value, { source, params, policies, primary, atomicPaths:
+      ['/feePolicy', '/feeQuote', '/feeSettings', '/terms/feeAuthorization', '/terms/feeSettings', ...(path.startsWith('payment-plan/') ? ['/redeem'] : [])] });
   };
 }
 

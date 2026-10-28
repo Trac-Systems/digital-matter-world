@@ -7,12 +7,38 @@ export const QUOTE_BLOCKS = 2016;
 const positive = value => typeof value === 'string' && /^[1-9][0-9]{0,37}$/.test(value) && BigInt(value) <= rules.TAP_MAX_ATOMS;
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const bytes = (domain, value) => Buffer.from(domain + '|' + rules.stableJSON(value));
-const revisionId = (baseFee, activeFrom) => hash(bytes('dmw-fee-policy-v1', { baseFee, activeFrom }));
+const settingsField = feeSettings => feeSettings === undefined ? {} : { feeSettings };
+// Omitted settings retain the original revision hash and the original defaults.
+const revisionId = (baseFee, activeFrom, feeSettings) => hash(bytes('dmw-fee-policy-v1', { baseFee, activeFrom, ...settingsField(feeSettings) }));
+export const LAUNCH_FEE_SETTINGS = Object.freeze({ ...rules.FEE_DEFAULTS, link: 3 });
+export function validateFeeSettings(settings) {
+  const multiplier = n => Number.isSafeInteger(n) && n >= 1 && n <= 10000;
+  check(settings && Object.keys(settings).sort().join(',') === 'compoundMinimum,link,tierMultipliers' &&
+    Array.isArray(settings.tierMultipliers) && settings.tierMultipliers.length === 5 &&
+    [...settings.tierMultipliers, settings.compoundMinimum, settings.link].every(multiplier), 'fee_settings');
+  return settings;
+}
+export const feeSettingsField = settingsField;
 export const mintFeeScope = (asset, block, kind) => rules.stableJSON(['mint', asset, block ?? null, kind]);
 
-export function createFeePolicy(baseFee, activeFrom = 0) {
+export async function issueFeeTerms(reads, kind, id, until, counted) {
+  const policy = (await reads.registry())[kind]; check(policy, kind + '_unconfigured');
+  const scope = `${kind}/${id}`, quote = await reads.feeQuotes.issue(scope, counted);
+  return { ...policy, baseFee: quote.baseFee, ...settingsField(quote.feeSettings),
+    feeAuthorization: await reads.feeQuotes.accept(quote, scope, id, until, counted) };
+}
+export async function validateQuotedTerms(reads, kind, row) {
+  const configured = (await reads.registry())[kind]; check(configured, kind + '_unconfigured');
+  const { payer, hash, feeAuthorization, ...policy } = row.terms;
+  const fee = await reads.feeQuotes.accepted(feeAuthorization, `${kind}/${row.id}`, row.id, row.request.until);
+  check(rules.stableJSON(policy) === rules.stableJSON({ ...configured, ...fee }), kind + '_policy');
+  return row.terms;
+}
+
+export function createFeePolicy(baseFee, activeFrom = 0, feeSettings) {
   check(positive(baseFee) && integer(activeFrom), 'fee_policy');
-  const revision = { id: revisionId(baseFee, activeFrom), baseFee, activeFrom, retiredAt: null };
+  if (feeSettings !== undefined) validateFeeSettings(feeSettings);
+  const revision = { id: revisionId(baseFee, activeFrom, feeSettings), baseFee, activeFrom, retiredAt: null, ...settingsField(feeSettings) };
   return { current: revision.id, revisions: [revision] };
 }
 
@@ -23,8 +49,10 @@ export function validateFeePolicy(registry) {
   const ids = new Set();
   for (const [i, r] of p.revisions.entries()) {
     const next = p.revisions[i + 1];
-    check(r && positive(r.baseFee) && integer(r.activeFrom) && r.id === revisionId(r.baseFee, r.activeFrom) && !ids.has(r.id) &&
+    if (r?.feeSettings !== undefined) validateFeeSettings(r.feeSettings);
+    check(r && positive(r.baseFee) && integer(r.activeFrom) && r.id === revisionId(r.baseFee, r.activeFrom, r.feeSettings) && !ids.has(r.id) &&
       (next ? integer(r.retiredAt) && r.retiredAt > r.activeFrom && r.retiredAt === next.activeFrom : r.retiredAt === null && r.id === p.current), 'fee_policy');
+    for (const kind of ['find', 'compound', 'link']) for (let tier = 1; tier <= 5; tier++) rules.feeFor(kind, r.baseFee, tier, r.feeSettings);
     ids.add(r.id);
   }
   for (const configured of [registry.link, ...Object.values(registry.assets ?? {})]) {
@@ -37,15 +65,33 @@ export function currentFee(registry) {
   return validateFeePolicy(registry).revisions.at(-1);
 }
 
+// A live policy may extend its launch pin but may never rewrite old terms.
+export function validateFeeHistory(policy, pinned) {
+  validateFeePolicy({ feePolicy: policy }); validateFeePolicy({ feePolicy: pinned });
+  check(policy.revisions.length >= pinned.revisions.length, 'fee_policy_history');
+  for (const [i, old] of pinned.revisions.entries()) {
+    const next = policy.revisions[i];
+    check(rules.stableJSON({ ...next, retiredAt: old.retiredAt }) === rules.stableJSON(old) &&
+      (old.retiredAt === null || next.retiredAt === old.retiredAt), 'fee_policy_history');
+  }
+}
+
 // Retain every revision so admitted requests can be verified after live changes.
 export function changeBaseFee(registry, baseFee, now = Date.now()) {
-  check(positive(baseFee) && integer(now) && now > 0, 'base_fee');
+  return changeFeePolicy(registry, { baseFee }, now);
+}
+export function changeFeePolicy(registry, changes, now = Date.now()) {
+  check(changes && Object.keys(changes).length > 0 && Object.keys(changes).every(k => ['baseFee', 'link', 'tierMultipliers', 'compoundMinimum'].includes(k)), 'fee_changes');
   const previous = currentFee(registry);
-  if (previous.baseFee === baseFee) return registry;
+  const { baseFee = previous.baseFee, ...multipliers } = changes;
+  check(positive(baseFee) && integer(now) && now > 0, 'base_fee');
+  const feeSettings = Object.keys(multipliers).length ? validateFeeSettings({ ...rules.FEE_DEFAULTS, ...previous.feeSettings, ...multipliers }) : previous.feeSettings;
+  if (previous.baseFee === baseFee && rules.stableJSON(settingsField(previous.feeSettings)) === rules.stableJSON(settingsField(feeSettings))) return registry;
   check(now > previous.activeFrom, 'fee_change_clock');
-  const next = { id: revisionId(baseFee, now), baseFee, activeFrom: now, retiredAt: null };
+  const next = createFeePolicy(baseFee, now, feeSettings).revisions[0];
   const revisions = registry.feePolicy.revisions.map(r => r.id === previous.id ? { ...r, retiredAt: now } : r);
-  return { ...registry, feePolicy: { current: next.id, revisions: [...revisions, next] } };
+  const updated = { ...registry, feePolicy: { current: next.id, revisions: [...revisions, next] } };
+  validateFeePolicy(updated); return updated;
 }
 
 export class FeeQuotes {
@@ -60,20 +106,22 @@ export class FeeQuotes {
     const { signature, ...payload } = signed;
     check(verify(null, bytes(domain, payload), this.publicKey, Buffer.from(signature, 'hex')), 'fee_quote_signature'); return payload;
   }
-  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash) {
+  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash, sourceLocators) {
     const started = this.now(), registry = await this.registry(), revision = currentFee(registry);
     // A replacement may land while the registry read is in flight. Either
     // snapshot has a valid issuance instant without delaying the new rate.
     const issuedAt = Math.max(started, revision.activeFrom);
     check(integer(issuedAt) && issuedAt <= this.now() && integer(counted) && integer(counted + QUOTE_BLOCKS), 'fee_quote_clock');
     return this.sign('dmw-fee-quote-v1', { network: this.network, scope, revision: revision.id, baseFee: revision.baseFee, unit: rules.TAP_UNIT,
-      issuedAt, expiresAt: issuedAt + QUOTE_MILLISECONDS, validFrom: counted, validUntil: counted + QUOTE_BLOCKS, ...(payouts ? { payouts } : {}), ...(deploymentId ? { deploymentId } : {}), ...(mintOwnershipHash ? { mintOwnershipHash } : {}) });
+      ...settingsField(revision.feeSettings),
+      issuedAt, expiresAt: issuedAt + QUOTE_MILLISECONDS, validFrom: counted, validUntil: counted + QUOTE_BLOCKS, ...(payouts ? { payouts } : {}), ...(deploymentId ? { deploymentId } : {}), ...(mintOwnershipHash ? { mintOwnershipHash } : {}), ...(sourceLocators ? { sourceLocators } : {}) });
   }
   async validate(quote, scope) {
     const q = this.verify('dmw-fee-quote-v1', quote), registry = await this.registry();
     const revision = validateFeePolicy(registry).revisions.find(r => r.id === q.revision);
     check(q.network === this.network && q.scope === scope && rules.stableJSON(q.unit) === rules.stableJSON(rules.TAP_UNIT) && positive(q.baseFee) && revision && revision.id === q.revision && revision.baseFee === q.baseFee &&
-      revision.id === revisionId(revision.baseFee, revision.activeFrom), 'fee_quote_policy');
+      revision.id === revisionId(revision.baseFee, revision.activeFrom, revision.feeSettings) &&
+      rules.stableJSON(settingsField(q.feeSettings)) === rules.stableJSON(settingsField(revision.feeSettings)), 'fee_quote_policy');
     check(integer(q.issuedAt) && q.issuedAt >= revision.activeFrom && (revision.retiredAt === null || q.issuedAt <= revision.retiredAt) &&
       q.expiresAt === q.issuedAt + QUOTE_MILLISECONDS && integer(q.validFrom) && integer(q.validUntil) && q.validUntil === q.validFrom + QUOTE_BLOCKS, 'fee_quote_window');
     return q;
@@ -87,6 +135,6 @@ export class FeeQuotes {
     const a = this.verify('dmw-fee-acceptance-v1', authorization), q = await this.validate(a.quote, scope);
     check(a.network === this.network && a.id === id && a.until === until && integer(a.counted) && a.counted >= q.validFrom && integer(until) && until > a.counted && until <= q.validUntil &&
       integer(a.at) && a.at >= q.issuedAt && a.at <= q.expiresAt, 'fee_quote_binding');
-    return { baseFee: q.baseFee };
+    return { baseFee: q.baseFee, ...settingsField(q.feeSettings) };
   }
 }

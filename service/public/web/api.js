@@ -104,7 +104,15 @@ export const labStream = { state: 'idle', events: [], start() {}, stop() {} };
 export const store = {
   status: null, patterns: null, player: null, bots: [],
   async refreshBots() { return { agents: [] }; },
-  async refreshStatus() { this.status = await get('/status'); bus.emit('status', this.status); return this.status; },
+  async refreshStatus() {
+    try { this.status = await get('/status'); }
+    catch (error) {
+      this.status = { ...this.status, feePolicy: null };
+      bus.emit('status', this.status);
+      throw error;
+    }
+    bus.emit('status', this.status); return this.status;
+  },
   async refreshPatterns() { this.patterns = await get('/patterns?limit=200'); bus.emit('patterns', this.patterns); return this.patterns; },
   async refreshPlayer() { return null; },
   pattern(ref) {

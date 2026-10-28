@@ -1,13 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { FEE_DEFAULTS, splitFee } from '../../../rules/src/fees.js';
+import { splitFee, feeFor } from '../../../rules/src/fees.js';
+import { feePrice } from '../js/money.js';
+import { formatTap } from '../js/amount-format.js';
 import { MINT_DEFAULTS } from '../../../rules/src/mint-rights.js';
 import { PATTERN_LIMITS, TIER_THRESHOLDS, tierFor } from '../../../rules/src/patterns.js';
 import { compound as makeCompound } from '../../../rules/src/compounds.js';
 
 const markdown = await readFile(new URL('../content/about.md', import.meta.url), 'utf8');
 const numbers = text => [...text.matchAll(/\b\d[\d,]*\b/g)].map(m => Number(m[0].replaceAll(',', '')));
+
+test('live displayed prices match feeFor for every tier and operator setting', () => {
+  const policies = [
+    { baseFee: '22600000000000000000', feeSettings: { tierMultipliers: [1, 3, 10, 30, 100], compoundMinimum: 1, link: 1 } },
+    { baseFee: '1234567890123456789', feeSettings: { tierMultipliers: [2, 4, 7, 11, 17], compoundMinimum: 9, link: 6 } },
+    { baseFee: '90071992547409931234567890', feeSettings: { tierMultipliers: [8, 2, 5, 3, 9], compoundMinimum: 1, link: 4 } },
+  ];
+  for (const policy of policies) {
+    policy.unit = { currency: 'TAP', denomination: 'atomic', decimals: 18 };
+    const compounds = [];
+    for (const kind of ['find', 'compound', 'link']) for (let tier = 1; tier <= 5; tier++) {
+      const atoms = feeFor(kind, policy.baseFee, tier, policy.feeSettings);
+      assert.equal(feePrice(policy, kind, tier), formatTap(atoms, policy.unit.decimals));
+      if (kind === 'compound') compounds.push(BigInt(atoms));
+    }
+    const minimum = compounds.reduce((a, b) => a < b ? a : b);
+    assert.equal(feePrice(policy, 'compound-minimum'), formatTap(minimum.toString(), policy.unit.decimals));
+  }
+  assert.equal(feePrice(policies[0], 'find', 2), '67.8 TAP');
+  assert.equal(feePrice(policies[0], 'compound-minimum'), '22.6 TAP');
+  assert.equal(feePrice(policies[0], 'link'), '22.6 TAP');
+  for (const policy of [null, {}, { baseFee: '1' }, { ...policies[0], baseFee: '22.6' },
+    { ...policies[0], feeSettings: { ...policies[0].feeSettings, link: undefined } }]) {
+    for (const kind of ['find', 'compound', 'compound-minimum', 'link']) assert.equal(feePrice(policy, kind), 'current price');
+  }
+});
 
 test('every rules number in About agrees with the rules library', () => {
   const covered = [];
@@ -21,10 +49,10 @@ test('every rules number in About agrees with the rules library', () => {
     for (const actual of read(re, count)) assert.deepEqual(actual, expected, `About disagrees with the rules: ${re}`);
   }
   const tiers = [tierFor(Number.MAX_SAFE_INTEGER), tierFor(0)];
-  check(/\| Make a found pattern real \|[^\n]+/, [...FEE_DEFAULTS.tierMultipliers, ...tiers]);
-  check(/\| Make a compound real \|[^\n]+/, [FEE_DEFAULTS.compoundMinimum]);
-  check(/\| Link a Bitmap \|[^\n]+/, [FEE_DEFAULTS.link]);
-  check(/\| Bitmap link \| The Bitmap holder \|[^\n]+/, [FEE_DEFAULTS.link]);
+  check(/\| Make a found pattern real \|[^\n]+/, [1, 2, 3, 4, 5, ...tiers]);
+  check(/\| Make a compound real \|[^\n]+/, []);
+  check(/\| Link a Bitmap \|[^\n]+/, []);
+  check(/\| Bitmap link \| The Bitmap holder \|[^\n]+/, []);
   check(/from \d+ \(common\) to \d+ \(rarest\)/, tiers);
   check(/must match at least \d+ blocks in history/, [PATTERN_LIMITS.minMatchingBlocks]);
   check(/First [\d,]+ blocks \(about a week\) after the find/, [MINT_DEFAULTS.finderWindow]);
@@ -81,9 +109,9 @@ test('every rules number in About agrees with the rules library', () => {
   for (const tier of [5, 4, 3, 2]) {
     const bound = TIER_THRESHOLDS[5 - tier];
     assert.equal(tierFor(bound), tier); assert.equal(tierFor(bound + 1), tier - 1);
-    check(new RegExp(`\\| ${tier}( \\(rarest\\))? \\| up to [\\d,]+ blocks \\|[^\\n]+`), [tier, bound, FEE_DEFAULTS.tierMultipliers[tier - 1]]);
+    check(new RegExp(`\\| ${tier}( \\(rarest\\))? \\| up to [\\d,]+ blocks \\|[^\\n]+`), [tier, bound, tier]);
   }
-  check(/\| 1 \(common\) \| more than [\d,]+ blocks \|[^\n]+/, [1, TIER_THRESHOLDS[3], FEE_DEFAULTS.tierMultipliers[0]]);
+  check(/\| 1 \(common\) \| more than [\d,]+ blocks \|[^\n]+/, [1, TIER_THRESHOLDS[3], 1]);
   assert.equal(tierFor(TIER_THRESHOLDS[3] + 1), 1);
   const dummy = n => Array.from({ length: n }, (_, i) => ({ asset: `p${i}`, amount: '1' }));
   for (const n of [1, 9]) assert.throws(() => makeCompound('fusion', dummy(n), 1), /recipe/);

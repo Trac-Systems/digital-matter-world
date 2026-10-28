@@ -21,14 +21,21 @@ export class MintOperations {
     return null;
   }
   acceptedOperations(draft) {
-    return draft.proposal.batch.ops.filter(op => ['rq', 'mp', 'mc'].includes(op.op)).map(op => ({ space: 'mintInputs', id: op.op + '/' + (op.op === 'rq' ? rules.pendingId(this.network, op.request) : op.id) }));
+    return draft.proposal.batch.ops.filter(op => ['rq', 'mp', 'mc'].includes(op.op)).flatMap(op => {
+      const id = op.op === 'rq' ? rules.pendingId(this.network, op.request) : op.id, row = this.store.get('mints', id);
+      return [{ space: 'mintInputs', id: op.op + '/' + id }, ...(op.op === 'rq' && row ? [{ space: 'mints', id, value: { ...row, admissionBatch: draft.proposal.batch.n } }] : [])];
+    });
   }
   async retire(key, row, reason, counted, retryable = false) {
     await this.store.transact([{ space: 'mintInputs', id: key }, { space: retryable ? 'mintDeferred' : 'mintRejected', id: key, value: { id: row.id, reason, counted } },
       ...(retryable ? [{ space: 'mints', id: row.id, value: { ...row, reason, checkedAt: counted } }] : []),
       ...(!retryable && key.startsWith('rq/') ? [{ space: 'mints', id: row.id, value: { ...row, state: 'expired', reason } }, { space: 'activeMints', id: row.id }, ...(row.key ? [{ space: 'holds', id: row.key, value: { id: row.id, expiry: counted - 1, safeToReplace: true } }] : [])] : [])]);
   }
-  async inputs({ counted, last, files, view, limit }) {
+  inputs(options) {
+    if (!this.store.count('mintInputs') && !this.store.count('mintDeferred')) return Promise.resolve([]);
+    return this.reads.withSnapshot ? this.reads.withSnapshot(options.view, () => this.readInputs(options)) : this.readInputs(options);
+  }
+  async readInputs({ counted, last, files, view, limit }) {
     // Deferred evidence is retried once per new counted snapshot. The original
     // request and rejection reason remain durable and publicly inspectable.
     for (const { id: key, value } of this.store.list('mintDeferred', { limit: 256 })) if (value.counted < counted && this.store.count('mintInputs') < 256) {

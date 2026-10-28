@@ -23,7 +23,7 @@ recovery-key import or `--no-backup` path.
 
 ## Open and fund
 
-Use Node **23.11.0** and the existing local stack:
+Use Node **24.22.1** and the existing local stack:
 
 ```js
 import { CancellableInscriber } from './local/cancellable-inscriber.mjs';
@@ -225,7 +225,7 @@ Run the proofs with the existing stack tests:
 
 ```sh
 source ~/.nvm/nvm.sh
-nvm use 23.11.0
+nvm use 24.22.1
 export npm_config_userconfig=/dev/null
 node --test local/test/*.test.mjs
 ```

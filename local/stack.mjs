@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { supportedNode } from '../node-version.mjs';
 import { mkdir, open, access, lstat, realpath, rm, unlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
@@ -63,7 +64,7 @@ async function freePorts() {
 
 async function up() {
   await diskCheck();
-  if (process.version !== 'v23.11.0') throw new Error('Use Node 23.11.0');
+  if (!supportedNode()) throw new Error('Use Node 24.22.1 or newer 24.x');
   for (const [binary, expected] of [['bitcoind', /v29\.0\.0\b/], ['forge', /Version: 1\.7\.1\b/], ['anvil', /Version: 1\.7\.1\b/]]) {
     if (!expected.test((await run(binary, ['--version'])).stdout)) throw new Error(`Unexpected ${binary} version; see local/versions.json`);
   }

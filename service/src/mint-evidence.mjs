@@ -15,7 +15,7 @@ export async function winningMint(reads, row, entry, recovered, view) {
     if (!winner) return null;
     inscription = winner.ins;
   }
-  if (!inscription && d.kind === 'compound') {
+  if (!inscription && d.kind === 'compound' && !reads.namedSources) {
     const path=encodeURIComponent(row.receiver)+'/'+encodeURIComponent(d.tick);
     const count=Number(await reads.tap('getAccountMintListLength/'+path));
     check(Number.isSafeInteger(count) && count>=0 && count<=1000000,'mint_list_bound');
@@ -28,8 +28,8 @@ export async function winningMint(reads, row, entry, recovered, view) {
     inscription=recent.find(m=>m.fail===false && m.dta===row.permit.dta && m.amt===row.request.amount)?.ins;
   }
   if (!inscription) return null;
-  const rows = await reads.tap('getMintedList/' + inscription.slice(0, 64));
-  const minted = rows.find(r => r.ins === inscription && r.fail === false);
+  const rows = reads.mintedItem ? [await reads.mintedItem(inscription, row.mintLocator)] : await reads.tap('getMintedList/' + inscription.slice(0, 64));
+  const minted = rows.find(r => r?.ins === inscription && r.fail === false);
   if (!minted) return null;
   const canonical = await reads.included(inscription, view); if (!canonical) return null;
   const payload = await reads.content(inscription);
@@ -48,6 +48,16 @@ export async function winningMint(reads, row, entry, recovered, view) {
 export async function admittedMint({ store, reads, audits, network, id }) {
   const pending = await reads.pendingAcceptance(id);
   check(pending?.id === id && Number.isSafeInteger(pending.created), 'pending_acceptance');
+  if (store.batchAt) {
+    const hint = store.get('mints', id)?.admissionBatch;
+    const batches = hint ? [{ batch: { n: hint } }] : store.batchAt(pending.created);
+    for (const batch of batches) for (const file of await audits(batch.batch.n)) for (const [index, input] of (file.mintOperations ?? []).entries()) {
+      if (input.op !== 'rq' || file.mintOutcomes?.[index]?.reason !== 'accepted' || rules.pendingId(network, input.request) !== id) continue;
+      check(rules.verifyRequest('rq', network, input.request, input.sig, input.request.until), 'owner_signature');
+      return { context: input.evidence.context, bitmap: input.evidence.bitmap };
+    }
+    throw Error('mint_admission_evidence_missing');
+  }
   let after = '';
   for (;;) {
     const page = store.list('batches', { after, limit: 256 });

@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { createReadStream } from 'node:fs';
+import { resolve } from 'node:path';
 import { HttpSource, requireValue as check } from './http.mjs';
 import { tapEndpoint, privatePath } from './config.mjs';
 import { readTapSourceURL } from '../src/source-url.mjs';
 import { GENESIS, MAINNET_PARAMS, REGTEST_PARAMS, parseHeader, targetFromBits, retargetBits } from '../../contract/beacon/bitcoin.js';
 import { serial } from '../src/util.mjs';
+import { ByteCache, sourcePolicy, sourceScope } from './source-cache.mjs';
 import { rules } from '../src/rules.mjs';
 const require = createRequire(new URL('../../local/package.json', import.meta.url));
 const { RawTx, RawOldTx, CompactSize } = require('@scure/btc-signer/script');
@@ -55,25 +57,29 @@ export function ordTransaction(value) {
   } catch { throw Error('bitcoin_transaction_shape'); }
 }
 export class BitcoinSource {
-  constructor({ kind = 'ord', source, network = 'mainnet' }) {
+  constructor({ kind = 'ord', source, network = 'mainnet', policy }) {
     check(kind === 'ord' && ['mainnet', 'regtest'].includes(network), 'bitcoin_source');
+    const limits = sourcePolicy(policy); this.blocks = new ByteCache(limits.blockBytes); this.transactions = new ByteCache(limits.transactionBytes); this.proofs = new ByteCache(limits.proofBytes);
     Object.assign(this, { kind, source, network, params: network === 'mainnet' ? MAINNET_PARAMS : REGTEST_PARAMS, genesis: network === 'mainnet' ? GENESIS.hash : REGTEST_GENESIS });
   }
   async verifyNetwork() { check(await this.blockHash(0) === this.genesis, 'bitcoin_network'); await this.header(this.genesis); }
   async tip() {
     const n = height(await this.source.request('/r/blockheight')), id = await this.blockHash(n);
     const info = await this.headerInfo(id);
-    check(info.height === n && await this.source.request('/r/blockheight') === n && await this.source.request('/r/blockhash') === id && await this.blockHash(n) === id, 'bitcoin_tip_changed');
+    check(info.height === n && await this.source.request('/r/blockhash') === id, 'bitcoin_tip_changed');
     return { height: n, hash: id };
   }
   async blockHash(n) { return hash(await this.source.request('/r/blockhash/' + height(n))); }
   async headerInfo(id) {
-    const info = await this.source.request('/r/blockinfo/' + hash(id));
-    return { ...info, raw: ordHeader(info, id, this.params) };
+    return this.blocks.read('header/' + hash(id), async () => {
+      const info = await this.source.request('/r/blockinfo/' + id);
+      return { ...info, raw: ordHeader(info, id, this.params) };
+    });
   }
   async header(id) { return (await this.headerInfo(id)).raw; }
   async block(id, { withTransactions = false } = {}) {
-    const info = await this.headerInfo(hash(id)), block = await this.source.request('/block/' + id);
+    const verified = await this.blocks.read('block/' + hash(id), async () => {
+    const info = await this.headerInfo(id), block = await this.source.request('/block/' + id);
     check(block?.hash === id && height(block.height) === info.height && Array.isArray(block.transactions) && block.transactions.length > 0 && block.transactions.length <= 100000 && block.transactions.length === info.transaction_count, 'bitcoin_block');
     let bytes = 80 + CompactSize.encode(block.transactions.length).length, weight = bytes * 4;
     const raws = block.transactions.map(value => {
@@ -89,7 +95,10 @@ export class BitcoinSource {
       const root = merkle(raws.map((raw, i) => i === 0 ? Buffer.alloc(32) : hash256(Buffer.from(raw, 'hex'))));
       check(hash256(Buffer.concat([root, Buffer.from(coinbase.input[0].witness[0], 'hex')])).toString('hex') === commitment.script_pubkey.slice(12, 76), 'bitcoin_witness_commitment');
     } else check(block.transactions.every(t => t.input.every(i => i.witness.length === 0)), 'bitcoin_witness_commitment');
-    return { hash: id, height: info.height, tx, raw: info.raw, ...(withTransactions ? { transactions: raws } : {}) };
+    return { hash: id, height: info.height, tx, raw: info.raw, transactions: raws };
+    });
+    if (!withTransactions) delete verified.transactions;
+    return verified;
   }
   async rawBlock(id) {
     const block = await this.block(id, { withTransactions: true });
@@ -104,11 +113,27 @@ export class BitcoinSource {
     } catch { throw Error('bitcoin_transaction'); }
   }
   async transaction(id) {
-    const tx = this.decode(await this.source.request('/r/tx/' + hash(id)));
-    check(tx.txid === id, 'bitcoin_tx_binding'); return tx;
+    hash(id);
+    const load = async () => {
+      const tx = this.decode(await this.source.request('/r/tx/' + id));
+      check(tx.txid === id, 'bitcoin_tx_binding'); return tx;
+    };
+    // txid alone does not commit to witness bytes. Inclusion caches only after
+    // checking the full witness against a verified block.
+    return load();
   }
   async included(id, at, history) {
     check(typeof id === 'string' && /^[0-9a-f]{64}i(0|[1-9][0-9]{0,9})$/.test(id), 'inscription_id');
+    const scope = sourceScope.getStore(), scoped = scope?.bitcoin === this && !scope.closed && scope.history;
+    if (scoped) {
+      check(!at || at.tip === scope.stamp.height && at.tipHash === scope.stamp.hash, 'bitcoin_view');
+      at = { tip: scope.stamp.height, tipHash: scope.stamp.hash }; history = scope.history;
+    }
+    const prior = this.proofs.get(id);
+    if (prior && at && history?.hashAt(prior.height) === prior.blockHash && history.hashAt(at.tip) === at.tipHash) {
+      if (scoped || await this.blockHash(prior.height) === prior.blockHash && await this.blockHash(at.tip) === at.tipHash)
+        return { ...prior, confirmations: at.tip - prior.height + 1 };
+    }
     let inscription;
     try { inscription = await this.source.request('/inscription/' + id); } catch (error) { if (error.status === 404) return null; throw error; }
     check(inscription?.id === id, 'bitcoin_inscription_binding');
@@ -119,27 +144,32 @@ export class BitcoinSource {
     try {
       if (!history) { owned = new BitcoinViews(this, ':memory:'); history = await owned.view(tip.height, tip.hash); }
       check(history.hashAt(tip.height) === tip.hash && history.length === tip.height + 1, 'bitcoin_view');
-      const blockHash = await this.blockHash(n);
+      const blockHash = scoped ? history.hashAt(n) : await this.blockHash(n);
       if (history.hashAt(n) !== blockHash) return null;
-      const block = await this.block(blockHash, { withTransactions: true }), tx = await this.transaction(id.slice(0, 64));
+      const block = await this.block(blockHash, { withTransactions: true }), txKey = blockHash + '/' + id.slice(0, 64);
+      const tx = this.transactions.get(txKey) ?? await this.transaction(id.slice(0, 64));
       check(block.height === n && block.tx.includes(tx.txid), 'bitcoin_tx_inclusion');
       check(block.transactions[block.tx.indexOf(tx.txid)] === tx.hex, 'bitcoin_tx_witness_binding');
-      if (await this.blockHash(n) !== blockHash || await this.blockHash(tip.height) !== tip.hash) return null;
-      return { height: n, blockHash, confirmations: tip.height - n + 1, tx };
+      this.transactions.set(txKey, tx);
+      if (!scoped && (await this.blockHash(n) !== blockHash || await this.blockHash(tip.height) !== tip.hash)) return null;
+      const proof = { height: n, blockHash, tx };
+      this.proofs.set(id, proof);
+      return { ...proof, confirmations: tip.height - n + 1 };
     } finally { owned?.close(); }
   }
 }
-export async function createBitcoin(config, policy, { network = 'mainnet' } = {}) {
+export async function createBitcoin(config, policy, { network = 'mainnet', readsPolicy } = {}) {
   check(config?.kind === 'ord' && typeof config.urlFile === 'string' && config.urlFile.length > 0 && !config.url && !config.authFile && !config.tokenFile, 'bitcoin_source');
   const endpoint = network === 'mainnet' ? await tapEndpoint(config) : { url: await readTapSourceURL(config.urlFile) };
   const fetchImpl = globalThis.fetch[Symbol.for('dmw.localFetch')] ?? globalThis.fetch;
-  const client = new BitcoinSource({ source: new HttpSource({ ...policy, ...endpoint, fetchImpl, maxBytes: 16000000 }), network });
+  const client = new BitcoinSource({ source: new HttpSource({ ...policy, ...endpoint, fetchImpl, maxBytes: sourcePolicy(readsPolicy).bitcoinMaxBytes }), network, policy: readsPolicy });
   await client.verifyNetwork(); return client;
 }
 // Branches are immutable by hash. Header verification includes PoW, mainnet
 // difficulty transitions and median time, including the offline seed history.
 export class BitcoinViews {
   constructor(client, filename, { maxHeadersPerView = 4096 } = {}) {
+    this.filename = filename === ':memory:' ? null : resolve(filename);
     this.client = client; this.params = client.params ?? MAINNET_PARAMS; this.genesis = client.genesis ?? GENESIS.hash; this.maxHeadersPerView = maxHeadersPerView; this.gate = serial();
     this.db = new DatabaseSync(filename); this.db.exec('PRAGMA journal_mode=WAL; PRAGMA cache_size=-4096; CREATE TABLE IF NOT EXISTS headers(hash TEXT PRIMARY KEY,height INTEGER,parent TEXT,raw TEXT,periodTime INTEGER,times TEXT)');
     this.get = this.db.prepare('SELECT * FROM headers WHERE hash=?'); this.put = this.db.prepare('INSERT OR IGNORE INTO headers VALUES(?,?,?,?,?,?)');
@@ -196,7 +226,8 @@ export class BitcoinViews {
       if (!page) { page = new Map(query.all(tipHash, start, start, start + 1024).map(r => [r.height, r.raw])); if (pages.size >= 4) pages.delete(pages.keys().next().value); pages.set(start, page); }
       check(page.has(h), 'bitcoin_history_missing'); return page.get(h);
     };
-    return { length: tip + 1, raw, get: h => rules.parseHeader(raw(h), h), hashAt: h => raw(h) ? parseHeader(raw(h)).hash : null,
+    return { ...(this.filename ? { replaySource: { filename: this.filename, tip, tipHash } } : {}),
+      length: tip + 1, raw, get: h => rules.parseHeader(raw(h), h), hashAt: h => raw(h) ? parseHeader(raw(h)).hash : null,
       field: (h, f, dt = 'n') => (f === 4 ? h : f === 10 ? rules.parseHeader(raw(h)).nonce : rules.parseHeader(raw(h)).bits).toString(dt === 'h' ? 16 : 10) };
   }); }
   close() { this.db.close(); }

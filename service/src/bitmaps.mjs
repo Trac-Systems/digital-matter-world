@@ -1,10 +1,10 @@
 import { check, heightKey } from './util.mjs';
 
-export async function walletBitmaps(e, owner, page) {
+export async function walletBitmaps(e, owner, page, { maxInscriptions = 1000000 } = {}) {
   const address = e.reads.bindings.current(owner, 'tap')?.request.address;
   if (!address) return [];
   const count = Number(await e.reads.tap('getBitmapWalletHistoricListLength/' + address));
-  check(Number.isSafeInteger(count) && count >= 0 && count <= 1000000, 'bitmap_count');
+  check(Number.isSafeInteger(count) && count >= 0 && count <= maxInscriptions, 'bitmap_count');
   const inscriptions = new Set(), out = [];
   for (let offset = 0; offset < count; offset += 500) {
     const entries = await page(e.manifest, address, offset);

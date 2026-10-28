@@ -83,7 +83,7 @@ test('captured inscription and raw transaction routes bind to the same verified 
   const [insPath, inscription] = Object.entries(routes).find(([path]) => path.startsWith('/inscription/'));
   const [blockPath, block] = Object.entries(routes).find(([path]) => path.startsWith('/block/'));
   routes['/r/blockhash/' + inscription.height] = block.hash;
-  const client = new BitcoinSource({ network: 'regtest', source: { request: async path => { assert.ok(Object.hasOwn(routes, path), path); return routes[path]; } } });
+  const client = new BitcoinSource({ network: 'regtest', policy: { proofBytes: 0, transactionBytes: 0 }, source: { request: async path => { assert.ok(Object.hasOwn(routes, path), path); return routes[path]; } } });
   const at = { tip: inscription.height, tipHash: block.hash }, history = { length: at.tip + 1, hashAt: n => n === at.tip ? at.tipHash : null };
   assert.equal((await client.included(inscription.id, at, history)).confirmations, 1);
   assert.equal((await client.transaction(inscription.id.slice(0, 64))).txid, inscription.id.slice(0, 64));

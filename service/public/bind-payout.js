@@ -1,4 +1,5 @@
 import { tapAccount, ethAccount } from '/web/wallets.js';
+import { walletError } from '/web/console/js/wallet-errors.js';
 const $ = id => document.getElementById(id), id = location.pathname.split('/').at(-1);
 let pending, target;
 function fail(message) { throw Object.assign(new Error(message), { display: true }); }
@@ -6,7 +7,7 @@ async function json(path, value) {
   const response = await fetch(path, value ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) } : {});
   const result = await response.json(); if (!response.ok) fail(/^[a-z][a-z0-9_]{0,80}$/.test(result.error) ? result.error : 'request_failed'); return result;
 }
-async function action(fn) { try { await fn(); } catch (e) { $('status').textContent = e.display ? e.message : e.code === 4001 ? 'Signature request cancelled.' : 'The wallet or gateway request failed. Try again.'; } }
+async function action(fn) { try { await fn(); } catch (e) { $('status').textContent = e.code === 4001 ? 'Signature request cancelled.' : walletError(e); } }
 $('sign').onclick = () => action(async () => {
   let signature;
   if (pending.request.expiry <= Date.now()) fail('Request expired. Ask your agent for a new binding request.');

@@ -170,10 +170,15 @@ integer string (at most 20 digits) that increases for that agent and rail;
 `expiry` is a Unix time in milliseconds, at most 24 hours ahead. The canonical
 UTF-8 signing message is `dmw-payout-binding-v1\n` followed by stable-key-sorted
 JSON of `{network,bitcoinNetwork,agent,rail,address,nonce,expiry}`. Both wallets
-sign that same message: the agent with Ed25519, the human with Taproot BIP-322
-simple or Ethereum EIP-191 `personal_sign`. Ethereum addresses are lowercase.
-TAP accepts only key-path P2TR on the configured mainnet/regtest network,
-SIGHASH_DEFAULT or SIGHASH_ALL, with the `smp` prefix optional.
+sign that same message: the agent with Ed25519, the human with a TAP wallet or
+Ethereum EIP-191 `personal_sign`. Ethereum addresses are lowercase.
+TAP accepts BIP-322 simple key-path P2TR (SIGHASH_DEFAULT or SIGHASH_ALL, optional
+`smp` prefix) and TAP Wallet's legacy Bitcoin Signed Message compact signature.
+Legacy proofs must be canonical base64, exactly 65 bytes with header 27–34 and
+low-S ECDSA. The recovered account key's x-only BIP86 Taproot address must exactly
+match the request on the configured mainnet/regtest network. Other Bitcoin
+address types are refused; legacy messages are limited to 4,096 UTF-8 bytes.
+Both formats retain the original wallet signature in the committee certificate.
 
 The response supplies `id,message,bindPath,state` and the public agent request.
 `GET /payout-bindings/requests/ID` reads the same public request. The local
@@ -293,3 +298,9 @@ route parameters, filters and cursor anchors use the same `trac1…` address.
 Agent search matches address prefixes. Protocol archives retain their signed wire
 encoding; public projections encode identities without changing transaction IDs,
 block hashes, Bitcoin addresses, Ethereum addresses or exact amounts.
+
+The live `feePolicy` includes `baseFee`, `revision`, `unit` and
+`feeSettings:{link,tierMultipliers,compoundMinimum}`. Multipliers are counts,
+not atomic TAP. Launch settings are link 3, tiers 1/3/10/30/100 and compound
+minimum 10. Signed quotes bind their own revision and multipliers; a live
+change does not reprice existing requests.

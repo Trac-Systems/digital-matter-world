@@ -1,5 +1,11 @@
 # Digital Matter World agent kit
 
+Prices are set in TAP by the operator and can change. Read the live
+`public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
+costs `baseFee × feeSettings.link`. Find prices use the tier multiplier;
+compound prices use the greater of that multiplier and `compoundMinimum`.
+Check the request’s quote before paying. Existing requests keep their signed terms.
+
 Use your own local Trac signer to find, discover and craft matter, then reserve, pay and
 inscribe authorized mints from your own Bitcoin wallet. Start with `rules`, `address`, `status`,
 `public_status` and `hunting`. All read commands work in either launch mode.
@@ -11,14 +17,22 @@ These documents contain everything a player needs; no outside rulebook is requir
 
 ## Start here: mainnet
 
-Use **Node 23.11.0**. From the cloned repository, install the pinned packages,
+Use **Node 24 LTS (24.22.1 or newer 24.x)**. From the cloned repository, install the pinned packages,
 then create your local player:
 
 ```sh
-for package in rules contract kit; do npm --prefix "$package" ci --ignore-scripts; done
+for package in rules contract kit; do
+  (cd "$package" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || exit
+done
 cd kit
 node bin/dmw.mjs setup --network mainnet
 ```
+
+Measured player packages use about 956 MiB, plus roughly 78 MB for headers.
+Allow 2 GiB free for setup, temporary files and npm cache, and room for growing
+Trac stores. No Bitcoin node is needed. Keep all three packages: `contract`
+provides the pinned Trac runtime and read logic; `rules` needs its cryptographic
+dependencies. `--omit=dev` skips development tools; no operator install is needed.
 
 Setup privately prompts for a password, creates an encrypted signer (or reuses
 it), asks for optional receiver/payer addresses, and prints your `trac1…` address,
@@ -89,6 +103,10 @@ per header, about 77.6 MB for 970,000 headers. A stopped transfer resumes with
 HTTP Range. The first download uses the gateway's gzip copy when available;
 compressed and uncompressed bytes each have a checked SHA-256 digest. Later
 updates request only the new raw byte range. Reorgs replace the divergent tail.
+The download checks free space on the filesystem containing your chosen output,
+budgeting additional compressed/raw temporary files plus 10% and a 512 MiB
+reserve (about 680 MiB free for a first 78 MB archive). An already verified,
+current cache needs no new archive space. It never requires 100 GB free.
 To download explicitly outside an MCP session:
 
 ```sh
@@ -104,6 +122,14 @@ submit nothing until the verified history reaches the exact contract tip.
 MCP refreshes automatically and uses the completed history without a restart.
 A standalone CLI discovery call waits for its download/verification.
 
+The local 12-sends-per-tip limit prints
+`waiting for the next Bitcoin block (12/12 used)` on stderr once per full tip,
+then resumes when the tip changes. Stopping the command preserves its intent.
+An HTTP `429 reveal_capacity` is a refusal before acceptance. Retry the same
+action ID after another Bitcoin block; the kit refreshes the refused packet and
+keeps its signed history. For older installs with stale `unknown` refused reveals,
+follow [the recovery instructions](docs/ACTIONS.md#recover-an-old-refused-reveal).
+
 **TNK: 0 for setup, reading, headers, claims, discoveries and crafts.** Free
 moves are signed locally and submitted to the gateway, whose operator submits
 the settlement batches. The player does not need an MSB account: the contract
@@ -118,7 +144,7 @@ writer automatically. There is no fixed TNK onboarding charge. TAP payment fees 
 ## Connect your agent
 
 Use absolute paths, replacing `/abs/kit` and `/abs/player/mainnet.json` with the
-CLI and config paths printed by setup. The child must use Node 23.11.0. Passwords
+CLI and config paths printed by setup. The child must use Node 24.22.1 or newer 24.x. Passwords
 are never tool arguments or config values. For an MCP client without a terminal,
 enter the password privately in the shell that launches that client; for example
 in Bash:
@@ -246,7 +272,7 @@ console.log(quote.amounts['/price'].human);
 
 ## Local signer setup
 
-Use Node 23.11.0 and the installed workspace dependencies. From `kit/`:
+Use Node 24.22.1 and the installed workspace dependencies. From `kit/`:
 
 ```sh
 npm ci
@@ -415,11 +441,33 @@ save a signed reveal before wallet approval and the signed commit before sending
 Keep that browser profile until the request is indexed. Do not pay the same
 request from multiple wallets or independent journals.
 
+TAP Wallet 1.0.48 needs an active global authority for payments. If none exists,
+the browser requests an authority covering all TAP tokens, waits for its
+inscription, and asks for a separate activation self-send. Review both Bitcoin
+fees and the global scope in TAP Wallet. Future payments still require approval.
+An existing setup in the wallet must be completed there before continuing.
+Ordinary cancellation or popup closure can happen after funding was sent, so
+an uncertain attempt remains saved. The specific “No authority found” response
+occurs before payment and allows another authority check.
+
+In 1.0.48 a pending action order can fail to load because the wallet queries a
+different service from the one that created it. Keep the saved order and resume
+after the wallet's order lookup is fixed; do not pay for a replacement order.
+Ledger accounts can sign payout bindings, but this release cannot sign TAP
+authority/redeem payloads and can return an unsigned inscription PSBT. The
+browser refuses that PSBT before broadcasting.
+
 On Bitcoin mainnet the TAP burn share is sent to the unspendable
 `1BitcoinEaterAddressDontSendf59kuE` as a `tt:"a"` item (test networks use the
 same key hash in their own address encoding). Use the exact quoted
 address and amount; it is still burned. Ethereum uses the escrow token's burn
 function. Do not invent or substitute a burn recipient.
+These address fee items work with TAP Wallet 1.0.48 and ord-tap. Native burn
+allocations work in lock actions; ordinary redeem items do not encode them.
+Native lock allocations use ord-tap's fixed burn marker on every network;
+address-transfer items use the Bitcoin network's address encoding above.
+The client stops a quote explicitly requiring a native burn item instead of
+substituting a different payment.
 
 Payment precedes the permit. Paid fees are not refunded by us. A permit has no
 expiry because its Trac units have already been consumed. A new quote does not

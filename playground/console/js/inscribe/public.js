@@ -1,6 +1,7 @@
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field } from '../dom.js';
 import { tap } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal } from './wallet.js';
+import { walletError } from '../wallet-errors.js';
 
 // Protocol responses must retain chain/network fields; the display-only public
 // read adapter deliberately strips those and cannot be used for wallet signing.
@@ -25,7 +26,7 @@ export function mount(root, { id }) {
     for (const button of actions.querySelectorAll('button')) button.disabled = true;
     clear(note, 'Working…');
     try { await fn(); if (!stopped) clear(note, 'Saved wallet steps can be resumed using this same request link.'); }
-    catch (error) { if (!stopped) clear(note, error.message); }
+    catch (error) { if (!stopped) clear(note, walletError(error)); }
     finally { busy = false; for (const button of actions.querySelectorAll('button')) button.disabled = false; }
   };
   const button = (label, fn) => h('button.btn', { onclick: () => attempt(fn) }, label);
@@ -38,7 +39,7 @@ export function mount(root, { id }) {
     const next = [button('Refresh', refresh)];
     if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payable) next.push(button('Pay missing items', async () => {
       if (!await confirmModal({ title: 'Pay the remaining fees?', lead: 'Your wallet pays the quoted recipients. We do not refund these payments.', rows: status.missing.map(item => [item.role, tap(item.amount)]), confirm: 'Pay from my wallet' })) return;
-      if (status.payBy.rail === 'tap') { await wallet.connect(); await wallet.pay(id); }
+      if (status.payBy.rail === 'tap') { await wallet.connect(); const result = await wallet.pay(id); if (result.localState === 'payment_pending') throw Error(result.message); }
       else { const plan = await api('/web-api/mint/' + id); await ethereum.connect(plan.payer); await ethereum.pay(id); }
       await refresh();
     }));
@@ -68,7 +69,7 @@ export function mount(root, { id }) {
     target = await api('/web-api/target');
     if (!['mainnet', 'regtest'].includes(target.bitcoinNetwork)) throw Error('Invalid Bitcoin network');
     const options = { network: target.bitcoinNetwork, readStatus: () => api('/mint/' + id), readPaymentPlan: () => api('/web-api/mint/' + id) };
-    wallet = new TapWalletMint(options);
+    wallet = new TapWalletMint({ ...options, notify: text => clear(note, text) });
     ethereum = new EthereumMint({ ...options, journal: new BrowserMintJournal(), readTarget: () => api('/web-api/target'), readPlan: () => api('/web-api/mint/' + id) });
     await refresh(); poll();
   });

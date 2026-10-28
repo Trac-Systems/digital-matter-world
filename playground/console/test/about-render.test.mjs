@@ -13,10 +13,11 @@ test('the shipped About view is built from the complete approved Markdown', asyn
 });
 
 test('the Markdown subset escapes source text, including bold and inline code', () => {
-  const html = renderMarkdown('# Heading\n\n**<strong>** and `<script>` & plain.\n\n| A | B |\n|---|---|\n| <img> | 10 × B |');
+  const html = renderMarkdown('# Heading\n\n**<strong>** and `<script>` & plain.\n\n| Item | Price |\n|---|---|\n| <img> | {{price:find:3}} |');
   assert.match(html, /<strong>&lt;strong&gt;<\/strong>/);
   assert.match(html, /<code>&lt;script&gt;<\/code> &amp; plain\./);
   assert.match(html, /<td>&lt;img&gt;<\/td>/);
   assert.doesNotMatch(html, /<(?:script|img)>/);
+  assert.match(html, /<span data-fee-kind="find" data-fee-tier="3">current price<\/span>/);
   assert.match(html, /tabindex="0" role="region" aria-labelledby="about-heading-0"/);
 });

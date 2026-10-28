@@ -15,9 +15,10 @@ export function generationDigest(entry) {
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
 // well as the exact inscription. Sharing an authority is not an approval.
-export async function verifyDeployment(reads, entry, { confirmations = 1, view } = {}) {
+export async function verifyDeployment(reads, entry, { confirmations = 1, view, scoped = false } = {}) {
+  if (reads.withSnapshot && !scoped) return reads.withSnapshot(view, () => verifyDeployment(reads, entry, { confirmations, view, scoped: true }));
   check(entry && entry.suspended !== true, 'asset_provisioning');
-  const d = await reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick));
+  const d = await (reads.indexedDeployment ? reads.indexedDeployment(entry.indexTick ?? entry.tick) : reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick)));
   check(d?.ins === entry.id && d.prv === entry.privilege, 'deployment_binding');
   const payload = await reads.content(entry.id);
   const elementId = entry.elementId ?? payload.elem, dt = entry.dt ?? entry.pattern?.dt;
@@ -26,7 +27,7 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view }
   check(d.tick === (entry.indexTick ?? entry.tick) && Number(d.dec) === 0, 'deployment_semantics');
   if (entry.kind === 'dmt') {
     check(d.elem === elementId && d.dt === dt, 'deployment_definition');
-    const element = (await elementSnapshot(reads)).find(e => e.ins === elementId);
+    const element = reads.element ? await reads.element(elementId, entry.sourceLocators?.element) : (await elementSnapshot(reads)).find(e => e.ins === elementId);
     check(element?.ins === elementId && element.pat === entry.pattern.pat && Number(element.fld) === entry.pattern.fld, 'element_binding');
     check(typeof element.tick === 'string' && (!entry.elementName || element.tick === entry.elementName), 'element_name');
     const text = await reads.content(elementId), parts = typeof text === 'string' ? text.trim().split('.') : [];
@@ -34,8 +35,8 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view }
       parts.at(-2) === String(element.fld) && parts.slice(1, -2).join('.') === element.pat, 'element_content');
     check((await reads.included(elementId, view))?.confirmations >= confirmations, 'element_confirmations');
   } else check(d.max === normalized.options.max && (d.lim ?? '0') === (normalized.options.lim ?? '0'), 'deployment_supply');
-  let authority;
-  for (let offset = 0; offset < 1000000; offset += 500) {
+  let authority = reads.privilegeAuthority ? await reads.privilegeAuthority(entry.privilege, entry.sourceLocators?.authority) : null;
+  for (let offset = 0; !authority && offset < 1000000; offset += 500) {
     const page = await reads.tap(offset ? `getPrivilegeAuthList?offset=${offset}&max=500` : 'getPrivilegeAuthList');
     check(Array.isArray(page) && page.length <= 500, 'privilege_list_invalid');
     authority = page.find(a => a.ins === entry.privilege);
@@ -52,7 +53,7 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view }
   check(inclusion?.confirmations >= confirmations, 'deployment_confirmations');
   if (entry.receiver) check((await reads.inscription(entry.id, view))?.address === entry.receiver, 'deployment_receiver');
   if (entry.approval) check(entry.approval === generationDigest(entry), 'deployment_approval');
-  return { deployment: d, inclusion, authority, authorityKey: key, elementId, dt };
+  return { deployment: d, inclusion, authority, authorityKey: key, elementId, dt, auth };
 }
 
 // Enumerate using the declared count, and reject pagination gaps, duplicates,

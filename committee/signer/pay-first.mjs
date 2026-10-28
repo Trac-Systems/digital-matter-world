@@ -3,7 +3,10 @@ import { rules, requestID, permit } from './adapter.mjs';
 
 // Used both by the batch approvers (before consumption) and by the detached
 // permit approvers (after consumption). Every monetary field is read locally.
-export async function paidMintPlan({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, request, signature, receiver, consumed = false, final = true, confirmations = 1 }) {
+export async function paidMintPlan(options) {
+  return options.reads.withSnapshot ? options.reads.withSnapshot(undefined, () => readPaidMintPlan(options)) : readPaidMintPlan(options);
+}
+async function readPaidMintPlan({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, request, signature, receiver, consumed = false, final = true, confirmations = 1 }) {
   check(rules.verifyRequest('rq', network, request, signature, request?.until), 'owner_signature');
   check(typeof receiver === 'string' && rules.hash(receiver) === request.receive, 'receiver_binding');
   const id = requestID(network, request), raw = await reads.pending(id), pending = await reads.pendingAcceptance(id);
@@ -28,7 +31,7 @@ export async function paidMintPlan({ reads, bitcoinNetwork = reads.bindings?.bit
     const hold = await reads.blockHold(request.asset, request.block);
     check(!hold || hold.id === id, 'block_pending');
   }
-  const price = rules.feeFor(d.kind === 'dmt' ? 'find' : 'compound', terms.baseFee, context.tier, context.feeSettings);
+  const price = rules.feeFor(d.kind === 'dmt' ? 'find' : 'compound', terms.baseFee, context.tier, terms.feeSettings ?? context.feeSettings);
   const split = rules.splitFee(price, { kind: d.kind === 'dmt' ? 'find' : 'compound', linked: !!holder, discovered: !!context.discoverer });
   const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
     landowner: payment.kind === 'ethereum' ? context.landownerAddress : holder?.address ?? null, discoverer: context.discoverer ?? null };

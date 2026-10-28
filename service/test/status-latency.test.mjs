@@ -88,11 +88,11 @@ test('status and catalog HTTP reads stay bounded with one million stored headers
     return { value, ms: performance.now() - start };
   };
   const before = [await timed('/status'), await timed('/status')];
-  assert.equal(sourceCalls, 12, 'six source reads on every uncached status');
+  assert.equal(sourceCalls, 7, 'four cold reads, then three with the verified header cached');
   assert.deepEqual(before[0].value, before[1].value);
   const cache = cachePublicReads(views, { records: async () => ({}) });
   assert.equal((await fetch(http.url + '/status')).status, 503, 'cold reads never start a source refresh');
-  assert.equal(sourceCalls, 12);
+  assert.equal(sourceCalls, 7);
   await cache.status.refresh();
   const after = [];
   for (let i = 0; i < 12; i++) {
@@ -100,9 +100,9 @@ test('status and catalog HTTP reads stay bounded with one million stored headers
     assert.deepEqual(result.value, before[0].value);
     assert.ok(result.ms < 500, `cached status ${result.ms} ms (generous CI bound)`);
   }
-  assert.equal(sourceCalls, 18, 'cached GETs make no source calls');
+  assert.equal(sourceCalls, 10, 'cached GETs make no source calls');
   const bytes = (await stat(filename)).size;
-  t.diagnostic(`1,000,000 headers in each SQLite table; ${(bytes / 1024 ** 2).toFixed(1)} MiB; uncached status ${before.map(r => r.ms.toFixed(1))} ms; cached status min/max ${Math.min(...after).toFixed(2)}/${Math.max(...after).toFixed(2)} ms; source calls 6 -> 0 per GET`);
+  t.diagnostic(`1,000,000 headers in each SQLite table; ${(bytes / 1024 ** 2).toFixed(1)} MiB; uncached status ${before.map(r => r.ms.toFixed(1))} ms; cached status min/max ${Math.min(...after).toFixed(2)}/${Math.max(...after).toFixed(2)} ms; source calls 3 warm -> 0 per GET`);
 
   bitcoin.db.exec('BEGIN');
   for (let i = 0; i < 1000; i++) store.put('types', 'c' + i.toString().padStart(4, '0'), {

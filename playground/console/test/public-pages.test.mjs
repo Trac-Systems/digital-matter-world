@@ -14,7 +14,7 @@ function pageRows(key, rows, u) {
 }
 function read(path) {
   const u = new URL(path, 'http://local'), p = u.pathname;
-  if (p === '/status') return { tip: 10, counted: 10, feePolicy: { baseFee: '1000000000000000000', unit: { decimals: 18 } } };
+  if (p === '/status') return { tip: 10, counted: 10, feePolicy: { baseFee: '1000000000000000000', feeSettings: { link: 3, tierMultipliers: [1,3,10,30,100], compoundMinimum: 10 }, unit: { decimals: 18 } } };
   if (p === '/patterns') return pageRows('patterns', !u.searchParams.has('asset') || u.searchParams.get('asset') === pattern.asset ? [pattern] : [], u);
   if (p === '/feed') return pageRows('events', events.filter(e => e.sequence > Number(u.searchParams.get('since') ?? 0)), u);
   if (p === '/finds') return pageRows('finds', finds, u);
@@ -152,4 +152,55 @@ test('a pattern lookup failure has a retry that loads the requested pattern', as
   await p.getByRole('alert').getByRole('button', { name: 'Retry', exact: true }).click();
   await p.getByRole('heading', { name: 'Retry', exact: true }).waitFor();
   assert.equal(calls, 2);
+});
+
+test('About prices and the existing status cell follow the live policy and unavailable reads', async t => {
+  const p = await open(t);
+  let release;
+  const loading = new Promise(resolve => { release = resolve; });
+  let unavailable = false;
+  let policy = { baseFee: '22600000000000000000', unit: { decimals: 18 },
+    feeSettings: { tierMultipliers: [1, 3, 10, 30, 100], compoundMinimum: 1, link: 1 } };
+  await p.route('**/status', async route => {
+    await loading;
+    await route.fulfill({ status: unavailable ? 503 : 200, contentType: 'application/json',
+      body: JSON.stringify(unavailable ? { error: 'unavailable' } : { tip: 10, counted: 10, feePolicy: policy }) });
+  });
+  await p.goto(server.url + '/about', { waitUntil: 'domcontentloaded' });
+  const prices = p.locator('article.about [data-fee-kind]');
+  await prices.first().waitFor();
+  const fallback = Array(13).fill('current price');
+  assert.deepEqual(await prices.allTextContents(), fallback, 'placeholders render before status loads');
+  assert.equal(await p.locator('article.about table').count(), 8);
+  const firstArticle = await p.locator('article.about').elementHandle();
+  release();
+  await p.waitForFunction(() => document.querySelector('[data-fee-kind]')?.textContent === '2,260 TAP');
+  assert.deepEqual(await prices.allTextContents(), ['2,260 TAP', '678 TAP', '226 TAP', '67.8 TAP', '22.6 TAP',
+    '22.6 TAP', '67.8 TAP', '226 TAP', '678 TAP', '2,260 TAP', '22.6 TAP', '22.6 TAP', '22.6 TAP']);
+  const fee = p.locator('.strip .cell').filter({ hasText: 'Base price' });
+  assert.equal(await fee.locator('.v').innerText(), '22.6 TAP');
+  assert.equal(await fee.getAttribute('data-tip'), 'Changes apply to new quotes. Link: 22.6 TAP; tiers: 22.6 TAP, 67.8 TAP, 226 TAP, 678 TAP, 2,260 TAP; compounds from: 22.6 TAP.');
+  const refresh = () => p.evaluate(async () => {
+    const { store } = await import('/web/console/js/api.js');
+    await store.refreshStatus().catch(() => {});
+  });
+  policy = { ...policy, baseFee: '2500000000000000000', feeSettings: { tierMultipliers: [2, 4, 6, 8, 12], compoundMinimum: 7, link: 5 } };
+  await refresh();
+  assert.deepEqual(await prices.allTextContents(), ['30 TAP', '20 TAP', '15 TAP', '10 TAP', '5 TAP',
+    '5 TAP', '10 TAP', '15 TAP', '20 TAP', '30 TAP', '17.5 TAP', '12.5 TAP', '12.5 TAP']);
+  assert.equal(await firstArticle.evaluate(node => node === document.querySelector('article.about')), true, 'status updates preserve the article');
+  unavailable = true;
+  await refresh();
+  assert.deepEqual(await prices.allTextContents(), fallback, 'failed reads clear stale prices');
+  await p.reload();
+  await prices.first().waitFor();
+  assert.deepEqual(await prices.allTextContents(), fallback, 'initial status failure keeps placeholders');
+  unavailable = false;
+  await refresh();
+  assert.equal(await prices.first().textContent(), '30 TAP', 'a later successful read restores prices');
+  assert.doesNotMatch(await p.locator('body').innerText(), /\bB\b|\{\{price:/);
+  await p.getByRole('link', { name: 'Agents', exact: true }).click();
+  await p.getByRole('heading', { name: 'Agents', exact: true }).waitFor();
+  assert.equal(await p.evaluate(async () => (await import('/web/console/js/api.js')).bus.map.get('status').size), 1,
+    'leaving About removes its status listener');
 });

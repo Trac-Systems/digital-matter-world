@@ -2,6 +2,8 @@ import { encodeTracAddress } from '../../rules/src/trac-address.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { HeaderHistory, parseHeader, evaluateDiscovery, CLAIM_DEFAULTS } from '../../rules/src/index.js';
 import { loadHistory, historyProof, assertHistoryTip, downloadHeaders, headerSource } from '../lib/headers.mjs';
@@ -40,6 +42,9 @@ test('claims before the contract checkpoint use a verified archive with a matchi
 });
 test('download resumes once, checks both source tips and verifies the complete resulting chain', async t => {
   const f = await mainnet(t), output = join(f.dir, 'download.bin'); let requests = 0;
+  const checked = [];
+  t.mock.method(fsPromises, 'statfs', async path => { checked.push(path); return { bavail: 600n * 1024n * 1024n, bsize: 1n }; });
+  syncBuiltinESMExports(); t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const source = { height: async () => 63, hash: async h => f.history.get(h).hash, blocks: async top => {
     requests++; return Array.from({ length: Math.min(top + 1, 10) }, (_, i) => {
       const h = top - i, row = f.history.get(h), raw = f.history.raw(h);
@@ -51,6 +56,7 @@ test('download resumes once, checks both source tips and verifies the complete r
   const report = await downloadHeaders({ output, source, independent: source, delayMs: 0 });
   assert.equal(report.count, 64); assert.equal(report.downloaded, 44); assert.equal(report.independentTipChecked, true);
   const before = requests; assert.equal((await downloadHeaders({ output, source, independent: source, delayMs: 0 })).downloaded, 0); assert.equal(requests, before);
+  assert.deepEqual(checked, [f.dir, f.dir]);
   assert.deepEqual(await readFile(output), f.bytes);
   await assert.rejects(downloadHeaders({ output, source, independent: { hash: async () => '00'.repeat(32) }, delayMs: 0 }), /Independent/);
 });

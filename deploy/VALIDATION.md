@@ -1,11 +1,11 @@
 # Deployment validation
 
-Use Node 23.11.0 and the checked-in dependency locks. Run the rules, contract,
+Use Node 24.22.1 and the checked-in dependency locks. Run the rules, contract,
 kit and service suites as described in the [repository README](../README.md).
 Then run the deployment and production adapter suites:
 
 ```sh
-nice -n 20 node --test deploy/*.test.mjs service/prod/test/*.test.mjs
+nice -n 20 node --experimental-test-module-mocks --test --test-concurrency=1 deploy/*.test.mjs service/prod/test/*.test.mjs
 nice -n 20 python3 -m unittest discover -s deploy/servers -p 'test_*.py'
 ```
 

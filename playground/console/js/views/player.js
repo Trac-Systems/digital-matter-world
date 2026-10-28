@@ -3,7 +3,7 @@ import { get, bus, store } from '../api.js';
 import { mineral, assetName, assetKind, mintRule, title, fieldName, FIELDS, PAYMENT_STATE, who, isMe } from '../words.js';
 import { run, payWhenReady, requestTarget, feeTerms, linkFlow } from '../flows.js';
 import { playerMintFlow as mintFlow, playerCompoundMintFlow as compoundMintFlow, savedMintRequests, savedMintIntents } from '../inscribe/flow.js';
-import { tap, eth, btc, fee, splitTable } from '../money.js';
+import { tap, eth, btc, fee, splitTable, feePrice } from '../money.js';
 import { pagedTable } from '../paged.js';
 
 export function mount(root, params) {
@@ -26,7 +26,7 @@ export function mount(root, params) {
     const w = p.wallets ?? {};
     clear(head, h('div.grow', {}, h('h1', {}, 'My player'),
       h('p', {}, 'Your agent on the local networks. Mining, claiming, discovering and crafting are free; only minting on-chain and Bitmap links cost TAP.')),
-      h('div.small.muted', {}, 'Trac address ', hashEl(p.address, short(p.address, 10, 6)), ' · ', h('a', { href: `https://dmtworld.much.fun/agents/${encodeURIComponent(p.address)}`, target: '_blank', rel: 'noopener' }, 'Public profile')));
+      h('div.small.muted', {}, 'Trac address ', hashEl(p.address, short(p.address, 10, 6)), ' · ', h('a', { href: `https://dmtworld.tap-protocol.com/agents/${encodeURIComponent(p.address)}`, target: '_blank', rel: 'noopener' }, 'Public profile')));
     clear(figuresBox, figures([
       ['Kinds of matter', fmtInt(p.counts?.balances ?? (p.balances ?? []).filter(b => b.amount !== '0').length), 'on Trac'],
       ['Test TAP (Bitcoin)', tap(w.bitcoin?.tap).replace(' TAP', ''), 'TAP wallet', 'Mint fees are paid before the permit; your wallet then inscribes the mint.'],
@@ -289,7 +289,7 @@ export function mount(root, params) {
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. After payment is final, your units are consumed and your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
       kv([['Who may mint a block', 'The finder alone for 1,008 blocks; then the Bitmap holder if the Bitmap was linked before the find; otherwise anyone.'],
-        ['Price', 'By rarity tier: 1x / 3x / 10x / 30x / 100x B'], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
+        ['Price', `By rarity tier: ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
       savedMintIntents().length ? h('div', {}, h('h3', {}, 'Resume a quote'), ...savedMintIntents().map(intent => h('button.btn.sm', { onclick: () => mintFlow({ resumeIntent: intent }) }, `${assetName(intent.asset)} · ${intent.actionId}`))) : null,
       savedMintRequests().length ? h('div', {}, h('h3', {}, 'Resume a saved mint'), ...savedMintRequests().map(id => h('button.btn.sm', { onclick: () => mintFlow({ id }) }, short(id, 12, 6)))) : null,
@@ -300,7 +300,7 @@ export function mount(root, params) {
     const terms = feeTerms('link');
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Link a Bitmap you hold to its plot. Linked plots earn the Bitmap holder share of every mint fee, and blocks found after the link may only be minted by the holder once the finder window ends. Paid once; the link stays with the Bitmap.'),
-      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link price ${tap(terms.total)}`), ' · 20x B'), splitTable(terms.split)) : null,
+      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link price ${tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
       h('div.section-label', { style: { padding: '6px 0 0' } }, 'Your Bitmaps'),
       formPaged({
         path: '/player/bitmaps', key: 'bitmaps', limit: 10,

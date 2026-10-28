@@ -9,7 +9,7 @@ export async function createReads({ file }) {
   return new Proxy({}, { get: (target, method) => {
     if (Object.hasOwn(target, method)) return target[method];
     if (method === 'mintPayoutSnapshot' || method === 'verifyPayoutSnapshot') return undefined;
-    if (method === 'close' || method === 'then' || method === 'refreshEvidence' || method === 'bindings') return undefined;
+    if (method === 'withAction' || method === 'withSnapshot' || method === 'close' || method === 'then' || method === 'refreshEvidence' || method === 'bindings') return undefined;
     return async (...args) => {
       const options = JSON.parse(await readFile(file, 'utf8'));
       if (method === 'batchContext') return { ...batchFixture().context, ...(options.batchCounted === undefined ? {} : { counted: options.batchCounted }) };

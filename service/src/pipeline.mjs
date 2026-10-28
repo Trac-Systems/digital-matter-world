@@ -90,7 +90,7 @@ export class Pipeline {
     const observations = this.store.list('observations', { limit: this.limits.maxObservations ?? 512 }).map(r => r.value);
     if (!observations.length || observations.at(-1).counted <= last.to) return null;
     const execution = await this.reads.counted?.() ?? observations.at(-1).counted;
-    if (this.committee.ready && !await this.committee.ready()) return null;
+    if (this.committee.ready && !await this.committee.ready({ counted: execution, tip: Math.max(...observations.map(o => o.tip)) })) return null;
     const contract = await this.reads.settings?.();
     const limits = { ...this.limits, ...(contract ? { maxBytes: contract.batch_bytes, maxOps: contract.batch_ops, maxAssets: contract.batch_assets, maxKv: contract.batch_kv } : {}) };
     const settings = { claimsPerWindow: rules.CLAIM_DEFAULTS.claimsPerWindow, ...this.settings, maxBatchBytes: limits.maxBytes, maxOps: limits.maxOps, maxAssets: limits.maxAssets, maxKv: limits.maxKv, maxMintOps: limits.maxMintOps ?? this.settings.maxMintOps ?? 8 };

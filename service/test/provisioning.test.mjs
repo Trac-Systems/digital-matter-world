@@ -4,6 +4,26 @@ import { Provisioner } from '../src/provisioning.mjs';
 import { candidate, verifyDeployment } from '../src/deployments.mjs';
 import { provisioningFixture } from './provisioning-fixture.mjs';
 
+test('idle provisioning does not rewrite an unchanged cursor', async t => {
+  const f = await provisioningFixture(t), before = f.store.sequence;
+  await f.operator.tick(); await f.operator.tick();
+  assert.equal(f.store.sequence, before);
+  await f.store.put('meta', 'provisioningCursor', { pattern: 8, type: 'gone' });
+  await f.operator.tick();
+  assert.deepEqual(f.store.get('meta', 'provisioningCursor'), { pattern: 0, type: '' });
+  const reset = f.store.sequence;
+  await f.operator.tick(); assert.equal(f.store.sequence, reset);
+});
+
+test('a job waiting for the player is not rewritten on every pass', async t => {
+  const f = await provisioningFixture(t); f.funds(0n);
+  const waiting = await f.operator.request('p2', f.pattern), before = f.store.sequence;
+  assert.equal(waiting.state, 'awaiting_player_deploy');
+  await f.operator.request('p2', f.pattern); await f.operator.request('p2', f.pattern); await f.operator.tick();
+  assert.equal(f.store.sequence, before);
+  assert.deepEqual(f.store.get('provisioning', 'p2'), waiting);
+});
+
 test('exact pair reuse wins over occupied names, keeps attribution and independent type', async t => {
   const f = await provisioningFixture(t), id = f.index('Outsider.123.4.element'); f.index('dmwexample.999.4.element'); f.mine();
   const job = await f.complete(); assert.equal(job.entry.elementId, id); assert.equal(job.definition.discoverer, f.pattern.discoverer);

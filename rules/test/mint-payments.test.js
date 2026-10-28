@@ -32,7 +32,7 @@ test('every Bitcoin network burns to the same P2PKH script and rejects another n
   const fees = mintFeeItems(split, destinations, 'ab'.repeat(32), null, 'tap', network);
   assert.equal(fees.at(-1).to, burn);
   assert.equal(walletFeeItems(fees, network).at(-1).address, burn);
-  assert.equal(tapPaymentLock({ split, destinations, payer: 'p', hash: 'ab'.repeat(32), expiry: 100, bitcoinNetwork: network }).al.at(-1).to, burn);
+  assert.equal(tapPaymentLock({ split, destinations, payer: 'p', hash: 'ab'.repeat(32), expiry: 100, bitcoinNetwork: network }).al.at(-1).to, TAP_BURN, 'native burn allocation uses the ord-tap protocol literal, not a network address transfer');
   const wrong = tapBurnAddress(network === 'mainnet' ? 'regtest' : 'mainnet');
   assert.throws(() => walletFeeItems(fees.map(f => f.role === 'burn' ? { ...f, to: wrong } : f), network), /tap_payment_item/);
   assert.equal(paymentProgress(fees, fees.map((f, i) => ({ ...f, to: f.role === 'burn' ? wrong : f.to, key: paymentItemKey('tap', String(i)), accepted: true, confirmations: 1 }))).final, false);

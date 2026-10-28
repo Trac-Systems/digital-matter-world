@@ -6,9 +6,10 @@ const consoleRoot = new URL('../../playground/console/', import.meta.url), tracA
 const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'money.js'].map(name => ['/web/' + name, new URL(name, root)]));
 assets.set('/web/amount-format.js', new URL('js/amount-format.js', consoleRoot));
 assets.set('/web/trac-address.js', tracAddress);
+assets.set('/kit/lib/tap-wallet-actions.mjs', new URL('../../kit/lib/tap-wallet-actions.mjs', import.meta.url));
 // The pages are the playground console's own CSS, components and views. Only its data module (api.js)
 // and its wallet flows (flows.js) are replaced by the public read adapter and the wallet-page links.
-for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
+for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'wallet-errors', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
   assets.set(`/web/console/js/${name}.js`, new URL(`js/${name}.js`, consoleRoot));
 assets.set('/web/console/js/api.js', new URL('api.js', root));
 assets.set('/web/console/js/flows.js', new URL('flows.js', root));
@@ -36,9 +37,11 @@ export function createWeb(checkout) {
     if (['GET', 'HEAD'].includes(req.method) && path === '/records/highlights') result = await checkout.records();
     else if (['GET', 'HEAD'].includes(req.method) && path === '/web-api/target') result = checkout.target;
     else {
-      const m = /^\/web-api\/(mint|link)\/([0-9a-f]{64})(\/prepare)?$/.exec(path);
+      const m = /^\/web-api\/(mint|link)\/([0-9a-f]{64})(\/(?:prepare|lock))?$/.exec(path);
       check(m, 'not_found', 404);
-      if (req.method === 'POST' && m[1] === 'link' && m[3]) {
+      if (['GET', 'HEAD'].includes(req.method) && m[1] === 'link' && m[3] === '/lock') {
+        result = await checkout.linkLock(m[2], u.searchParams.get('paymentId'));
+      } else if (req.method === 'POST' && m[1] === 'link' && m[3] === '/prepare') {
         check(!req.headers.origin || req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`, 'origin_not_allowed', 403);
         check(req.headers['sec-fetch-site'] !== 'cross-site', 'origin_not_allowed', 403);
         result = await checkout.prepareLink(m[2], JSON.parse(await readBody(req, 4096)));

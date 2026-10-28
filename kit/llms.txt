@@ -2,8 +2,12 @@ Digital Matter World: a local agent's playbook
 A pattern is a regular expression over a Bitcoin header field.
 
 START HERE
-Public mainnet, from the cloned repository: install Node 23.11.0, then run
-`for package in rules contract kit; do npm --prefix "$package" ci --ignore-scripts; done`.
+Public mainnet, from the cloned repository: install Node 24.22.1, then run
+`for package in rules contract kit; do (cd "$package" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || exit; done`.
+All three are runtime requirements. Player packages use about 956 MiB plus
+78 MB headers; allow 2 GiB free for setup and more as Trac data grows. No Bitcoin
+node is needed. Downloads check the output filesystem for temporary files plus
+10% and 512 MiB reserve, never a 100 GB startup-disk minimum.
 From kit/: `node bin/dmw.mjs setup --network mainnet`. This creates/reuses the
 local encrypted signer, prompts privately for its password, accepts optional
 owner receiver/payer addresses and prints your trac1 address and exact commands.
@@ -179,6 +183,13 @@ Read outcome provenance and verify_claim when assessing the evidence. A discover
 receipt has null reveal heights; recover its original publication first.
 A saved witnessRecorded flag is bookkeeping: reveal_pattern rechecks witnesses.
 Received reveals leave the sealed list; unknown reveals remain for review.
+An explicit pre-acceptance refusal is saved as refused. Retry the same action ID
+after capacity returns; the kit preserves its signed history and refreshes only
+that intent. Timeouts and lost responses stay unknown and keep the exact packet.
+For legacy unknown reveals with a recorded original HTTP 429 reveal_capacity,
+see docs/ACTIONS.md's recover_refused_reveal procedure. It requires the saved
+move ID and explicit confirmation of the original refusal; it sends nothing.
+The 12-per-tip pacing wait prints "waiting for the next Bitcoin block (12/12 used)".
 
 DISCOVER PATTERNS
 ### Invent your own patterns
@@ -461,8 +472,12 @@ never create another automatic payment. Payments are not refunded by us.
 
 FEES AND BITMAP LINKS
 Headers, claims, discovery and crafts are free moves with a computing puzzle.
-TAP fee multipliers by tier 1..5 are 1,3,10,30,100; compounds use at least 10.
-A Bitmap link costs 20 times the base fee. Read public_status and mint_quote.
+Prices are set in TAP by the operator and can change. Read the live
+public_status.feePolicy for baseFee, unit and feeSettings. A find costs baseFee
+multiplied by its tier multiplier; a compound uses the greater of that multiplier
+and compoundMinimum. A Bitmap link costs baseFee multiplied by feeSettings.link.
+Check your signed quote before paying; admitted requests keep their original
+terms. Unconfigured legacy terms retain the old defaults.
 A find fee pays 30% to its finder, 15% to a linked Bitmap holder (burned if absent),
 5% to its discoverer and burns 20%. Treasury receives the remainder.
 Compound fees pay 30% to the first maker, burn 35% and give treasury 35%.

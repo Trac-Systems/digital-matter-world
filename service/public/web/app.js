@@ -3,7 +3,7 @@
 // the public stand-ins (see service/src/web.mjs).
 import { h, clear, installTooltips, fmtInt, logo, inspect, panel, table, autoColumns, labelFor } from './console/js/dom.js';
 import { get, bus, stream, store } from './console/js/api.js';
-import { tap } from './console/js/money.js';
+import { tap, feePolicyTip } from './console/js/money.js';
 import { pagedTable } from './console/js/paged.js';
 import { route } from './data.js';
 import { moneyPage } from './money.js';
@@ -63,7 +63,9 @@ async function boot() {
   bus.on('event-stream', drawConn); drawConn(stream.state);
   bus.on('status', drawStrip);
   stream.start();
-  await Promise.allSettled([store.refreshStatus(), store.refreshPatterns()]);
+  const ready = Promise.allSettled([store.refreshStatus(), store.refreshPatterns()]);
+  // About can show its current-price placeholders while the live reads load.
+  if (resolve(pageAddress(new URL(location.href)).pathname).id !== 'about') await ready;
   document.addEventListener('click', follow);
   addEventListener('popstate', show);
   addEventListener('hashchange', show);
@@ -88,7 +90,7 @@ function drawStrip(s) {
     cell('Tip', fmtInt(s.tip), 'Newest Bitcoin block the gateway has seen.'),
     cell('Counted', fmtInt(s.counted), 'Blocks the Trac contract has counted. Finder windows and refunds run on counted blocks.'),
     cell('Batch', s.batch ? `#${fmtInt(s.batch.n)} → ${fmtInt(s.batch.to)}` : '–', 'Last committee batch applied on Trac and the counted block it covers.'),
-    cell('Base fee B', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), 'Every price is a multiple of B. Changes apply immediately to new quotes.'));
+    cell('Base price', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)));
 }
 
 // Links between pages stay in this page: the address changes and the matching view opens.
