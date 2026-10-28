@@ -53,12 +53,12 @@ test('pair race adopts indexed winner; the service never needs Bitcoin funds', a
   f.hook(async p => { if (typeof p.entries[0].text === 'string') winner ??= f.index('outsider.123.4.element'); });
   const job = await f.complete(); assert.equal(job.entry.elementId, winner); assert.equal(job.reused, true);
 });
-test('complete binding rejects wrong type, options, element, authority and incomplete pagination', async t => {
+test('complete binding rejects wrong type, options, element, authority and unavailable point lookup', async t => {
   const f = await provisioningFixture(t), job = await f.complete();
   for (const patch of [{ dt: 'h' }, { elementId: '00'.repeat(32) + 'i0' }, { authorityKey: '00' }, { options: { prj: '1' } }])
     await assert.rejects(verifyDeployment(f.reads, { ...job.entry, ...patch }));
-  const tap = f.reads.tap; f.reads.tap = async path => path.startsWith('getDmtElementsList?') ? [] : tap(path);
-  await assert.rejects(verifyDeployment(f.reads, job.entry), /element_list_incomplete/);
+  f.reads.element = undefined;
+  await assert.rejects(verifyDeployment(f.reads, job.entry), /tap_element_lookup_required/);
 });
 test('compound allocator uses registry ticker and occupied friendly label falls back', async t => {
   const f = await provisioningFixture(t); f.index({ op: 'token-deploy', tick: 'dmwc1', prv: 'outsider' });
@@ -86,12 +86,11 @@ test('periodic provisioning fairly revisits more than one page of accepted asset
   assert.equal(new Set(visited).size, 19);
 });
 
-test('authority verification paginates and rejects an explicitly cancelled authority', async t => {
+test('authority verification uses a named lookup and rejects an explicitly cancelled authority', async t => {
   const f = await provisioningFixture(t), job = await f.complete(), tap = f.reads.tap;
   let cancelled = false;
   f.reads.tap = async path => {
-    if (path === 'getPrivilegeAuthList') return Array.from({ length: 500 }, (_, i) => ({ ins: 'other-' + i }));
-    if (path === 'getPrivilegeAuthList?offset=500&max=500') return [{ ins: f.privilege }];
+    if (path.startsWith('getPrivilegeAuthList')) throw Error('global_list_forbidden');
     if (path.startsWith('getPrivilegeAuthCancelled/')) return cancelled;
     return tap(path);
   };

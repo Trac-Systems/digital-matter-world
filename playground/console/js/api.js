@@ -186,7 +186,8 @@ export function refreshSoon(what = ['status']) {
 bus.on('event', e => {
   if (e.type === 'block') refreshSoon(['status', 'player']);
   if (/^(find|mint_complete|mint_request|mint_permit|craft|transfer|link|discovery)$/.test(e.type)) refreshSoon(['player']);
-  if (e.type === 'discovery' && e.data?.state === 'accepted') refreshSoon(['patterns']);
+  // v2 discovery events are acceptances and carry no state field.
+  if (e.type === 'discovery' && (e.data?.state ?? 'accepted') === 'accepted') refreshSoon(['patterns']);
 });
 bus.on('lab', e => {
   if (e.type === 'component' || e.type === 'block') refreshSoon(['status']);

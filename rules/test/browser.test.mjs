@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 test('entire ESM graph loads with browser globals and no Node APIs', () => {
-  const context = vm.createContext({ TextEncoder, TextDecoder });
+  const context = vm.createContext({ TextEncoder, TextDecoder, atob, btoa });
   const cache = new Map(), root = fileURLToPath(new URL('../', import.meta.url));
   function module(path) {
     if (!cache.has(path)) cache.set(path, new vm.SourceTextModule(readFileSync(path, 'utf8'), { context, identifier: path }));
@@ -25,8 +25,10 @@ test('entire ESM graph loads with browser globals and no Node APIs', () => {
   return entry.link(link).then(() => entry.evaluate()).then(async () => {
     const smoke = new vm.SourceTextModule(`
       import {hash, stableJSON, heightToPlot, ordMatchCount, CLAIM_DEFAULTS, merkleRoot, tapBurnAddress} from './src/index.js';
+      import {decodeNodeHints} from './src/node-evidence.js';
       if(typeof process !== 'undefined' || typeof Buffer !== 'undefined') throw Error('node globals');
       if (tapBurnAddress('mainnet') !== '1BitcoinEaterAddressDontSendf59kuE' || tapBurnAddress('regtest') === tapBurnAddress('mainnet')) throw Error('burn network');
+      if (decodeNodeHints('A'.repeat(43) + '=')[0] !== '0'.repeat(64)) throw Error('packed node hints');
       export const result = [hash('abc'),stableJSON({z:2,a:1}),heightToPlot(8),ordMatchCount('0?', '12'),
         CLAIM_DEFAULTS.claimsPerWindow,merkleRoot(['one','two']).length];
     `, { context, identifier: resolve(root, 'smoke.js') });

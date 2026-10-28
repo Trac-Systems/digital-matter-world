@@ -14,7 +14,7 @@ test('verified header views seed offline, preserve old branches and bound catch-
   await views.seed(file); const view = await views.view(0, GENESIS.hash); assert.equal(view.hashAt(0), GENESIS.hash); assert.equal(view.field(0, 10), '2083236893');
   assert.throws(() => views.insert(genesis.slice(0, -2) + '00', 1, views.get.get(GENESIS.hash)), /bitcoin_pow/);
   await assert.rejects(views.view(2, GENESIS.hash), /bitcoin_header_height/);
-  const limited = new BitcoinViews({ header: async () => genesis }, ':memory:', { maxHeadersPerView: 0 }); t.after(() => limited.close()); await assert.rejects(limited.view(0, GENESIS.hash), /bitcoin_history_seed_required/);
+  assert.throws(() => new BitcoinViews({}, ':memory:', { maxHeadersPerView: 0 }), /bitcoin_work_budget/);
 });
 test('TAP requires agreement on present and absent records and refuses split sources', async () => {
   let other = { result: { owner: 'a' } };
@@ -26,12 +26,14 @@ test('TAP snapshots detect same-height reorgs and refuse historical ownership', 
   let hash = GENESIS.hash;
   const source = { request: async path => path.includes('getCurrentBlock') ? { result: 10 } : hash };
   const reader = new TapReader({ sources: [source, source], agreement: 2, bitcoin: { blockHash: async () => hash } });
+  assert.equal(await reader.at({ tip: '10', tipHash: hash }, async () => true), true);
   await assert.rejects(reader.at({ tip: 9, tipHash: hash }, async () => true), /tap_historical_snapshot_unavailable/);
   await assert.rejects(reader.at({ tip: 10, tipHash: hash }, async () => { hash = '11'.repeat(32); return true; }), /tap_snapshot_changed/);
 });
-test('TAP list calls use ord-tap max pagination and a fixed total budget', async () => {
+test('TAP lists stream bounded pages without a total-history ceiling', async () => {
   const paths = []; const source = { request: async path => { paths.push(path); return { result: [1, 2] }; } };
   const reader = new TapReader({ sources: [source], agreement: 1 });
-  await assert.rejects(reader.all('getPrivilegeAuthList', { pageSize: 2, maxRows: 4 }), /tap_list_limit/);
+  const pages = reader.pages('getPrivilegeAuthList', { pageSize: 2 });
+  assert.deepEqual((await pages.next()).value.rows, [1,2]); await pages.next(); await pages.return();
   assert.ok(paths[1].endsWith('?offset=2&max=2')); await reader.holders('tap', { offset: 10, limit: 5 }); assert.ok(paths.at(-1).endsWith('?offset=10&max=5'));
 });

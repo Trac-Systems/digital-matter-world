@@ -2,11 +2,11 @@ import { rpc, randomHex, delay } from './tss.mjs';
 import { attachPermit } from './signer/adapter.mjs';
 import { ethereumSignature } from './signer/escrow.mjs';
 
-export async function signProposal(signers, proposal, { epoch = 1, timeout = 180000 } = {}) {
+export async function signProposal(signers, proposal, { epoch = 1, timeout = 180000, prepareTimeout = timeout } = {}) {
   if (signers.length !== 3 || new Set(signers.map(s => s.id)).size !== 3) throw Error('three_signers_required');
   const id = randomHex(), ceremony = { id, epoch, peers: signers.map(s => s.peer) };
   try {
-    const prepared = await Promise.allSettled(signers.map(s => rpc(s.url, s.token, '/prepare', { proposal, ceremony })));
+    const prepared = await Promise.allSettled(signers.map(s => rpc(s.url, s.token, '/prepare', { proposal, ceremony }, prepareTimeout)));
     const failed = prepared.find(p => p.status === 'rejected'); if (failed) throw failed.reason;
     if (new Set(prepared.map(p => p.value.digest)).size !== 1) throw Error('policy_disagreement');
     const sessions = prepared.map(p => p.value.id);

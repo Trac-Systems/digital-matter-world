@@ -26,7 +26,10 @@ export async function save(path, value) {
 }
 export async function diskCheck() {
   const fs = await statfs('/');
-  if (fs.bavail * fs.bsize < 100 * 1024 ** 3) throw new Error('Less than 100 GiB free; stopping');
+  // Disposable rehearsals may use a smaller, explicit reserve (never below 40 GiB).
+  const minimum = Number(process.env.DMW_LOCAL_MIN_FREE_GIB ?? 100);
+  if (!Number.isFinite(minimum) || minimum < 40) throw new Error('Invalid local disk reserve');
+  if (fs.bavail * fs.bsize < minimum * 1024 ** 3) throw new Error(`Less than ${minimum} GiB free; stopping`);
 }
 export function localUrl(value) {
   const url = new URL(value);

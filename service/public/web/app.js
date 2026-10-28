@@ -17,7 +17,7 @@ const VIEWS = {
   feed: { label: 'Live feed', short: 'Feed', href: '/feed', load: () => import('./console/js/views/feed.js') },
   results: { label: 'Results', href: '/results', load: () => import('./console/js/views/results.js') },
   records: { label: 'Records', href: '/records', load: () => import('./records.js') },
-  money: { label: 'Mint On-Chain', short: 'Mint', href: '/mint', sep: true, load: async () => ({ mount: (root, page) => moneyPage(root, page, navigate) }) },
+  money: { label: 'Mint', title: 'Mint & wallets', href: '/mint', sep: true, load: async () => ({ mount: moneyPage }) },
 };
 const app = document.getElementById('app');
 let cleanup = null, current = null, mainEl, navEl, stripEl, connEl;
@@ -43,7 +43,8 @@ function resolve(path) {
     case 'results': return { id: 'results', params: { tab: page.collection } };
     case 'records': return { id: 'records', params: {} };
     case 'batch': return { id: 'records', params: { batch: page.n } };
-    case 'money': return { id: 'money', params: page };
+    // /link and /bind-payout without a request link are sections of the one Mint & wallets page.
+    case 'money': return { id: 'money', params: page, anchor: page.id ? null : { link: 'bitmap', 'bind-payout': 'wallets' }[page.type] ?? null };
     default: return { id: null, params: {} };
   }
 }
@@ -121,7 +122,7 @@ async function show() {
   cleanup?.(); cleanup = null; current = id;
   scrollTo(0, 0);
   if (!id) { clear(mainEl, h('div.page', {}, h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Page not found'), h('p', {}, h('a', { href: '/' }, 'Open the World map')))))); document.title = 'Digital Matter World'; return; }
-  document.title = `${VIEWS[id].label} · Digital Matter World`;
+  document.title = `${VIEWS[id].title ?? VIEWS[id].label} · Digital Matter World`;
   clear(mainEl, h('div.page', {}, h('div.empty', {}, 'Loading…')));
   try {
     if (id === 'world' && q.has('collection')) { cleanup = collection(q.get('collection'), q.get('key') ?? 'items'); return; }

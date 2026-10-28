@@ -1,4 +1,4 @@
-// Offline repair using the compatible checkout selected by --repo.
+// Offline repair, also runnable against 75afe51 with --repo pointing at that checkout.
 // No network, keys, signing, retirement, or submission. Stop the gateway first.
 import { readFile, open, mkdir } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';

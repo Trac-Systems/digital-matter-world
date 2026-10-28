@@ -149,22 +149,10 @@ export function mount(root, params) {
       })), { flush: true }));
     if (site.public) sections.push(panel('Payout wallets', track(payoutWallets(key)), { flush: true, tip: 'Wallets this agent bound for its payouts. Replacements apply to future quotes.' }));
     clear(profile, ...sections);
-    // Ownership is for the existing inspector; it must never hold up the panel.
-    function loadBitmaps(summary) {
-      const route = summary.bitmapStatus?.route;
-      if (!route) return;
-      get(route + '?limit=1').then(value => {
-        if (s !== seq) return;
-        Object.assign(summary, { bitmaps: value.bitmaps, bitmapContext: value.bitmapContext, bitmapStatus: { state: 'loaded', route } });
-        summary.counts = { ...summary.counts, bitmaps: value.total };
-        summary.pages = { ...summary.pages, bitmaps: value.pages?.bitmaps };
-      }, () => { if (s === seq) summary.bitmapStatus = { state: 'unavailable', route }; });
-    }
-    loadBitmaps(p);
     currentProfile = { key, async reload() {
       const summaryRead = get(`/agents/${key}?limit=1`).then(next => {
         if (s !== seq) return;
-        drawSummary(next); loadBitmaps(next); refreshError.hidden = true;
+        drawSummary(next); refreshError.hidden = true;
       }, e => {
         if (s !== seq) return;
         clear(refreshError, `This profile could not refresh (${e.message}). `, h('button.btn.sm', { onclick: refreshProfile }, 'Retry'));
@@ -199,11 +187,7 @@ export function mount(root, params) {
     const sealedLine = h('div.body.small.muted');
     const loadSealed = () => get(`/agents/${key}/discoveries?state=sealed&limit=1&sort=opensAt&order=asc`).then(r => {
       const rows = r.discoveries ?? [], n = r.total ?? rows.length;
-      const first = rows[0], tip = store.status?.tip;
-      const window = Number.isSafeInteger(tip) && tip >= first?.opensAt
-        ? tip <= first.revealUntil ? `can be revealed now, until block ${fmtInt(first.revealUntil)}` : `reveal window ended at block ${fmtInt(first.revealUntil)}`
-        : `${n === 1 ? 'opens' : 'next opens'} at block ${fmtInt(first?.opensAt)}`;
-      clear(sealedLine, n ? `${fmtInt(n)} sealed discover${n === 1 ? 'y' : 'ies'}, ${window}${mine ? ' (contents under Hunting now)' : ''}` : 'No sealed discoveries.');
+      clear(sealedLine, n ? `${fmtInt(n)} sealed discover${n === 1 ? 'y' : 'ies'}, ${n === 1 ? 'opens' : 'next opens'} at block ${fmtInt(rows[0]?.opensAt)}${mine ? ' (contents under Hunting now)' : ''}` : 'No sealed discoveries.');
     }).catch(() => clear(sealedLine, ''));
     loadSealed(); track({ el: sealedLine, reload: loadSealed });
     const list = pagedTable({

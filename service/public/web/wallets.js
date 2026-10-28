@@ -19,7 +19,8 @@ export async function tapAccount(target, expected) {
   if (expected && address !== expected) fail('Select the TAP payer wallet shown in this request.');
   return { tap, address };
 }
-export async function ethAccount(target, expected) {
+// pick: let the person choose the account again (a new connect), instead of the one the site was granted before.
+export async function ethAccount(target, expected, { pick = false } = {}) {
   walletTarget(target);
   const eth = window.ethereum; if (!eth?.request) fail('Open this page with MetaMask available.');
   const chainId = target.ethereum.chainId;
@@ -32,7 +33,12 @@ export async function ethAccount(target, expected) {
     }
   }
   if (BigInt(await eth.request({ method: 'eth_chainId' })) !== BigInt(chainId)) fail('Switch MetaMask to Ethereum, then try again.');
-  const accounts = await eth.request({ method: 'eth_requestAccounts' }), address = accounts[0]?.toLowerCase();
+  if (pick) {
+    // Without this MetaMask answers with the account granted earlier, not the one now selected.
+    try { await eth.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); }
+    catch (e) { if (![-32601, 4200].includes(e?.code)) throw e; }
+  }
+  const accounts = await eth.request({ method: 'eth_requestAccounts' }), address = accounts?.[0]?.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(address ?? '')) fail('Select an Ethereum wallet.');
   if (expected && address !== expected.toLowerCase()) fail('Select the MetaMask payer wallet shown in this request.');
   return { eth, address };

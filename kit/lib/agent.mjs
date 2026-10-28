@@ -1,5 +1,11 @@
+import { makeFinancialLink } from './financial-link.mjs';
+import { submitFinancialCredit } from './financial-credit.mjs';
+import { claimFinancialCustody } from './financial-custody.mjs';
 import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
-import { stableJSON, validatePayload, patternCount, compound, patternProperties, patternAsset, pendingId, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
+import { stableJSON, validatePayload, patternCount, compound, patternProperties, patternAsset, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
+import { financialMintId as pendingId } from '../../rules/src/financial-mint.js';
+import { makeFinancialMint } from './financial-mint.mjs';
+import { craftNamed, refineCompoundNamed } from './craft-v2.mjs';
 import { check, sha256, nonce, integer, hex32, gatewayOrigin } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signMove, signOwnerRequest, signPaymentIntent, signPlotRequest, mintExpiry, paymentPayer } from './signing.mjs';
@@ -12,17 +18,26 @@ import { bitcoinAddress } from './addresses.mjs';
 import { bindingMessage, bindingId, payoutAddress, verifyBinding } from '../../rules/src/payout-bindings.mjs';
 import { signBytes } from './signing.mjs';
 import { PlayerMint } from './player-mint.mjs';
+import { proposeNamed, revealNamed, addNamedOccurrences, sendNamedMove } from './named-discovery.mjs';
+import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RESOURCE_PROFILE, validateResources, safeNumberV2 } from '../../rules/src/index.js';
+import { requireKitVersion, resumeLegacyFinancial } from './upgrade.mjs';
 
 export class Agent {
-  constructor({ wallet, network, service, trac, journal, bitcoinWallet, dryRun = true, puzzleBits = 12, powLimitBits = 0x1d00ffff, work = {}, paymentOrigin, owner = {}, bitcoinNetwork = powLimitBits === 0x207fffff ? 'regtest' : 'mainnet' } = {}) {
+  useCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
+  transferCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
+  claimCustody(args) { return this.exclusive(() => claimFinancialCustody(this, args)); }
+  constructor({ wallet, network, service, trac, journal, bitcoinWallet, dryRun = true, puzzleBits = 12, powLimitBits = 0x1d00ffff, work = {}, resources = RESOURCE_PROFILE, paymentOrigin, owner = {}, bitcoinNetwork = powLimitBits === 0x207fffff ? 'regtest' : 'mainnet' } = {}) {
     check(wallet && service && trac && journal && typeof network === 'string', 'Signer, local clients and journal required');
     check(service.network === network && trac.network === network, 'Client network mismatch');
     if (paymentOrigin) gatewayOrigin(paymentOrigin, service?.mode ?? 'regtest');
     Object.assign(this, { wallet, network, service, trac, journal, dryRun, puzzleBits, powLimitBits, work, paymentOrigin });
+    this.resources = Object.freeze(structuredClone(validateResources(resources)));
     check(['regtest', 'mainnet'].includes(bitcoinNetwork), 'Invalid Bitcoin network');
     this.bitcoinNetwork = bitcoinNetwork;
     this.bitcoinWallet = bitcoinWallet;
     this.playerMint = new PlayerMint({ service, journal, wallet: bitcoinWallet, owner: encodeTracAddress(publicKey(wallet)), dryRun });
+    this.playerLink = new PlayerMint({ service: { mintStatus: id => service.linkStatus(id), mintPaymentPlan: id => service.linkStatus(id), reportMintPayment: value => service.reportLinkPayment(value) },
+      journal, wallet: bitcoinWallet, owner: encodeTracAddress(publicKey(wallet)), dryRun });
     this.ownerConfig = Object.freeze({ receiver: Object.freeze({ ...owner.receiver }), payer: Object.freeze({ ...owner.payer }) });
     this.owner = publicKey(wallet); this.address = encodeTracAddress(this.owner); this.tail = Promise.resolve();
   }
@@ -34,6 +49,7 @@ export class Agent {
   async reconcileAction(id) {
     const row = this.journal.get(id);
     if (!row || ['prepared', 'refused', 'accepted', 'rejected'].includes(row.state)) return;
+    if (row.body.version === 2 && !row.body.t || id.endsWith('/witnesses-v2')) return;
     if (id.startsWith('payout/')) {
       const value = wireIdentities(await this.service.payoutBinding(this.address, row.body.request.rail));
       if (value.binding) {
@@ -69,6 +85,7 @@ export class Agent {
         this.journal.observe(id, 'accepted', { source: 'public_catalog', asset: patternAsset(found) });
       }
     } else if (row.body.t) {
+      check(row.body.v !== 2, 'upgrade_required: v2 batch inclusion verifier required; saved packet retained');
       const proof = await this.service.inclusion(row.body, { receipt: row.result ?? undefined, hashAt: h => this.trac.hashAt(h) });
       const state = proof.reportedOutcome === 'accepted' ? 'accepted' : 'rejected';
       const evidence = { source: 'witnessed_audit', reason: proof.reportedOutcome, publication: proof.publication, contractCommitted: proof.contractCommitted };
@@ -90,11 +107,11 @@ export class Agent {
   }
   async status() {
     const reconciliationPending = await this.reconcileActions(this.journal.recent().map(row => row.id));
-    const actions = this.journal.recent().map(row => {
+    const actions = this.journal.recent().filter(row => !row.id.endsWith('/reservation-v2')).map(row => {
       const kind = row.id.split('/')[0], digest = { mint: pendingId, link: linkId }[kind];
       const evidence = this.journal.evidence(row.id);
       const savedMove = this.journal.get(row.id);
-      if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: moveId(savedMove.body),
+      if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: (savedMove.body.v === 2 ? moveIdV2 : moveId)(savedMove.body),
         ...(row.state === 'refused' ? { refusal: savedMove.result, retry: 'Retry the original action ID and intent; the kit will refresh the refused packet.' } : {}) };
       if (kind.startsWith('bitcoin-')) {
         const saved = this.journal.get(row.id), plan = saved.body.plan, deploy = kind === 'bitcoin-deploy';
@@ -205,20 +222,35 @@ export class Agent {
       note: 'Won/lost uses public settled draws. Other phases estimate timing; check block and verify_claim for evidence. A reorg never reopens a closed claim window.' };
   }
   async catalog() {
-    const rows = [], cursors = new Set(); let cursor, total;
+    const rows = [], cursors = new Set(); let cursor, total, version, revision, pages = 0;
     do {
       const page = await this.service.patterns({ cursor, sort: 'number', order: 'asc' });
-      check(integer(page.total) && page.total <= 100000, 'Invalid catalog size');
-      total ??= page.total;
+      const bounded = page.v === 3;
+      check(++pages <= 100000 && (bounded && page.total === null || integer(page.total) && page.total <= 100000), 'Invalid catalog size');
+      if (pages === 1) { total = page.total; version = bounded; revision = page.revision; }
+      check(bounded === version && (!bounded || typeof page.revision === 'string' && /^(0|[1-9][0-9]*)$/.test(page.revision) && page.revision === revision), 'Catalog changed during read');
       check(page.total === total && Array.isArray(page.patterns) && integer(page.limit) && page.limit >= 1 && page.limit <= 200 &&
         page.patterns.length <= page.limit && (page.next === null || typeof page.next === 'string' && page.next.length > 0), 'Invalid catalog page');
-      rows.push(...page.patterns);
-      check(rows.length <= total && (page.next === null || page.patterns.length > 0 && !cursors.has(page.next)), 'Catalog changed during read');
+      rows.push(...page.patterns.map(p => bounded ? { ...p, number: safeNumberV2(p.number) } : p));
+      check(rows.length <= 100000 && (total === null || rows.length <= total) &&
+        (page.next === null || (bounded || page.patterns.length > 0) && !cursors.has(page.next)), 'Catalog changed during read');
       cursor = page.next; if (cursor !== null) cursors.add(cursor);
     } while (cursor !== null);
-    check(rows.length === total && rows.every(p => integer(p.number)) && new Set(rows.map(p => p.number)).size === rows.length, 'Catalog changed during read'); return rows;
+    check((total === null || rows.length === total) && rows.every(p => integer(p.number)) && new Set(rows.map(p => p.number)).size === rows.length, 'Catalog changed during read'); return rows;
   }
   async sendMove(id, type, payload, { intent = payload, validate = async () => {} } = {}) {
+    if (['header', 'claim'].includes(type)) {
+      const context = await this.namedContext();
+      if (context) {
+        const old = this.journal.get(id);
+        check(!old || old.body.v === 2, 'Saved legacy action must be reconciled before a v2 submission');
+        const header = h => ({ height: String(h.height), raw: h.raw });
+        const value = type === 'header' ? header(payload) : { window: String(payload.window),
+          plots: payload.plots.map(p => ({ block: String(p.block), patterns: p.patterns.map(String) })),
+          ...(payload.header ? { header: header(payload.header) } : {}) };
+        return sendNamedMove(this, id, type + '-v2', value, context.settings, validate);
+      }
+    }
     validatePayload(type, payload);
     const old = this.journal.get(id);
     if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting action refused; use the saved intent');
@@ -315,8 +347,22 @@ export class Agent {
     evaluateDiscovery({ proposal, discoverer: this.owner, history: { length: head.counted + 1, field: (...a) => history.field(...a), get: h => history.get(h) }, existing: patterns, number: analysis.record.number });
     return analysis.record;
   }
-  propose({ actionId, proposal, history, patterns }) {
+  async namedContext() {
+    const active = await this.trac.settings();
+    if (active.ruleset !== 'dmw-v2' && active.batchVersion !== 2) return null;
+    check(typeof this.trac.rulesContext === 'function', 'upgrade_required: activated rules proof adapter required');
+    const context = await this.trac.rulesContext(); validateSettingsDocument(context.settings);
+    const manifest = activationManifest(context.manifest, context.manifestHash);
+    requireKitVersion(manifest.minimumKitVersion);
+    check(context.settings.network === this.network && manifest.network === this.network && hashObject(context.settings) === context.settingsHash, 'Activated settings mismatch');
+    return context;
+  }
+  submitOccurrences(args) {
+    return this.exclusive(async () => { const context = await this.namedContext(); check(context, 'upgrade_required: named occurrences require v2 activation'); return addNamedOccurrences(this, args, context); });
+  }
+  propose({ actionId, proposal, history, patterns, witnesses }) {
     return this.exclusive(async () => {
+      const context = await this.namedContext(); if (context) return proposeNamed(this, { actionId, proposal, history, witnesses }, context);
       this.actionId(actionId); const id = `discovery/${actionId}`, old = this.journal.get(id);
       if (old) check(old.fingerprint === sha256(stableJSON(proposal)), 'Conflicting discovery action ID');
       if (this.dryRun || !old) this.discoveryAnalysis(proposal, history, patterns, await this.trac.head());
@@ -331,8 +377,9 @@ export class Agent {
       return { ...result, actionId, phase: 'commit', commitment, revealFrom: result.receipt.tip + 2, revealUntil: result.receipt.tip + DISCOVERY_LIMITS.lifetime };
     });
   }
-  reveal({ actionId, publication, history, patterns }) {
+  reveal({ actionId, publication, history, patterns, witnesses }) {
     return this.exclusive(async () => {
+      const context = await this.namedContext(); if (context) return revealNamed(this, { actionId, history, witnesses }, context);
       this.actionId(actionId); const id = `discovery/${actionId}`, saved = this.journal.get(id), committed = this.journal.get(`${id}/commit`);
       check(saved && committed, 'No saved discovery commitment');
       const payload = { proposal: saved.body.proposal, salt: saved.body.salt };
@@ -362,8 +409,11 @@ export class Agent {
   linkBitmap(args) { return this.plotRequest('link', args); }
   plotRequest(kind, { actionId, height, payer }) {
     return this.exclusive(async () => {
-      this.actionId(actionId); check(kind === 'link' && integer(height), 'Invalid plot request');
+      this.actionId(actionId);
       payer = bitcoinAddress(payer ?? this.ownerConfig.payer.tap, this.bitcoinNetwork, 'payer');
+      const context = await this.namedContext();
+      if (context) return await resumeLegacyFinancial(this, 'link', actionId, { height, payer }) ?? makeFinancialLink(this, { actionId, height, payer }, context);
+      check(kind === 'link' && integer(height), 'Invalid plot request');
       const id = `${kind}/${actionId}`, intent = { height, payer }, old = this.journal.get(id);
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting plot action ID');
       if (!this.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
@@ -387,6 +437,7 @@ export class Agent {
   }
   craft({ actionId, recipe = 'fusion', inputs, patterns, compounds = [] }) {
     return this.exclusive(async () => {
+      const context = await this.namedContext(); if (context) return craftNamed(this, { actionId, recipe, inputs }, context);
       this.actionId(actionId); const id = `craft/${actionId}`, intent = { recipe, inputs };
       const old = this.journal.get(id), head = await this.trac.head();
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting craft action ID');
@@ -399,6 +450,9 @@ export class Agent {
       const payload = old?.body.p ?? { recipe, request, sig: this.dryRun ? '0'.repeat(128) : signOwnerRequest(this.wallet, 'xc', this.network, request, head.counted) };
       return { ...await this.sendMove(id, 'craft', payload, { intent }), compound: result };
     });
+  }
+  refineCompound(args) {
+    return this.exclusive(async () => { const context = await this.namedContext(); check(context, 'upgrade_required: compound continuation requires v2'); return refineCompoundNamed(this, args, context); });
   }
   actionId(id) { check(typeof id === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(id), 'Choose a stable action ID (1–64 letters, numbers, dot, dash or underscore)'); }
   transaction({ actionId, op, value }) {
@@ -432,6 +486,8 @@ export class Agent {
       this.actionId(actionId); candidate = wireIdentities(candidate);
       ({ receiver, payer, kind } = this.paymentAddresses({ receiver, payer, kind }));
       const id = `mint/${actionId}`, intent = { asset, amount, ...(block === undefined ? {} : { block }), receiver, payer, kind, compound: isCompound }, old = this.journal.get(id);
+      const context = await this.namedContext();
+      if (context) return await resumeLegacyFinancial(this, 'mint', actionId, intent) ?? makeFinancialMint(this, intent, actionId, candidate, context);
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting mint action ID');
       if (!this.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
       if (!this.dryRun && old) {
@@ -484,9 +540,13 @@ export class Agent {
     for (const pattern of patterns) {
       const blocks = new Set(), cursors = new Set(); let cursor;
       do {
-        const page = await this.service.readPage(`/patterns/${patternAsset(pattern)}/blocks`, { found: true, limit: 200, cursor });
+        // v2 serves the found index at /claimed-blocks (pages of up to 50) with decimal-string heights.
+        const v2 = typeof pattern.key === 'string' && /^[0-9a-f]{64}$/.test(pattern.key), asset = v2 ? `p2:${pattern.number}` : patternAsset(pattern);
+        const page = await this.service.readPage(`/patterns/${asset}/${v2 ? 'claimed-blocks' : 'blocks'}`, { found: true, limit: v2 ? 50 : 200, cursor });
+        page.next ??= null;
         check(Array.isArray(page.rows) && (page.next === null || typeof page.next === 'string' && page.next.length > 0), 'Invalid found index page');
-        for (const row of page.rows) { check(integer(row.block) && (row.found || row.minted), 'Invalid found index row'); blocks.add(row.block); }
+        for (const row of page.rows) { const block = typeof row.block === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(row.block) ? Number(row.block) : row.block;
+          check(integer(block) && (row.found || row.minted), 'Invalid found index row'); blocks.add(block); }
         cursor = page.next; check(!cursor || !cursors.has(cursor), 'Repeated found index cursor'); cursors.add(cursor);
       } while (cursor);
       taken[pattern.number] = blocks;
@@ -504,6 +564,8 @@ export class Agent {
     let publication;
     try { publication = await this.service.latest(); } catch (e) { if (e.status === 404) return sendHeader(); throw e; }
     const summary = await this.service.publication(publication.summary);
+    // v2 summaries carry heights as decimal strings ("973603").
+    for (const k of ['tip', 'height']) if (typeof summary[k] === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(summary[k])) summary[k] = Number(summary[k]);
     if (claimWindow(summary.tip, head.tip.height) && summary.tipHash === await this.trac.hashAt(summary.tip)) {
       if (summary.tip >= history.length || history.get(summary.tip).hash !== summary.tipHash)
         return { ...await sendHeader(), claimState: 'history_downloading' };

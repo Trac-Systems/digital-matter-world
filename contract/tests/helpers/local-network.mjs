@@ -13,6 +13,7 @@ import CoinProtocol from '../../protocol.js';
 import CoinContract from '../../contract.js';
 import { deployment } from './harness.mjs';
 import { fanOutValidatorSends } from '../../runtime/fanout.js';
+import { confineLocalUDP } from './loopback.mjs';
 
 export const sleep = ms => new Promise(r=>setTimeout(r,ms));
 export async function until(fn, label, timeout=15000) {
@@ -21,6 +22,7 @@ export async function until(fn, label, timeout=15000) {
   throw new Error(`Timed out: ${label}`);
 }
 export async function localNetwork({ directory = new URL('../../.devnet/', import.meta.url).pathname, cleanup = true } = {}) {
+  confineLocalUDP();
   await fs.mkdir(directory, {recursive:true, mode:0o700});
   const root=await fs.mkdtemp(path.join(directory,'network-'));
   const net=await createTestnet(3); const peers=[]; const buses=[];
@@ -59,9 +61,9 @@ export async function localNetwork({ directory = new URL('../../.devnet/', impor
     await b.state.append(safeEncodeApplyOperation(msg));
     return until(()=>b.state.getNodeEntry(w.address),'MSB funded account');
   }
-  async function client(b) {
-    const w=await wallet('msb-client',true);
-    const config=new MsbConfig({storeName:'msb-client',storesDirectory:path.join(root,'bus-client'),bootstrap:b.config.bootstrap,
+  async function client(b, name = 'msb-client') {
+    const w=await wallet(name,true);
+    const config=new MsbConfig({storeName:name,storesDirectory:path.join(root,'bus-' + name),bootstrap:b.config.bootstrap,
       channel:'dmw-local-msb',dhtBootstrap,enableInteractiveMode:false,enableWallet:true,enableValidatorObserver:false,enableRoleRequester:false}, createMsbConfig(MSB_ENV.DEVELOPMENT));
     const c=new MainSettlementBus(config,w);buses.push(c);await c.ready();fanOutValidatorSends(c.network);
     await c.network.tryConnect(b.wallet.publicKey.toString('hex'),'validator');
@@ -70,7 +72,9 @@ export async function localNetwork({ directory = new URL('../../.devnet/', impor
     return c;
   }
   async function peer(name,b,bootstrap=null, options={}) {
-    const w=await wallet(name);
+    const { wallet: suppliedWallet, ...peerOptions } = options;
+    options = peerOptions;
+    const w=suppliedWallet ?? await wallet(name);
     const config=createConfig(ENV.DEVELOPMENT,{txContentHash:'utf8-strict',storeName:name,storesDirectory:root,bootstrap,channel:'dmw-local-subnet',dhtBootstrap,
       replicate:true,enableUpdater:true,enableBackgroundTasks:true,apiMsgExposed:true,apiTxExposed:true,enableTxlogs:false,...options});
     config.dmw={...deployment,...options.dmw};

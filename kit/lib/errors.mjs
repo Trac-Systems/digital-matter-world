@@ -1,6 +1,13 @@
+import { KIT_UPGRADE_MESSAGE } from '../../rules/src/kit-release.js';
 // Only bounded codes are echoed. Remote bodies and nested errors may contain
 // credentials, private paths or signed payloads.
 export const errorMeanings = Object.freeze({
+  upgrade_required: KIT_UPGRADE_MESSAGE,
+  next_batch_work_capacity: 'The next batch has no remaining work reservation. Retry the same action after it completes.',
+  next_batch_byte_capacity: 'The next batch has no remaining byte reservation. Retry the same action after it completes.',
+  closure_backlog_capacity: 'Earlier claim windows are still settling. Wait for Retry-After, then retry the same saved action.',
+  next_batch_account_capacity: 'The next batch has no remaining account-proof reservation. Retry the same saved action after it completes.',
+  compound_tier_cursor: 'The accepted tier calculation has advanced. Reconcile this action before preparing another step.',
   trac_address_required: 'Use a checksum-valid trac1… Trac address; raw hex keys are not accepted.',
   mint_balance: 'You do not have enough spendable units; an existing request may have reserved them.',
   mint_count: 'A pattern mint must consume exactly this block’s match count.',
@@ -30,7 +37,12 @@ export const errorMeanings = Object.freeze({
 });
 // Only errors known to occur before /moves acceptance qualify. A generic
 // HTTP failure, proxy response or interrupted body is not refusal evidence.
-const moveRefusals = Object.freeze({ request_rate: 429, sender_rate: 429, reveal_capacity: 429, craft_capacity: 429,
+const moveRefusals = Object.freeze({ request_rate: 429, sender_rate: 429, reveal_capacity: 429, craft_capacity: 429, named_proof_budget: 429,
+  next_batch_account_capacity: 429, compound_work_budget: 429, closure_backlog_capacity: 429,
+  account_operation: 429, account_operation_bytes: 429, account_proof_budget: 429, account_leaf_budget: 429,
+  account_insufficient: 400, account_signature: 400, account_replay: 400, craft_authorization: 400, craft_output: 400, compound_tier_cursor: 400, compound_tier_complete: 400,
+  compound_input_unknown: 400, compound_snapshot: 400, compound_ratio: 400, compound_inputs: 400, resonance_charge: 400,
+  upgrade_required: 409, next_batch_work_capacity: 429, next_batch_byte_capacity: 429, ruleset_not_ready: 503, reserved_batch_pending: 503, reservation_context_changed: 503,
   audit_capacity: 429, body_limit: 413, content_type: 415, move_type: 400, invalid_move: 400,
   tip_transition: 503, receipt_window_sealed: 503, discovery_history_adapter_required: 503, pending_capacity: 503 });
 export const isMoveRefusal = (status, code) => Object.hasOwn(moveRefusals, code) && moveRefusals[code] === status;

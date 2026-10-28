@@ -1,3 +1,6 @@
+import { pageRows } from '../src/paging.mjs';
+import { playerSpecs } from '../src/read-specs.mjs';
+import { migrateRegistry } from '../src/registry.mjs';
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -20,16 +23,15 @@ import { TapReader } from '../prod/tap.mjs';
 
 let active;
 mock.module('../prod/bitcoin.mjs', { exports: {
-  createBitcoin: async () => ({ tip: async () => ({ height: active.head.tip.height, hash: active.head.tip.hash }) }),
-  BitcoinViews: class { async view() {} close() {} }
+  createBitcoin: async () => ({ tip: async () => ({ height: active.head.tip.height, hash: active.head.tip.hash }), blockHash: async () => active.head.tip.hash }),
+  BitcoinViews: class {
+    ordinal(value) { return Number(value); }
+    async view() { await active.bootstrapWait?.(); return { hashAt: () => active.head.tip.hash }; }
+    close() {}
+  }
 } });
 mock.module('../prod/tap.mjs', { exports: { createTap: async () => ({
-  async stamp() {
-    active.stamps = (active.stamps ?? 0) + 1;
-    this.observedTip = { height: active.head.tip.height, hash: active.head.tip.hash, checkedAt: Date.now() };
-    return { height: this.observedTip.height, hash: this.observedTip.hash };
-  },
-  tap: path => active.tap(path), at: (_view, read) => read()
+  tap: path => active.tap(path), at: (_view, read) => read(), stamp: async()=>({...active.head.tip}), bitcoin:{blockHash:async()=> active.head.tip.hash}
 }) } });
 mock.module('../prod/ethereum.mjs', { exports: { createEthereum: async () => ({
   rpc: (...args) => active.rpc(...args), escrow: { deposit: async () => active.deposit }
@@ -79,6 +81,24 @@ test('unchanged and lower verified tips do not rewrite the durable highest tip',
   assert.equal(f.store.sequence, before + 2);
   await f.reads.close(); f.reads = await productionReads(f.config, f.store);
   await f.reads.tip(); assert.equal(f.store.sequence, before + 2);
+});
+
+test('production readers do not become available until their header bootstrap completes; failed startup stays closed', async t => {
+  const f = await fixture(t);
+  await f.reads.close();
+  let release, entered;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  f.bootstrapWait = async () => { entered(); await waiting; };
+  let available = false;
+  const opening = productionReads(f.config, f.store).then(reads => { available = true; f.reads = reads; return reads; });
+  await started;
+  assert.equal(available, false, 'gateway adapter and independent signer must await this factory before listening');
+  release();
+  assert.equal((await opening).headerBootstrap.ready, true);
+  await f.reads.close();
+  f.bootstrapWait = async () => { throw Error('source_unavailable'); };
+  await assert.rejects(productionReads(f.config, f.store), /source_unavailable/);
 });
 
 test('production supply matches balances plus mint escrow and locks, with exact integer burns and restart', async t => {
@@ -186,25 +206,22 @@ test('production transaction indexing accepts empty and non-transfer pages befor
 test('production bitmaps use the configured TAP reader and filter historical transfers', async t => {
   const f = await fixture(t);
   assert.deepEqual(await f.reads.bitmaps('unbound'), []);
-  assert.equal(f.stamps, undefined, 'unbound agents never check the TAP/Bitcoin tip');
   f.reads.bindings.current = () => ({ request: { address: 'wallet' } });
   await f.store.put('links', heightKey(2), { block: 2 });
-  const rows = { 'getBitmapWalletHistoricListLength/wallet': 3, 'getBitmapWalletHistoricList/wallet?offset=0&max=500': ['a', 'b', 'c'],
+  const rows = { 'getBitmapWalletHistoricListLength/wallet': 3, 'getBitmapWalletHistoricList/wallet?offset=0&max=3': ['a', 'b', 'c'],
     'getBitmapByInscription/a': { ownr: 'wallet', ins: 'a', bm: 2 }, 'getBitmapByInscription/b': { ownr: 'elsewhere', ins: 'b', bm: 1 },
     'getBitmapByInscription/c': { ownr: 'wallet', ins: 'c', bm: 0 } };
   f.tap = path => { assert.ok(Object.hasOwn(rows, path), path); return rows[path]; };
-  assert.deepEqual(await f.reads.bitmaps('owner'), [{ height: 0, inscription: 'c', linked: false }, { height: 2, inscription: 'a', linked: true }]);
-  assert.equal(f.stamps, 2);
-  f.tap = () => assert.fail('cached wallet must not call TAP');
-  const snapshot = await f.reads.bitmapSnapshot('owner');
-  assert.equal(snapshot.bitmapContext.cached, true); assert.equal(f.stamps, 2);
-  assert.deepEqual(snapshot.bitmapContext.tip, f.head.tip);
+  await f.reads.bitmaps('owner'); await f.reads.bitmapInventory.tick();
+  const page = pageRows(await f.reads.bitmaps('owner'), new URLSearchParams(), { ...playerSpecs.bitmaps, route:'/wallet' });
+  assert.deepEqual(page.entries.map(e=>e.row), [{ height: 0, inscription: 'c', linked: false }, { height: 2, inscription: 'a', linked: true }]);
 });
 
 test('production public treasury reads configured unique addresses and token with integer precision', async t => {
   const f = await fixture(t), address = '0x' + '44'.repeat(20), large = 9007199254740993n;
   await writeFile(f.config.prod.registry, JSON.stringify({ feePolicy: createFeePolicy('100'), link: { treasury: 'tap-wallet' },
-    assets: { p0: { tap: { treasury: 'tap-wallet' }, ethereum: { treasury: address } }, p1: { ethereum: { treasury: address } } } }));
+    assets: { p0: { id: 'p0', tap: { treasury: 'tap-wallet' }, ethereum: { treasury: address } }, p1: { id: 'p1', ethereum: { treasury: address } } } }));
+  await migrateRegistry(f.config.prod.registry);
   let tapCalls = 0, ethCalls = 0;
   f.tap = path => { assert.equal(path, 'getBalance/tap-wallet/tap'); tapCalls++; return large.toString(); };
   f.rpc = async (method, [call, block]) => {
@@ -216,12 +233,13 @@ test('production public treasury reads configured unique addresses and token wit
   assert.equal(result.outstandingSupply.ethereum, '100'); assert.equal(tapCalls, 1); assert.equal(ethCalls, 2);
 });
 
-test('production launch registry and ord-tap null balance produce a successful results view', async t => {
+test('host-157 launch registry and ord-tap null balance produce a successful results view', async t => {
   const f = await fixture(t), treasury = 'bc1q' + 'a'.repeat(38);
   // renderConfig() starts with a link treasury and no registered assets.
   // The real ord-tap getBalance route returns {result:null} for an absent key.
   f.config.prod.ethereum.token = '0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454';
   await writeFile(f.config.prod.registry, JSON.stringify({ feePolicy: createFeePolicy('22600000000000000000'), link: { treasury }, assets: {} }));
+  await migrateRegistry(f.config.prod.registry);
   const tap = new TapReader({ sources: [{ request: async path => {
     assert.equal(path, '/r/tap/getBalance/' + treasury + '/tap'); return { result: null };
   } }], agreement: 1 });
@@ -245,6 +263,7 @@ test('production launch registry and ord-tap null balance produce a successful r
 test('public treasury rejects malformed amounts without disguising upstream errors as zero', async t => {
   const f = await fixture(t);
   await writeFile(f.config.prod.registry, JSON.stringify({ feePolicy: createFeePolicy('100'), link: { treasury: 'wallet' }, assets: {} }));
+  await migrateRegistry(f.config.prod.registry);
   f.rpc = async () => '0x0';
   for (const value of [undefined, {}, [], 0, false, '', '-1', '1.5', 'NaN', '0x10']) {
     f.tap = () => value;
@@ -259,23 +278,24 @@ test('public treasury rejects malformed amounts without disguising upstream erro
   }
 });
 
-test('production public escrow uses the configured deployment start and rejects reorganized logs', async t => {
+test('production public escrow uses named verified receipts and rejects reorganized logs', async t => {
   const f = await fixture(t), payer = '0x' + '44'.repeat(20), id = '55'.repeat(32);
   f.config.prod.ethereum.fromBlock = '0x10';
-  f.deposit = { address: f.config.prod.ethereum.address, blockNumber: '0x20', deposit: { amount: '7' } };
+  f.deposit = { address: f.config.prod.ethereum.address, blockNumber: '0x20', blockHash: 'canonical', deposit: { amount: '7' } };
   const log = { removed: false, address: f.deposit.address, topics: ['event', '0x' + id, '0x' + payer.slice(2).padStart(64, '0')],
     blockNumber: '0x18', blockHash: 'canonical', transactionHash: 'tx', logIndex: '0x0' };
+  f.deposit.depositEvent = log;
   let canonical = true;
   f.rpc = async (method, [filter]) => {
-    if (method === 'eth_getLogs') { assert.equal(filter.fromBlock, '0x10'); assert.equal(filter.toBlock, '0x20'); return [log]; }
     assert.equal(method, 'eth_getBlockByNumber'); return { hash: canonical ? 'canonical' : 'reorg' };
   };
   assert.deepEqual((await f.reads.publicEscrow(payer, id)).transactions, [{ txid: 'tx', blockNumber: '0x18', blockHash: 'canonical', logIndex: '0x0', topic: 'event' }]);
   canonical = false; await assert.rejects(f.reads.publicEscrow(payer, id), /escrow_event_reorg/);
 });
 
-test('production public list failures log their cause and recover through the cached production reader', async t => {
+test('production public list failures log their cause and recover through the cached A1 reader', async t => {
   const f = await fixture(t), { store, reads } = f, files = new Files(join(store.directory, 'static'));
+  await migrateRegistry(f.config.prod.registry);
   f.rpc = async () => '0x0';
   const { assetSupply, publicTreasury } = reads;
   delete reads.assetSupply; delete reads.publicTreasury;

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { ordinalCodec } from '../../rules/src/integers-v2.js';
 import b4a from 'b4a';
 
 export const MAINNET_PARAMS = Object.freeze({ powLimitBits: 0x1d00ffff, interval: 2016, timespan: 1209600, retarget: true, confirmations: 1, branchDepth: 12 });
@@ -40,10 +41,22 @@ export const PRUNE_STEPS = 64;
 // The transition owns atomicity. Headers and indexes are independent records;
 // cleanup never scans all forks; branch validation is bounded by the retained window.
 export class BitcoinBeacon {
-  constructor(store, { checkpoint = GENESIS, params = MAINNET_PARAMS } = {}) {
-    this.store = store; this.checkpoint = checkpoint; this.params = params;
+  constructor(store, { checkpoint = GENESIS, params = MAINNET_PARAMS, recovery = true, integerVersion = 1 } = {}) {
+    this.clock = ordinalCodec(integerVersion === 2);
+    this.store = store; this.checkpoint = { ...checkpoint, height: this.clock.value(checkpoint.height) }; this.params = params; this.recovery = recovery;
+  }
+  async resolveRecovery() {
+    if (this.resolved) return;
+    const active = this.recovery ? await this.store.get('b/recovery') : null;
+    if (active) {
+      const base = this.store, prefix = 'br/' + active.id + '/';
+      this.store = { get: key => base.get(prefix + key), put: (key, value) => base.put(prefix + key, value), del: key => base.del(prefix + key) };
+      this.checkpoint = { ...active.checkpoint, height: this.clock.value(active.checkpoint.height) };
+    }
+    this.resolved = true;
   }
   async init() {
+    await this.resolveRecovery();
     if (await this.store.get('b/best')) return;
     const r = { ...this.checkpoint, prev: null, poster: null, periodTime: this.checkpoint.time,
       times: this.checkpoint.times ?? [this.checkpoint.time] };
@@ -52,20 +65,23 @@ export class BitcoinBeacon {
     this.store.put(`b/h/${r.height}`, r.hash);
     this.store.put('b/gc', r.height);
   }
-  async raw(hash) { return unpack(hash, await this.store.get(`b/r/${hash}`)); }
+  async raw(hash) { await this.resolveRecovery(); const row = unpack(hash, await this.store.get(`b/r/${hash}`)); return row && { ...row, height: this.clock.value(row.height) }; }
   async tip() {
+    await this.resolveRecovery();
     const r = await this.raw(await this.store.get('b/best')) ?? this.checkpoint;
     return { height: r.height, hash: r.hash };
   }
-  async countedHeight() { return await this.store.get('b/cnt') ?? this.checkpoint.height; }
+  async countedHeight() { await this.resolveRecovery(); return this.clock.value(await this.store.get('b/cnt') ?? this.checkpoint.height); }
+  async revision() { await this.resolveRecovery(); return this.clock.value(await this.store.get('b/rev') ?? 0); }
   async hashAt(height) {
-    return await this.store.get(`b/h/${height}`) ?? await this.store.get(`b/u/${height}`) ?? (height === this.checkpoint.height ? this.checkpoint.hash : null);
+    await this.resolveRecovery();
+    return await this.store.get(`b/h/${height}`) ?? await this.store.get(`b/u/${height}`) ?? (this.clock.compare(height, this.checkpoint.height) === 0 ? this.checkpoint.hash : null);
   }
   window() { return Math.max(this.params.interval, this.params.branchDepth, this.params.confirmations); }
-  async floor() { return Math.max(this.checkpoint.height, await this.countedHeight() - this.window()); }
+  async floor() { await this.resolveRecovery(); return this.clock.max(this.checkpoint.height, this.clock.add(await this.countedHeight(), -this.window())); }
   async record(hash) {
     const r = await this.raw(hash);
-    return r && r.height >= await this.floor() ? r : null;
+    return r && this.clock.compare(r.height, await this.floor()) >= 0 ? r : null;
   }
   async save(r) {
     const head = `b/xh/${r.height}`;
@@ -94,7 +110,7 @@ export class BitcoinBeacon {
   }
   async ingestRecord(hash) {
     const r = await this.raw(hash);
-    return r && r.height >= this.ingestFloor ? r : null;
+    return r && this.clock.compare(r.height, this.ingestFloor) >= 0 ? r : null;
   }
   async add(h, poster) {
     // Cheap rejection precedes ancestry reads; direct-parent metadata covers bits/MTP.
@@ -102,59 +118,59 @@ export class BitcoinBeacon {
     if (!target || target > targetFromBits(this.params.powLimitBits) || BigInt(`0x${h.hash}`) > target) return { error: 'header_pow' };
     const parent = await this.ingestRecord(h.prev);
     if (!parent) return { error: 'header_parent' };
-    const boundary = (parent.height + 1) % this.params.interval === 0;
+    const boundary = BigInt(this.clock.add(parent.height)) % BigInt(this.params.interval) === 0n;
     const expected = boundary && this.params.retarget ? retargetBits(parent.bits, parent.time - parent.periodTime, this.params) : parent.bits;
     if (h.bits !== expected) return { error: 'header_bits' };
     const times = [...parent.times].sort((a, b) => a - b);
     if (h.time <= times[Math.floor(times.length / 2)]) return { error: 'header_time' };
-    const height = parent.height + 1, final = await this.countedHeight();
+    const height = this.clock.add(parent.height), final = await this.countedHeight();
     const floor = await this.floor();
     let ancestor = parent;
     const path = [];
-    while (ancestor && ancestor.height >= floor && ancestor.hash !== await this.hashAt(ancestor.height)) {
+    while (ancestor && this.clock.compare(ancestor.height, floor) >= 0 && ancestor.hash !== await this.hashAt(ancestor.height)) {
       path.push(ancestor); ancestor = await this.ingestRecord(ancestor.prev);
     }
-    if (!ancestor || ancestor.height < floor) return { error: 'header_reorg_window' };
+    if (!ancestor || this.clock.compare(ancestor.height, floor) < 0) return { error: 'header_reorg_window' };
     const record = { ...h, height, poster, periodTime: boundary ? h.time : parent.periodTime,
       times: [...parent.times, h.time].slice(-11), chainwork: (BigInt(parent.chainwork) + workFor(h.bits)).toString() };
     await this.save(record);
     const best = await this.raw(await this.store.get('b/best'));
     const counted = [];
     if (BigInt(record.chainwork) > BigInt(best.chainwork)) {
-      const next = Math.max(final, height - this.params.confirmations + 1);
+      const next = this.clock.max(final, this.clock.add(height, 1 - this.params.confirmations));
       this.store.put('b/best', h.hash);
       // Rewrite the changed canonical suffix, including already counted hashes.
       // Previous batches and the monotone deadline clock are never rolled back.
       for (const r of [record, ...path]) {
-        const key = `b/${r.height <= next ? 'h' : 'u'}/${r.height}`;
+        const key = `b/${this.clock.compare(r.height, next) <= 0 ? 'h' : 'u'}/${r.height}`;
         if (await this.store.get(key) !== r.hash) this.store.put(key, r.hash);
-        const other = `b/${r.height <= next ? 'u' : 'h'}/${r.height}`;
+        const other = `b/${this.clock.compare(r.height, next) <= 0 ? 'u' : 'h'}/${r.height}`;
         if (await this.store.get(other) !== null && await this.store.get(other) !== undefined) this.store.del(other);
       }
-      for (let i = height + 1; i <= best.height; i++) {
+      for (let i = this.clock.add(height); this.clock.compare(i, best.height) <= 0; i = this.clock.add(i)) {
         this.store.del(`b/u/${i}`);
-        if (i <= final) this.store.del(`b/h/${i}`);
+        if (this.clock.compare(i, final) <= 0) this.store.del(`b/h/${i}`);
       }
-      for (let i = final + 1; i <= next; i++) {
+      for (let i = this.clock.add(final); this.clock.compare(i, next) <= 0; i = this.clock.add(i)) {
         const hash = await this.hashAt(i);
         this.store.put(`b/h/${i}`, hash); this.store.del(`b/u/${i}`);
         counted.push(await this.raw(hash));
       }
       if (next !== final) this.store.put('b/cnt', next);
-      if (ancestor.height < final) this.store.put('b/rev', (await this.store.get('b/rev') ?? 0) + 1);
+      if (this.clock.compare(ancestor.height, final) < 0) this.store.put('b/rev', this.clock.add(await this.store.get('b/rev') ?? 0));
     }
     return { counted };
   }
   async prune(headers = 1) {
-    let height = await this.store.get('b/gc');
+    let height = this.clock.value(await this.store.get('b/gc'));
     const floor = await this.floor();
     let budget = PRUNE_STEPS * headers;
-    while (height < floor && budget-- > 0) {
+    while (this.clock.compare(height, floor) < 0 && budget-- > 0) {
       const key = `b/xh/${height}`, hash = await this.store.get(key);
-      if (!hash) { height++; continue; }
+      if (!hash) { height = this.clock.add(height); continue; }
       const index = `b/x/${height}/${hash}`, next = await this.store.get(index);
       this.store.del(index); this.store.del(`b/r/${hash}`);
-      if (next) this.store.put(key, next); else { this.store.del(key); height++; }
+      if (next) this.store.put(key, next); else { this.store.del(key); height = this.clock.add(height); }
     }
     if (height !== await this.store.get('b/gc')) this.store.put('b/gc', height);
   }

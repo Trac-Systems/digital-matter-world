@@ -1,14 +1,17 @@
 import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
 import { readFile } from 'node:fs/promises';
-import { check } from './util.mjs';
+import { check, hash } from './util.mjs';
+import { R3_RESOURCES } from './r3-settings.mjs';
 import { rules } from './rules.mjs';
-import { withPublicReads } from '../prod/http.mjs';
+import { claimedPage } from './claimed-feeds.mjs';
+import { claimedPublicRead } from './claimed-public.mjs';
+import { extendedPublicRead, publicProjectionRevision } from './public-projections.mjs';
 import { agentSpecs, blockSpecs, collectionSpecs, eventSpec, patternBlocksSpec, resultSpecs } from './read-specs.mjs';
 import { genericSpec, limitOf, listRoute, numberFilter, pageRows, pointerValue, projectLists } from './paging.mjs';
 
 const notFound = () => { throw Object.assign(Error('not_found'), { status: 404 }); };
 const immutablePath = path => /^\/(?:blocks|receipts)\/.+\.(?:json|bin)$/.test(path) || /-[0-9a-f]{64}\.json$/.test(path);
-const staticPath = path => /^\/(?:blocks|receipts|patterns|records)\/[a-zA-Z0-9/_.-]+\.(?:json|bin)$/.test(path) && immutablePath(path) || path === '/latest.json';
+const staticPath = path => /^\/(?:blocks|receipts|patterns|records)\/[a-zA-Z0-9/:_.-]+\.(?:json|bin)$/.test(path) && immutablePath(path) || path === '/latest.json';
 const withRoute = (spec, route) => ({ ...spec, route });
 const policiesFor = (specs, base, suffix = '') => Object.fromEntries(Object.entries(specs).map(([key, spec]) => ['/' + key, withRoute(spec, base + '/' + key + suffix)]));
 const normalize = input => {
@@ -21,7 +24,7 @@ const normalize = input => {
   return url;
 };
 
-export function createPublicAPI({ views, files }) {
+export function createPublicAPI({ views, files, settings = {} }) {
   const raw = async url => {
     const path = url.pathname, params = url.searchParams;
     if (path === '/status') return views.status();
@@ -45,7 +48,6 @@ export function createPublicAPI({ views, files }) {
     if (agent) {
       if (!agent[2]) return views.profile(agent[1]);
       if (!Object.hasOwn(agentSpecs, agent[2])) return notFound();
-      if (agent[2] === 'bitmaps' && views.reads?.bitmapSnapshot) return views.reads.bitmapSnapshot(agent[1]);
       return { [agent[2]]: await views.agentList(agent[1], agent[2]) };
     }
     const block = /^\/blocks\/(\d+)(?:\/([a-zA-Z]+))?$/.exec(path);
@@ -64,6 +66,14 @@ export function createPublicAPI({ views, files }) {
   const read = async (input, { unpagedPath, depth = 0 } = {}) => {
     check(depth < 3, 'invalid_list_source');
     const url = normalize(input), path = url.pathname, params = new URLSearchParams(url.searchParams), source = path + url.search;
+    const pageSettings = { ...settings, publicPageBytes: (settings.publicPageBytes ?? R3_RESOURCES.publicPageBytes) - Buffer.byteLength(JSON.stringify({ route: path })) - 128 };
+    const claimed = /^\/patterns\/(p[0-9a-z]+|p2:(?:0|[1-9][0-9]*))\/claimed-blocks$/.exec(decodeURIComponent(path));
+    if (claimed) return claimedPage(views.store, claimed[1], params, pageSettings);
+    if (views.store?.get('meta', 'ruleState')?.batchVersion === 2) {
+      const extended = extendedPublicRead(views.store, url, pageSettings); if (extended !== undefined) return extended;
+      const projected = claimedPublicRead(views.store, url, pageSettings); if (projected !== undefined) return projected;
+      if (!(path === '/status' || path === '/list' || /^\/mint\/[0-9a-f]{64}$/.test(path) || staticPath(path))) return notFound();
+    }
     if (path === '/world/map') {
       for (const key of params.keys()) check(['from', 'to'].includes(key) && params.getAll(key).length === 1, 'world_map_query');
       // A bounded canvas projection, not a pageable collection of full plots.
@@ -129,8 +139,27 @@ export function createPublicAPI({ views, files }) {
     return projectLists(value, { source, params, policies, primary, unpagedPath,
       atomicPaths: ['/feePolicy', '/feeQuote', '/feeSettings', '/terms/feeAuthorization', '/terms/feeSettings'] });
   };
-  return { read: input => withPublicReads(async () => publicIdentities(await read(tracReadRoute(input)))), handles(input) {
+  const cache = new Map();
+  const publicRead = async input => {
+    const value = publicIdentities(await read(tracReadRoute(input)));
+    return value?.nextCursor !== undefined ? { ...value, next: value.nextCursor, route: normalize(input).pathname } : value;
+  };
+  return { read: publicRead, async response(input) {
+    const version2 = views.store?.get('meta', 'ruleState')?.batchVersion === 2;
+    // Health/readiness and live mint state also depend on adapters and time.
+    // A database revision alone cannot authenticate a cached answer for them.
+    const path = normalize(input).pathname, cacheable = version2 && path !== '/status' && !path.startsWith('/mint/');
+    const revisionOf = () => version2 ? publicProjectionRevision(views.store, tracReadRoute(input)) : null, revision = revisionOf();
+    if (cacheable && revision !== null && cache.get(input)?.revision === revision) { const saved = cache.get(input); cache.delete(input); cache.set(input, saved); return saved.result; }
+    const bytes = Buffer.from(JSON.stringify(await publicRead(input))), result = { bytes, etag: '"' + hash(bytes) + '"' };
+    if (cacheable && revision !== null && revision === revisionOf()) {
+      const capacity = settings.publicCachePages ?? R3_RESOURCES.publicCachePages;
+      while (cache.size >= capacity) cache.delete(cache.keys().next().value);
+      cache.set(input, { revision, result });
+    }
+    return result;
+  }, handles(input) {
     const path = normalize(input).pathname;
-    return !immutablePath(path) && (staticPath(path) || /^\/records\/batches(?:\/\d+)?$/.test(path) || /^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|agents|events|feed|results|list)(?:\/|$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path));
+    return !immutablePath(path) && (staticPath(path) || /^\/records\/batches(?:\/\d+)?$/.test(path) || /^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|agents|accounts|payouts|events|feed|results|list|window-eligibility|windows)(?:\/|$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path));
   } };
 }

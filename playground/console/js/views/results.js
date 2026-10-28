@@ -89,11 +89,11 @@ export function mount(root, params = {}) {
       { key: 'receiver', label: 'Owner', render: r => hashEl(r.receiver), sortable: false },
     ],
     payments: [
-      { key: 'blck', label: 'Bitcoin block', num: true, render: r => h('span.mono', {}, fmtInt(r.consumed?.blck)), sort: r => r.consumed?.blck },
-      { key: 'action', label: 'Action', render: r => r.consumed?.action === 'claim' ? 'Released' : r.consumed?.action === 'refund' ? 'Refunded' : cell(r.consumed?.action) },
-      { key: 'total', label: 'Total', num: true, render: r => h('span.mono', {}, tap(r.consumed?.total ?? r.consumed?.amt, unit())) },
-      { key: 'split', label: 'Split', sortable: false, render: r => h('span.small', {}, [...(r.consumed?.target ? [`${tap(r.consumed.amt, unit())} treasury`] : []), ...(r.consumed?.al ?? []).map(a => `${tap(a.amt, unit())} ${ROLE[a.rl] ?? a.rl}`)].join(' · ')) },
-      { key: 'tx', label: 'Transaction', render: r => hashEl(r.consumed?.tx), sortable: false },
+      { key: 'blck', label: 'Bitcoin block', num: true, render: r => h('span.mono', {}, fmtInt(r.consumed?.blck ?? r.block)), sort: r => r.consumed?.blck },
+      { key: 'action', label: 'Action', render: r => r.consumed?.action === 'claim' ? 'Released' : r.consumed?.action === 'refund' ? 'Refunded' : cell(r.consumed?.action ?? r.action) },
+      { key: 'total', label: 'Total', num: true, render: r => h('span.mono', {}, tap(r.consumed?.total ?? r.consumed?.amt ?? r.amount ?? r.total, unit())) },
+      { key: 'split', label: 'Split', sortable: false, render: r => h('span.small', {}, [...(r.consumed?.target ? [`${tap(r.consumed.amt, unit())} treasury`] : []), ...(!r.consumed && r.role ? [`${tap(r.amount, unit())} ${r.role}`] : []), ...(r.consumed?.al ?? []).map(a => `${tap(a.amt, unit())} ${ROLE[a.rl] ?? a.rl}`)].join(' · ')) },
+      { key: 'tx', label: 'Transaction', render: r => hashEl(r.consumed?.tx ?? r.reference), sortable: false },
     ],
     payouts: [
       { key: 'beneficiary', label: 'Paid to', render: r => hashEl(r.beneficiary ?? r.to), sortable: false },
@@ -110,9 +110,9 @@ export function mount(root, params = {}) {
     paid: [
       { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
-      { key: 'agent', label: 'Agent', render: r => hashEl(r.agent), sortable: false },
-      { key: 'address', label: 'Paid to', render: r => hashEl(r.address), sortable: false },
-      { key: 'state', label: 'State', render: r => r.state === 'paid' ? pill('paid', 'good') : STATE(r.state) },
+      { key: 'agent', label: 'Agent', render: r => hashEl(r.agent ?? r.beneficiary), sortable: false },
+      { key: 'address', label: 'Paid to', render: r => hashEl(r.address ?? r.to), sortable: false },
+      { key: 'state', label: 'State', render: r => (r.state === 'paid' || r.evidence === 'independently_verified_settlement') ? pill('paid', 'good') : STATE(r.state) },
     ],
     links: [
       { key: 'block', label: 'Bitmap', num: true, render: r => h('a.mono', { href: site.href('world', { b: r.block }) }, `${fmtInt(r.block)}.bitmap`) },
@@ -120,9 +120,9 @@ export function mount(root, params = {}) {
     ],
     ethereum: [
       { key: 'requestId', label: 'Request', render: r => hashEl(r.requestId ?? r.id), sortable: false },
-      { key: 'amount', label: 'Held', num: true, render: r => h('span.mono', {}, tap(r.deposit?.amount, r.unit)) },
-      { key: 'status', label: 'Escrow', render: r => { const st = { 0: 'empty', 1: 'held', 2: 'released', 3: 'refunded' }[r.deposit?.status] ?? r.deposit?.status; return STATE(st === 'held' ? 'held' : st === 'released' ? 'released' : st); } },
-      { key: 'split', label: 'Split on release', sortable: false, render: r => { const d = r.deposit?.split ?? {}; return h('span.small', {}, [['finder', d.finderAmount], ['discoverer', d.discovererAmount], ['Bitmap holder', d.landownerAmount], ['burn', d.burnAmount], ['treasury', d.treasuryAmount]].filter(([, v]) => v && v !== '0').map(([k, v]) => `${tap(v, r.unit)} ${k}`).join(' · ')); } },
+      { key: 'amount', label: 'Held', num: true, render: r => h('span.mono', {}, tap(r.deposit?.amount ?? r.amount, r.unit)) },
+      { key: 'status', label: 'Escrow', render: r => { const st = { 0: 'empty', 1: 'held', 2: 'released', 3: 'refunded' }[r.deposit?.status ?? r.status] ?? r.deposit?.status ?? r.status; return STATE(st === 'held' ? 'held' : st === 'released' ? 'released' : st); } },
+      { key: 'split', label: 'Split on release', sortable: false, render: r => { const d = r.deposit?.split ?? r.split ?? {}; return h('span.small', {}, [['finder', d.finderAmount], ['discoverer', d.discovererAmount], ['Bitmap holder', d.landownerAmount], ['burn', d.burnAmount], ['treasury', d.treasuryAmount]].filter(([, v]) => v && v !== '0').map(([k, v]) => `${tap(v, r.unit)} ${k}`).join(' · ')); } },
       { key: 'confirmations', label: 'Confirmations', num: true },
       { key: 'payer', label: 'Payer', render: r => hashEl(r.payer ?? r.deposit?.payer), sortable: false },
     ],

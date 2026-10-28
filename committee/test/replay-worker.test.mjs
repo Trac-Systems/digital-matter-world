@@ -123,3 +123,7 @@ test('an idle or in-flight worker exit can be retried without restarting the sig
 test('replay timeout setting rejects values that Node would silently clamp', () => {
   for (const timeoutMs of [0, -1, NaN, Infinity, '30000', 1.5, 2147483648]) assert.throws(() => new BatchReplay({ timeoutMs }), /replay_timeout_setting/);
 });
+
+test('replay node cache rejects unbounded or invalid capacities', () => {
+  for (const nodeCacheEntries of [0, -1, NaN, Infinity, '4096', 1.5]) assert.throws(() => new BatchReplay({ nodeCacheEntries }), /replay_node_cache_setting/);
+});

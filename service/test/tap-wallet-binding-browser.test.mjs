@@ -31,6 +31,10 @@ test('TAP Wallet page signs legacy output, reports refusals plainly and shows th
   }, pending.request.address);
   await page.goto(server.url + '/bind-payout/' + pending.id);
   const button = page.getByRole('button', { name: 'Sign with wallet and bind' });
+  // A request link opens its own flow inside the one Mint & wallets page, with no sub-tabs.
+  await page.getByRole('heading', { name: 'Bind payout wallet', exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: '← Mint & wallets' }).getAttribute('href'), '/mint');
+  assert.equal(await page.getByRole('tab').count(), 0);
   await button.click();
   await page.getByText("Your wallet's signature was not accepted. Make sure the wallet shown above is the active account and try again.", { exact: true }).waitFor();
   assert.equal(f.bindings.current(who.address, 'tap'), null);

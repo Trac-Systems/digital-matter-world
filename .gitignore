@@ -1,10 +1,18 @@
-# Generated data and private configuration
-/.*/
-/playground/.*/
+# Local-only files and generated data
+/.local/
+/PLAN-v1*.md
+/HANDOFF-*.md
+/world/
+/briefs/
+/handoffs/
+/reports/
+/REPORT-*.md
 /deploy/targets/*.local.json
 node_modules/
 target/
 .data/
+/playground/.charters/
+/playground/.rehearsal/
 *.log
 .env
 .env.*

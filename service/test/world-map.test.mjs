@@ -6,6 +6,8 @@ import { createPublicAPI } from '../src/public-api.mjs';
 import { serve } from '../src/http.mjs';
 import { rules } from '../src/rules.mjs';
 import { heightKey } from '../src/util.mjs';
+import { Store } from '../src/store.mjs';
+import { temp } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 async function fixture(t) {
@@ -81,4 +83,32 @@ test('mainnet-sized explorer loads all 40,001 plots in one map request and cance
   await page.locator('article.about').waitFor(); release();
   await page.waitForLoadState('networkidle');
   assert.equal(await page.locator('#world-count').count(), 0); assert.deepEqual(errors, []);
+});
+
+
+test('v2 explorer follows map continuations and pattern links read submitted blocks', async t => {
+  const store = await Store.open(await temp()); t.after(() => store.close());
+  const tip = 1000000, calls = [], errors = [];
+  await store.put('meta', 'ruleState', { batchVersion: 2, counted: String(tip) });
+  await store.put('meta', 'head', { tip: String(tip), hash: rules.hash('tip') });
+  await store.put('catalogPatterns', 'p2:0', { number: '0', name: 'v2-known', pat: '[0-9]', fld: 4, dt: 'n', knownMatchCount: '1', tier: 1 });
+  await store.put('claimed2/p2:0', rules.uintKeyV2(String(tip)), { height: String(tip), pattern: '0', count: '1', hash: rules.hash('tip') });
+  for (let i = 0; i < 5; i++) await store.put('links', heightKey(tip - i), { block: String(tip - i), linkHeight: '1' });
+  const api = createPublicAPI({ views: { store }, settings: { patternDetailRows: 2 } });
+  const server = await serve({ intake: { store }, files: { serve: async () => false }, publicAPI: { handles: () => true, read: async path => {
+    calls.push(path);
+    if (path === '/status') return { tip: String(tip), counted: String(tip), feePolicy: { baseFee: '100', unit: { decimals: 18 } } };
+    return api.read(path);
+  } } }); t.after(() => server.close());
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage(); page.on('pageerror', e => errors.push(e.message));
+  await page.goto(server.url + '/explore');
+  await page.waitForFunction(() => document.getElementById('world-count')?.textContent.startsWith('40,001'));
+  await page.waitForLoadState('networkidle');
+  assert.equal(calls.filter(p => p.startsWith('/world/map')).length, 3);
+  await page.goto(server.url + '/pattern/p2:0');
+  await page.waitForLoadState('networkidle');
+  assert.ok(calls.some(p => p.startsWith('/patterns/p2:0/claimed-blocks')));
+  assert.equal(await page.getByRole('heading', { name: 'V2-Known', exact: false }).count() > 0 || await page.locator('h2').filter({ hasText: /v2.known/i }).count() > 0, true);
+  assert.deepEqual(errors, []);
 });

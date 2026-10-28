@@ -107,7 +107,7 @@ block to bound event searches. The reader pins all getters and the event query t
 one latest block number, filters `Deposited` by both request ID and payer,
 verifies that event against `getDeposit(payer,id)`,
 checks the event's canonical block hash, and rechecks the snapshot block hash.
-It validates chain/token and compares its computed hashes to contract utilities.
+It validates chain/token and compares its computed hashes to contract helpers.
 These consistency checks require a trusted RPC source. The operator selects
 that source and its freshness and chain-finality policy.
 
@@ -143,7 +143,7 @@ including the Boolean `adminOrigin`. Policy refuses missing origin data or any
 pending admin-origin recovery, even when mature. Committee-origin proposals may
 be replaced under the normal nonce/epoch/deadline checks.
 `records.committeeRotation()` must independently approve the exact successor, nonce, committee epoch and submission deadline;
-unconfigured adapters refuse. Neither the HTTP proposal nor the RPC digest utility
+unconfigured adapters refuse. Neither the HTTP proposal nor the RPC digest helper
 is authorization to install a successor. Verify successor key possession and
 provision its operators before configuring approval. The policy checks current
 committee, nonce, epoch and inclusive deadline before reserving a rotation slot.

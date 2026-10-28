@@ -14,6 +14,6 @@ export async function create({ wallet, network, config, runtime, runtimeFile = p
     check(runtime.peer.wallet.publicKey.toString('hex') === publicKey(wallet), 'The paid writer must belong to this agent');
     const trac = productionTrac(runtime.peer, { network, msb: runtime.bus, pins: config.trac });
     await trac.head();
-    return { trac, source: headerSource(config.headerSource), close: () => runtime.close() };
+    return { trac, source: headerSource(config.headerSource, config.headerHTTPSettings), close: () => runtime.close() };
   } catch (error) { await runtime.close(); throw error; }
 }

@@ -1,3 +1,4 @@
+import { TapLookupIndex, installTapLookups } from '../prod/tap-index.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installMintPayments } from '../src/mint-payments.mjs';
@@ -12,7 +13,7 @@ function setup(kind='tap', bitcoinNetwork='mainnet'){
   const row={id,request:f.proposal.request,signature:f.proposal.signature,payer:f.data.payer,kind,context:f.data.context,quote:{fees:f.data.payment.fees,split,destinations,price:'100',payableAmount:'100'},paymentIds:[ins],creditIds:[]};
   const transfers=[],items=[],escrow={chainId:'31337',address:address('4'),token:address('5')};let confirmations=1,used=null,raw={s:0},status=1;
   for(const fee of row.quote.fees){items.push({tick:fee.ticker,amt:rules.formatTapAmount(fee.amount),address:fee.to??'burn-looking-address',tt:fee.tt,dta:fee.dta});transfers.push({ins,fail:false,int:true,addr:row.payer,taddr:fee.to??'burn-looking-address',tick:fee.ticker,amt:fee.amount,dta:fee.dta});}
-  const reads={pending:async()=>raw,paymentUsed:async()=>used,included:async()=>({confirmations}),content:async()=>({p:'tap',op:'token-auth',redeem:{items}}),
+  const reads={paymentTransfers: async () => transfers.map((value,index)=>({index,value})),pending:async()=>raw,paymentUsed:async()=>used,included:async()=>({confirmations}),content:async()=>({p:'tap',op:'token-auth',redeem:{items}}),
     tap:async path=>path.startsWith('getAccountRedeemListLength/')?0:path.startsWith('getTransferredListLength/')?transfers.length:path.startsWith('getTransferredList/')?transfers:[],
     escrowDeposit:async()=>({...escrow,payer:row.payer,confirmations,deposit:{payer:row.payer,status,amount:'100',split:expectedEscrowSplit(split,destinations)}}),
     escrowSettled:async()=>({kind:'claim',confirmations})};
@@ -56,7 +57,7 @@ test('expired Ethereum credit reduces only the matching new deposit and is spent
   // Only the burn was left unused by an earlier quote. It covers the next burn.
   for(const fee of old.quote.fees)if(fee.role!=='burn')spent.set(oldKey(fee.role),{used:fee.amount});
   const remaining=row.quote.fees.filter(f=>f.role!=='burn'), partialSplit=expectedEscrowSplit({...old.quote.split,burn:'0'},old.quote.destinations);
-  const reads={pending:async key=>key===old.id?{s:2,o:1}:current,agentAddress:async()=>old.request.owner,paymentUsed:async key=>spent.get(key),
+  const reads={paymentTransfers: async () => transfers.map((value,index)=>({index,value})),pending:async key=>key===old.id?{s:2,o:1}:current,agentAddress:async()=>old.request.owner,paymentUsed:async key=>spent.get(key),
     escrowDeposit:async(payer,key)=>{
       if(key===id&&!hasDeposit)throw Error('escrow_payer');
       return {...escrow,payer,confirmations:1,deposit:{payer,status:2,amount:key===id?'65':'100',split:key===id?partialSplit:expectedEscrowSplit(old.quote.split,old.quote.destinations)}};
@@ -76,6 +77,7 @@ test('captured ord-tap transfer records bind real per-item amounts and leave the
   const paths = [], reads = { pending: async () => ({ s: 0 }), paymentUsed: async () => null, included: async () => ({ confirmations: 1 }), content: async () => captured.payload,
     tap: async path => { paths.push(path); if (path.startsWith('getAccountRedeemListLength/')) return captured.redeems.length; if (path.startsWith('getAccountRedeemList/')) return captured.redeems;
       if (path.startsWith('getTransferredListLength/')) return captured.transfers.length; if (path.startsWith('getTransferredList/')) return captured.transfers; throw Error('unexpected_route'); } };
+  reads.paymentTransfers = async () => captured.transfers.map((value,index)=>({index,value}));
   installMintPayments(reads, { request: () => row, network });
   const result = await reads.mintPayment(id);
   assert.equal(result.receipts.length, 2); assert.ok(result.receipts.every(r => r.confirmations === 1));
@@ -83,17 +85,23 @@ test('captured ord-tap transfer records bind real per-item amounts and leave the
   assert.ok(paths.filter(p => p.includes('?')).every(p => p.includes('max=500')));
 });
 
-test('transaction transfer pagination cannot silently omit items after ord-tap’s 500-row cap', async () => {
-  const f = setup(), transfers = Array.from({ length: 500 }, () => ({ ins: 'unrelated' })).concat(f.transfers);
-  const original = f.reads.tap, offsets = [];
-  f.reads.tap = async path => {
+test('named transfers beyond 1,000 rows retain their original allocation positions across restart', async () => {
+  const f = setup(), transfers = Array.from({ length: 1501 }, () => ({ ins: 'unrelated' })).concat(f.transfers), offsets = [];
+  const indexer = { bitcoin: { blockHash: async () => 'aa' }, stamp: async () => ({ height: 1, hash: 'aa' }), at: async (_at, fn) => fn(), tap: async path => {
+    assert.ok(!path.includes('AccountRedeem'), 'explicit payment must not read payer history');
     if (path.startsWith('getTransferredListLength/')) return transfers.length;
-    if (path.startsWith('getTransferredList/')) { const query = new URL('http://fixture.invalid/' + path).searchParams, offset = Number(query.get('offset')); offsets.push(offset); assert.equal(query.get('max'), '500'); return transfers.slice(offset, offset + 500); }
-    return original(path);
-  };
-  const payment = await f.reads.mintPayment(f.row.id); assert.equal(rules.paymentProgress(payment.fees, payment.receipts).final, true); assert.deepEqual(offsets, [0, 500]);
-  transfers.push(...Array.from({ length: 501 }, () => ({ ins: 'unrelated' })));
-  await assert.rejects(f.reads.mintPayment(f.row.id), /payment_list_bound/);
+    if (path.startsWith('getTransferredList/')) { const query = new URL('http://fixture.invalid/' + path).searchParams, offset = Number(query.get('offset')), size = Number(query.get('max')); offsets.push(offset); return transfers.slice(offset, offset + size); }
+    throw Error('unexpected_route');
+  } };
+  const index = new TapLookupIndex({ indexer }); installTapLookups(f.reads, index);
+  try {
+    const payment = await f.reads.mintPayment(f.row.id);
+    assert.equal(rules.paymentProgress(payment.fees, payment.receipts).final, true);
+    assert.ok(offsets.includes(1500));
+    assert.deepEqual(payment.receipts.map(r=>r.key).sort(), f.transfers.map((_,i)=>rules.paymentItemKey('tap', f.row.paymentIds[0] + '/' + (1501+i))).sort());
+    offsets.length = 0; await f.reads.mintPayment(f.row.id);
+    assert.deepEqual(offsets, [1501,1502,1503], 'warm verification fetches only the nominated inscription items');
+  } finally { index.close(); }
 });
 
 test('regtest reader requires an executed transfer to the network-correct burn address', async () => {

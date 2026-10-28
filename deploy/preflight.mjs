@@ -1,6 +1,9 @@
+import { privateRegistry as readRegistry, registryPages } from './registry.mjs';
 import { supportedNode } from '../node-version.mjs';
 import { pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { TapReader } from '../service/prod/tap.mjs';
+import { indexedAuthority } from '../service/prod/tap-index.mjs';
 import { createRequire } from 'node:module';
 import { loadTarget, validateTarget, need, privateBytes, privateJSON, secret, endpoint, request, rpc, tracRead, sha256 } from './target.mjs';
 import { fundingRequirements } from './costs.mjs';
@@ -66,12 +69,13 @@ export async function preflight(target, { fetchEndpoint = endpoint, ...options }
   }
   for (const [name, file] of fileSlots) await check(name, async () => { await privateBytes(file); return 'Owned 0600 file, outside repositories, no symlinks.'; }, 'Provide a nonempty owned 0600 file outside repositories; do not copy its contents into the target.');
   await check('Private configuration matches the target', async () => {
-    const c = await privateJSON(t.gateway.configFile), registry = await privateJSON(t.gateway.registryFile);
+    const c = await privateJSON(t.gateway.configFile), registry = await readRegistry(t.gateway.registryFile);
     need(c.network === t.network && c.mode === t.mode && c.epoch === t.committee.epoch, 'config');
     need(c.gatewayKey === t.gateway.keyFile && c.local.registry === t.gateway.registryFile, 'paths');
     need(c.local.escrow.address === t.ethereum.escrowAddress && c.local.escrow.token === t.ethereum.tokenAddress && c.local.escrow.chainId === t.ethereum.chainId, 'escrow');
     need(c.committee.length === 5 && c.committee.every((s, i) => s.id === t.committee.members[i].id && s.peer.identity === t.committee.members[i].identity), 'roster');
-    need(registry.assets && !Array.isArray(registry.assets) && Object.values(registry.assets).every(a => a.privilege === t.bitcoin.authorityInscription && a.tap.treasury === t.bitcoin.treasuryAddress && a.ethereum.treasury === t.ethereum.treasuryAddress), 'registry');
+    need(registry.assets && !Array.isArray(registry.assets), 'registry');
+    for (const page of registryPages(registry)) need(page.every(({ value: a }) => a.privilege === t.bitcoin.authorityInscription && a.tap.treasury === t.bitcoin.treasuryAddress && a.ethereum.treasury === t.ethereum.treasuryAddress), 'registry');
     need(hex32(await secret(t.gateway.keyFile)), 'keys');
     const publicConfig = await privateJSON(t.release.publicManifestFile);
     need(publicConfig.network === t.network && publicConfig.escrow?.address === t.ethereum.escrowAddress && publicConfig.escrow?.token === t.ethereum.tokenAddress, 'public config');
@@ -110,10 +114,12 @@ export async function preflight(target, { fetchEndpoint = endpoint, ...options }
   if (eps.indexer) await check('TAP indexer tip and deployed authority', async () => {
     const indexed = (await request(eps.indexer, { path: '/r/tap/getCurrentBlock' })).result;
     need(Number.isSafeInteger(tip) && Number(indexed) >= tip, 'indexer lag');
-    const active = (await request(eps.indexer, { path: '/r/tap/getPrivilegeAuthList' })).result;
-    need(Array.isArray(active) && active.some(a => a.ins === t.bitcoin.authorityInscription), 'authority');
-    const registry = await privateJSON(t.gateway.registryFile);
-    for (const a of Object.values(registry.assets)) {
+    const indexer = new TapReader({ sources: [{ request: path => request(eps.indexer, { path }) }], agreement: 1,
+      bitcoin: { blockHash: height => rpc(eps.bitcoin, 'getblockhash', [height]) }, settings: options.lookupSettings });
+    const active = await indexedAuthority(indexer, join(t.paths.output, 'preflight-tap-lookups.sqlite'), t.bitcoin.authorityInscription, options.lookupSettings);
+    need(active?.ins === t.bitcoin.authorityInscription && await indexer.tap('getPrivilegeAuthCancelled/' + t.bitcoin.authorityInscription) === false, 'authority');
+    const registry = await readRegistry(t.gateway.registryFile);
+    for (const page of registryPages(registry)) for (const { value: a } of page) {
       const d = (await request(eps.indexer, { path: '/r/tap/getDeployment/' + encodeURIComponent(a.indexTick ?? a.tick) })).result;
       need(d?.ins === a.id && d.prv === t.bitcoin.authorityInscription && Number(d.dec) === 0, 'deployment');
     }

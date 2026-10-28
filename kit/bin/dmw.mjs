@@ -14,7 +14,9 @@ import { serveMcp } from '../lib/mcp.mjs';
 import { runTool } from '../lib/tools.mjs';
 import { explainError } from '../lib/errors.mjs';
 import { setup } from '../lib/setup.mjs';
+import { upgradeConfig } from '../lib/upgrade.mjs';
 import { networkProfile, readNetworkJSON, validatePlayerConfig } from '../lib/network.mjs';
+import { manifestTrust } from '../lib/header-manifest.mjs';
 import { HistorySync } from '../lib/history-sync.mjs';
 import { loadRegtestHistory } from '../lib/headers.mjs';
 import { localBitcoinWallet, mempoolBitcoinSource } from '../lib/bitcoin-wallet.mjs';
@@ -54,11 +56,14 @@ async function main() {
   check(supportedNode(), 'Use Node 24.22.1 or newer 24.x');
   const command = args[0] ?? 'help';
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
       ...(opts.import ? { mnemonic: () => secret('DMW_SIGNER_MNEMONIC', 'Recovery words: ') } : {}), ask })); return;
+  }
+  if (command === 'upgrade') {
+    print(await upgradeConfig({ configFile: opts.config, networkFile: opts['network-file'] })); return;
   }
   if (command === 'preflight') {
     const config = opts.config ? await validatePlayerConfig(await readNetworkJSON(opts.config)) : await networkProfile({ network: opts.network, networkFile: opts['network-file'] });
@@ -67,7 +72,11 @@ async function main() {
   if (command === 'verify-history') { check(opts.headers, '--headers is required'); print(historyProof(await loadHistory(opts.headers))); return; }
   if (command === 'download') {
     check(opts.output, '--output is required');
-    print(await downloadHeaders({ output: opts.output, ...(opts.source ? { source: headerSource(opts.source) } : {}), ...(opts.independent ? { independent: headerSource(opts.independent) } : {}),
+    const pins = opts.config ? await validatePlayerConfig(await readNetworkJSON(opts.config)) : opts.network === 'regtest' ? null : await networkProfile();
+    const source = headerSource(opts.source ?? pins?.headerSource ?? 'https://dmtworld.tap-protocol.com', pins?.headerHTTPSettings);
+    print(await downloadHeaders({ output: opts.output, source,
+      manifestTrust: pins?.headerManifestTrust ?? (pins && manifestTrust(pins.gatewayKey)), chunkLimits: pins?.headerChunkLimits,
+      ...(opts.independent ? { independent: headerSource(opts.independent) } : {}),
       ...(opts.end ? { end: Number(opts.end) } : {}), ...(opts.network === 'regtest' ? { network: 'regtest', independent: opts.independent ? headerSource(opts.independent) : null } : {}),
       onProgress: (() => { let last = ''; return p => { const mark = `${p.phase ?? 'downloading'} ${Math.floor(100 * p.count / p.target)}%`; if (mark !== last) { last = mark; process.stderr.write(mark + '\n'); } }; })() })); return;
   }
@@ -117,12 +126,12 @@ async function main() {
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
     const historyTool = ['search_patterns', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
     const session = ['mcp', 'once'].includes(command);
-    const source = adapter.source ?? (config.headerCookie ? regtestSource({ origin: opts.source ?? config.headerSource, cookiePath: config.headerCookie }) : headerSource(opts.source ?? config.headerSource));
+    const source = adapter.source ?? (config.headerCookie ? regtestSource({ origin: opts.source ?? config.headerSource, cookiePath: config.headerCookie }) : headerSource(opts.source ?? config.headerSource, config.headerHTTPSettings));
     let history = adapter.history;
     if (!history && (session || historyTool)) {
       if (source.manifest && (production || config.headerSource || opts.source)) {
         historySync = new HistorySync({ output: opts.headers ?? config.headers ?? join(directory, 'headers.bin'), source,
-          network: agent.bitcoinNetwork, independent: agent.bitcoinNetwork === 'mainnet' ? headerSource('https://blockstream.info') : null });
+          network: agent.bitcoinNetwork, manifestTrust: config.headerManifestTrust ?? manifestTrust(config.gatewayKey), chunkLimits: config.headerChunkLimits, independent: agent.bitcoinNetwork === 'mainnet' ? headerSource('https://blockstream.info') : null });
         historySync.start();
         if (command !== 'mcp') { await historySync.pending; history = historySync.available(); }
       } else if (opts.headers ?? config.headers) history = await (agent.bitcoinNetwork === 'regtest' ? loadRegtestHistory : loadHistory)(opts.headers ?? config.headers);

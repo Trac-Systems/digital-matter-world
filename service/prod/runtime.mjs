@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { createHmac } from 'node:crypto';
 import { readSecret, privatePath, readPrivateJSON } from './config.mjs';
 import { requireValue as check } from './http.mjs';
 import { validateDeployment } from '../../contract/state.js';
@@ -9,6 +10,7 @@ import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { rules } from '../src/rules.mjs';
 import { TRAC_MAINNET, msbIdentity } from './mainnet.mjs';
 import { fanOutValidatorSends } from '../../contract/runtime/fanout.js';
+import { installTerminalBarrier } from '../../contract/runtime/terminal-barrier.js';
 const patched = new WeakSet();
 export function installValidatorFanout(network) {
   if (patched.has(network)) return;
@@ -56,6 +58,21 @@ export async function waitForValidators(bus, c, { timeoutMs = 120000, intervalMs
 const require = createRequire(new URL('../../contract/package.json', import.meta.url));
 const dependency = name => import(pathToFileURL(require.resolve(name)).href);
 
+// MSB and Peer each own a listening Noise swarm. Advertising the same public
+// key from both lets DHT reconnects reach the wrong protocol and evict healthy
+// validator connections. Derive a stable MSB-only transport identity from the
+// retained role key; never replace the Peer authority or write new custody.
+export async function msbTransportWallet(wallet, directory) {
+  check(Buffer.isBuffer(wallet.secretKey) && wallet.secretKey.length === 64
+    && typeof directory === 'string' && directory.length > 0, 'trac_transport_identity');
+  const { ed25519 } = await dependency('@noble/curves/ed25519');
+  const seed = createHmac('sha256', wallet.secretKey).update('dmw-msb-transport-v1\0' + directory).digest();
+  try {
+    const publicKey = Buffer.from(ed25519.getPublicKey(seed));
+    return await wallet.constructor.fromKeyPair({ publicKey, secretKey: Buffer.concat([seed, publicKey]) });
+  } finally { seed.fill(0); }
+}
+
 export function fundingRuntimeConfig(c) {
   check(c.mode === 'prod' && c.localOnly !== true, 'trac_runtime_config');
   check(typeof c.fundingDirectory === 'string' && c.fundingDirectory.length > 0 &&
@@ -94,7 +111,7 @@ export async function openFundingRuntime({ configFile }) {
 export async function openRuntime({ configFile }) {
   return connectRuntime(await readPrivateJSON(configFile, { maxBytes: 1000000 }));
 }
-export async function connectRuntime(c, { create = false } = {}) {
+export function validateConnectionConfig(c, { create = false } = {}) {
   check(c.mode === 'prod' && c.localOnly !== true, 'trac_runtime_config');
   validateDeployment(c.dmw);
   check(rules.stableJSON(c.dmw.beacon?.params) === rules.stableJSON(MAINNET_PARAMS) && c.dmw.beacon.checkpoint.height % 2016 === 0, 'trac_mainnet_deployment');
@@ -102,22 +119,29 @@ export async function connectRuntime(c, { create = false } = {}) {
   validateValidators(c);
   for (const field of (create ? ['msbBootstrap'] : ['msbBootstrap', 'subnetBootstrap'])) check(/^[0-9a-f]{64}$/.test(c[field]), 'trac_bootstrap');
   for (const field of ['msbChannel', 'peerChannel']) check(typeof c[field] === 'string' && c[field].length > 0 && c[field].length <= 128, 'trac_channel');
+  return c;
+}
+export async function connectRuntime(c, { create = false } = {}) {
+  validateConnectionConfig(c, { create });
   await privatePath(c.directory, { directory: true }); await readSecret(c.msbWallet); await readSecret(c.peerWallet);
   const [{ Peer, Wallet, createConfig, ENV, ensureTextCodecs }, { MainSettlementBus }, { createConfig: msbConfig, ENV: MSB_ENV }, { default: PeerWallet }, { default: Contract }, { default: Protocol }] = await Promise.all([
     dependency('trac-peer'), dependency('trac-msb/src/index.js'), dependency('trac-msb/src/config/env.js'), dependency('trac-wallet'), import('../../contract/contract.js'), import('../../contract/protocol.js')
   ]);
-  await ensureTextCodecs(); let peer, bus, closed = false;
-  const close = async () => { if (closed) return; closed = true; try { await peer?.close(); } finally { try { await peer?.store.close(); } finally { await bus?.close(); } } };
+  await ensureTextCodecs(); let peer, bus, barrier, closed = false;
+  const close = async () => { if (closed) return; closed = true; barrier?.close(); try { await peer?.close(); } finally { try { await peer?.store.close(); } finally { await bus?.close(); } } };
   const wallet = async (Class, file) => { const w = new Class(); await w.ready; w.importFromFile(file, Buffer.alloc(0)); return w; };
   try {
     const mc = msbConfig(MSB_ENV.MAINNET, { bootstrap: c.msbBootstrap, channel: c.msbChannel, dhtBootstrap: c.dhtBootstrap, storesDirectory: c.directory, storeName: 'msb', enableInteractiveMode: false, enableWallet: true, enableValidatorObserver: true, enableRoleRequester: false, enableTxApplyLogs: false, enableErrorApplyLogs: false, debug: false });
-    bus = new MainSettlementBus(mc, await wallet(PeerWallet, c.msbWallet)); await bus.ready();
+    const retainedMSB = await wallet(PeerWallet, c.msbWallet);
+    const transportMSB = c.dmw.v2 ? await msbTransportWallet(retainedMSB, c.directory) : retainedMSB;
+    bus = new MainSettlementBus(mc, transportMSB); await bus.ready();
     await waitForValidators(bus, c);
     installValidatorFanout(bus.network);
     const pc = createConfig(ENV.MAINNET, { bootstrap: create ? null : c.subnetBootstrap, channel: c.peerChannel, dhtBootstrap: c.dhtBootstrap, storesDirectory: c.directory, storeName: 'peer', txContentHash: 'utf8-strict', enableInteractiveMode: false, enableTxlogs: false, replicate: true, enableUpdater: true, enableBackgroundTasks: true, apiMsgExposed: true, apiTxExposed: true, maxTxDelay: 21600, txPoolMaxSize: 10000 });
     pc.dmw = c.dmw;
     await installPeerKey(c.peerWallet, pc.keyPairPath);
     peer = new Peer({ config: pc, msb: bus, wallet: await wallet(Wallet, c.peerWallet), protocol: Protocol, contract: Contract }); await peer.ready();
-    return { peer, bus, close };
+    if (c.dmw.v2) barrier = installTerminalBarrier(peer);
+    return { peer, bus, barrier, close };
   } catch { await close(); throw Error('trac_runtime_unavailable'); }
 }

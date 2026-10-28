@@ -4,12 +4,7 @@ import { check, equal } from './crypto.mjs';
 
 // Balance and hold reads start at the accepted contract head. Earlier operations
 // in the proposed batch are applied locally, never read back from the gateway.
-export async function verifyBatchEvidence(options) {
-  const monetary = options.files.find(file => file.ops.some(op => ['rq', 'mp', 'mc'].includes(op.op)));
-  const view = monetary && { tip: monetary.tip, tipHash: monetary.tipHash };
-  return monetary && options.reads.withSnapshot ? options.reads.withSnapshot(view, () => readBatchEvidence(options)) : readBatchEvidence(options);
-}
-async function readBatchEvidence({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, context, files, authorizedMint, confirmations = 1 }) {
+export async function verifyBatchEvidence({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, context, files, authorizedMint, confirmations = 1 }) {
   const balances = new Map(), holds = new Map(), nonces = new Set(), requests = new Set();
   const at = { counted: context.counted, last: context.last };
   const balance = async (owner, asset) => {

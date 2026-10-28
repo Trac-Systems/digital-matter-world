@@ -94,9 +94,9 @@ adapter boundary. Keep all data and credentials private.
 
 ## Live fees
 
-The operator supplies B to the command as a positive decimal TAP amount, with
+The operator supplies the base price to the command as a positive decimal TAP amount, with
 at most 18 fractional digits. For example, `22.6` stores `22600000000000000000`
-atomic TAP units. B represents $1 worth of TAP at the operator's chosen rate;
+atomic TAP units. The launch base price represents $1 worth of TAP at the operator's chosen rate;
 the service does not fetch a market price. Both payment routes use that same
 atomic integer for finds, compounds and links.
 
@@ -110,7 +110,7 @@ export npm_config_userconfig=/dev/null
 node service/scripts/base-fee.mjs /absolute/private/gateway.json --base-fee 22.6 --link 3 --tier-multipliers 1,3,10,30,100 --compound-minimum 10
 ```
 
-The command atomically replaces the registry. New quotes use the new B and multipliers on the
+The command atomically replaces the registry. New quotes use the new base price and multipliers on the
 next read, with no restart, signal, waiting period or scheduled activation.
 The operator registry must contain one global `feePolicy` with `current` and
 `revisions`. Startup fails if it is missing or invalid. Initialize it with
@@ -119,7 +119,7 @@ The operator registry must contain one global `feePolicy` with `current` and
 `{id, baseFee, activeFrom, retiredAt, feeSettings?}`.
 `feeSettings` contains `link`, five `tierMultipliers`, and `compoundMinimum`;
 all must be integers in 1..10000, and every resulting price must fit TAP amounts.
-Launch settings select link 3 (67.8 TAP at B = 22.6), tiers 1/3/10/30/100 and
+Launch settings select link 3 (67.8 TAP at a base price of 22.6 TAP), tiers 1/3/10/30/100 and
 compound minimum 10. The unconfigured legacy fallback keeps link 20; never
 change it to reprice existing requests. Asset and link configuration
 contains destinations and asset metadata only. Retain every revision when
@@ -149,7 +149,7 @@ deployments must use `dec:"18"`; matter and compound deployments retain `dec:"0"
 
 Each signer verifies the quote and its request-bound acceptance against its
 configured gateway public key and the retained operator policy revision. It
-recomputes the price using that B. Signature, request, rail, scope and validity
+recomputes the price using that base price. Signature, request, rail, scope and validity
 checks reject substituted or expired quotes. Other independent payment,
 ownership and expiry checks still apply. Custom read adapters implement
 `mintFeeTerms(id)` with the same authenticated pinned-price semantics; the
@@ -394,5 +394,10 @@ The positional base-fee command remains supported. Omitted flags retain their
 previous values. `--registry /absolute/registry.json` updates a registry directly;
 `--at MILLISECONDS` gives independently updated copies the same revision ID.
 The `/status` and `/operator/status` pages expose the live multipliers.
-Retain existing policy revisions and deployment pins when updating configured
-registry copies.
+Host 157 also pins registry policy in its coordination documents: update those
+local policies together, retaining the launch pins, as described in
+[the fee rollout guide](../deploy/host-157/FEES.md). Do not replace history.
+
+Immutable signed header distribution, key rotation, bounded client cache cleanup,
+operator resource settings and gateway/signer seed checkpoints are documented in
+[the header distribution runbook](docs/header-distribution.md).

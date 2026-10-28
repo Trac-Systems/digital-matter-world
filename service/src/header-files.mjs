@@ -7,25 +7,29 @@ import { createGzip } from 'node:zlib';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { check, syncDirectory } from './util.mjs';
+import { HeaderChunks } from './header-chunks.mjs';
 
-const archiveName = /^headers\/(mainnet|regtest)-(0|[1-9][0-9]{0,6})-([0-9a-f]{64})\.bin(\.[0-9a-f]{64}\.gz)?$/;
+const archiveName = /^headers\/(mainnet|regtest)-(0|[1-9][0-9]*)-([0-9a-f]{64})\.bin(\.[0-9a-f]{64}\.gz)?$/;
 
 // Only public canonical headers go here. The production adapter has already
 // checked this history against Core and the contract beacon. Clients must still
 // verify the archive from genesis and check its tip independently.
 export class HeaderFiles {
-  constructor({ history, files, network }) {
+  constructor({ history, files, network, store = history.store, chunkSettings, secret, signingEpoch }) {
     check(['mainnet', 'regtest'].includes(network), 'header_network');
     Object.assign(this, { history, files, network });
+    if (store?.get('meta', 'ruleState')?.batchVersion === 2) this.chunks = new HeaderChunks({ store, history, files, network, settings: chunkSettings, secret, signingEpoch });
   }
+  tick() { return this.chunks?.tick(); }
   async manifest() {
+    if (this.chunks) return this.chunks.manifest();
     if (this.building) return this.building;
     this.building = this.snapshot();
     try { return await this.building; } finally { this.building = null; }
   }
   async snapshot() {
     const { history, files, network } = this, height = history.length - 1;
-    check(height >= 0 && height <= 2000000, 'header_history_unavailable', 503);
+    check(Number.isSafeInteger(height) && height >= 0 && Number.isSafeInteger((height + 1) * 80), 'header_history_unavailable', 503);
     const tip = history.hashAt(height);
     if (!this.current) {
       try {
@@ -85,15 +89,18 @@ export class HeaderFiles {
   }
   async serve(req, res) {
     if (!['GET', 'HEAD'].includes(req.method)) return false;
+    if (this.chunks && await this.chunks.serve(req, res)) return true;
     const path = req.url;
     if (path === '/headers/manifest.json') {
       const bytes = Buffer.from(JSON.stringify(await this.manifest()));
       res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'public, max-age=5, must-revalidate');
       res.setHeader('Content-Length', bytes.length); res.end(req.method === 'HEAD' ? undefined : bytes); return true;
     }
-    const at = /^\/headers\/height\/(0|[1-9][0-9]{0,6})\.json$/.exec(path);
+    const at = /^\/headers\/height\/(0|[1-9][0-9]*)\.json$/.exec(path);
     if (at) {
-      const height = Number(at[1]), hash = this.history.hashAt(height), top = this.history.length - 1;
+      const height = Number(at[1]);
+      check(Number.isSafeInteger(height), 'header_missing', 404);
+      const hash = this.history.hashAt(height), top = this.history.length - 1;
       check(hash, 'header_missing', 404);
       const bytes = Buffer.from(JSON.stringify({ height, hash, tip: { height: top, hash: this.history.hashAt(top) } }));
       res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'public, max-age=1, must-revalidate');

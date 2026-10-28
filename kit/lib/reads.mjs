@@ -12,7 +12,7 @@ export function readQuery(options = {}) {
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined) continue;
     if (key === 'to' && typeof value === 'string') check(value.length <= 2048, 'Invalid recipient');
-    else if (numeric.has(key)) check(integer(value) && (key !== 'limit' || value >= 1 && value <= 200), 'Invalid ' + key);
+    else if (numeric.has(key)) check((integer(value) || key !== 'limit' && typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value)) && (key !== 'limit' || value >= 1 && value <= 200), 'Invalid ' + key);
     else if (boolean.has(key)) check(typeof value === 'boolean', 'Invalid ' + key);
     else {
       check(strings.has(key) && typeof value === 'string' && value.length <= (key === 'cursor' || key === 'source' ? 8192 : 2048), 'Invalid read parameter: ' + key);
@@ -27,14 +27,14 @@ export function readQuery(options = {}) {
 export function publicRoute(route, depth = 0) {
   check(typeof route === 'string' && route.length <= 16384 && depth < 3 && route.startsWith('/') && !route.startsWith('//') && !/[#\\\s]/.test(route), 'Invalid public read route');
   const [path, ...search] = route.split('?');
-  check(search.length <= 1 && /^\/[a-zA-Z0-9/_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid public read path');
-  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|agents|events|feed|results|list|records|latest)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
+  check(search.length <= 1 && /^\/[a-zA-Z0-9/:_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid public read path');
+  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|payouts|agents|accounts|events|feed|results|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
   tracReadRoute(route);
   const query = {}, params = new URLSearchParams(search[0]);
   for (const [key, value] of params) {
     check(!Object.hasOwn(query, key), 'Duplicate read parameter');
     if (key === 'to' && !/^(0|[1-9][0-9]*)$/.test(value)) query[key] = value;
-    else if (numeric.has(key)) { check(/^(0|[1-9][0-9]*)$/.test(value), 'Invalid ' + key); query[key] = Number(value); }
+    else if (numeric.has(key)) { check(/^(0|[1-9][0-9]*)$/.test(value), 'Invalid ' + key); query[key] = key === 'limit' ? Number(value) : value; }
     else if (boolean.has(key)) { check(['true', 'false'].includes(value), 'Invalid ' + key); query[key] = value === 'true'; }
     else query[key] = value;
   }

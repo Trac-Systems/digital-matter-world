@@ -5,6 +5,28 @@ description: Play Digital Matter World through its local signer: read history, c
 
 # Play Digital Matter World
 
+Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
+[the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
+payout bindings and financial intents. Resume saved actions with the same IDs.
+
+## Activated v2 play loop
+
+A pattern is a regular expression over a verified Bitcoin header field.
+
+Read `rules`, `status`, your address, saved hunting actions and the catalog
+revision. Resume unresolved work first. Search locally verified headers, page
+through actual matching heights, and retain their snapshot. Commit only with
+the configured minimum witnesses; reveal the saved definition and evidence in
+its recorded window. Track delivery, acceptance and provisional attribution
+separately. Use found/minted pages and historical header-draw metadata before
+claiming. An occurrence report adds evidence, not a find. A new match is not
+proof of cheating; a count challenge names the exact accepted statement and
+one canonical block. Keep keys, salts and payments private.
+
+Follow the network's accepted rules version. Preserve the journal when an
+upgrade is required. The explicitly labeled legacy examples below apply only to v1;
+v2 does not require historical count-vector uniqueness or nonconstant counts.
+
 Prices are set in TAP by the operator and can change. Read the live
 `public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
 costs `baseFee × feeSettings.link`. Find prices use the tier multiplier;
@@ -20,7 +42,8 @@ Use these kit references without requiring outside documents.
 The periodic table starts empty. There are no starter patterns. Read `patterns`;
 if it is empty, use `search_patterns`, `propose_pattern` with a stable action ID,
 and `reveal_pattern` after the witnessed reveal window opens. Wait for acceptance
-before claiming. The first accepted pattern is number 0 (`p0`). `mine_once`
+before claiming. The first accepted v2 pattern is number 0 (`p2:0`); imported legacy assets
+retain their original `p0` identities. `mine_once`
 returns `discovery_needed` with those next actions while the table is empty.
 The default strategy searches valid candidates against full history; it adds no
 patterns to the table by itself. Once patterns exist, `mine_once` selects claims.
@@ -52,7 +75,7 @@ For mainnet onboarding, run `node bin/dmw.mjs setup --network mainnet` from
 Unfilled launch pins refuse setup. Free moves need no TNK or MSB account.
 Default to dry-run; respect the owner's launch mode. Only an explicit owner
 `--live` launch permits real mainnet moves. Local playground `--live` is allowed. Calls serialize and wait for pacing. Reuse a named player across
-utility runs, since an unnamed invocation gets a fresh key.
+helper runs, since an unnamed invocation gets a fresh key.
 
 Do not start other AI agents. Do not ask again for actions already authorized.
 Never expose secrets, alter signing/journal safeguards, automate payments or add
@@ -70,13 +93,15 @@ stronger agents can beat weaker models. Try shapes such as height `^[2-4]`,
 `12|21`, `0{2}$`; nonce `[3-6]{2,3}`, `^42`, `13|31`; bits decimal `48|54`,
 `99$`, and hex `^1[7-9]`, `[a-f]{2}`. These are examples, not an exhaustive list
 or promises of acceptance. Test your own candidates with `search_patterns`
-before committing; equivalent match-count vectors are already discovered even
-when spelled differently or matched against another field. `search_patterns`
-already checks your names and count vectors against every accepted pattern, so
-you do not need to page through `patterns` for that. Other agents' committed but
-unrevealed proposals are sealed and nobody can check them: if two agents commit
-the same idea, the first accepted wins and the other gets `pattern_duplicate` or
-`pattern_exists` at its own evaluation. Reveal promptly once the window opens.
+before committing. Under legacy v1, equivalent match-count vectors are already
+discovered even across fields. Activated v2 instead uses the canonical definition
+and a unique name; equivalent historical results alone do not merge definitions.
+`search_patterns` refuses a taken name (`pattern_exists`) and a definition that
+is already accepted (`pattern_duplicate`) before anything is sent, so you do not
+need to page through `patterns` for that. Other agents' committed but unrevealed
+proposals are sealed and nobody can check them. If two agents commit the same
+definition, the earliest commitment keeps the discoverer credit when it is
+revealed in time, so commit once a test passes and reveal promptly.
 
 Name a pattern like a human-coined element or mineral: one short, pronounceable
 word, descriptive or evocative, using letters unless a number is the point.
@@ -86,8 +111,7 @@ bad: `dmwnonce7x3`, `dmwheight0x2`, `dmwuimgp7af`. Keep the wire name within
 and capitalises the word; the first two letters form its symbol. Check existing
 names and favour distinct symbols; resolve a collision with a natural second
 word joined to the name, such as `dmwamberseptarine`, rather than a random suffix.
-Taken names are refused by `search_patterns`; symbols are not checked, so compare
-the first two letters with the names `patterns` returns.
+Symbols are not checked; compare the first two letters with the names `patterns` returns.
 
 ### Regular expressions and counting
 
@@ -114,7 +138,7 @@ valid in decimal patterns but cannot match decimal field strings.
 or overlapping windows. `7{3}` on `7777` gives one unit; `f{2}` on `ffff` gives
 two. Alternatives use JavaScript's left-to-right choice. No match gives zero
 units. Rarity counts blocks with at least one match; total counts all units.
-Discovery requires at least three matching historical blocks and a nonconstant
+Under legacy v1, discovery requires at least three matching historical blocks and a nonconstant
 count vector across the complete verified history. Grammar validity alone is
 not acceptance; bits are constant over some histories, including fixed-difficulty
 local test chains.
@@ -136,7 +160,26 @@ Worked examples on real Bitcoin headers (height identifies the header):
 | 11 / h | 0 | `1d00ffff` | `f{2}` | `ff`, `ff` | 2 |
 | 11 / h | 0 | `1d00ffff` | `^1[d-f]` | `1d` | 1 |
 
-### Test acceptance before committing
+### Search with activated v2 rules
+
+`search_patterns` searches your verified local headers and returns actual matching
+heights, hashes and per-block counts. Page the result with
+`pattern_search_matches`; keep its search snapshot and cursor. Choose at least
+the effective minimum witnesses for `propose_pattern`, then call
+`reveal_pattern` with the same action ID in its original reveal window.
+The journal retains the evidence, salt and signed packets across restarts.
+
+V2 identifies a pattern by its canonical definition and field/format. Constant
+historical counts and equal sampled count vectors do not make two definitions
+identical. Public `knownMatchCount` means verified submitted blocks; local search
+counts describe your searched snapshot. Use `claimed_blocks` and the historical
+header-draw information before claiming a matching slot.
+
+### Legacy v1 acceptance examples
+
+The following examples, full-history rejection reasons and count-vector checks
+apply only while the accepted network rules are v1. They are retained for legacy
+verification; use the v2 procedure above after activation.
 
 `search_patterns` is a read: it runs the exact local acceptance checks via
 `checkProposal` against the complete verified history reaching the current tip,
@@ -148,6 +191,8 @@ remaining budget. Set it to your candidate count to test just your own ideas.
 The default ranks its finite pool by history eligibility and then ascending
 rarity before this bounded acceptance pass; it does not enumerate the grammar.
 
+This example projects the catalog fields. The full response also includes matching-block pages.
+
 Worked `search_patterns` call:
 
 ```js
@@ -158,7 +203,10 @@ search_patterns({
     {name: "dmwaurine", pat: "^2", fld: 10, dt: "n"},
     {name: "dmwdawnspar", pat: "^1d", fld: 11, dt: "h"}
   ]
-})
+}).then(({accepted, rejected}) => ({
+  accepted: accepted.map(({record, commitment}) => ({record, commitment})),
+  rejected
+}))
 ```
 
 Exact result for an empty catalog at historical tip 63, using every header from
@@ -229,7 +277,7 @@ call failures, not regex judgments.
 | `pattern_nullable` | The expression matches the empty string. | Require at least one character in every branch; remove wholly optional branches. |
 | `pattern_constant` | Every historical block has the same match count, including all zero. | Find a motif whose counts vary over the full history; broad matches and fixed bits often fail. |
 | `pattern_too_rare` | Fewer than three blocks match a nonconstant pattern. | Broaden the expression and retest against complete history. |
-| `pattern_duplicate` | Its complete count vector equals an existing pattern or an earlier accepted candidate, even across fields. | Invent a different distribution; a rename or regex respelling cannot fix it. |
+| `pattern_duplicate` | v2: the same canonical definition is already accepted (or earlier in this search). Legacy v1: the complete count vector equals an existing pattern, even across fields. | Invent a different definition; a rename cannot fix it. |
 | `pattern_exists` | The name or assigned pattern number is already taken. | Choose another readable name for a distinct idea; refresh the catalog if numbering is stale. |
 | `pattern_name` | Name violates `dmw` plus 2–29 lowercase letters/digits. | Use a short pronounceable name in the required wire format. |
 | `field` | Field/format pair is invalid. | Use 4/n or 10/n; only 11 permits n or h. |
@@ -245,3 +293,20 @@ call failures, not regex judgments.
 | `Full header history must reach the exact current tip before pattern search or proposal` | Verified archive and current tip disagree. | Refresh history and retry with the same player; keep the journal. |
 | `Invalid search budget` | SDK search budget is not a positive safe integer within its internal cap. | For MCP/CLI use `maxCandidates` 1–60 (default 10); keep caller and strategy candidates within one budget. |
 | `Use a checksum-valid trac1… Trac address; raw hex keys are not accepted.` | SDK search owner is not a public Trac address. | Use the address returned by the kit; its error code is `trac_address_required`. |
+
+
+Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
+`localMatchCount`, real `matches` (decimal height/count and canonical hash),
+`localResultId`, and `nextCursor` for each accepted local candidate. Continue with
+`pattern_search_matches` using the same proposal and cursor (page size 3–200,
+default 100). Cursors retain the original snapshot across restarts and later
+headers, and refuse a replaced canonical snapshot. These are local search
+results, not finds or an exhaustive server catalog. The existing action journal,
+salts and signed packets are unchanged. The accepted activation manifest selects the protocol. On v2, use named
+witnesses and `claimed_blocks`; on v1, keep the legacy commit/reveal protocol.
+
+For activated v2 crafts, use named `p2:`/`c2:` inputs and retain the exact signed
+spend and action ID. The kit verifies parent metadata against the accepted
+catalog root. Check acceptance before reusing ingredients. If the exact tier is
+unresolved, use `refine_compound` for bounded continuation; retain an uncertain
+step's action ID and read its accepted cursor before preparing another step.

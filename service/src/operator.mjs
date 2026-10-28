@@ -1,3 +1,4 @@
+import { KeyedRegistry, REGISTRY_DEFAULTS } from './registry.mjs';
 import { mkdir, readdir, readFile, lstat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { check, atomicWrite } from './util.mjs';
@@ -18,7 +19,19 @@ export async function createOperator({ config, store, files, reads, committee })
       committee: { healthy: (await committee.healthy()).map(s => s.id), threshold: 3, total: 5, members: config.committee.map(s => s.peer), rosterHistory: config.rosterHistory ?? [], transitions: config.rosterTransitions ?? [] },
       inscription: { payer: 'player', mode: 'wallet_content' } };
   };
-  const deployments = async () => { const registry = await reads.registry(); return { network: config.network, assets: registry.assets, generations: registry.generations ?? {} }; };
+  const deployments = async (params = new URLSearchParams()) => {
+    const registry = await reads.registry(), collection = params.get('collection') ?? 'assets', asset = params.get('asset'), after = params.get('after') ?? '';
+    check(['assets', 'fees', 'generations'].includes(collection) && (collection !== 'generations' || asset), 'registry_page');
+    const maximum = registry.settings?.pageRows ?? REGISTRY_DEFAULTS.pageRows, limit = Number(params.get('limit') ?? maximum);
+    check(Number.isSafeInteger(limit) && limit > 0 && limit <= maximum, 'registry_page');
+    if (params.has('revision')) check(Number(params.get('revision')) === registry.revision, 'registry_snapshot_changed', 409);
+    const space = collection === 'generations' ? 'generations/' + asset : collection;
+    const entries = registry instanceof KeyedRegistry ? registry.page(space, { after, limit }) :
+      Object.entries(collection === 'assets' ? registry.assets : Object.fromEntries((collection === 'fees' ? registry.feePolicy.revisions : registry.generations?.[asset] ?? []).map(r => [r.id, r])))
+        .filter(([id]) => id > after).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).slice(0, limit).map(([id, value]) => ({ id, value }));
+    return { network: config.network, collection, revision: registry.revision ?? null, entries,
+      nextCursor: entries.length === limit ? entries.at(-1).id : null, ...(collection === 'assets' ? { assets: Object.fromEntries(entries.map(r => [r.id, r.value])) } : {}) };
+  };
   return { status, deployments, provisioner, async tick() {
     await provisioner?.tick();
     for (const file of (await readdir(inbox)).filter(f => /^[0-9a-f-]{36}\.json$/.test(f)).slice(0, 16)) {

@@ -7,7 +7,7 @@ import { describe, isMe } from '../words.js';
 const WINDOW = 200;
 // Public game events only; Lab diagnostics live on the Lab page. Categories match the public feed.
 const FILTERS = [['all', 'All'], ['chain', 'Chain'], ['money', 'Money'], ['you', 'You']].filter(([id]) => !site.public || id !== 'you');
-const MONEY = /^(mint_request|mint_permit|mint_complete|transfer|link|payment)$/;
+const MONEY = /^(mint_request|mint_permit|mint_complete|transfer|link|payment|financial_.*)$/;
 const KIND = { claim: ['Claim', ''], find: ['Find', 'good'], header_find: ['Header find', 'good'], craft: ['Craft', 'info'], mint_request: ['Mint', 'warn'], mint_permit: ['Mint permit', 'good'], mint_complete: ['Minted', 'minted'], link: ['Link', 'info'], transfer: ['Transfer', ''], block: ['Block', 'ink'], job: ['Lab', ''], player: ['You', 'info'], bot: ['Bot', ''], payment: ['Mint', 'good'], draw: ['Draw', 'info'], discovery: ['Discovery', 'good'], receipts: ['Gateway', ''], component: ['System', ''], error: ['Problem', 'bad'] };
 
 export function mount(root) {

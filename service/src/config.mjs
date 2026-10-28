@@ -15,6 +15,7 @@ export async function loadConfig(filename) {
   check(rel.startsWith('../'), 'config_outside_repository_required');
   const c = JSON.parse(await readFile(path, 'utf8'));
   check(c.claimsPerWindow === undefined || Number.isSafeInteger(c.claimsPerWindow) && c.claimsPerWindow >= 1 && c.claimsPerWindow <= rules.MAX_CLAIMS_PER_WINDOW, 'claim_budget_config');
+  check(c.pipelineDepth === undefined || [1, 2].includes(c.pipelineDepth), 'pipeline_depth');
   if (c.mode === 'prod') return (await import('../prod/config.mjs')).loadConfig(path);
   check(c.version === 1 && c.mode === 'regtest' && /^[a-zA-Z0-9._:-]{1,96}$/.test(c.network), 'config_network');
   check(c.listen?.host === '127.0.0.1' && Number.isSafeInteger(c.listen.port) && c.listen.port >= 0 && c.listen.port <= 65535, 'config_listen');

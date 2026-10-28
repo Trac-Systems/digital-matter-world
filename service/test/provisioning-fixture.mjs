@@ -26,6 +26,10 @@ export async function provisioningFixture(t) {
       if (path.startsWith('getDeployment/')) return deployments.get(decodeURIComponent(path.slice(14))) ?? null;
       throw Error('unexpected_route');
     } };
+  reads.privilegeAuthority = async id => id === privilege ? { ins: privilege } : null;
+  reads.element = async id => elements.find(e => e.ins === id) ?? null;
+  reads.elementByDefinition = async (pat, fld) => elements.find(e => e.pat === pat && Number(e.fld) === fld) ?? null;
+  reads.elementByName = async name => elements.find(e => e.tick.toLowerCase() === name.toLowerCase()) ?? null;
   const index = (text, id) => {
     contents.set(id, text); canonical.set(id, tip);
     if (typeof text === 'string') {

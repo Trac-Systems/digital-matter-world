@@ -1,3 +1,4 @@
+import { receiptSegmentKey as rulesSegmentKey } from '../../rules/src/receipt-segments.js';
 import { opendir, unlink, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hash } from './util.mjs';
@@ -12,7 +13,7 @@ export async function pruneDrafts(store) {
 }
 export async function collectFiles(store, files) {
   for (const { id } of store.list('fileGarbage', { limit: 256 })) {
-    if (!/^\/patterns\/[a-z0-9]+\/[0-9]+-[0-9a-f]{64}\.json$/.test(id)) throw Error('retention_path');
+    if (!/^\/patterns\/[a-z0-9]+\/[0-9]+(?:-detail(?:-index)?)?-[0-9a-f]{64}\.json$/.test(id)) throw Error('retention_path');
     await removeFile(files.path(id.slice(1))); await store.put('fileGarbage', id);
   }
 }
@@ -41,7 +42,7 @@ export function acceptedRetention(store, draft) {
     ops.push({ space: 'ceremonies', id: key, value: { ...rest, proposalHash: hash(JSON.stringify(proposal)) } });
   }
   for (const item of draft.items) {
-    const id = `${item.input.tip}/${item.input.tipHash}`, old = store.get('receiptObservations', id);
+    const id = item.input.receiptRoot ? rulesSegmentKey(item.input.receiptRoot) : `${item.input.tip}/${item.input.tipHash}`, old = store.get('receiptObservations', id);
     if (old && !old.archive && !item.missed && item.output.file.receipts.length) ops.push({ space: 'receiptObservations', id, value: { seal: old.seal, archive: item.publication.audit } });
   }
   return ops;

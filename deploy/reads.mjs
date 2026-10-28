@@ -1,3 +1,4 @@
+import { registryPages } from './registry.mjs';
 import { lookup } from 'node:dns/promises';
 import tls from 'node:tls';
 import { endpoint as productionEndpoint, tapEndpoint, productionURL } from '../service/prod/config.mjs';
@@ -8,6 +9,9 @@ import { openFundingRuntime } from '../service/prod/runtime.mjs';
 import { msbIdentity } from '../service/prod/mainnet.mjs';
 import { localBalances } from './local-balances.mjs';
 import { validateTracAddress } from '../rules/src/trac-address.js';
+import { join } from 'node:path';
+import { TapReader } from '../service/prod/tap.mjs';
+import { indexedAuthority } from '../service/prod/tap-index.mjs';
 
 export async function tlsHealth(value) {
   const url = new URL(productionURL(value));
@@ -45,7 +49,7 @@ export async function msbFunding(target, runtime) {
 
 // The same bounded read interface for loopback rehearsal and TLS production.
 // There is deliberately no generic write RPC exposed by this adapter.
-export async function targetReads(t, { resolveEndpoint, sourceFactory, tlsProbe = tlsHealth, runtime } = {}) {
+export async function targetReads(t, { resolveEndpoint, sourceFactory, tlsProbe = tlsHealth, runtime, lookupSettings } = {}) {
   const production = t.mode === 'mainnet', resolve = resolveEndpoint ?? (production ? productionEndpoint : localEndpoint);
   const endpoints = {}, sources = {}, tlsChecks = [];
   for (const [name, spec] of Object.entries({ bitcoin: t.bitcoin.rpc, witness: t.bitcoin.witnessRpc, indexer: t.indexer.endpoint,
@@ -86,9 +90,12 @@ export async function targetReads(t, { resolveEndpoint, sourceFactory, tlsProbe 
       return { balances: Object.fromEntries(Object.entries(balances).map(([k, v]) => [k, String(v)])), observedAt: Date.now(), source: 'local-baseline', feeAtoms: null };
     },
     async registry(registry) {
-      need(registry.assets && !Array.isArray(registry.assets) && Object.keys(registry.assets).length <= 4096, 'registry_assets');
-      const active = await tap('indexer', 'getPrivilegeAuthList'); need(active.some(a => a.ins === t.bitcoin.authorityInscription), 'authority_inactive');
-      for (const a of Object.values(registry.assets)) {
+      need(registry.assets && !Array.isArray(registry.assets), 'registry_assets');
+      const indexer = new TapReader({ sources: [sources.indexer, sources.independentIndexer].filter(Boolean), agreement: sources.independentIndexer ? 2 : 1,
+        bitcoin: { blockHash: height => core('getblockhash', [height]) }, settings: lookupSettings });
+      const active = await indexedAuthority(indexer, join(t.paths.output, 'preflight-tap-lookups.sqlite'), t.bitcoin.authorityInscription, lookupSettings);
+      need(active?.ins === t.bitcoin.authorityInscription && await indexer.tap('getPrivilegeAuthCancelled/' + t.bitcoin.authorityInscription) === false, 'authority_inactive');
+      for (const page of registryPages(registry)) for (const { value: a } of page) {
         const path = 'getDeployment/' + encodeURIComponent(a.indexTick ?? a.tick), d = await tap('indexer', path);
         need(d?.ins === a.id && d.prv === t.bitcoin.authorityInscription && Number(d.dec) === 0, 'registry_deployment');
         if (sources.independentIndexer) need(JSON.stringify(d) === JSON.stringify(await tap('independentIndexer', path)), 'deployment_disagreement');

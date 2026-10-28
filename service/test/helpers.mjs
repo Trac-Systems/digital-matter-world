@@ -25,7 +25,7 @@ export function makeMove(history, tip, who = agent(), type = 'claim', bits = 0) 
 }
 export const newStore = async () => Store.open(await temp());
 export const receiptSigners = Array.from({ length: 5 }, (_, i) => ({ id: `test-${i}`, identity: agent(800 + i).address }));
-export const attestRoot = async seal => receiptSigners.slice(0, 3).map((s, i) => rules.attestReceiptRoot(seal, seal.tip + 1, s.id, agent(800 + i).secret));
+export const attestRoot = async seal => receiptSigners.slice(0, 3).map((s, i) => rules.attestReceiptRoot(seal, typeof seal.tip === 'string' ? rules.nextUint(seal.tip) : seal.tip + 1, s.id, agent(800 + i).secret));
 
 export function feeFixture({ baseFee = '100', store, network: feeNetwork = network, secret: feeSecret = secret } = {}) {
   const registry = { feePolicy: createFeePolicy(baseFee) };

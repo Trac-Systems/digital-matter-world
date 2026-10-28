@@ -7,6 +7,18 @@ import { bytesToHex, hash, hexToBytes, mintRight, acceptMintRequest, finishMintR
   compoundDeploy, compoundMintPermit, signMintPrivilege, compoundTicker } from '../src/index.js';
 const secret = new Uint8Array(32).fill(1), owner = bytesToHex(ed25519.getPublicKey(secret)), other = '22'.repeat(32);
 const find = { asset: 'p1', block: 100, count: 3, finder: owner, findHeight: 200 };
+test('revisioned finds retain original decimal deadlines across settings amendments', () => {
+  const recorded = { ...find, settingsHash: hash('original-settings'), finderUntil: '1208' };
+  for (const finderWindow of [1, 10000]) {
+    assert.deepEqual(mintRight({ find: recorded, owner: other, counted: 1207, finderWindow }), { allowed: false, role: 'finder', until: '1208' });
+    assert.equal(mintRight({ find: recorded, owner: other, counted: 1208, finderWindow }).role, 'public');
+  }
+  const large = { ...recorded, block: '9223372036854775808', findHeight: '9223372036854775810', finderUntil: '9223372036854776818' };
+  assert.equal(mintRight({ find: large, owner: other, counted: '9223372036854776817' }).allowed, false);
+  assert.equal(mintRight({ find: large, owner: other, counted: large.finderUntil, link: { block: large.block, linkHeight: '9223372036854775809' }, currentHolder: other }).role, 'bitmap');
+  assert.throws(() => mintRight({ find: { ...recorded, finderUntil: undefined }, owner, counted: 200 }));
+  assert.throws(() => mintRight({ find: { ...recorded, finderUntil: '0208' }, owner, counted: 200 }));
+});
 test('finder week is exclusive; permanent pre-find links follow the live holder without a deadline', () => {
   const args = { find, owner: other, counted: 1207, link: { block: 100, linkHeight: 199 }, currentHolder: other };
   assert.equal(mintRight(args).allowed, false); assert.equal(mintRight({ ...args, owner }).allowed, true);

@@ -26,7 +26,7 @@ type Start struct {
 	ID       string `json:"id"`
 	Kind     string `json:"kind"`
 	Network  string `json:"network"`
-	Epoch    int    `json:"epoch"`
+	Epoch    Epoch  `json:"epoch"`
 	Digest   string `json:"digest"`
 	Peers    []Peer `json:"peers"`
 	NewPeers []Peer `json:"newPeers"`

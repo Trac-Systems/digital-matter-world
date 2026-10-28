@@ -74,7 +74,7 @@ Signatures contain decimal `r`, decimal low-S `s`, recovery ID `v` (0 or 1), and
 The authenticated sidecar control endpoints are `POST /prepare`, `/go`, `/status`,
 `/abort` and `/commit`; `/peer` uses peer identities instead of the control token.
 The separate control token belongs only to the signer/operator, never to the
-gateway. `tss.mjs` exports local orchestration utilities for keygen, signing and
+gateway. `tss.mjs` exports local orchestration helpers for keygen, signing and
 resharing. `createGroup` creates five fresh identities; `ceremony(old, 'reshare',
 {epoch: oldEpoch+1, newGroup})` performs the transition after both groups start.
 
@@ -236,7 +236,14 @@ not properties repaired by threshold signing.
 Set `replayTimeoutMs` in each signer's JSON configuration (the file passed to
 `committee/signer/service.mjs`). The default is 120000 milliseconds. It bounds
 worker startup and each replay; use a positive integer no greater than Node's
-timer maximum, 2147483647. Restart the configured signer after changing it.
+timer maximum, 2147483647. On host 157 the file is
+`/var/lib/dmw/operatorN/host-157/signer.json`, for N = 1 through 5. Restart that
+signer after changing it; host config regeneration retains this setting.
+
+Replay also uses the local resource document's `namedNodeCache` capacity for a
+raw node cache inside the worker (default 4096 entries). Without a resource
+document, `replayNodeCacheEntries` configures it. The cache lasts one replay;
+root authentication and evidence freshness checks remain required.
 
 Production replay reads the signer's own validated header database read-only,
 loads a hash-bound branch once, and shares that snapshot between observations

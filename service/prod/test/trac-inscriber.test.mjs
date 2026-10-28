@@ -35,3 +35,75 @@ test('Trac acceptance index preserves actual creation height across restart', as
   client = await createTrac({ ...f, store, network: 'fixture-main' }); assert.deepEqual(await client('hold', ['a', 1]), { id, expiry: 300 }); assert.equal((await client('acceptance', [id])).created, 90);
 });
 
+
+test('migration reads an immutable own-notary checkout and refuses a moving revision without sending', async () => {
+  const f = runtimeFixture(); f.data.set('bt/last', { n: 1, to: 99 }); f.data.set('b/cnt', 100);
+  let closed = 0, move = false;
+  f.runtime.peer.base.view.checkout = revision => {
+    assert.equal(revision, f.state.revision); const rows = structuredClone([...f.data]);
+    return { async *createReadStream() { for (const [key, value] of rows) yield { key, value }; if (move) f.state.revision++; }, close: async () => { closed++; } };
+  };
+  const client = await createTrac({ ...f, store: new MemoryStore(), network: 'fixture-main' });
+  const snapshot = await client('migrationSnapshot');
+  assert.deepEqual(snapshot.records, [['b/cnt', 100], ['bt/last', { n: 1, to: 99 }]]);
+  assert.deepEqual(snapshot.options, f.deployment); assert.equal(snapshot.revision, 0); assert.equal(closed, 1);
+  move = true; await assert.rejects(client('migrationSnapshot'), /trac_snapshot_changed/);
+  assert.equal(closed, 2); assert.deepEqual(f.chosen, []);
+});
+
+test('terminal import uses a new notary reader namespace while preserving the old binding and cursor', async () => {
+  const { rules: r } = await import('../../src/rules.mjs');
+  const f = runtimeFixture(), store = new MemoryStore();
+  await createTrac({ ...f, store, network: 'fixture-main' });
+  const before = store.get('prodTrac', 'binding'); await store.put('prodTrac', 'cursor', 999);
+  const manifest = { version: 1, network: 'fixture-main', fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: r.hash('previous'),
+    bitcoinAnchor: { height: '100', hash: r.hash('anchor') }, settingsHash: r.hash('settings'), catalogRoot: r.hash('catalog'), accountsRoot: r.hash('accounts'),
+    receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
+  const manifestHash = r.hashObject(manifest);
+  f.deployment.v2 = { manifest, manifestHash };
+  f.config.bootstrap = '55'.repeat(32); f.runtime.peer.base.key = Buffer.from(f.config.bootstrap, 'hex');
+  f.runtime.peer.protocol.instance.api.dmwRulesContext = async () => ({ ready: true, manifestHash });
+  const client = await createTrac({ ...f, store, network: 'fixture-main' });
+  await client('acceptance', ['absent']);
+  assert.equal(store.get('prodTrac', 'binding'), before); assert.equal(store.get('prodTrac', 'cursor'), 999);
+  assert.equal(store.get('prodTracV2/' + manifestHash, 'cursor'), '0');
+  assert.notEqual(store.get('prodTracV2/' + manifestHash, 'binding'), before);
+  f.config.bootstrap = '66'.repeat(32); f.runtime.peer.base.key = Buffer.from(f.config.bootstrap, 'hex');
+  await assert.rejects(createTrac({ ...f, store, network: 'fixture-main' }), /trac_store_binding/);
+  f.runtime.peer.protocol.instance.api.dmwRulesContext = async () => ({ ready: false, manifestHash });
+  await assert.rejects(createTrac({ ...f, store, network: 'fixture-main' }), /trac_activation_binding/);
+});
+
+for (const base of ['9007199254740991', '9223372036854775807', '9'.repeat(80)]) test(`activated source snapshot and indexed cursor retain exact revision ${base}`, async () => {
+  const f = runtimeFixture(), store = new MemoryStore();
+  const { rules: r } = await import('../../src/rules.mjs');
+  const manifest = { version: 1, network: 'fixture-main', fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: r.hash('previous'),
+    bitcoinAnchor: { height: '100', hash: r.hash('anchor') }, settingsHash: r.hash('settings'), catalogRoot: r.hash('catalog'), accountsRoot: r.hash('accounts'),
+    receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
+  const manifestHash = r.hashObject(manifest), progressSpace = 'prodTracV2/' + manifestHash;
+  f.deployment.v2 = { manifest, manifestHash };
+  f.runtime.peer.protocol.instance.api.dmwRulesContext = async () => ({ ready: true, manifestHash });
+  f.state.revision = base;
+  const end = String(BigInt(base) + 2n), id = 'aa'.repeat(32), pending = { s: 0, o: '1', asset: 'a', block: '1', e: '300' };
+  await store.put(progressSpace, 'cursor', base);
+  f.runtime.peer.base.view.createHistoryStream = async function* ({ gte, lt }) {
+    assert.equal(gte, base); assert.equal(lt, end);
+    yield { seq: base, type: 'put', key: 'b/cnt', value: '90' };
+    yield { seq: String(BigInt(base) + 1n), type: 'put', key: 'm/' + id, value: pending };
+  };
+  let client = await createTrac({ ...f, store, network: 'fixture-main' });
+  const at = await client('stamp'); assert.equal(at.revision, base);
+  assert.equal(await client('balance', ['owner', 'asset', at]), '7');
+  if (base === '9007199254740991') {
+    assert.equal(await client('balance', ['owner', 'asset', { ...at, revision: Number(base) }]), '7', 'retained numeric snapshot pins remain valid');
+    await assert.rejects(client('balance', ['owner', 'asset', { ...at, revision: Number(base) - 1 }]), /trac_snapshot_changed/);
+  }
+  await assert.rejects(client('balance', ['owner', 'asset', { ...at, revision: Number.MAX_SAFE_INTEGER + 1 }]), /integer_v2/);
+  f.state.revision = end;
+  assert.deepEqual(await client('acceptance', [id]), { id, created: '90', expiry: '300' });
+  assert.equal(store.get(progressSpace, 'cursor'), end);
+  client = await createTrac({ ...f, store, network: 'fixture-main' });
+  assert.equal((await client('stamp')).revision, end);
+  f.state.revision = Number.MAX_SAFE_INTEGER + 1;
+  await assert.rejects(client('stamp'), /integer_v2/);
+});

@@ -75,7 +75,7 @@ export function mount(root) {
 
   function worldPanel(s) {
     const baseFee = s.feePolicy?.baseFee ?? '', unit = s.feePolicy?.unit;
-    const fee = input({ class: 'mono', value: tapText(baseFee, unit), inputmode: 'decimal', 'aria-label': 'Base fee in TAP', style: { width: '160px' } });
+    const fee = input({ class: 'mono', value: tapText(baseFee, unit), inputmode: 'decimal', 'aria-label': 'Base price in TAP', style: { width: '160px' } });
     const count = input({ class: 'mono', value: String(s.bots?.count ?? 12), inputmode: 'numeric', 'aria-label': 'Bot count', style: { width: '80px' } });
     const speed = select(speedOptions(s.bots?.intervalMs), { value: String(s.bots?.intervalMs ?? 15000), 'aria-label': 'Bot speed' });
     return panel('Economy and bots', h('div.ctl', {},

@@ -42,7 +42,7 @@ batch inputs without these fields cannot be replayed under this implementation.
 
 ## Canonical JSON and signatures
 
-Import the utilities from `../signing.js`; do not implement a second serializer.
+Import the helpers from `../signing.js`; do not implement a second serializer.
 Canonical JSON sorts object keys by JavaScript UTF-16 order, preserves array order,
 uses JSON string escaping and admits only safe integers, strings, booleans, null,
 plain objects and dense arrays. Negative zero, fractions, undefined, BigInt,
@@ -280,3 +280,45 @@ committee `epoch` as a JSON number alongside its committee public key.
 `dmwMint` exposes expired pending records
 as `s:2` without writing. Balances include all expired escrow; reading the raw
 `v/` value alone is insufficient. Pending-admin reads cover nine fixed slots.
+# Certified receipt renewal (v2 rehearsal)
+
+An authorized settings amendment can reserve its complete immutable
+receipt range with a committee-signed v2 batch whose `renewal.kind` is
+`reserve`. The deployment must pin `v2.gateway` and five distinct
+`v2.receiptSigners`; older deployments without these pins refuse renewal.
+The cutoff commits the accepted batch/claim/catalog checkpoint, original and
+authorized successor settings, contiguous receipt range, and immutable segment
+roots. Independent signers verify all members and their original timely
+segment certificates. The reserve batch changes only the notary sequence and
+the durable renewal record; game/account roots and receipt bytes stay intact.
+
+Only the immediately following `renewal:{kind:"execute",id}` batch may consume
+that reservation. It includes every original segment under the original
+settings, preserves all original receipt windows, and commits consumption
+atomically with game/account changes. Fresh admission uses the authorized
+successor afterward. An ordinary batch cannot bypass a pending renewal.
+Signers reserve `receipt-renewal/<id>/<kind>` atomically with the normal batch
+slot. Ambiguous responses retain both reservations; only independently proven
+batch expiry/epoch change and nonacceptance retire them.
+
+The gateway automatically fences at the successor's effective boundary and on
+restart, after reconciling any uncertain draft. An empty cutoff includes a
+witnessed empty segment; its execution advances the authenticated receipt chain.
+Proof publications are indexed by renewal ID and observation, become visible
+with local acceptance, and retain the original receipts and audit bytes.
+
+New deployments may pin `v2.receiptProtocol:1`, the gateway and the five receipt
+witnesses. The marker is installed with terminal import, cannot be added to an
+existing deployment by an amendment, and requires durable quorum admission and
+fencing on the signers. It does not authorize reducing any capacity limit.
+
+All fourteen `settings_capacity_drain_required` guards remain:
+`batchBytes`, `batchOps`, `batchAssets`, `batchKv`, `auditChunkBytes`,
+`auditTotalBytes`, `summaryBytes`, `observationBudget`, `receiptSegmentEntries`, `proofBytes`,
+`accountLeaves`, `accountProofNodes`, `accountProofBytes` and `accountActions`.
+The immutable cutoff can itself exceed the original one-batch observation or
+execution envelope. A valid two-receipt backlog with three segments and an
+original observation budget of two remains durably sealed, but cannot renew
+with this format. Renewal across multiple batches, and renewal of arbitrary
+outstanding financial/proof obligations into smaller envelopes, are unfinished.
+Older deployments also need an explicit reconciliation of preexisting receipts.

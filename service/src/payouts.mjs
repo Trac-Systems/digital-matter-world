@@ -24,6 +24,12 @@ export class Payouts {
     await this.publish();
   }
   async publish() {
+    if (this.store.get('meta', 'ruleState')?.batchVersion === 2) {
+      const collections = Object.fromEntries([['beneficiaries', 'payoutTotals'], ['owed', 'commissionOwed'], ['paid', 'payoutPaid']]
+        .map(([name, space]) => [name, { count: this.store.countUint(space), page: '/payouts/' + name }]));
+      return this.files.json('records/payouts/index.json', { version: 2, currency: 'TAP', unit: rules.TAP_UNIT,
+        paidEvidence: 'operator_recorded_transaction', ...collections });
+    }
     const counts = {};
     for (const [name, space] of [['beneficiaries', 'payoutTotals'], ['owed', 'commissionOwed'], ['paid', 'payoutPaid']]) {
       let after = '', page = 0;

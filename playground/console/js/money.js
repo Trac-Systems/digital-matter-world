@@ -21,6 +21,8 @@ export function tap(v, unit) {
 // Display the current operator policy, with the same integer math as rules feeFor.
 // Missing settings must never fall back to legacy or launch prices.
 export function feePrice(policy, kind, tier = 1) {
+  // v2 sends integers as decimal strings ("4").
+  if (typeof tier === 'string' && /^[1-5]$/.test(tier)) tier = Number(tier);
   const settings = policy?.feeSettings;
   if (typeof policy?.baseFee !== 'string' || !/^(0|[1-9]\d*)$/.test(policy.baseFee) ||
       !Array.isArray(settings?.tierMultipliers) || settings.tierMultipliers.length !== 5 ||

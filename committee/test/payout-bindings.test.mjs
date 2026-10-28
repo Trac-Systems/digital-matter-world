@@ -50,7 +50,7 @@ test('permanent mint approval keep the signed quote payout after two wallet repl
     f.reads.verifyPayoutSnapshot = (snapshot, roles) => verifyPayoutSnapshot(snapshot, roles, { bindings: b.bindings, journal: b.journals[0] });
     f.data.context.finderAddress=first.request.address;f.data.context.discoverer=first.request.address;f.reprice();
     now += 10; await b.bind(who, 'tap', agent(42).secret.toString('hex'), '2');
-    assert.throws(() => verifyPayoutSnapshot({ ...quote, issuedAt: now }, payouts, { bindings: b.bindings, journal: b.journals[0] }), /binding_rollback/);
+    await assert.rejects(() => verifyPayoutSnapshot({ ...quote, issuedAt: now }, payouts, { bindings: b.bindings, journal: b.journals[0] }), /binding_rollback/);
     const approved = await f.policy.approve(f.proposal);
     assert.deepEqual(approved.details.commissions, []);
     assert.equal(f.data.payment.fees.find(f=>f.role==='finder').to, first.request.address);

@@ -162,7 +162,7 @@ becoming valid when a former committee key is installed again. A fork that keeps
 the same chain ID and copies contract state does not gain distinct EIP-712 replay
 protection.
 
-The digest utilities also return hashes for unknown or terminal requests. A hash
+The digest helpers also return hashes for unknown or terminal requests. A hash
 being available is not authorization: signers must first check state `Open`,
 payment policy, remaining time and the mint evidence.
 

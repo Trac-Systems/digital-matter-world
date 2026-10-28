@@ -1,8 +1,13 @@
 import { validateTracAddress, publicIdentities } from '../../rules/src/trac-address.js';
-import { stableJSON, decodeBinary, verifyReceiptRoot, verifyReceipt, verifyRootAttestations, verifyMerkle, moveId, claimWindow } from '../../rules/src/index.js';
+import { stableJSON, decodeBinary, verifyReceiptRoot, verifyReceipt, verifyRootAttestations, verifyMerkle, moveId as legacyMoveId, moveIdV2, claimWindow } from '../../rules/src/index.js';
 import { check, gatewayOrigin, hex32, integer, sha256 } from './check.mjs';
 import { presentRead, readQuery, publicRoute } from './reads.mjs';
 import { serviceError, safeCode, isMoveRefusal } from './errors.mjs';
+import { verifyReceiptV2 } from '../../rules/src/receipt-v2.js';
+import { financialAsset } from '../../rules/src/financial-mint.js';
+import { verifyRenewedAudit } from './receipt-renewal.mjs';
+import { KIT_UPGRADE_CODE } from '../../rules/src/kit-release.js';
+const moveId = move => move.v === 2 ? moveIdV2(move) : legacyMoveId(move);
 
 // All gateway HTTP routes live here. No private key or wallet enters this client.
 export class ServiceClient {
@@ -16,10 +21,10 @@ export class ServiceClient {
     Object.defineProperty(this, 'receiptSigners', { value: receiptSigners && Object.freeze(receiptSigners.map(m => Object.freeze({ id: m.id, identity: m.identity }))) });
   }
   async request(path, { value, limit = 60000, binary = false, query } = {}) {
-    check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
+    check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
-    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment'].includes(path));
+    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/link/payment'].includes(path));
     const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: this.origin, route: path, method, status, code, reason, submission });
     let response;
     for (let attempt = 0; ; attempt++) try {
@@ -48,20 +53,43 @@ export class ServiceClient {
     const bytes = Buffer.concat(chunks);
     if (!response.ok) {
       let code; try { const body = JSON.parse(bytes); code = body.code ?? body.error; } catch {}
+      if (code === KIT_UPGRADE_CODE) code = 'upgrade_required';
       const refusedBeforeAcceptance = method === 'POST' && path === '/moves' && isMoveRefusal(response.status, code);
-      throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance), { refusedBeforeAcceptance });
+      const hint = response.headers.get('retry-after'), seconds = /^\d+$/.test(hint ?? '') ? Number(hint) : NaN;
+      const retryAfterMs = Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 2147483 ? seconds * 1000 : undefined;
+      throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
+        { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });
     }
     if (binary) return bytes;
     try { return JSON.parse(bytes); }
     catch { throw failure('invalid_json', 'response is not valid JSON', response.status, mutation); }
   }
   health() { return this.request('/health'); }
+  accountProof(owner, asset, limit) {
+    check(hex32(owner) && financialAsset(asset) && integer(limit), 'Invalid account proof read');
+    return this.request(`/account-proof/${owner}/${asset}`, { limit });
+  }
+  craftPreview(value, limit) { return this.request('/craft-preview', { value, limit }); }
+  compoundProof(asset, kind, limit) {
+    check(/^c2:[0-9a-f]{64}$/.test(asset) && ['assets', 'tiers', 'maker'].includes(kind), 'Invalid compound read');
+    return this.request(`/named-record/compound/${kind}/${asset}`, { limit });
+  }
+  namedCommitmentProof(agent, commitment, limit) {
+    check(hex32(agent) && hex32(commitment) && integer(limit), 'Invalid named commitment read');
+    return this.request(`/named-record/commit/${agent}/${commitment}`, { limit });
+  }
   payoutBinding(owner, rail, { history = false, ...query } = {}) {
     validateTracAddress(owner); check(['tap', 'ethereum'].includes(rail), 'Invalid payout binding');
     return this.request(`/payout-bindings/${owner}/${rail}${history ? '/history' : ''}`, { query, limit: 1000000 }).then(publicIdentities);
   }
   requestPayoutBinding(value) { return this.request('/payout-bindings/request', { value }); }
   latest() { return this.request('/latest.json'); }
+  async renewalProof(id, observation, { batchRoot, settingsByHash, renewalSlice, limit = 1500000 } = {}) {
+    check(hex32(id) && /^(0|[1-9][0-9]*)$/.test(String(observation)) &&
+      typeof batchRoot === 'function' && typeof settingsByHash === 'function', 'Independent renewal reads required');
+    const descriptor = await this.request(`/receipt-renewals/${id}/${observation}`);
+    return { ...await this.publication(descriptor, { limit }), batchRoot, settingsByHash, renewalSlice };
+  }
   async readPage(route, options = {}) {
     const { path, query } = publicRoute(route);
     for (const [key, value] of Object.entries(readQuery(options))) query[key] = value;
@@ -92,11 +120,21 @@ export class ServiceClient {
     check(collection === undefined || ['balances', 'bitmaps', 'finds', 'mintRights', 'discoveries', 'history'].includes(collection), 'Invalid profile collection');
     return this.readPage(`/agents/${owner}${collection ? '/' + collection : ''}`, options);
   }
+  claimedBlocks(asset, options = {}) {
+    check(/^p2:(0|[1-9][0-9]*)$/.test(asset), 'Invalid submitted-block asset');
+    return this.readPage(`/patterns/${asset}/claimed-blocks`, options);
+  }
+  submitBitmap({ block, inscription }) {
+    check(integer(block) || typeof block === 'string' && /^(0|[1-9][0-9]*)$/.test(block), 'Invalid bitmap block');
+    check(inscription === undefined || /^[0-9a-f]{64}i(0|[1-9][0-9]*)$/.test(inscription), 'Invalid bitmap inscription');
+    return this.request('/bitmaps/submit', { value: { block: String(block), ...(inscription ? { inscription } : {}) } });
+  }
   async mintQuote(value) {
-    check(value && typeof value.asset === 'string' && /^[0-9a-z]{1,24}$/.test(value.asset) && (value.block === undefined || integer(value.block)) &&
+    check(value && financialAsset(value.asset) && (value.block === undefined || integer(value.block) || typeof value.block === 'string' && /^(0|[1-9][0-9]*)$/.test(value.block)) &&
       (value.amount === undefined || typeof value.amount === 'string' && /^[1-9][0-9]{0,77}$/.test(value.amount)) &&
       (value.kind === undefined || ['tap', 'ethereum'].includes(value.kind)) &&
-      Object.keys(value).every(k => ['asset', 'block', 'amount', 'kind'].includes(k)), 'Invalid quote');
+      [value.payer, value.receiver].every(x => x === undefined || typeof x === 'string' && x.length > 0 && x.length <= 128) &&
+      Object.keys(value).every(k => ['asset', 'block', 'amount', 'kind', 'payer', 'receiver'].includes(k)), 'Invalid quote');
     return presentRead(await this.quote(value), { route: '/mint/quote', asset: value.asset });
   }
   async publication(descriptor, { binary = false, limit = 1000000 } = {}) {
@@ -105,11 +143,14 @@ export class ServiceClient {
     check(bytes.length === descriptor.bytes && sha256(bytes) === descriptor.hash, 'Publication hash mismatch');
     return binary ? bytes : JSON.parse(bytes);
   }
-  async audit(publication, { hashAt, commitment } = {}) {
+  async audit(publication, { hashAt, commitment, renewal } = {}) {
     const bytes = await this.publication(publication.audit, { binary: true, limit: 1500000 }), file = decodeBinary(bytes);
     check(file.height === publication.height && file.receiptRoot.network === this.network &&
       (publication.observation === undefined || file.observation === publication.observation), 'Foreign audit file');
     if (commitment) check(verifyMerkle(bytes, commitment.proof, commitment.root), 'Audit does not match contract batch root');
+    if (file.renewal && renewal && !renewal.reservationBatch) renewal = await this.renewalProof(file.renewal, file.observation, renewal);
+    const renewed = file.renewal ? await verifyRenewedAudit(file, bytes, renewal ?? {},
+      { network: this.network, gateway: this.gateway, members: this.receiptSigners }) : null;
     check(hex32(this.gateway) && typeof hashAt === 'function', 'Pinned gateway and verified header hashes required');
     const tipHash = await hashAt(file.tip);
     check(tipHash === file.tipHash, 'Audit tip differs from verified chain');
@@ -122,14 +163,16 @@ export class ServiceClient {
     check(receipts.size === file.receipts.length && file.moves.length === receipts.size && new Set(file.moves.map(r => moveId(r.move))).size === receipts.size, 'Audit move/receipt mismatch');
     for (const { move } of file.moves) {
       const receipt = receipts.get(moveId(move));
-      check(receipt.tip === file.tip && receipt.hash === file.tipHash && verifyReceipt(receipt, move, { network: this.network, gateway: this.gateway, hashAt: h => h === file.tip ? tipHash : null }), 'Invalid audit receipt');
+      check(receipt.tip === file.tip && receipt.hash === file.tipHash && (move.v === 2 ? verifyReceiptV2 : verifyReceipt)(receipt, move, {
+        network: this.network, gateway: this.gateway, hashAt: h => h === file.tip ? tipHash : null,
+        ...(move.v === 2 ? { batch: file.batchSequence, renewal: renewed?.renewal } : {}) }), 'Invalid audit receipt');
       check(move.t !== 'claim' || claimWindow(move.p.window, receipt.tip), 'Claim receipt outside window');
     }
-    return { file, witnessed, contractCommitted: !!commitment };
+    return { file, witnessed, contractCommitted: !!commitment || !!renewed };
   }
-  async inclusion(move, { publication, receipt, hashAt, commitment } = {}) {
+  async inclusion(move, { publication, receipt, hashAt, commitment, renewal } = {}) {
     if (!publication) publication = await this.receiptPublication(move, receipt);
-    const audit = await this.audit(publication, { hashAt, commitment });
+    const audit = await this.audit(publication, { hashAt, commitment, renewal });
     const included = audit.file.receipts.find(r => r.move === moveId(move));
     check(audit.witnessed && included && (!receipt || stableJSON(receipt) === stableJSON(included)), 'Receipt missing from witnessed observation. Wait for publication, or pass the saved claim’s provenance from block collection claims as publication {height,observation,audit}. Height is the audit counted height, not the receipt tip; for a discovery use receipts at the commitment receipt tip.');
     return { verified: true, inclusion: 'witnessed', publication: { height: audit.file.height, observation: audit.file.observation, audit: publication.audit },
@@ -158,7 +201,7 @@ export class ServiceClient {
     check(move.network === this.network && hex32(this.gateway) && typeof hashAt === 'function', 'Pinned gateway and chain required');
     const receipt = await this.request('/moves', { value: move });
     const expected = await hashAt(receipt.tip);
-    check(verifyReceipt(receipt, move, { network: this.network, gateway: this.gateway, hashAt: h => h === receipt.tip ? expected : null }), 'Invalid gateway receipt; submission outcome unknown');
+    check((move.v === 2 ? verifyReceiptV2 : verifyReceipt)(receipt, move, { network: this.network, gateway: this.gateway, hashAt: h => h === receipt.tip ? expected : null }), 'Invalid gateway receipt; submission outcome unknown');
     return receipt;
   }
   quote(value) { return this.request('/mint/quote', { value }); }
@@ -168,7 +211,14 @@ export class ServiceClient {
   reportMintPayment(value) { return this.request('/mint/payment', { value }); }
   deployment(asset) { check(/^[pc][0-9a-z]{1,23}$/.test(asset), 'Invalid deployment asset'); return this.request('/mint/deployment/' + asset, { limit: 1500000 }); }
   submitDeployment(value) { return this.request('/mint/deployment', { value }); }
+  linkQuote(value) { return this.request('/link/quote', { value }); }
+  linkStatus(id) { check(hex32(id), 'Invalid link ID'); return this.request('/link-status/' + id); }
+  reportLinkPayment(value) { return this.request('/link/payment', { value }); }
   requestLink(value) { return this.request('/link/request', { value }); }
+  financialAction(value) { return this.request('/financial/action', { value }); }
+  financialActionStatus(id) { check(hex32(id), 'Invalid financial action ID'); return this.request('/financial/action/' + id); }
+  custodyStatus(id) { check(hex32(id), 'Invalid custody ID'); return this.request('/financial/custody/' + id); }
+  reportCustodyPayment(value) { return this.request('/financial/custody/payment', { value }); }
   paymentLink(id, origin = this.origin, kind = 'mint') {
     check(hex32(id) && ['mint', 'link'].includes(kind), 'Invalid payment request');
     return `${gatewayOrigin(origin, this.mode)}/${kind}/${id}`;

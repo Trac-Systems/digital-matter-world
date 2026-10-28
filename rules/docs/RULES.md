@@ -516,11 +516,12 @@ decoding preserves leading U+FEFF, including in object keys.
 ### Operator fee settings
 
 The revisioned global fee policy carries `feeSettings:{link,tierMultipliers,compoundMinimum}`
-in signed quotes and admitted terms. Launch settings are link **3**, tiers
-**1,3,10,30,100**, compound minimum **10**. A link is 67.8 TAP at B = 22.6 TAP
-(about $3 at the October 27 reference rate); it is not pegged to USD.
-All multipliers and B may change for new quotes. Verify saved terms against
-their retained revision, never the current revision.
+in signed quotes and admitted terms. Read the live `/status` response's
+`feePolicy` for `baseFee`, `unit` and `feeSettings`. Find prices in TAP use the
+base price multiplied by the tier multiplier; compounds use the greater of
+that multiplier and `compoundMinimum`. A Bitmap link uses `feeSettings.link`.
+The base price and multipliers may change for new quotes. Verify saved terms
+against their retained revision, never the current revision.
 `FEE_DEFAULTS` remains the legacy fallback (including link 20) solely for
 unconfigured historical terms and installed verifier compatibility. The link
 split remains half burn, half treasury, with integer rounding as before.

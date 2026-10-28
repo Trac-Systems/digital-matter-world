@@ -1,20 +1,21 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
-import { createReadStream } from 'node:fs';
+import { seedChunks } from './seed-chunks.mjs';
+import { seedCheckpoint } from './seed-checkpoint.mjs';
 import { resolve } from 'node:path';
 import { HttpSource, requireValue as check } from './http.mjs';
 import { tapEndpoint, privatePath } from './config.mjs';
 import { readTapSourceURL } from '../src/source-url.mjs';
 import { GENESIS, MAINNET_PARAMS, REGTEST_PARAMS, parseHeader, targetFromBits, retargetBits } from '../../contract/beacon/bitcoin.js';
 import { serial } from '../src/util.mjs';
-import { ByteCache, sourcePolicy, sourceScope } from './source-cache.mjs';
 import { rules } from '../src/rules.mjs';
+import { lookupSettings } from './lookup-settings.mjs';
 const require = createRequire(new URL('../../local/package.json', import.meta.url));
 const { RawTx, RawOldTx, CompactSize } = require('@scure/btc-signer/script');
 const hash256 = bytes => createHash('sha256').update(createHash('sha256').update(bytes).digest()).digest();
 const hash = value => { check(typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), 'bitcoin_hash'); return value; };
-const height = value => { check(Number.isSafeInteger(value) && value >= 0 && value <= 4000000, 'bitcoin_height'); return value; };
+const height = value => { rules.decimalV2(value); return value; };
 const u32 = value => { check(Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff, 'bitcoin_word'); return value; };
 const hexBytes = value => { check(typeof value === 'string' && /^(?:[0-9a-f]{2})*$/.test(value) && value.length <= 8000000, 'bitcoin_hex'); return Buffer.from(value, 'hex'); };
 function merkle(nodes) {
@@ -30,7 +31,7 @@ export function ordHeader(info, id, params = MAINNET_PARAMS) {
   check(info && info.hash === hash(id), 'bitcoin_header_binding'); height(info.height);
   const raw = Buffer.alloc(80);
   raw.writeUInt32LE(u32(info.version), 0);
-  Buffer.from(hash(info.previous_block ?? (info.height === 0 ? '00'.repeat(32) : null)), 'hex').reverse().copy(raw, 4);
+  Buffer.from(hash(info.previous_block ?? (String(info.height) === '0' ? '00'.repeat(32) : null)), 'hex').reverse().copy(raw, 4);
   Buffer.from(hash(info.merkle_root), 'hex').reverse().copy(raw, 36);
   raw.writeUInt32LE(u32(info.timestamp), 68); raw.writeUInt32LE(u32(info.bits), 72); raw.writeUInt32LE(u32(info.nonce), 76);
   const encoded = raw.toString('hex'), header = parseHeader(encoded), target = targetFromBits(header.bits);
@@ -57,29 +58,25 @@ export function ordTransaction(value) {
   } catch { throw Error('bitcoin_transaction_shape'); }
 }
 export class BitcoinSource {
-  constructor({ kind = 'ord', source, network = 'mainnet', policy }) {
+  constructor({ kind = 'ord', source, network = 'mainnet' }) {
     check(kind === 'ord' && ['mainnet', 'regtest'].includes(network), 'bitcoin_source');
-    const limits = sourcePolicy(policy); this.blocks = new ByteCache(limits.blockBytes); this.transactions = new ByteCache(limits.transactionBytes); this.proofs = new ByteCache(limits.proofBytes);
     Object.assign(this, { kind, source, network, params: network === 'mainnet' ? MAINNET_PARAMS : REGTEST_PARAMS, genesis: network === 'mainnet' ? GENESIS.hash : REGTEST_GENESIS });
   }
   async verifyNetwork() { check(await this.blockHash(0) === this.genesis, 'bitcoin_network'); await this.header(this.genesis); }
   async tip() {
     const n = height(await this.source.request('/r/blockheight')), id = await this.blockHash(n);
     const info = await this.headerInfo(id);
-    check(info.height === n && await this.source.request('/r/blockhash') === id, 'bitcoin_tip_changed');
+    check(info.height === n && await this.source.request('/r/blockheight') === n && await this.source.request('/r/blockhash') === id && await this.blockHash(n) === id, 'bitcoin_tip_changed');
     return { height: n, hash: id };
   }
   async blockHash(n) { return hash(await this.source.request('/r/blockhash/' + height(n))); }
   async headerInfo(id) {
-    return this.blocks.read('header/' + hash(id), async () => {
-      const info = await this.source.request('/r/blockinfo/' + id);
-      return { ...info, raw: ordHeader(info, id, this.params) };
-    });
+    const info = await this.source.request('/r/blockinfo/' + hash(id));
+    return { ...info, raw: ordHeader(info, id, this.params) };
   }
   async header(id) { return (await this.headerInfo(id)).raw; }
   async block(id, { withTransactions = false } = {}) {
-    const verified = await this.blocks.read('block/' + hash(id), async () => {
-    const info = await this.headerInfo(id), block = await this.source.request('/block/' + id);
+    const info = await this.headerInfo(hash(id)), block = await this.source.request('/block/' + id);
     check(block?.hash === id && height(block.height) === info.height && Array.isArray(block.transactions) && block.transactions.length > 0 && block.transactions.length <= 100000 && block.transactions.length === info.transaction_count, 'bitcoin_block');
     let bytes = 80 + CompactSize.encode(block.transactions.length).length, weight = bytes * 4;
     const raws = block.transactions.map(value => {
@@ -95,10 +92,7 @@ export class BitcoinSource {
       const root = merkle(raws.map((raw, i) => i === 0 ? Buffer.alloc(32) : hash256(Buffer.from(raw, 'hex'))));
       check(hash256(Buffer.concat([root, Buffer.from(coinbase.input[0].witness[0], 'hex')])).toString('hex') === commitment.script_pubkey.slice(12, 76), 'bitcoin_witness_commitment');
     } else check(block.transactions.every(t => t.input.every(i => i.witness.length === 0)), 'bitcoin_witness_commitment');
-    return { hash: id, height: info.height, tx, raw: info.raw, transactions: raws };
-    });
-    if (!withTransactions) delete verified.transactions;
-    return verified;
+    return { hash: id, height: info.height, tx, raw: info.raw, ...(withTransactions ? { transactions: raws } : {}) };
   }
   async rawBlock(id) {
     const block = await this.block(id, { withTransactions: true });
@@ -113,121 +107,209 @@ export class BitcoinSource {
     } catch { throw Error('bitcoin_transaction'); }
   }
   async transaction(id) {
-    hash(id);
-    const load = async () => {
-      const tx = this.decode(await this.source.request('/r/tx/' + id));
-      check(tx.txid === id, 'bitcoin_tx_binding'); return tx;
-    };
-    // txid alone does not commit to witness bytes. Inclusion caches only after
-    // checking the full witness against a verified block.
-    return load();
+    const tx = this.decode(await this.source.request('/r/tx/' + hash(id)));
+    check(tx.txid === id, 'bitcoin_tx_binding'); return tx;
   }
   async included(id, at, history) {
     check(typeof id === 'string' && /^[0-9a-f]{64}i(0|[1-9][0-9]{0,9})$/.test(id), 'inscription_id');
-    const scope = sourceScope.getStore(), scoped = scope?.bitcoin === this && !scope.closed && scope.history;
-    if (scoped) {
-      check(!at || at.tip === scope.stamp.height && at.tipHash === scope.stamp.hash, 'bitcoin_view');
-      at = { tip: scope.stamp.height, tipHash: scope.stamp.hash }; history = scope.history;
-    }
-    const prior = this.proofs.get(id);
-    if (prior && at && history?.hashAt(prior.height) === prior.blockHash && history.hashAt(at.tip) === at.tipHash) {
-      if (scoped || await this.blockHash(prior.height) === prior.blockHash && await this.blockHash(at.tip) === at.tipHash)
-        return { ...prior, confirmations: at.tip - prior.height + 1 };
-    }
     let inscription;
     try { inscription = await this.source.request('/inscription/' + id); } catch (error) { if (error.status === 404) return null; throw error; }
     check(inscription?.id === id, 'bitcoin_inscription_binding');
     const n = height(inscription.height), tip = at ? { height: height(at.tip), hash: hash(at.tipHash) } : await this.tip();
-    if (n > tip.height) return null;
+    if (rules.compareOrdinal(n, tip.height) > 0) return null;
     // A verified linked header view is mandatory, including direct launch reads.
     let owned;
     try {
       if (!history) { owned = new BitcoinViews(this, ':memory:'); history = await owned.view(tip.height, tip.hash); }
-      check(history.hashAt(tip.height) === tip.hash && history.length === tip.height + 1, 'bitcoin_view');
-      const blockHash = scoped ? history.hashAt(n) : await this.blockHash(n);
+      check(history.hashAt(tip.height) === tip.hash && String(history.length) === rules.nextUint(rules.decimalV2(tip.height)), 'bitcoin_view');
+      const blockHash = await this.blockHash(n);
       if (history.hashAt(n) !== blockHash) return null;
-      const block = await this.block(blockHash, { withTransactions: true }), txKey = blockHash + '/' + id.slice(0, 64);
-      const tx = this.transactions.get(txKey) ?? await this.transaction(id.slice(0, 64));
+      const block = await this.block(blockHash, { withTransactions: true }), tx = await this.transaction(id.slice(0, 64));
       check(block.height === n && block.tx.includes(tx.txid), 'bitcoin_tx_inclusion');
       check(block.transactions[block.tx.indexOf(tx.txid)] === tx.hex, 'bitcoin_tx_witness_binding');
-      this.transactions.set(txKey, tx);
-      if (!scoped && (await this.blockHash(n) !== blockHash || await this.blockHash(tip.height) !== tip.hash)) return null;
-      const proof = { height: n, blockHash, tx };
-      this.proofs.set(id, proof);
-      return { ...proof, confirmations: tip.height - n + 1 };
+      if (await this.blockHash(n) !== blockHash || await this.blockHash(tip.height) !== tip.hash) return null;
+      return { height: n, blockHash, confirmations: typeof tip.height === 'string' || typeof n === 'string' ? String(BigInt(tip.height) - BigInt(n) + 1n) : tip.height - n + 1, tx };
     } finally { owned?.close(); }
   }
 }
-export async function createBitcoin(config, policy, { network = 'mainnet', readsPolicy } = {}) {
+export async function createBitcoin(config, policy, { network = 'mainnet' } = {}) {
   check(config?.kind === 'ord' && typeof config.urlFile === 'string' && config.urlFile.length > 0 && !config.url && !config.authFile && !config.tokenFile, 'bitcoin_source');
   const endpoint = network === 'mainnet' ? await tapEndpoint(config) : { url: await readTapSourceURL(config.urlFile) };
   const fetchImpl = globalThis.fetch[Symbol.for('dmw.localFetch')] ?? globalThis.fetch;
-  const client = new BitcoinSource({ source: new HttpSource({ ...policy, ...endpoint, fetchImpl, maxBytes: sourcePolicy(readsPolicy).bitcoinMaxBytes }), network, policy: readsPolicy });
+  const client = new BitcoinSource({ source: new HttpSource({ ...policy, ...endpoint, fetchImpl, maxBytes: 16000000 }), network });
   await client.verifyNetwork(); return client;
 }
 // Branches are immutable by hash. Header verification includes PoW, mainnet
 // difficulty transitions and median time, including the offline seed history.
 export class BitcoinViews {
-  constructor(client, filename, { maxHeadersPerView = 4096 } = {}) {
+  constructor(client, filename, { maxHeadersPerView = 4096, settings, integerVersion = 1 } = {}) {
+    check(Number.isSafeInteger(maxHeadersPerView) && maxHeadersPerView > 0, 'bitcoin_work_budget');
+    this.decimal = integerVersion === 2; this.limits = lookupSettings(settings);
     this.filename = filename === ':memory:' ? null : resolve(filename);
     this.client = client; this.params = client.params ?? MAINNET_PARAMS; this.genesis = client.genesis ?? GENESIS.hash; this.maxHeadersPerView = maxHeadersPerView; this.gate = serial();
-    this.db = new DatabaseSync(filename); this.db.exec('PRAGMA journal_mode=WAL; PRAGMA cache_size=-4096; CREATE TABLE IF NOT EXISTS headers(hash TEXT PRIMARY KEY,height INTEGER,parent TEXT,raw TEXT,periodTime INTEGER,times TEXT)');
-    this.get = this.db.prepare('SELECT * FROM headers WHERE hash=?'); this.put = this.db.prepare('INSERT OR IGNORE INTO headers VALUES(?,?,?,?,?,?)');
+    this.db = new DatabaseSync(filename);
+    if (this.decimal) {
+      this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA cache_size=-${this.limits.headerCacheKiB};
+        CREATE TABLE IF NOT EXISTS decimal_headers(hash TEXT PRIMARY KEY,height TEXT NOT NULL,parent TEXT NOT NULL,raw TEXT NOT NULL,periodTime INTEGER NOT NULL,times TEXT NOT NULL,jumps TEXT NOT NULL) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS decimal_catchup(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS decimal_pending(position TEXT PRIMARY KEY,height TEXT NOT NULL,hash TEXT NOT NULL,raw TEXT NOT NULL) WITHOUT ROWID;`);
+      this.get = this.db.prepare('SELECT * FROM decimal_headers WHERE hash=?'); this.put = this.db.prepare('INSERT OR IGNORE INTO decimal_headers VALUES(?,?,?,?,?,?,?)');
+    } else { this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA cache_size=-${this.limits.headerCacheKiB};
+      CREATE TABLE IF NOT EXISTS headers(hash TEXT PRIMARY KEY,height INTEGER,parent TEXT,raw TEXT,periodTime INTEGER,times TEXT);
+      CREATE TABLE IF NOT EXISTS catchup(id INTEGER PRIMARY KEY CHECK(id=1),target TEXT,height INTEGER,cursor TEXT,nextHeight INTEGER,phase TEXT);
+      CREATE TABLE IF NOT EXISTS catchup_headers(height INTEGER PRIMARY KEY,hash TEXT,raw TEXT);`);
+    this.get = this.db.prepare('SELECT * FROM headers WHERE hash=?'); this.put = this.db.prepare('INSERT OR IGNORE INTO headers VALUES(?,?,?,?,?,?)'); }
   }
+  seedKey(path) { return this.decimal ? 'integer2:' + path : path; }
+  ordinal(value) { const n = rules.decimalV2(value); if (this.decimal) return n; const valueNumber = Number(n); check(Number.isSafeInteger(valueNumber), 'bitcoin_height'); return valueNumber; }
+  job() { return this.decimal ? JSON.parse(this.db.prepare('SELECT value FROM decimal_catchup WHERE id=1').get()?.value ?? 'null') : this.db.prepare('SELECT * FROM catchup WHERE id=1').get(); }
+  saveJob(job) {
+    if (this.decimal) this.db.prepare('INSERT OR REPLACE INTO decimal_catchup VALUES(1,?)').run(JSON.stringify(job));
+    else this.db.prepare('INSERT OR REPLACE INTO catchup VALUES(1,?,?,?,?,?)').run(job.target, job.height, job.cursor, job.nextHeight, job.phase);
+  }
+  clearJob() { this.db.exec('DELETE FROM ' + (this.decimal ? 'decimal_catchup' : 'catchup')); }
   insert(raw, n, parent) {
+    n = this.ordinal(n);
     const h = parseHeader(raw); check(h && targetFromBits(h.bits) && targetFromBits(h.bits) <= targetFromBits(this.params.powLimitBits) && BigInt('0x' + h.hash) <= targetFromBits(h.bits), 'bitcoin_pow');
-    let times = [], periodTime = h.time;
-    if (n === 0) check(h.hash === this.genesis, 'bitcoin_genesis');
+    let times = [], periodTime = h.time, jumps = [];
+    if (String(n) === '0') check(h.hash === this.genesis, 'bitcoin_genesis');
     else {
-      check(parent && parent.height + 1 === n && parent.hash === h.prev, 'bitcoin_link');
-      const previous = parseHeader(parent.raw), boundary = n % this.params.interval === 0;
+      check(parent && BigInt(parent.height) + 1n === BigInt(n) && parent.hash === h.prev, 'bitcoin_link');
+      const previous = parseHeader(parent.raw), boundary = BigInt(n) % BigInt(this.params.interval) === 0n;
       check(h.bits === (boundary && this.params.retarget ? retargetBits(previous.bits, previous.time - parent.periodTime, this.params) : previous.bits), 'bitcoin_difficulty');
       times = JSON.parse(parent.times); const sorted = [...times].sort((a, b) => a - b); check(h.time > sorted[Math.floor(sorted.length / 2)], 'bitcoin_time');
       periodTime = boundary ? h.time : parent.periodTime;
     }
-    this.put.run(h.hash, n, h.prev, raw, periodTime, JSON.stringify([...times, h.time].slice(-11))); return this.get.get(h.hash);
+    if (this.decimal && parent) {
+      jumps.push(parent.hash);
+      for (let level = 0; ; level++) {
+        const ancestor = this.get.get(jumps[level]); check(ancestor, 'bitcoin_history_missing');
+        const older = JSON.parse(ancestor.jumps)[level]; if (!older) break; jumps.push(older);
+      }
+    }
+    const old = this.get.get(h.hash); check(!old || old.height === n && old.raw === raw, 'bitcoin_header_height');
+    this.put.run(h.hash, n, h.prev, raw, periodTime, JSON.stringify([...times, h.time].slice(-11)), ...(this.decimal ? [JSON.stringify(jumps)] : [])); return this.get.get(h.hash);
   }
-  async seed(filename) {
-    await privatePath(filename); let pending = Buffer.alloc(0), n = 0, parent, resume = true;
-    for await (const bytes of createReadStream(filename, { highWaterMark: 80 * 4096 })) {
-      pending = Buffer.concat([pending, bytes]); let used = 0;
+  async seed(filename, options) {
+    await privatePath(filename); return this.gate(() => seedCheckpoint(this, filename, options));
+  }
+  async seedChunks(options) {
+    await privatePath(options.manifestFile); await privatePath(options.directory, { directory: true });
+    return this.gate(() => seedChunks(this, options));
+  }
+  // A long missing branch first spools backwards on disk, then verifies forwards
+  // from the known ancestor. Neither phase loses its cursor on a budget yield or
+  // restart. Only fully linked/PoW/difficulty/time-verified rows enter headers.
+  async catchUp(tip, tipHash) {
+    let job = this.job();
+    if (job && job.target !== tipHash && job.phase !== 'discard' && this.client.blockHash) {
+      let canonical;
+      try { canonical = await this.client.blockHash(job.height); }
+      catch (error) { if (error.status !== 404) throw error; }
+      if (canonical !== job.target) {
+        job.phase = 'discard'; this.saveJob(job);
+      }
+    }
+    if (job?.phase === 'discard') {
+      const table = this.decimal ? 'decimal_pending' : 'catchup_headers', key = this.decimal ? 'position' : 'height';
+      this.db.prepare(`DELETE FROM ${table} WHERE ${key} IN (SELECT ${key} FROM ${table} LIMIT ?)`).run(this.maxHeadersPerView);
+      if (!this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) this.clearJob();
+      return false;
+    }
+    if (!job) {
+      job = { target: tipHash, height: tip, cursor: tipHash, nextHeight: tip, phase: 'fetch' }; this.saveJob(job);
+    }
+    const save = () => this.saveJob(job);
+    let work = 0;
+    while (job.phase === 'fetch') {
+      const known = this.get.get(job.cursor);
+      if (known || BigInt(job.nextHeight) < 0n) {
+        check(!known || known.height === job.nextHeight, 'bitcoin_header_height');
+        job.phase = 'verify'; job.nextHeight = this.ordinal(String(BigInt(job.nextHeight) + 1n)); save(); break;
+      }
+      if (work++ >= this.maxHeadersPerView) return false;
+      const info = this.client.headerInfo ? await this.client.headerInfo(job.cursor) : null;
+      check(!info || rules.decimalV2(info.height) === rules.decimalV2(job.nextHeight), 'bitcoin_header_height');
+      const raw = info?.raw ?? await this.client.header(job.cursor), h = parseHeader(raw), target = h && targetFromBits(h.bits);
+      check(target && target <= targetFromBits(this.params.powLimitBits) && BigInt('0x' + h.hash) <= target, 'bitcoin_pow');
+      check(h?.hash === job.cursor, 'bitcoin_header_binding');
       this.db.exec('BEGIN');
       try {
-        while (pending.length - used >= 80) {
-          const raw = pending.subarray(used, used + 80);
-          // Only reuse the contiguous, hash-matched prefix of our validated
-          // store. A matching tip alone would miss changes earlier in the file.
-          const stored = resume ? this.get.get(hash256(raw).reverse().toString('hex')) : null;
-          if (stored?.height === n && (n === 0 ? stored.hash === this.genesis : stored.parent === parent.hash)) parent = stored;
-          else { resume = false; parent = this.insert(raw.toString('hex'), n, parent); }
-          n++; used += 80;
-        }
-        this.db.exec('COMMIT');
-      }
-      catch (e) { this.db.exec('ROLLBACK'); throw e; }
-      pending = pending.subarray(used);
+        if (this.decimal) this.db.prepare('INSERT OR REPLACE INTO decimal_pending VALUES(?,?,?,?)').run(rules.uintKeyV2(job.nextHeight), job.nextHeight, h.hash, raw);
+        else this.db.prepare('INSERT INTO catchup_headers VALUES(?,?,?)').run(job.nextHeight, h.hash, raw);
+        job.cursor = h.prev; job.nextHeight = this.decimal ? String(BigInt(job.nextHeight) - 1n) : job.nextHeight - 1; save(); this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     }
-    check(pending.length === 0 && n > 0, 'bitcoin_seed');
+    if (work >= this.maxHeadersPerView) return false;
+    const rows = this.decimal ? this.db.prepare('SELECT * FROM decimal_pending WHERE position>=? ORDER BY position LIMIT ?').all(rules.uintKeyV2(job.nextHeight), this.maxHeadersPerView - work) : this.db.prepare('SELECT * FROM catchup_headers WHERE height>=? ORDER BY height LIMIT ?').all(job.nextHeight, this.maxHeadersPerView - work);
+    let parent = this.get.get(job.cursor);
+    this.db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        check(row.height === job.nextHeight, 'bitcoin_history_missing');
+        parent = this.insert(row.raw, row.height, parent);
+        job.cursor = parent.hash; job.nextHeight = this.ordinal(String(BigInt(job.nextHeight) + 1n));
+        if (this.decimal) this.db.prepare('DELETE FROM decimal_pending WHERE position=?').run(row.position);
+        else this.db.prepare('DELETE FROM catchup_headers WHERE height=?').run(row.height);
+      }
+      if (BigInt(job.nextHeight) > BigInt(job.height)) {
+        check(parent?.hash === job.target, 'bitcoin_header_binding');
+        this.clearJob();
+      } else save();
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return BigInt(job.nextHeight) > BigInt(job.height);
   }
   view(tip, tipHash) { return this.gate(async () => {
-    height(tip); hash(tipHash); let cursor = tipHash, n = tip; const missing = [];
-    while (!this.get.get(cursor)) {
-      check(missing.length < this.maxHeadersPerView, 'bitcoin_history_seed_required');
-      const raw = await this.client.header(cursor); missing.push({ n, raw }); if (n === 0) break; cursor = parseHeader(raw).prev; n--;
+    tip = this.ordinal(tip); hash(tipHash);
+    if (!this.get.get(tipHash)) {
+      let complete;
+      try { complete = await this.catchUp(tip, tipHash); }
+      catch (error) {
+        if (['bitcoin_pow', 'bitcoin_header_binding', 'bitcoin_header_height', 'bitcoin_genesis', 'bitcoin_link', 'bitcoin_difficulty', 'bitcoin_time', 'bitcoin_history_missing'].includes(error.message))
+          { const job = this.job(); if (job) { job.phase = 'discard'; this.saveJob(job); } }
+        throw error;
+      }
+      // Finishing an older target is useful even when the observed tip advanced.
+      // The next tick starts its suffix; never exceed this call's work budget.
+      check(complete && this.get.get(tipHash), 'bitcoin_history_catching_up');
     }
-    let parent = this.get.get(cursor);
-    this.db.exec('BEGIN');
-    try { for (const r of missing.reverse()) parent = this.insert(r.raw, r.n, parent); this.db.exec('COMMIT'); } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     check(this.get.get(tipHash)?.height === tip, 'bitcoin_header_height');
+    if (this.decimal) {
+    const cache = new Map(), raw = height => {
+      height = rules.decimalV2(height); if (rules.compareUint(height, tip) > 0) return null;
+      if (cache.has(height)) return cache.get(height);
+      let row = this.get.get(tipHash);
+      while (row.height !== height) {
+        const distance = BigInt(row.height) - BigInt(height), jumps = JSON.parse(row.jumps);
+        const level = Math.min(distance.toString(2).length - 1, jumps.length - 1); check(level >= 0, 'bitcoin_history_missing');
+        const ancestor = this.get.get(jumps[level]);
+        check(ancestor && BigInt(row.height) - BigInt(ancestor.height) === 1n << BigInt(level), 'bitcoin_ancestry'); row = ancestor;
+      }
+      if (cache.size >= this.limits.headerCachePages * this.limits.headerPageRows) cache.delete(cache.keys().next().value);
+      cache.set(height, row.raw); return row.raw;
+    };
+    return { length: rules.nextUint(tip), raw, get: h => rules.parseHeader(raw(h), rules.decimalV2(h)), hashAt: h => raw(h) ? parseHeader(raw(h)).hash : null,
+      field: (h, f, dt = 'n') => f === 4 ? rules.decimalV2(h) : (f === 10 ? rules.parseHeader(raw(h)).nonce : rules.parseHeader(raw(h)).bits).toString(dt === 'h' ? 16 : 10) };
+    }
     const pages = new Map(), query = this.db.prepare('WITH RECURSIVE branch AS (SELECT * FROM headers WHERE hash=? UNION ALL SELECT h.* FROM headers h JOIN branch b ON h.hash=b.parent WHERE b.height>?) SELECT height,raw FROM branch WHERE height>=? AND height<?');
     const raw = h => {
       if (!Number.isSafeInteger(h) || h < 0 || h > tip) return null;
-      const start = Math.floor(h / 1024) * 1024; let page = pages.get(start);
-      if (!page) { page = new Map(query.all(tipHash, start, start, start + 1024).map(r => [r.height, r.raw])); if (pages.size >= 4) pages.delete(pages.keys().next().value); pages.set(start, page); }
+      const start = Math.floor(h / this.limits.headerPageRows) * this.limits.headerPageRows; let page = pages.get(start);
+      if (!page) { page = new Map(query.all(tipHash, start, start, start + this.limits.headerPageRows).map(r => [r.height, r.raw])); if (pages.size >= this.limits.headerCachePages) pages.delete(pages.keys().next().value); pages.set(start, page); }
       check(page.has(h), 'bitcoin_history_missing'); return page.get(h);
     };
+    // Offline migration hashes the complete archive. Walk the verified branch
+    // once; repeated named lookups would retraverse ancestry for every page.
+    const branch = this.db.prepare('WITH RECURSIVE branch AS (SELECT height,parent,raw FROM headers WHERE hash=? UNION ALL SELECT h.height,h.parent,h.raw FROM headers h JOIN branch b ON h.hash=b.parent WHERE b.height>0) SELECT height,raw FROM branch WHERE height<=? ORDER BY height');
+    const rawRange = function* (through = tip) {
+      check(Number.isSafeInteger(through) && through >= 0 && through <= tip, 'bitcoin_header_height');
+      let next = 0;
+      for (const row of branch.iterate(tipHash, through)) { check(row.height === next++, 'bitcoin_history_missing'); yield row.raw; }
+      check(next === through + 1, 'bitcoin_history_missing');
+    };
     return { ...(this.filename ? { replaySource: { filename: this.filename, tip, tipHash } } : {}),
-      length: tip + 1, raw, get: h => rules.parseHeader(raw(h), h), hashAt: h => raw(h) ? parseHeader(raw(h)).hash : null,
+      length: tip + 1, raw, rawRange, get: h => rules.parseHeader(raw(h), h), hashAt: h => raw(h) ? parseHeader(raw(h)).hash : null,
       field: (h, f, dt = 'n') => (f === 4 ? h : f === 10 ? rules.parseHeader(raw(h)).nonce : rules.parseHeader(raw(h)).bits).toString(dt === 'h' ? 16 : 10) };
   }); }
   close() { this.db.close(); }

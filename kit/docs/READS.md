@@ -1,3 +1,76 @@
+# Activated v2 mint status
+
+Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
+[the upgrade instructions](UPGRADING.md) to keep your wallet, journal, headers,
+payout bindings and financial intents. Resume saved actions with the same IDs.
+
+
+`mint_status` retains the existing permit, fees and missing-payment fields. The
+v2 response adds `financialVersion:2`, the accepted `reservation` state, a
+`funding` summary with paid amounts and its page commitment, and the current
+queued/accepted `transition` with any deferred reason. A queued transition is
+not an accepted payment. `payable` is false until the account reservation is
+accepted, and after a permit or terminal exit.
+
+# Activated v2 occurrence reads
+
+After activation, `pattern_matches` / claimed-block pages mean submitted and
+verified occurrence evidence only. They are not complete historical searches.
+Counts, rarity and cursors bind a catalog revision. Finding another match adds
+information; it does not prove fraud. Found/minted indexes and implicit header
+awards remain necessary before assuming an absent occurrence row is free.
+Before activation, the legacy matching-block reference below remains applicable.
+
+## V2 projection contract
+
+V2 collection cursors pin durable collection revisions and survive restarts and
+unrelated writes. A change to a relevant collection returns `page_cursor_stale`;
+restart that traversal. Pending feed events fence only their affected scopes.
+The configured row and serialized byte budgets both apply. A page may contain
+no selected rows and still have `next`: continue until it is null. `total:null`
+means an exact count was intentionally not computed. Filtered pages expose
+`examined` and `continuationMeaning:"bounded_index_work"`.
+
+`claimed_blocks` and v2 `pattern_matches` use
+`/patterns/p2:NUMBER/claimed-blocks`. This route accepts found/minted booleans,
+block order and a cursor. Counts mean verified submitted blocks. They are lower
+bounds on all matches and exclude deferred, unmaterialized header awards.
+`/window-eligibility` and `/windows/WINDOW/{claims,winners,headers}` expose the
+separate implicit award evidence.
+
+`/mint-rights?owner=ADDRESS` seeks through that owner's indexed balance assets,
+then explicit awarded slots, followed by owned compounds. Ordering is asset,
+then block within each asset. A named asset filter also supports zero-balance
+diagnostics. Every page uses stored finder deadlines, deployment registration,
+account revision, holds and named Bitmap snapshots. Stale ownership or a
+balance root that has not been projected cannot produce `allowed:true`.
+Eligibility is a public hint; admission rechecks current named evidence.
+Financial producers must publish every changed balance and its account head.
+
+`submit_bitmap({block,inscription?})` posts `/bitmaps/submit`. The source must
+agree with the verified Bitcoin/Trac snapshot and the current inscription
+owner, and the wallet must have exactly one accepted Trac binding. Only those
+verified submitted items appear in `/agents/ADDRESS/bitmaps`; this is explicitly
+not a complete wallet inventory. Updates and ownership changes are checked by
+bounded maintenance. No wallet inscription history is requested.
+
+World/map, block collections, catalog, agent collections, result collections
+and rankings read persistent projections only. `/world/map` is paged. Summary
+responses link their collections instead of embedding all rows. Financial
+summary values are null until a producer supplies their verified projection;
+null must not be rendered as a measured zero. Rankings pin the exact submitted
+match fraction and catalog revision at find publication. Time rankings expose
+their published maintenance clock.
+
+Header manifest version 2 points to immutable Merkle tree nodes and raw/gzip
+chunks at relative public mirror paths. The downloader resumes chunk ranges,
+checks both compressed and raw hashes, verifies the full Bitcoin chain and
+checks the tip independently. A routine unchanged server seed restart uses a
+verified local checkpoint and reads zero seed bytes. Changed seed files are
+fully checked again. No private origin is included in a public manifest.
+
+The following reference describes legacy read defaults where they differ.
+
 # Public read reference
 
 Use the tool names and CLI examples in [README.md](../README.md). This is the
@@ -304,3 +377,27 @@ The live `feePolicy` includes `baseFee`, `revision`, `unit` and
 not atomic TAP. Launch settings are link 3, tiers 1/3/10/30/100 and compound
 minimum 10. Signed quotes bind their own revision and multipliers; a live
 change does not reprice existing requests.
+
+
+Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
+`localMatchCount`, real `matches` (decimal height/count and canonical hash),
+`localResultId`, and `nextCursor` for each accepted local candidate. Continue with
+`pattern_search_matches` using the same proposal and cursor (page size 3–200,
+default 100). Cursors retain the original snapshot across restarts and later
+headers, and refuse a replaced canonical snapshot. These are local search
+results, not finds or an exhaustive server catalog. The existing action journal,
+salts and signed packets are unchanged. The accepted activation manifest selects the protocol. On v2, use named
+witnesses and `claimed_blocks`; on v1, keep the legacy commit/reveal protocol.
+
+Activated v2 craft previews use `POST /craft-preview` with
+`{recipe,inputs,snapshot:{height,hash}}`. This read returns named-state proof nodes,
+the original compound record and output quantity. The kit independently rebuilds
+the preview against the accepted catalog root. It never trusts supplied parent
+properties or a gateway's claimed revision without proof.
+
+`GET /named-record/compound/assets/c2:COMMITMENT`, `/tiers/c2:COMMITMENT` and
+`/maker/c2:COMMITMENT` (under the same `/named-record/compound` prefix) return
+bounded membership/nonmembership proofs. `assets` is immutable; `tiers` holds
+accepted comparison progress and its cursor; `maker` records the first accepted
+maker and provenance. A null progress record uses the original record's tier.
+These are v2 proof reads; existing public collection pagination is separate.

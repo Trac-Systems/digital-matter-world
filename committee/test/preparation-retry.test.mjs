@@ -71,3 +71,16 @@ test('host-safe errors expose protocol codes but suppress arbitrary dependency d
   for (const message of ['evidence_reorg', 'ceremony_id', 'replay_timeout', 'file_mismatch', 'session_busy']) assert.deepEqual(signerError(Error(message)), { error: message });
   for (const message of ['https://private.invalid/credential', '/private/credential', 'arbitrary_secret_text']) assert.deepEqual(signerError(Error(message)), { error: 'signer_error' });
 });
+
+test('batch audit has no reservation and prepare rechecks live policy before reserving', async t => {
+  const f = await setup(t);
+  const approval = await f.signer.handle('/audit-batch', f.body.proposal);
+  assert.equal(approval.digest, Buffer.from(f.b.built.signingDigest).toString('hex'));
+  assert.equal(f.prepares(), 0);
+  assert.equal((await f.signer.handle('/preparation-state', { id: f.body.ceremony.id })).reserved, false);
+  f.data.counted = 94;
+  await assert.rejects(f.signer.handle('/prepare', f.body), /signer_not_caught_up/);
+  assert.equal(f.prepares(), 0);
+  assert.equal((await f.signer.handle('/preparation-state', { id: f.body.ceremony.id })).reserved, false);
+  await assert.rejects(f.signer.handle('/audit-batch', { kind: 'mint' }), /audit_batch_only/);
+});

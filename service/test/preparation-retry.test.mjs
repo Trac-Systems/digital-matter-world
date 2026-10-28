@@ -43,7 +43,7 @@ async function setup(t) {
   return { store, signers, state, proposal, key: 'batch/0/1', committee: () => new Committee({ store, signers, network }) };
 }
 
-test('wait for quorum, preserve partial reservations across catch-up and gateway restart', async t => {
+test('19:19 sequence: wait for quorum, preserve partial reservations across catch-up and gateway restart', async t => {
   const f = await setup(t); let c = f.committee();
   assert.equal(await c.ready({ counted: 95, tip: 100 }), false);
   assert.equal(await c.signature(f.key, f.proposal), null); assert.equal(f.store.count('ceremonies'), 0);

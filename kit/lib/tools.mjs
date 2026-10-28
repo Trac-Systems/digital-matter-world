@@ -2,6 +2,7 @@ import { encodeTracAddress, isTracAddress, publicIdentities, TRAC_ADDRESS_ERROR 
 import { z } from 'zod/v4';
 import { check } from './check.mjs';
 import { findPatterns } from './search.mjs';
+import { searchMatchPage } from './search-matches.mjs';
 import { backtest } from './backtest.mjs';
 import { chooseClaims, chooseCompound, chooseMint } from '../strategies/default.mjs';
 import { readTools } from './read-tools.mjs';
@@ -9,8 +10,13 @@ import { readTools } from './read-tools.mjs';
 const hex = z.string().regex(/^[0-9a-f]{64}$/), units = z.string().regex(/^[1-9][0-9]{0,77}$/), height = z.number().int().nonnegative().safe();
 const asset = z.string().regex(/^[0-9a-z]{1,24}$/), actionId = z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/);
 const pairs = z.array(z.tuple([asset, units])).min(1).max(16);
+const craftInputs = z.array(z.tuple([z.string().regex(/^([0-9a-z]{1,24}|p2:(0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/), z.string().regex(/^[1-9][0-9]*$/)])).min(2);
 const proposal = z.object({ name: z.string().regex(/^dmw[a-z0-9]{2,29}$/), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']) }).strict();
 const publication = z.object({ height, observation: height.optional(), audit: z.object({ path: z.string().max(512), hash: hex, bytes: height.max(1500000) }).strict() });
+const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
+const namedAnchor = z.object({ height: decimal, hash: hex }).strict();
+const namedMatches = z.array(z.object({ height: decimal, hash: hex, count: decimal }).strict()).min(1);
+const witnesses = z.object({ anchor: namedAnchor, matches: namedMatches }).strict();
 
 export function gameTools({ agent, history, historySync, source, strategies = {}, candidates = async () => [], compounds = async () => [] }) {
   const tools = {};
@@ -24,6 +30,16 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     return run(value, head, ...args);
   };
   for (const [name, tool] of Object.entries(readTools(agent))) register(name, tool.description, tool.shape, tool.run);
+  register('use_credit', 'Allocate accepted fee credit to an open request with matching fee terms. Reuse the action ID after uncertainty.',
+    { actionId, credit: hex, request: hex, items: z.array(z.object({ fee: hex, amount: z.string().regex(/^[1-9][0-9]*$/) }).strict()).min(1) }, args => agent.useCredit(args), false);
+  register('transfer_credit', 'Transfer an accepted fee credit to another player using the current signed revision. Reuse the action ID after uncertainty.',
+    { actionId, credit: hex, to: z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR) }, args => agent.transferCredit(args), false);
+  register('financial_action_status', 'Read acceptance of a saved credit or beneficiary action.', { id: hex }, ({ id }) => agent.service.financialActionStatus(id));
+  register('claim_custody', 'Claim an accepted beneficiary liability to your chosen payout address. Saves one signed claim; never sends the custodian payment.',
+    { actionId, id: hex, destination: z.string().min(1).max(90) }, args => agent.claimCustody(args), false);
+  register('custody_status', 'Read a beneficiary liability and its exact payout plan for the custodian.', { id: hex }, ({ id }) => agent.service.custodyStatus(id));
+  register('report_custody_payment', 'Report a transfer already made by the custodian for canonical verification. This tool never sends funds.',
+    { id: hex, reference: z.string().min(1).max(100), index: z.number().int().nonnegative().safe() }, args => agent.service.reportCustodyPayment(args), false);
   register('bind_payout_wallet', 'Request a payout binding signed by this agent; the human signs with the wallet on the returned local page. Reuse the action ID on retry.', {
     actionId, rail: z.enum(['tap', 'ethereum']), address: z.string().min(1).max(90).optional()
   }, args => agent.bindPayoutWallet(args), false);
@@ -36,11 +52,14 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   register('post_header', 'Submit a correct header for free during its block’s open window; defaults to the observed tip. Unclaimed patterns are drawn among its header senders.', { height: height.optional() }, async ({ height }) => {
     check(source, 'Configure a header source'); return agent.postHeader({ height, history: currentHistory(), source });
   }, false);
-  register('search_patterns', 'Test bounded candidate patterns against full verified history. Reports history downloading (x%) until ready.', { maxCandidates: z.number().int().min(1).max(60).default(10), candidates: z.array(proposal).max(60).optional() }, discovery(async (history, head, { maxCandidates, candidates }, extra) => {
-    return findPatterns({ history, tip: head.tip, existing: await agent.catalog(), owner: encodeTracAddress(agent.owner), maxCandidates, candidates, strategy: strategies.searchPatterns, signal: extra?.signal });
+  register('pattern_search_matches', 'Page through locally computed matching heights, canonical hashes and exact counts. Reuse the proposal, snapshot and cursor; this creates no find or server submission.', { proposal, cursor: z.string().max(1024).optional(), pageSize: z.number().int().min(3).max(200).default(100) }, discovery((history, head, args, extra) => searchMatchPage({ history, tip: head.tip, ...args, signal: extra?.signal })));
+  register('search_patterns', 'Test bounded candidate patterns against verified local history and return matching heights, hashes, counts and a resumable local page cursor. Reports history downloading (x%) until ready.', { maxCandidates: z.number().int().min(1).max(60).default(10), candidates: z.array(proposal).max(60).optional() }, discovery(async (history, head, { maxCandidates, candidates }, extra) => {
+    const context = await agent.namedContext?.();
+    return findPatterns({ history, tip: head.tip, existing: context ? [] : await agent.catalog(), settings: context?.settings, owner: encodeTracAddress(agent.owner), maxCandidates, candidates, strategy: strategies.searchPatterns, signal: extra?.signal });
   }));
-  register('propose_pattern', 'Check history and commit a secret pattern. Reports download progress until ready; keep the action ID for reveal.', { actionId, proposal }, discovery(async (history, head, args) => agent.propose({ ...args, history, patterns: await agent.catalog() })), false);
-  register('reveal_pattern', 'Reveal the saved pattern only after three pinned signers witness its commitment, at commitment tip +2 through +144. Supply the original observation if it is no longer latest.', { actionId, publication: publication.optional() }, discovery(async (history, head, args) => agent.reveal({ ...args, history, patterns: await agent.catalog() })), false);
+  register('propose_pattern', 'Save the pattern, snapshot, real matching blocks and salt; commit with a stable action ID. Reads the activated rules and preserves the original journal.', { actionId, proposal, witnesses: witnesses.optional() }, discovery(async (history, head, args) => agent.propose({ ...args, history, patterns: await agent.namedContext?.() ? [] : await agent.catalog() })), false);
+  register('reveal_pattern', 'Reveal the saved pattern and named blocks in its recorded eligibility window, after independently verifying the accepted commitment. Legacy actions add a witness attachment.', { actionId, publication: publication.optional(), witnesses: witnesses.optional() }, discovery(async (history, head, args) => agent.reveal({ ...args, history, patterns: await agent.namedContext?.() ? [] : await agent.catalog() })), false);
+  register('submit_occurrences', 'Submit a bounded page of named matching blocks under activated v2 rules. Adds known evidence; it awards no find. Reuse the action ID after uncertainty.', { actionId, patternKey: hex, anchor: namedAnchor, matches: namedMatches }, args => agent.submitOccurrences(args), false);
   register('recover_refused_reveal', 'Record an owner-confirmed original HTTP 429 reveal_capacity refusal discarded by an older kit. Use the exact move ID from status, only when every attempt of that packet was definitely refused, never after a timeout or lost response. Preserves history and sends nothing; then retry reveal_pattern with the same action ID.', {
     actionId, move: hex, status: z.literal(429), code: z.literal('reveal_capacity'), confirmOriginalRefusal: z.literal(true)
   }, args => agent.recoverRefusedReveal(args), false);
@@ -69,7 +88,12 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     if (slotCount) warnings.push({ code: 'consumes_mintable_finder_units', message: 'This craft consumes units available for your mintable finder slots.', slots: mintableFinderSlots, total: slotCount, pages: slotPages });
     return { suggestion, reason: null, warnings };
   });
-  register('craft', 'Consume input units through an owner-signed free craft. Reuse the same action ID after an uncertain result.', { actionId, recipe: z.enum(['fusion', 'resonance']).default('fusion'), inputs: pairs }, async args => agent.craft({ ...args, patterns: await agent.catalog(), compounds: await compounds() }), false);
+  register('craft', 'Consume input units through an owner-signed free craft. Reuse the same action ID after an uncertain result.', { actionId, recipe: z.enum(['fusion', 'resonance']).default('fusion'), inputs: craftInputs }, async args => {
+    const context = await agent.namedContext();
+    return agent.craft({ ...args, ...(context ? {} : { patterns: await agent.catalog(), compounds: await compounds() }) });
+  }, false);
+  register('refine_compound', 'Continue exact tier comparison for an accepted v2 compound. Reuse this action ID after uncertainty; each accepted step retains its cursor.',
+    { actionId, asset: z.string().regex(/^c2:[0-9a-f]{64}$/), steps: z.number().int().positive().safe().optional() }, args => agent.refineCompound(args), false);
   register('mint_idea', 'Choose an eligible unminted block that fits your balance, preferring supplied UTC dates.', { asset, specialDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).default([]) }, async ({ asset, specialDates }) => {
     const balance = await agent.trac.balance(agent.owner, asset);
     if (BigInt(balance) === 0n) return { suggestion: null, reason: 'no_balance' };
@@ -104,7 +128,12 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     if (agent.dryRun) return { state: 'dry-run', asset, inscription, sent: false };
     return agent.service.submitDeployment({ asset, phase, inscription });
   }, false);
-  register('link_bitmap', 'Sign a permanent Bitmap-link request and return its payment page. Acceptance requires current holder evidence and a completed payment.', { actionId, height, payer: z.string().min(1).max(128).optional() }, args => agent.linkBitmap(args), false);
+  register('pay_link', 'Pay the missing TAP link fees with the local Bitcoin wallet after accepted reservation. Preserve the journal for exact retries.', mintBitcoinArgs, args => {
+    agent.playerLink.dryRun = agent.dryRun; return agent.playerLink.pay(args);
+  }, false);
+  register('poll_link', 'Read a paid link reservation and terminal settlement without signing or broadcasting.', { id: hex, timeoutMs: z.number().int().min(0).max(120000).default(30000) },
+    (args, extra) => agent.playerLink.poll(args.id, { timeoutMs: args.timeoutMs, signal: extra?.signal }));
+  register('link_bitmap', 'Sign a permanent Bitmap-link request and return its payment page. Acceptance requires current holder evidence and a completed payment.', { actionId, height: z.union([height, decimal]), payer: z.string().min(1).max(128).optional() }, args => agent.linkBitmap(args), false);
   register('transfer', 'Send integer asset units; TNK is charged to your own trac1… address.', { actionId, to: z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR), assets: pairs }, ({ actionId, ...value }) => agent.transaction({ actionId, op: 'tf', value }), false);
   return tools;
 }

@@ -9,7 +9,7 @@ TAP on Bitcoin regtest and bridged TAP on Anvil both have **18 decimals**.
 Protocol fees, quotes, splits, deposits and balances are integer atomic strings:
 `"22600000000000000000"` is 22.6 TAP on either payment rail. TAP inscription
 amounts are decimal TAP strings; the payment plan performs that conversion.
-The base-fee input accepts decimal TAP, such as `"22.6"`, and responses include
+The base-price input accepts decimal TAP, such as `"22.6"`, and responses include
 unit metadata. Test ETH pays gas. BTC balances use BTC units;
 `networkFeeSats` uses satoshis. Matter balances are indivisible integer units.
 `GET /api/status.units` makes these scales explicit. There is no exchange rate

@@ -1,7 +1,7 @@
 # Operator launch inputs
 
-Use [PAYMENTS.md](PAYMENTS.md) and the strict
-[example worksheet](inputs/mainnet-inputs.template.json). Endpoint values belong
+Use [GO-LIVE-TODAY.md](GO-LIVE-TODAY.md) and the strict
+[private worksheet](inputs/mainnet-inputs.template.json). Endpoint values belong
 only in private files. The Bitcoin/TAP source address must never appear in a
 configuration, output bundle, report or public profile.
 

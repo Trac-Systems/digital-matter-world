@@ -174,6 +174,6 @@ test('worked field examples and complete search responses match verified Bitcoin
     const sample = text.match(/Worked `search_patterns` call:\s*```js\n([\s\S]+?)\n```/)[1];
     const result = await runInNewContext(sample, { search_patterns: args => runTool({ agent, history }, 'search_patterns', JSON.parse(JSON.stringify(args))) });
     const expected = JSON.parse(text.slice(text.indexOf('Exact result for an empty catalog')).match(/```json\n([\s\S]+?)\n```/)[1]);
-    assert.deepEqual(result, expected, path);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), expected, path);
   }
 });

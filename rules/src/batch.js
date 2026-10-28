@@ -12,6 +12,7 @@ import { encodeBinary, summaryBytes } from './binary.js';
 import { verifyReceipt, verifyReceiptRoot, verifyRootAttestations, claimWindow } from './receipts.js';
 import { applyMintInput, MINT_BATCH_DEFAULTS } from './mint-batch.js';
 import { verifyLinkInput } from './link-payments.js';
+import { processBlockV2, buildBatchV2 } from './batch-v2.js';
 export const MAX_BATCH_HORIZON = 36;
 export function batchDeadline(executionHeight, horizon = 6) {
   assert(integer(executionHeight) && integer(horizon, MAX_BATCH_HORIZON) && integer(executionHeight + horizon), 'batch_deadline');
@@ -45,7 +46,11 @@ export function batchOperations(files, sequence) {
     notaryOp(`finds/batch/${sequence.toString(36)}`, findsCommitment(files)),
     notaryOp(`receipt/batch/${sequence.toString(36)}`, merkleRoot(files.map(f => encodeBinary({ observation: f.observation, tip: f.tip, hash: f.tipHash, seal: f.receiptRoot }))))];
 }
-export function buildBatch({ network, epoch, sequence, lastTo, files, executionHeight, deadline = batchDeadline(executionHeight), operations, headers = [], maxBytes = 98304, maxOps = 512, maxAssets = 4096, maxKv = 16,
+export function buildBatch(input) {
+  if (input.files?.[0]?.v === 5) return buildBatchV2(input);
+  return buildLegacyBatch(input);
+}
+export function buildLegacyBatch({ network, epoch, sequence, lastTo, files, executionHeight, deadline = batchDeadline(executionHeight), operations, headers = [], maxBytes = 98304, maxOps = 512, maxAssets = 4096, maxKv = 16,
   maxMintOps = MINT_BATCH_DEFAULTS.maxMintOps, maxObservations = 512, maxAuditBytes = 1500000 }) {
   networkId(network);
   assert(integer(epoch), 'batch_epoch');
@@ -87,7 +92,12 @@ function balance(state, owner, asset, delta) {
 }
 // One call observes a new raw tip, collects that tip's sealed receipts, then
 // settles eligible events against the counted chain. The two clocks differ.
-export function processBlock({ height, blockHash, tip, tipHash, network, gateway, history, patterns, entries, receiptRoot, rootAttestations = [],
+export function processBlock(input) {
+  if (input.settings?.batchVersion === 2) return processBlockV2(input);
+  assert(input.settings?.batchVersion === undefined || input.settings.batchVersion === 1, 'batch_version');
+  return processLegacyBlock(input);
+}
+export function processLegacyBlock({ height, blockHash, tip, tipHash, network, gateway, history, patterns, entries, receiptRoot, rootAttestations = [],
   state, hashAt, executionHeight = height, priorOperations = [], confirmed = Math.min(height, tip), linkOperations = [], mintOperations = [], settings = {} }) {
   assert(integer(height) && integer(tip) && hex(tipHash, 32) && integer(confirmed) && confirmed <= height && confirmed <= tip && (hex(blockHash, 32) || (blockHash === null && height > tip)) && hashAt(height) === blockHash && hashAt(tip) === tipHash, 'block_clock');
   assert(integer(executionHeight) && executionHeight >= height, 'execution_height');

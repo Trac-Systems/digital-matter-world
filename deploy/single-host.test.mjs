@@ -24,7 +24,7 @@ const path = new URL('./inputs/mainnet-inputs.template.json', import.meta.url);
 const worksheet = JSON.parse(await readFile(path));
 const recorded = JSON.parse(await readFile(new URL('./fixtures/production-reads.json', import.meta.url)));
 
-test('example layout has one host, one source, normal mainnet and ten distinct local signer ports', async () => {
+test('known layout has one host, one source, normal mainnet and ten distinct local signer ports', async () => {
   const t = await loadTarget(path);
   assert.equal(t.trac.networkId, '918'); assert.equal(t.trac.msbBootstrap, TRAC_MAINNET.msbBootstrap);
   assert.deepEqual(worksheet.files.tracRuntime.dhtBootstrap, TRAC_MAINNET.dhtBootstrap);
@@ -50,17 +50,15 @@ test('public input collector binds indexer/admin and keeps writer, signers and p
     ethereum: Object.fromEntries(['admin','treasury','payer'].map(r => [r+'Address', committeeAddress(Buffer.from(pk).toString('hex'))])),
     trac:{hostPublicKey:edPublic(Buffer.alloc(32, 8)),writerPublicKey:edPublic(Buffer.alloc(32, 9))}, gatewayKey:edPublic(Buffer.alloc(32, 10)) };
   const members = worksheet.target.committee.members.map((m, i) => ({id:m.id,network:worksheet.target.network,url:worksheet.operations.hosts.operators[i].sidecarURL,identity:edPublic(Buffer.alloc(32,i+11)),encryption:edPublic(Buffer.alloc(32,i+16))}));
-  const inputs = structuredClone(worksheet);
-  Object.assign(inputs.target.bitcoin, { feeRate: 2, estimateFeeRate: 10 });
-  const w = collectSingleHostInputs(inputs, roles, members);
+  const w = collectSingleHostInputs(worksheet, roles, members);
   assert.equal(w.target.trac.adminPublicKey, w.target.trac.hostAdminPublicKey);
   assert.notEqual(w.target.trac.writerPublicKey, w.target.trac.hostAdminPublicKey);
   const same = structuredClone(roles);same.trac.writerPublicKey=same.trac.hostPublicKey;
-  assert.throws(() => collectSingleHostInputs(inputs, same, members), /single_host_writer/);
+  assert.throws(() => collectSingleHostInputs(worksheet, same, members), /single_host_writer/);
   const changed = structuredClone(members); changed[0].identity=changed[1].identity;
-  assert.throws(() => collectSingleHostInputs(inputs, roles, changed), /target_roster/);
+  assert.throws(() => collectSingleHostInputs(worksheet, roles, changed), /target_roster/);
   assert.throws(() => collectSingleHostInputs(w, roles, changed), /identity_changed/);
-  const bad = structuredClone(inputs);bad.operations.hosts.operators[1].signerURL=bad.operations.hosts.operators[0].signerURL;
+  const bad = structuredClone(worksheet);bad.operations.hosts.operators[1].signerURL=bad.operations.hosts.operators[0].signerURL;
   assert.throws(() => collectSingleHostInputs(bad, roles, members), /single_host_ports/);
 });
 
@@ -139,7 +137,7 @@ test('verification receipts measure pinned bytes and implementation code without
   };
   const receipt=await prepareVerificationReceipt(target,'token',{ethereum});
   assert.equal(receipt.proxyKind,'eip1167');assert.equal(receipt.implementation,implementation);assert.equal(receipt.verified,undefined);
-  assert.match(receipt.artifactSHA256,/^[0-9a-f]{64}$/);assert.match(receipt.artifactURL,/^https:\/\/gateway\.example\.invalid\/verification\//);
+  assert.match(receipt.artifactSHA256,/^[0-9a-f]{64}$/);assert.match(receipt.artifactURL,/^https:\/\/dmtworld\.much\.fun\/verification\//);
   assert.ok(calls.every(method=>!method.includes('send')));
   reorg=true;await assert.rejects(prepareVerificationReceipt(target,'token',{ethereum}),/verification_reorg/);
 });

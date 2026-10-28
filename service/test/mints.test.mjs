@@ -43,6 +43,7 @@ test('quote reserves; partial final items and top-up precede once-only consumpti
   await f.tick(2);const issued=f.mints.public(f.id);assert.equal(issued.state,'permit_issued');assert.equal(f.ops.filter(o=>o.op==='mc').length,1);
   f.data.counted=50000;await f.tick(3);assert.deepEqual(f.mints.public(f.id).permit,issued.permit);assert.deepEqual((await f.mints.request(f.body)).permit,issued.permit);
   assert.equal(f.signatures,1); f.observe();await f.tick();assert.equal(f.mints.public(f.id).state,'minted');assert.equal(f.ops.filter(o=>o.op==='mc').length,1);
+  assert.deepEqual(f.store.get('feedBlockChanges', 'mint/p0/10'), { block: 10, asset: 'p0' });
 });
 test('mempool/confirming payment pins a reservation; finality and all items gate the permit',async t=>{
   const f=await setup();t.after(()=>f.store.close());await f.start();f.pay(0);await f.tick();f.data.counted=1000;await f.tick();assert.equal(f.mints.public(f.id).reservation,'held');assert.equal(f.signatures,0);

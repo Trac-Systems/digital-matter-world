@@ -101,3 +101,34 @@ test('fresh Link prepares, preserves its secret on cancellation, activates autho
   assert.deepEqual(wallet.state.calls.filter(c => c[0] === 'redeemTapActions').map(c => c[1].actions[0].op), ['lock', 'claim']);
   assert.deepEqual(errors, []);
 });
+
+test('activated Link waits for reservation and retries direct fee notification without paying twice', { timeout: 60000 }, async t => {
+  const store = await Store.open(await temp('financial-link-page-')); t.after(() => store.close());
+  const who = agent(87), payer = testPayoutAddress(who.secret.toString('hex'), 'tap', 'mainnet');
+  const wallet = tapWallet1048({ address: payer, active: true }), id = 'b7'.repeat(32), paymentId = 'c8'.repeat(32) + 'i0';
+  const fees = rules.mintFeeItems({ treasury: '10', burn: '2' }, { treasury: 'treasury' }, id, payer, 'tap', 'mainnet');
+  let state = 'reserving', sends = 0, reports = 0;
+  await store.put('financialLinks', id, { id });
+  const links = { financialVersion: 2, public: async () => ({ id, requestId: id, financialVersion: 2, state, payer, receiver: payer, block: '42',
+    price: '12', fees, fullFees: fees, missing: state === 'accepted' ? [] : fees, unit: rules.TAP_UNIT,
+    payable: state === 'awaiting_payment', payBy: { rail: 'tap', untilBlock: '532' }, blocked: [] }),
+    payment: async body => { assert.equal(body.id, id); assert.equal(body.paymentId, paymentId); if (++reports === 1) throw Error('payment_unconfirmed'); state = 'accepted'; return { id, state }; } };
+  const checkout = new WebCheckout({ store, links, reads: { counted: async () => '100' },
+    config: { network: 'dmw-mainnet', mode: 'prod', prod: { ethereum: { chainId: '1' } } } });
+  const server = await serve({ intake: { store }, files: { serve: async () => false }, links, web: createWeb(checkout) }); t.after(() => server.close());
+  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
+  wallet.provider.singleTxTransfer = async items => { sends++; assert.deepEqual(items, rules.walletFeeItems(fees)); return paymentId; };
+  wallet.provider.redeemTapActions = () => assert.fail('activated link used a legacy payment lock');
+  await page.exposeFunction('walletCall', async (method, args) => ({ value: await wallet.provider[method](...args) }));
+  await page.addInitScript(methods => { window.tapprotocol = Object.fromEntries(methods.map(method => [method, async (...args) => (await window.walletCall(method, args)).value])); }, Object.keys(wallet.provider));
+  await page.goto(server.url + '/link/' + id);
+  const pay = page.getByRole('button', { name: 'Approve payment in wallet' }); await pay.waitFor(); assert.equal(await pay.isDisabled(), true);
+  state = 'awaiting_payment'; await page.getByRole('button', { name: 'Refresh receipt' }).click();
+  await pay.click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === 'Approve payment in wallet' && !b.disabled));
+  assert.equal(sends, 1, await page.locator('body').innerText()); assert.equal(reports, 1, await page.locator('body').innerText()); await page.reload(); await pay.click();
+  await page.getByText(/accepted Bitmap link/).waitFor(); assert.equal(state, 'accepted'); assert.equal(sends, 1); assert.equal(reports, 2);
+  await page.reload(); await page.getByText('Confirmed: accepted.', { exact: true }).waitFor();
+  assert.equal(await pay.isDisabled(), true); assert.deepEqual(errors, []);
+});

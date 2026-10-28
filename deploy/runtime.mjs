@@ -1,3 +1,4 @@
+import { privateRegistry as readRegistry, registryPages } from './registry.mjs';
 import { join, dirname } from 'node:path';
 import { ROOT, validateTarget, need, endpoint as localEndpoint, secret, privateJSON, privateDirectory } from './target.mjs';
 import { endpoint as productionEndpoint, validateConfig, privatePath } from '../service/prod/config.mjs';
@@ -50,9 +51,9 @@ export async function renderTargetRuntime(t, { filename = t.gateway.configFile, 
     const { url } = await ep({ ...m.signer, authFile: '', tokenFile: '' });
     committee.push({ id: m.id, url, token: signer === null ? await secret(m.signer.tokenFile) : '', peer: { id: m.id, identity: m.identity, encryption: m.encryption, url } });
   }
-  const registry = await privateJSON(t.gateway.registryFile); validateFeePolicy(registry);
+  const registry = await readRegistry(t.gateway.registryFile); validateFeePolicy(registry);
   need(currentFee(registry).baseFee === t.policy.baseFeeAtoms, 'target_fee_policy_binding');
-  need(Object.values(registry.assets).every(a => a.privilege === t.bitcoin.authorityInscription && a.tap?.treasury === t.bitcoin.treasuryAddress && a.ethereum?.treasury === t.ethereum.treasuryAddress), 'target_registry_roles');
+  for (const page of registryPages(registry)) need(page.every(({ value: a }) => a.privilege === t.bitcoin.authorityInscription && a.tap?.treasury === t.bitcoin.treasuryAddress && a.ethereum?.treasury === t.ethereum.treasuryAddress), 'target_registry_roles');
   const r = t.runtime, p = t.policy;
   let config;
   if (!production) {

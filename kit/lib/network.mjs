@@ -1,9 +1,13 @@
+import { headerHTTPSettings } from './headers.mjs';
+import { validateManifestTrust } from './header-manifest.mjs';
+import { chunkDownloadLimits } from './header-chunks.mjs';
 import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, hex32, gatewayOrigin, localOrigin, MAINNET_GATEWAYS } from './check.mjs';
 import { stableJSON } from '../../rules/src/index.js';
 import { validateDeployment } from '../../contract/state.js';
+import { validateV2Deployment } from '../../contract/activation-v2.js';
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { TRAC_MAINNET } from '../../service/prod/mainnet.mjs';
 import { bitcoinAddress } from './addresses.mjs';
@@ -29,13 +33,14 @@ export function validateRoster(roster) {
 export function validateMainnet(profile) {
   check(profile && !JSON.stringify(profile).includes('TO-BE-FILLED-AT-LAUNCH'),
     'Mainnet pins are TO-BE-FILLED-AT-LAUNCH. Obtain the launch-pinned repository release; setup/preflight cannot use this template.');
-  check(own(profile, NETWORK_FIELDS) && NETWORK_FIELDS.every(k => Object.hasOwn(profile, k)), 'Unexpected mainnet network fields');
+  check(own(profile, [...NETWORK_FIELDS, 'headerManifestTrust']) && NETWORK_FIELDS.every(k => Object.hasOwn(profile, k)), 'Unexpected mainnet network fields');
   check(profile.version === 1 && profile.mode === 'mainnet' && profile.network === 'dmw-mainnet' && profile.bitcoinNetwork === 'mainnet', 'Pinned DMW mainnet required');
   for (const field of ['gateway', 'paymentOrigin', 'headerSource']) {
     gatewayOrigin(profile[field], 'mainnet');
     check(MAINNET_GATEWAYS.includes(profile[field]), 'Use the exact pinned production origin');
   }
   check(hex32(profile.gatewayKey) && !/^0+$/.test(profile.gatewayKey), 'Pinned gateway key required');
+  if (profile.headerManifestTrust) validateManifestTrust(profile.headerManifestTrust);
   validateRoster(profile.receiptSigners);
   check(profile.puzzleBits === 12 && profile.powLimitBits === 0x1d00ffff, 'Mainnet puzzle and proof-of-work limits required');
   const p = profile.trac, r = profile.runtime;
@@ -46,10 +51,19 @@ export function validateMainnet(profile) {
     r.msbChannel === TRAC_MAINNET.msbChannel && r.peerChannel === TRAC_MAINNET.peerChannel &&
     stableJSON(r.dhtBootstrap) === stableJSON(TRAC_MAINNET.dhtBootstrap), 'Pinned Trac discovery required');
   validateDeployment(r.deployment);
-  check(own(r.deployment, ['network', 'admin', 'committee', 'beacon']) && own(r.deployment.beacon, ['checkpoint', 'params']) &&
+  check(own(r.deployment, ['network', 'admin', 'committee', 'beacon', 'v2']) && own(r.deployment.beacon, ['checkpoint', 'params']) &&
     own(r.deployment.beacon.checkpoint, ['height', 'hash', 'bits', 'time', 'chainwork', 'times']), 'Public deployment fields only');
   check(r.deployment.network === profile.network && r.deployment.admin === p.adminPublicKey && r.deployment.committee === p.committeePublicKey &&
     stableJSON(r.deployment.beacon.params) === stableJSON(MAINNET_PARAMS), 'Deployment must match the pinned mainnet authorities and Bitcoin rules');
+  if (r.deployment.v2) {
+    check(own(r.deployment.v2, ['manifest', 'manifestHash', 'document', 'importRoot', 'importRows', 'receiptProtocol', 'gateway', 'receiptSigners']), 'Public activation fields only');
+    validateV2Deployment(r.deployment);
+    if (r.deployment.v2.gateway !== undefined || r.deployment.v2.receiptSigners !== undefined) {
+      validateRoster(r.deployment.v2.receiptSigners);
+      check(r.deployment.v2.gateway === profile.gatewayKey && stableJSON(r.deployment.v2.receiptSigners) === stableJSON(profile.receiptSigners),
+        'Activation receipt authorities must match the player pins');
+    }
+  }
   return profile;
 }
 export function validateOwner(owner = {}, network = 'mainnet') {
@@ -87,13 +101,17 @@ export async function validatePlayerConfig(config, { pins } = {}) {
   }
   pins ??= await readNetworkJSON(MAINNET_FILE);
   validateMainnet(pins);
-  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin']), 'Unpinned production config field');
+  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin', 'headerManifestTrust', 'headerChunkLimits', 'headerHTTPSettings']), 'Unpinned production config field');
   if (config.bitcoin !== undefined) {
     check(own(config.bitcoin, ['authority', 'funding']), 'Only a public token authority ID and cardinal funding outpoints belong in Bitcoin config');
     check(config.bitcoin.authority === undefined || /^[0-9a-f]{64}i[0-9]+$/.test(config.bitcoin.authority), 'Invalid token authority inscription ID');
     check(config.bitcoin.funding === undefined || Array.isArray(config.bitcoin.funding) && config.bitcoin.funding.length <= 1000 && config.bitcoin.funding.every(c => own(c, ['txid', 'vout']) && hex32(c.txid) && Number.isSafeInteger(c.vout) && c.vout >= 0), 'Invalid cardinal funding outpoints');
   }
+  if (config.headerHTTPSettings) headerHTTPSettings(config.headerHTTPSettings);
+  if (config.headerChunkLimits) chunkDownloadLimits(config.headerChunkLimits);
+  check(stableJSON(config.headerManifestTrust ?? null) === stableJSON(pins.headerManifestTrust ?? null), 'Header manifest identities differ from repository pins');
   const projected = Object.fromEntries(NETWORK_FIELDS.map(k => [k, config[k]]));
+  if (config.headerManifestTrust) projected.headerManifestTrust = config.headerManifestTrust;
   validateMainnet(projected);
   check(stableJSON(projected) === stableJSON(pins), 'Production config differs from the repository pins; use the matching launch release');
   check(isAbsolute(config.directory ?? ''), 'An absolute signer directory is required');

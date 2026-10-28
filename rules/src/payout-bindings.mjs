@@ -6,6 +6,11 @@ import * as btc from '@scure/btc-signer';
 import { assert, exactKeys, hex, integer, stableJSON, networkId, hash, hashBytes, utf8 } from './core.js';
 
 export const BINDING_DOMAIN = 'dmw-payout-binding-v1';
+export const BINDING_V2_DEFAULTS = Object.freeze({ freshnessMs: 60000 });
+export const bindingBarrier = record => record.request.v === 2 ? record.blockedAt : record.acceptedAt;
+export const bindingNonceKey = request => request.v === 2
+  ? 'v2/' + '1'.repeat(String(request.nonce.length).length) + '0' + request.nonce.length + ':' + request.nonce
+  : request.nonce.padStart(20, '0');
 export const bindingKey = (agent, rail) => `${agent}/${rail}`;
 export const bitcoinNetwork = name => {
   assert(['mainnet', 'regtest'].includes(name), 'binding_network');
@@ -24,10 +29,11 @@ export function payoutAddress(rail, address, chain) {
 }
 export function bindingMessage(network, chain, request) {
   networkId(network);
-  assert(['mainnet', 'regtest'].includes(chain) && exactKeys(request, ['agent', 'rail', 'address', 'nonce', 'expiry']) && hex(request.agent, 32) &&
-    typeof request.nonce === 'string' && /^[1-9][0-9]{0,19}$/.test(request.nonce) && integer(request.expiry) && request.expiry > 0, 'binding_request');
+  const v2 = request?.v === 2;
+  assert(['mainnet', 'regtest'].includes(chain) && exactKeys(request, [...(v2 ? ['v'] : []), 'agent', 'rail', 'address', 'nonce', 'expiry']) && hex(request.agent, 32) &&
+    typeof request.nonce === 'string' && (v2 ? /^[1-9][0-9]*$/ : /^[1-9][0-9]{0,19}$/).test(request.nonce) && integer(request.expiry) && request.expiry > 0, 'binding_request');
   payoutAddress(request.rail, request.address, chain);
-  return `${BINDING_DOMAIN}\n${stableJSON({ network, bitcoinNetwork: chain, ...request, agent: encodeTracAddress(request.agent) })}`;
+  return `${v2 ? 'dmw-payout-binding-v2' : BINDING_DOMAIN}\n${stableJSON({ network, bitcoinNetwork: chain, ...request, agent: encodeTracAddress(request.agent) })}`;
 }
 export const bindingId = (network, chain, request) => hash(bindingMessage(network, chain, request));
 export function verifyAgentBinding(envelope, { network, bitcoinNetwork: chain, now = Date.now(), historical = false }) {
@@ -108,8 +114,9 @@ export function verifyWalletBinding(envelope, options) {
   } catch { throw Error('binding_wallet_signature'); }
   return hash(message);
 }
-const certificateBody = (network, chain, record) => ({ domain: 'dmw-payout-acceptance-v1', network, bitcoinNetwork: chain,
-  id: record.id, request: record.request, agentSignature: record.agentSignature, walletSignature: record.walletSignature, acceptedAt: record.acceptedAt });
+const certificateBody = (network, chain, record) => ({ domain: record.request.v === 2 ? 'dmw-payout-acceptance-v2' : 'dmw-payout-acceptance-v1', network, bitcoinNetwork: chain,
+  id: record.id, request: record.request, agentSignature: record.agentSignature, walletSignature: record.walletSignature, acceptedAt: record.acceptedAt,
+  ...(record.request.v === 2 ? { attempt: record.attempt, blockedAt: record.blockedAt } : {}) });
 export function attestBinding(record, { network, bitcoinNetwork: chain, signer, secret }) {
   return { signer, sig: Buffer.from(ed25519.sign(utf8(stableJSON(certificateBody(network, chain, record))), Buffer.from(secret, 'hex'))).toString('hex') };
 }
@@ -129,6 +136,8 @@ export function verifyBinding(record, options) {
   }
   const { members } = options;
   assert(record && integer(record.acceptedAt) && record.acceptedAt < record.request.expiry, 'binding_certificate');
+  if (record.request.v === 2) assert(typeof record.attempt === 'string' && /^(0|[1-9][0-9]*)$/.test(record.attempt) &&
+    integer(record.blockedAt) && record.blockedAt <= record.acceptedAt, 'binding_attempt');
   assert(record.id === verifyWalletBinding(record, { ...options, historical: true }), 'binding_id');
   assert(Array.isArray(members) && members.length === 5 && new Set(members.map(m => m.id)).size === 5 && new Set(members.map(m => m.identity)).size === 5, 'binding_roster');
   const a = record.attestations;

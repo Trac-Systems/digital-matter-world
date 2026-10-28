@@ -1,5 +1,5 @@
 {
-  "source": "Public batch and receipt-certificate data for deterministic verification tests.",
+  "source": "Batch 43 draft rebuilt 2026-10-27 20:42; gateway certificates captured 21:30. Public audit data only. Replay is checked separately against the RT1 header archive.",
   "network": "dmw-mainnet",
   "receiptSigners": [
     {

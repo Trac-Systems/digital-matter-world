@@ -1,3 +1,4 @@
+import { lookupSettings } from '../prod/lookup-settings.mjs';
 import { createRequire } from 'node:module';
 import { rules } from './rules.mjs';
 import { check, hash } from './util.mjs';
@@ -9,7 +10,8 @@ const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const inscription = value => typeof value === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(value);
 const notFound = e => e.status === 404 || e.rpcCode === -5 || ['escrow_payer', 'payment_unconfirmed'].includes(e.message);
 
-export function inscriptionContents(raw) {
+export function inscriptionContents(raw, settings) {
+  const limits = lookupSettings(settings);
   const tx = Transaction.fromRaw(Buffer.from(raw, 'hex'), { allowUnknownInputs: true, allowUnknownOutputs: true, disableScriptCheck: true });
   const contents = [];
   for (let n = 0; n < tx.inputsLength; n++) {
@@ -28,7 +30,7 @@ export function inscriptionContents(raw) {
       const body = [];
       while (j < script.length && script[j] instanceof Uint8Array) body.push(script[j++]);
       check(script[j] === 'ENDIF', 'payment_inscription');
-      const bytes = Buffer.concat(body); check(bytes.length <= 65536, 'payment_inscription_size');
+      const bytes = Buffer.concat(body); check(bytes.length <= limits.inscriptionBytes, 'payment_inscription_size');
       try { contents.push(JSON.parse(bytes.toString('utf8'))); } catch { contents.push(null); }
       i = j;
     }
@@ -41,38 +43,36 @@ function recovered(payload, field) {
   const compact = ['r', 's'].map(k => BigInt(payload.sig[k]).toString(16).padStart(64, '0')).join('');
   return secp256k1.Signature.fromCompact(compact).addRecoveryBit(Number(payload.sig.v)).recoverPublicKey(digest).toHex(true);
 }
-async function pages(reads, path, countPath, { recent = false, maxRows = 1000000 } = {}) {
-  const count = Number(await reads.tap(countPath)); check(Number.isSafeInteger(count) && count >= 0 && count <= maxRows, 'payment_list_bound');
-  const rows = [];
-  for (let offset = recent ? Math.max(0, count - 1000) : 0; offset < count; offset += 500) {
-    const page = await reads.tap(`${path}?offset=${offset}&max=500`);
-    check(Array.isArray(page) && page.length === Math.min(500, count - offset), 'payment_list_incomplete'); rows.push(...page);
-  }
-  return rows;
-}
-async function tapReceipts(reads, row, paymentIds) {
+export async function tapReceipts(reads, row, paymentIds, settings, { at, confirmedOnly = false } = {}) {
+  const limits = lookupSettings(settings);
   const receipts = [];
-  const ids = new Set(paymentIds); // Discovery belongs to the submitting wallet, including detached/old payments.
-  check(ids.size <= (reads.sourcePolicy?.maxItems ?? 64), 'payment_item_limit');
+  // Explicit receipts are always checked first, without consulting payer
+  // history. Optional detached recovery advances a durable cursor from zero.
+  let discovered = [];
+  if (!confirmedOnly && !paymentIds.length && reads.discoverPaymentIds) {
+    try { discovered = await reads.discoverPaymentIds(row.payer, row.id); }
+    catch (e) { if (!['tap_lookup_index_catching_up'].includes(e.message)) throw e; }
+  }
+  const ids = new Set([...paymentIds, ...discovered]);
+  check(ids.size <= limits.paymentIds, 'payment_item_limit');
   for (const id of ids) {
     check(inscription(id), 'payment_id');
     let inclusion;
-    try { inclusion = await reads.included(id); } catch (e) { if (notFound(e)) continue; throw e; }
+    try { inclusion = await reads.included(id, at); } catch (e) { if (notFound(e)) continue; throw e; }
     if (!inclusion) {
-      // An ID without an authority locator is retained and checked again when
-      // confirmed. Never search the payer's authorization history.
-      if (reads.namedSources && !row.paymentEvidence?.[id]?.authority) continue;
+      if (confirmedOnly) continue;
       let tx;
       try { tx = await reads.bitcoinTransaction(id.slice(0, 64)); }
       catch (e) { if (notFound(e)) continue; throw e; }
-      const parsed = inscriptionContents(tx.hex); check(parsed.txid === id.slice(0, 64), 'payment_tx_binding');
+      const parsed = inscriptionContents(tx.hex, limits); check(parsed.txid === id.slice(0, 64), 'payment_tx_binding');
       const payload = parsed.contents[Number(id.split('i')[1])];
       check(payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items), 'payment_redeem');
       const authId = payload.redeem.auth; check(inscription(authId), 'payment_authority');
       const auth = await reads.content(authId);
       check(recovered(payload, 'redeem') === recovered(auth, 'auth'), 'payment_signature');
-      const authorities = reads.paymentAuthority ? [await reads.paymentAuthority(row.payer, authId, row.paymentEvidence?.[id]?.authority)] : await pages(reads, 'getAccountAuthList/' + encodeURIComponent(row.payer), 'getAccountAuthListLength/' + encodeURIComponent(row.payer));
-      check(authorities.some(a => a.ins === authId && a.addr === row.payer) && await reads.tap('getAuthCancelled/' + authId) === false, 'payment_authority');
+      check(typeof reads.paymentAuthority === 'function', 'tap_payment_lookup_required');
+      const authority = await reads.paymentAuthority(row.payer, authId);
+      check(authority?.ins === authId && authority.addr === row.payer && await reads.tap('getAuthCancelled/' + authId) === false, 'payment_authority');
       for (const [index, item] of payload.redeem.items.entries()) {
         const fee = row.quote.fees.find(f => f.tt === 'a' && f.dta === item.dta && f.to === item.address && f.ticker === item.tick);
         if (!fee) continue;
@@ -82,15 +82,17 @@ async function tapReceipts(reads, row, paymentIds) {
     }
     const payload = await reads.content(id);
     check(payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items), 'payment_redeem');
-    const transfers = reads.paymentTransfers ? await reads.paymentTransfers(id, row.paymentEvidence?.[id]?.transfers) : (await pages(reads, 'getTransferredList/' + id.slice(0, 64), 'getTransferredListLength/' + id.slice(0, 64), { maxRows: 1000 })).map((transfer, index) => ({ index, transfer }));
-    for (const { index, transfer } of transfers) {
+    check(typeof reads.paymentTransfers === 'function', 'tap_payment_lookup_required');
+    const transfers = await reads.paymentTransfers(id);
+    for (const { index, value: transfer } of transfers) {
+      check(Number.isSafeInteger(index) && index >= 0, 'payment_item_location');
       if (transfer.ins !== id || transfer.fail !== false || transfer.int !== true || transfer.addr !== row.payer) continue;
       // The burn fee matches only the exact configured burn address, amount,
       // payer and request-bound data, just like every other direct TAP item.
       const fee = row.quote.fees.find(f => f.tt === 'a' && f.dta === transfer.dta && f.to === transfer.taddr && f.ticker === transfer.tick);
       if (!fee) continue;
       check(payload.redeem.items.some(i => i.dta === fee.dta && i.address === fee.to && i.tick === fee.ticker && rules.parseTapAmount(i.amt) === transfer.amt), 'payment_item_binding');
-      receipts.push({ ...fee, key: rules.paymentItemKey('tap', id + '/' + index), amount: transfer.amt, accepted: true, confirmations: inclusion.confirmations, origin: row.id, reference: id });
+      receipts.push({ ...fee, key: rules.paymentItemKey('tap', id + '/' + index), amount: transfer.amt, accepted: true, confirmations: inclusion.confirmations, origin: row.id, reference: id, ...(confirmedOnly && inclusion.height !== undefined ? { verifiedHeight: rules.decimalV2(inclusion.height) } : {}) });
     }
   }
   return receipts;
@@ -99,17 +101,19 @@ async function tapReceipts(reads, row, paymentIds) {
 // Attach to each independent reader, including the committee's. Gateway rows
 // supply lookup hints only; successful transfers, escrow state and used credit
 // are always checked against the chain by the reader itself.
-export function installMintPayments(reads, { request, escrow, network, confirmations = 1 }) {
+export function installMintPayments(reads, { request, escrow, network, confirmations = 1, settings }) {
+  const limits = lookupSettings(settings);
   reads.mintRequest = async id => request(id);
   reads.mintPayment = async (id, candidate) => {
-    const row = candidate ?? request(id);
+    const row = candidate ?? await request(id);
     check(row.id === id && Array.isArray(row.quote.fees), 'payment_request');
     const current = await reads.pending(id), sources = [];
-    check(Array.isArray(row.creditIds ?? []) && (row.creditIds ?? []).length <= 32, 'payment_credit_limit');
+    check(Array.isArray(row.creditIds ?? []) && (row.creditIds ?? []).length <= limits.creditSources, 'payment_credit_limit');
     for (const creditId of row.creditIds ?? []) {
-      const source = request(creditId), pending = await reads.pending(creditId);
+      const source = await request(creditId), pending = await reads.pending(creditId);
       check(rules.pendingId(network, source.request) === creditId && rules.verifyRequest('rq', network, source.request, source.signature, source.request.until) && await reads.agentAddress(pending?.o) === source.request.owner, 'payment_credit_owner');
-      check(source.request.owner === row.request.owner && source.payer === row.payer && source.kind === row.kind && pending?.s === 2 && !pending.h, 'payment_credit_binding');
+      check(source.request.owner === row.request.owner && source.payer === row.payer && source.kind === row.kind &&
+        (pending?.s === 2 && !pending.h || pending?.s === 1), 'payment_credit_binding');
       sources.push(source);
     }
     sources.push(row); // Credits are independently accounted before the new deposit.
@@ -127,15 +131,15 @@ export function installMintPayments(reads, { request, escrow, network, confirmat
     };
     for (const source of sources) {
       const ids = source.paymentIds ?? (source.paymentId ? [source.paymentId] : []);
-      check(ids.length <= (reads.sourcePolicy?.maxItems ?? 64) && new Set(ids).size === ids.length, 'payment_id_limit');
-      if (source.kind === 'tap') receipts.push(...await tapReceipts(reads, source, ids));
+      check(ids.length <= limits.paymentIds && new Set(ids).size === ids.length, 'payment_id_limit');
+      if (source.kind === 'tap') receipts.push(...await tapReceipts(reads, source, ids, limits));
       else {
         if (source.id === id) {
           const credits = (await Promise.all(receipts.map(available))).filter(Boolean).sort((a,b)=>a.key.localeCompare(b.key));
           depositFees = rules.paymentProgress(row.quote.fees, credits, { confirmations }).missing;
         }
         let snapshot;
-        try { snapshot = await reads.escrowDeposit(source.payer, source.id); } catch (e) { if (notFound(e)) continue; throw e; }
+        try { snapshot = await reads.escrowDeposit(source.payer, source.id, { transactionIds: ids.filter(id => /^0x[0-9a-f]{64}$/.test(id)) }); } catch (e) { if (notFound(e)) continue; throw e; }
         const d = snapshot.deposit;
         check(snapshot.chainId === escrow.chainId && snapshot.address === escrow.address.toLowerCase() && snapshot.token === escrow.token.toLowerCase() && snapshot.payer === source.payer.toLowerCase(), 'escrow_domain');
         const actualFees = source.quote.fees.flatMap(fee => {

@@ -91,7 +91,7 @@ test('public limits, filtering, nested pages, immutable artifacts, HEAD and ETag
   assert.equal(profile.discoveries.length, 1); assert.equal(profile.counts.discoveries, 2);
   assert.equal(JSON.stringify(profile).includes('never-public'), false);
   const sealed = await f.get(`/agents/${encodeTracAddress(f.owner)}/discoveries?state=sealed`);
-  assert.deepEqual(sealed.discoveries[0], { state: 'sealed', exists: true, opensAt: 32, revealUntil: 174 });
+  assert.deepEqual(sealed.discoveries[0], { state: 'sealed', exists: true, opensAt: 32 });
   const block = await f.get('/blocks/1?limit=1');
   assert.deepEqual(block.claimWindow, { window: 30, closesAt: 32, drawAt: 32, settlesAt: 32, claimable: true, claimsPerWindow: rules.CLAIM_DEFAULTS.claimsPerWindow });
   const nested = block.claims[0].pages.patterns;

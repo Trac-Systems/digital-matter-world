@@ -23,8 +23,8 @@ export const linkWalletMessage = (network, id, paymentHash) => `dmw-link-payment
 // Only public, bounded checkout projections. No whole row, registry, RPC URL,
 // agent signature, wallet journal or committee secret is sent to the browser.
 export class WebCheckout {
-  constructor({ store, intents = store, config, reads, post }) {
-    Object.assign(this, { store, intents, reads, post }); this.target = webTarget(config); this.gate = serial();
+  constructor({ store, intents = store, config, reads, post, mints, links }) {
+    Object.assign(this, { store, intents, reads, post, mints, links }); this.target = webTarget(config); this.gate = serial();
     this.records = createRecordHighlights(store);
   }
   enrollLink(input) { return this.gate(async () => {
@@ -82,6 +82,12 @@ export class WebCheckout {
   }
   async plan(type, id) {
     check(['mint', 'link'].includes(type) && rules.hex(id, 32), 'payment_request');
+    if (type === 'link' && this.links?.financialVersion === 2 && this.store.get('financialLinks', id)) {
+      const status = await this.links.public(id);
+      return publicIdentities({ ...status, type, kind: 'tap', financialVersion: 2, target: this.target, counted: await this.reads.counted(), deadline: status.payBy.untilBlock,
+        submit: '/link/payment', walletPreparation: false, bitcoinWalletRequired: true, refundAfter: null, networkFee: null,
+        redeem: { items: status.payable ? rules.walletFeeItems(status.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] } });
+    }
     const row = this.store.get(type === 'mint' ? 'mints' : type + 'Intents', id);
     if (!row && type === 'link') {
       const pending = this.intents.get('webLinkIntents', id); check(pending, 'request_not_found', 404);
@@ -107,9 +113,9 @@ export class WebCheckout {
       networkFee: mint ? { address: row.networkFeeAddress, sats: quote.networkFeeSats } : null,
       submit: `/${type}/payment`, walletPreparation: false };
     if (mint) {
-      Object.assign(plan, publicMint(row), { refundAfter: null, networkFee: null });
+      Object.assign(plan, this.mints ? this.mints.public(id) : publicMint(row), { refundAfter: null, networkFee: null });
       plan.bitcoinWalletRequired = true;
-      plan.redeem = { items: row.kind === 'tap' && !plan.blocked.length ? rules.walletFeeItems(plan.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] };
+      plan.redeem = { items: row.kind === 'tap' && plan.payable && !plan.blocked.length ? rules.walletFeeItems(plan.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] };
     } else if (kind === 'tap' && row.terms.hash) {
       plan.redeem = { items: [], data: id, actions: [rules.tapPaymentLock({ split: quote.split, destinations: quote.destinations,
         payer, hash: row.terms.hash, expiry: refundAfter, kind: type, bitcoinNetwork: this.target.bitcoinNetwork })] };

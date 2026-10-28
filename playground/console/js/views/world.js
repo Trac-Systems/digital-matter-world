@@ -46,15 +46,25 @@ export function mount(root, params) {
   // Data
   async function load(from, to) {
     if (site.public) {
-      const r = await get(`/world/map?from=${from}&to=${to}`);
-      if (!alive) return;
-      for (let height = r.from; height <= r.to; height++) plots.set(height, {
-        height, halving: Math.floor(height / 210000), region: Math.floor(height / 2016),
-        found: false, linked: false, minted: false, finds: [],
-      });
-      for (const p of r.marks) Object.assign(plots.get(p.height), p);
-      tip = Math.max(tip, r.tip ?? 0);
-      paint(); updateCount(); return;
+      let cursor = null, initialized = false;
+      do {
+        const r = await get(`/world/map?from=${from}&to=${to}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`);
+        if (!alive) return;
+        const first = Number(r.from), last = Number(r.to), frontier = Number(r.tip);
+        if (![first, last, frontier].every(Number.isSafeInteger)) throw Error('Map height exceeds the canvas coordinate range');
+        if (!initialized) for (let height = first; height <= last; height++) plots.set(height, {
+          height, halving: Math.floor(height / 210000), region: Math.floor(height / 2016),
+          found: false, linked: false, minted: false, finds: [],
+        });
+        initialized = true;
+        for (const p of r.marks) {
+          const height = Number(p.height);
+          if (Number.isSafeInteger(height) && plots.has(height)) Object.assign(plots.get(height), p, { height });
+        }
+        tip = Math.max(Number(tip), frontier); cursor = r.next ?? null;
+        paint(); updateCount();
+      } while (cursor);
+      return;
     }
     // The map keeps plot data, not rendered rows; each range is read in server pages of up to 200 plots.
     for (let a = from; a <= to; a += 512) {
@@ -308,13 +318,15 @@ export function mount(root, params) {
     const H = b.height, small = { limit: 8 };
     // Public pages: the rows are read for the connected wallet's player, and a person without a wallet is offered one.
     const me = wallet?.player(), mayMint = r => r.allowed || r.rightAllowed && r.reason === 'asset_unregistered' && BigInt(r.balance ?? '0') >= BigInt(r.amount);
-    const offerWallet = wallet && !wallet.connected() && (b.mintRights ?? []).some(r => !r.minted);
+    // The v2 read lists one owner's rights only, so a public block without a player offers a wallet whenever it has a find.
+    const ownerOnly = site.public && !me, offerWallet = wallet && !wallet.connected() && (b.mintRights ? b.mintRights.some(r => !r.minted) : !!b.found);
     out.push(h('div.section-label', offerWallet ? { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } } : {}, 'Who may mint it now',
       offerWallet ? h('button.btn.sm', { style: { textTransform: 'none', letterSpacing: 'normal' }, onclick: () => wallet.open() }, 'Connect wallet to mint') : null));
     // The mint ladder (rules/src/mint-rights.js): finder window, then the earlier-linked Bitmap holder, then anyone.
     out.push(h('div.small.muted', { style: { padding: '0 14px 8px' } },
       'Only a settled find can be minted. First the finder, for 1,008 blocks (about a week) after the find; then the Bitmap holder, if the Bitmap was linked before the find; otherwise anyone holding enough units. Each pattern in a block is minted once.'));
-    out.push(pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
+    // Public reads come in the server's own order (pattern, then block); it has no other sort.
+    out.push(ownerOnly ? h('div.small.muted', { style: { padding: '0 14px 10px' } }, 'Connect a wallet linked to your agent to see what you may mint here.') : pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: site.public ? [] : [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
       empty: 'Nothing to mint here yet: no agent has a settled find in this block.',
       columns: [
         { key: 'asset', label: 'Pattern', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
@@ -327,7 +339,8 @@ export function mount(root, params) {
       ] }).el);
 
     out.push(h('div.section-label', {}, 'Patterns in this block'));
-    out.push(pagedTable({ ...small, path: `/blocks/${H}/matches?positive=true`, key: 'matches', sorts: [['number:asc', 'Pattern'], ['count:desc', 'Most units']],
+    // Public matches are the verified submitted rows, by pattern; the v2 read takes no filter or sort.
+    out.push(pagedTable({ ...small, path: `/blocks/${H}/matches${site.public ? '' : '?positive=true'}`, key: 'matches', sorts: site.public ? [] : [['number:asc', 'Pattern'], ['count:desc', 'Most units']],
       empty: 'No pattern occurs in this block.',
       columns: [
         { key: 'name', label: 'Pattern', render: m0 => { const m = normMatch(m0, b); return h('span', {}, h('span.swatch', { style: { background: mineral(m.asset) } }), m.name); } },

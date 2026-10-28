@@ -7,10 +7,11 @@ import { historyProof, loadHistoryAsync } from './headers.mjs';
 import { createGunzip } from 'node:zlib';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { downloadChunkArchive } from './header-chunks.mjs';
 
 export function validateManifest(m, network) {
-  check(m?.version === 1 && m.network === network && integer(m.height) && m.height <= 2000000 && m.count === m.height + 1 &&
-    m.bytes === m.count * 80 && hex32(m.tip) && hex32(m.sha256) && m.path === `/headers/${network}-${m.height}-${m.tip}.bin`, 'Invalid header manifest');
+  check(m?.version === 1 && m.network === network && integer(m.height) && integer(m.count) && m.count === m.height + 1 &&
+    integer(m.bytes) && m.bytes === m.count * 80 && hex32(m.tip) && hex32(m.sha256) && m.path === `/headers/${network}-${m.height}-${m.tip}.bin`, 'Invalid header manifest');
   if (m.gzip) check(hex32(m.gzip.sha256) && m.gzip.path === m.path + '.' + m.gzip.sha256 + '.gz' && integer(m.gzip.bytes) && m.gzip.bytes > 0 && m.gzip.bytes <= m.bytes + 100000, 'Invalid compressed header manifest');
   return m;
 }
@@ -89,7 +90,7 @@ async function gzipTransfer({ partial, manifest, source, signal, onProgress }) {
 
 // No metadata-page fallback for a gateway missing its archive. A missing route
 // stays an explicit background retry rather than an hours-long silent download.
-export async function downloadArchive({ output, source, independent, network = 'mainnet', end, signal, onProgress = () => {}, currentHistory, onHistory = () => {}, preferGzip = true }) {
+export async function downloadArchive({ output, source, independent, network = 'mainnet', end, signal, onProgress = () => {}, currentHistory, onHistory = () => {}, preferGzip = true, chunkLimits, manifestTrust }) {
   check(['mainnet', 'regtest'].includes(network), 'Invalid header network');
   check(network !== 'mainnet' || typeof independent?.hash === 'function', 'An independent mainnet tip source is required');
   check(!source.origin || !independent?.origin || source.origin !== independent.origin, 'Use a different origin for the independent tip source');
@@ -98,7 +99,15 @@ export async function downloadArchive({ output, source, independent, network = '
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const unlock = await lock(path + '.lock');
   try {
-    const manifest = validateManifest(await source.manifest({ signal }), network);
+    const announced = await source.manifest({ signal });
+    if (announced?.version === 2) {
+      check(end === undefined || end === announced.height, 'Bulk download uses the manifest snapshot height');
+      return await downloadChunkArchive({ manifest: announced, path, partial, source, independent, network, signal, onProgress, currentHistory, onHistory, preferGzip, limits: chunkLimits, manifestTrust });
+    }
+    let authenticated;
+    try { authenticated = await stat(path + '.manifest.json'); } catch (e) { absent(e); }
+    check(!authenticated, 'Authenticated header distribution cannot downgrade to a legacy manifest');
+    const manifest = validateManifest(announced, network);
     check(end === undefined || end === manifest.height, 'Bulk download uses the manifest snapshot height');
     const verify = file => loadHistoryAsync(file, { network, signal, onProgress: p => onProgress({ ...p, phase: 'verifying', bytes: manifest.bytes, totalBytes: manifest.bytes }) });
     let done = currentHistory;

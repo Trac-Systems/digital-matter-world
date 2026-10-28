@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { canonicalJSON, check, equal, hex, isHex, sha256 } from './crypto.mjs';
 import { permit, requestID, rules } from './adapter.mjs';
+import { financialMintId, verifyFinancialMintRequest } from '../../rules/src/financial-mint.js';
 const bodyFor = (network, details, signature) => ({ domain: 'dmw-mint-result-v1', network, details, signature });
 export function attestMintResult(network, details, signature, signer, secret) {
   const body = bodyFor(network, details, signature);
@@ -10,9 +11,11 @@ export function attestMintResult(network, details, signature, signer, secret) {
 export function verifyMintResult(details, signature, { network, publicKey, id }) {
   check(details?.id === id, 'mint_certificate');
   const r = details.request;
-  check(requestID(network, r) === id && rules.verifyRequest('rq', network, r, details.signature, r.until) && sha256(details.receiver) === r.receive, 'certificate_request');
+  check((details.version === 2 ? financialMintId(network, r) === id && verifyFinancialMintRequest(network, r, details.signature, r.until) :
+    requestID(network, r) === id && rules.verifyRequest('rq', network, r, details.signature, r.until)) && sha256(details.receiver) === r.receive, 'certificate_request');
   check(details.deployment.privilegePublicKey === publicKey, 'certificate_authority');
-  const expected = permit(network, r, details.deployment, details.receiver, id, rules.paymentCommitment(details.payment.allocations));
+  const expected = permit(network, r, details.deployment, details.receiver, id, details.version === 2 ? details.payment.commitment : rules.paymentCommitment(details.payment.allocations));
+  if (details.version === 2) check(isHex(details.payment.commitment), 'certificate_payment');
   check(equal(expected, details.permit), 'certificate_permit');
   check(isHex(signature?.compact, 64) && /^[0-9]+$/.test(signature.r) && /^[0-9]+$/.test(signature.s) && [0, 1].includes(signature.v), 'certificate_signature');
   const parsed = secp256k1.Signature.fromCompact(signature.compact);

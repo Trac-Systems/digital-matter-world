@@ -12,7 +12,7 @@ export async function createAdapters({ config, store, history }) {
   if (config.gatewayKey) reads.feeQuotes = new FeeQuotes({ network: config.network, secret: Buffer.from((await readFile(config.gatewayKey, 'utf8')).trim(), 'hex'), registry: reads.registry });
   const feeTerms = kind => (id, until, counted) => issueFeeTerms(reads, kind, id, until, counted);
   await mkdir(config.local.contexts, { recursive: true, mode: 0o700 });
-  const operations = new MintOperations({ store, network: config.network, reads });
+  const operations = new MintOperations({ store, network: config.network, reads, resources: config.assetResources });
   const eth = ethereumPayments({ rpc: ethRPC, escrow: config.local.escrow });
   const payments = {
     mint: row => reads.mintPayment(row.id, row),
@@ -28,12 +28,13 @@ export async function createAdapters({ config, store, history }) {
   reads.publishContext = async (n, draft) => {
     const context = { last: draft.last, counted: draft.execution, state: draft.startState, patterns: draft.startPatterns,
       gateway: draft.items[0].input.gateway, settings: draft.settings, limits: draft.limits, headers: draft.headers,
-      inputs: draft.items.map(i => ({ ...i.input, state: undefined, patterns: undefined, settings: undefined })) };
+      inputs: draft.items.map(i => ({ ...i.input, state: undefined, patterns: undefined, settings: undefined })),
+      ...(draft.activation ? { activation: draft.activation, previousRoot: draft.previousRoot } : {}) };
     await atomicWrite(join(config.local.contexts, n + '.json'), JSON.stringify(context));
   };
   let newObservations = false;
   const transport = Object.fromEntries(['prepareMessage', 'sendMessage', 'prepareTransaction', 'sendTransaction', 'status'].map(method => [method, (...args) => trac(method, args)]));
-  const links = new Links({ store, network: config.network, reads, terms: feeTerms('link') });
+  const links = new Links({ store, network: config.network, reads, terms: feeTerms('link'), resources: config.assetResources });
   return { reads, transport, operations, payments, links,
     async observations(previous) {
       const faults = config.local.faults ? JSON.parse(await readFile(config.local.faults, 'utf8')) : {};

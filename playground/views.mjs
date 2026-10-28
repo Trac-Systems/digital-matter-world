@@ -8,7 +8,7 @@ import { currentFee } from '../service/src/fees.mjs';
 import { calldata } from '../committee/signer/escrow.mjs';
 import { json, integer, PORTS, origin, check } from './common.mjs';
 
-export { bitmapHistoryPage, walletBitmaps } from '../service/local/bitmaps.mjs';
+export { walletBitmaps } from '../service/local/bitmaps.mjs';
 import { walletBitmaps } from '../service/local/bitmaps.mjs';
 
 // Read the complete local index; HTTP pagination is applied after filtering/sorting.

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { createPublicKey, verify } from 'node:crypto';
-import { check, privateDirectory } from './check.mjs';
+import { check, hex32, privateDirectory } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { validatePlayerConfig, validateLocalConfig } from './network.mjs';
 import { validateDeployment } from '../../contract/state.js';
@@ -38,6 +38,12 @@ export function runtimeWallets(wallet) {
   return { raw, peer };
 }
 
+export function playerPeerStore(config) {
+  if (!config.runtime.deployment.v2) return 'peer';
+  check(hex32(config.trac.bootstrap), 'Pinned notary bootstrap required');
+  return 'peer-v2-' + config.trac.bootstrap;
+}
+
 export async function openPlayerRuntime({ wallet, config }) {
   const production = config.mode === 'mainnet';
   await validatePlayerConfig(config);
@@ -71,7 +77,7 @@ export async function openPlayerRuntime({ wallet, config }) {
     bus = new MainSettlementBus(mc, wallets.raw); await bus.ready();
     if (!production && r.validatorKey) await bus.network.tryConnect(r.validatorKey, 'validator');
     const pc = createConfig(production ? ENV.MAINNET : ENV.DEVELOPMENT, { bootstrap: config.trac.bootstrap, channel: r.peerChannel, dhtBootstrap: r.dhtBootstrap,
-      storesDirectory: directory, storeName: 'peer', txContentHash: 'utf8-strict', enableInteractiveMode: false,
+      storesDirectory: directory, storeName: playerPeerStore(config), txContentHash: 'utf8-strict', enableInteractiveMode: false,
       enableTxlogs: false, replicate: true, enableUpdater: true, enableBackgroundTasks: true,
       apiMsgExposed: false, apiTxExposed: false, maxTxDelay: 21600, txPoolMaxSize: 10000 });
     pc.dmw = r.deployment;

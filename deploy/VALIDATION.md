@@ -6,6 +6,8 @@ Then run the deployment and production adapter suites:
 
 ```sh
 nice -n 20 node --experimental-test-module-mocks --test --test-concurrency=1 deploy/*.test.mjs service/prod/test/*.test.mjs
+nice -n 20 node --experimental-test-module-mocks --test deploy/host-157/*.test.mjs
+nice -n 20 python3 -m unittest discover -s deploy/host-157 -p 'test_*.py'
 nice -n 20 python3 -m unittest discover -s deploy/servers -p 'test_*.py'
 ```
 
@@ -27,9 +29,12 @@ TLS, proxy routes and account permissions. Exercise systemd startup, reboot
 and backup restoration on an isolated disposable host. Check the production
 checkpoint and public pins independently.
 Verify current funds and fees before executing transactions. A local fixture
-result does not establish provider or mainnet behavior. Open admission only
-after the configured installation passes its checks. Maintain a way to close
-new requests while preserving journals, paid requests and issued permits.
+result does not establish provider or mainnet behavior. For the shared host,
+follow [the run sheet](host-157/RUN-SHEET.md): once escrow and public HTTPS
+checks pass, run admission, open Caddy with the operator's OK for its graceful
+reload, then enable the DMW units. No host reboot, no Caddy restart, no ALPHA
+process change. Release publicly without a private operator test phase and keep
+`caddy.py close --owner-approved` ready for rollback.
 
 Evidence snapshots accept at most 4,095 rows and 8 MB, with individual audits
 limited to 200 KB. Size the deployment within these bounds. A larger history

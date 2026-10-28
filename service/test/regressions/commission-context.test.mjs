@@ -22,6 +22,9 @@ mock.module('../../prod/bitcoin.mjs', { exports: { BitcoinViews, createBitcoin: 
 const { localReads } = await import('../../local/reads.mjs');
 function deploymentEvidence(reads) {
   const element = 'ae'.repeat(32) + 'i0', originalTap = reads.tap;
+  reads.withTapSnapshot = async (_view, fn) => fn();
+  reads.element = async () => ({ ins: element, tick:'fixture-element', pat:'[0-9]', fld:4 });
+  reads.privilegeAuthority = async () => ({ ins:privilege });
   reads.tip = async () => ({ tip: 100 });
   reads.included = async () => ({ confirmations: 20, height: 81, blockHash: hash('deployment-block') });
   reads.content = async id => {

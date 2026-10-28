@@ -3,7 +3,21 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, stat, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installPeerKey } from '../runtime.mjs';
+import { installPeerKey, msbTransportWallet } from '../runtime.mjs';
+import { createRequire } from 'node:module';
+const require = createRequire(new URL('../../../contract/package.json', import.meta.url));
+const { default: Wallet } = await import(require.resolve('trac-wallet'));
+const { ed25519 } = await import(require.resolve('@noble/curves/ed25519'));
+
+test('MSB transport identity survives restart and is separate from every retained role authority', async () => {
+  const seed = Buffer.alloc(32, 37), publicKey = Buffer.from(ed25519.getPublicKey(seed));
+  const retained = await Wallet.fromKeyPair({ publicKey, secretKey: Buffer.concat([seed, publicKey]) });
+  const original = Buffer.from(retained.secretKey), one = await msbTransportWallet(retained, '/role/host');
+  const two = await msbTransportWallet(retained, '/role/host'), writer = await msbTransportWallet(retained, '/role/writer');
+  assert(one.publicKey.equals(two.publicKey)); assert(!one.publicKey.equals(writer.publicKey));
+  assert(!one.publicKey.equals(retained.publicKey)); assert(retained.secretKey.equals(original));
+  const message = Buffer.from('reconnect'); assert(Wallet.verify(one.sign(message), message, one.publicKey));
+});
 
 test('the peer key is placed where trac-peer loads it, never replaced by a different key', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'dmw-peer-key-')));

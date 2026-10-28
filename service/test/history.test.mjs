@@ -5,6 +5,7 @@ import { History } from '../src/history.mjs';
 import { temp, fixtureHistory } from './helpers.mjs';
 import { readFile } from 'node:fs/promises';
 import { rules } from '../src/rules.mjs';
+import { chain } from '../../contract/tests/helpers/chain.mjs';
 const mainnet = (await readFile(new URL('../../kit/test/fixtures/mainnet-64.hex', import.meta.url), 'utf8')).trim().match(/.{160}/g);
 test('a shorter canonical chain hides stale higher hashes and rejects header gaps', async () => {
   const store = await Store.open(await temp()), original = fixtureHistory(12), history = new History(store);
@@ -78,5 +79,22 @@ test('grouped overwrites and truncated history preserve append metadata semantic
     assert.equal(history.length, 20); assert.equal(history.hashAt(20), null);
     assert.deepEqual(await history.append(20, mainnet[20]), rules.parseHeader(mainnet[20], 20));
     assert.equal(history.length, 21); assert.deepEqual(await history.appendMany(21, []), []);
+  } finally { await store.close(); }
+});
+
+test('a branch view keeps only its fork suffix and rechecks the shared prefix after a reorg', async () => {
+  const store = await Store.open(await temp()), source = fixtureHistory(200), history = new History(store);
+  try {
+    await store.put('meta', 'ruleState', { batchVersion: 2 });
+    await history.appendMany(0, Array.from({ length: source.length }, (_, h) => source.raw(h)));
+    const old = history.view(200, history.hashAt(200)), original = source.raw(10);
+    await history.appendMany(198, chain(3, history.get(197), 601));
+    assert.equal(old.raw(10), original); assert.equal(old.raw(200), source.raw(200));
+    const table = 'decimal_branch_' + source.hashAt(200);
+    assert.equal(store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 4);
+    // A second branch invalidates the cached common ancestor.
+    await history.appendMany(196, chain(5, history.get(195), 602));
+    assert.equal(old.raw(196), source.raw(196)); assert.equal(old.raw(10), original);
+    assert.equal(store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 6);
   } finally { await store.close(); }
 });

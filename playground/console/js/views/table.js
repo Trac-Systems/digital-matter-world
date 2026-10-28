@@ -96,20 +96,20 @@ export function mount(root, params = {}) {
       kv([
         ['Rule', h('code', {}, p.pat), 'TAP\'s regular-expression form, matched against one header field. Each match is one unit.'],
         ['Field', fieldName(p)],
-        ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
+        ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (p.countMeaning === 'verified_submitted_blocks' ? 'Verified submitted blocks; more matches may exist.' : site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
         ['Tier', `${p.tier} of 5 · price ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
         ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],
       ]),
-      h('div.section-label', {}, 'Blocks where it occurs'), blocks));
+      h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
     if (seq !== rowsSeq) return;
     clear(blocks, pagedTable({
-      path: `/patterns/${p.asset}/blocks`, key: 'rows', limit: 25,
-      sorts: [['block:desc', 'Newest block'], ['block:asc', 'Oldest block'], ['count:desc', 'Most units']],
+      path: `/patterns/${p.asset}/${p.asset.startsWith('p2:') ? 'claimed-blocks' : 'blocks'}`, key: 'rows', limit: 25,
+      sorts: [['block:desc', 'Newest block'], ['block:asc', 'Oldest block'], ...(p.asset.startsWith('p2:') ? [] : [['count:desc', 'Most units']])],
       filters: [{ name: 'found', label: 'Found', value: '', options: [['', 'All'], ['true', 'Found'], ['false', 'Unfound']] },
         { name: 'minted', label: 'Minted', value: '', options: [['', 'All'], ['true', 'Minted'], ['false', 'Not minted']] }],
-      empty: 'No blocks in this view.',
+      empty: filters => Object.values(filters).every(v => v === '') && site.words?.patternBlocksEmpty || 'No blocks in this view.',
       columns: [
         { key: 'block', label: 'Block', num: true, render: r => h('a.mono', { href: site.href('world', { b: r.block }) }, fmtInt(r.block)) },
         { key: 'count', label: 'Units', num: true },

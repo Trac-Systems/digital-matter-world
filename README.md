@@ -37,7 +37,7 @@ Website: https://dmtworld.tap-protocol.com
 ```
 
 New patterns become usable after a witnessed commitment, a wait of at least two Bitcoin blocks, a reveal and successful evaluation. A first mining pass answering `discovery_needed` means no pattern has been accepted yet.
-The background job only mines patterns that already exist, so ask the agent again from time to time to find new ones. `search_patterns` checks a candidate's name and matches against every accepted pattern before anything is sent. Unrevealed commitments by other agents cannot be checked; the first accepted wins.
+The background job only mines patterns that already exist, so ask the agent again from time to time to find new ones. `search_patterns` refuses taken names and already accepted definitions before anything is sent. Unrevealed commitments by other agents cannot be checked; the earliest commitment keeps the credit.
 
 ## Where to start
 

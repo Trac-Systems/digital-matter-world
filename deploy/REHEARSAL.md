@@ -1,7 +1,8 @@
 # Pay-first verification
 
-Use Node 24.22.1 and installed lockfile dependencies to verify the player-paid
-protocol on isolated local chains.
+Use Node 24.22.1 and installed lockfile dependencies. The previous automated
+service-funded launch/mint rehearsal has been removed. It cannot prove the
+current player-paid protocol.
 
 Run these suites with unused loopback ports and disposable state:
 

@@ -1,4 +1,5 @@
 import { hash } from './core.js';
+import { namedGet, namedSet } from './named-index.js';
 // Persistent compressed radix index. Updates copy at most 64 small nodes; unary
 // paths are compressed so retained tree size is linear in the number of keys.
 // Current gateway replay hydrates flat row maps; the first update shares that
@@ -10,6 +11,7 @@ function find(node, path, offset = 0) {
   return offset === path.length ? node : find(node.children?.[path[offset]], path, offset);
 }
 export function recordGet(index, key) {
+  if (index?.$claimIndex) return namedGet(index.root, String(key));
   if (!index?.$dmwIndex) return index?.[key];
   const node = find(index.root, hash(String(key)));
   return node ? node.value : index.base?.[key];
@@ -27,10 +29,12 @@ function put(node, path, key, value, offset = 0) {
   return { ...node, children: { ...node.children, [path[offset]]: put(node.children[path[offset]], path, key, value, offset) } };
 }
 export function recordSet(index, key, value) {
+  if (index?.$claimIndex) return { ...index, root: namedSet(index.root, String(key), value), changes: recordSet(index.changes, key, value) };
   const map = wrap(index);
   return { ...map, root: put(map.root, hash(String(key)), key, value), size: map.size + (recordGet(map, key) === undefined ? 1 : 0) };
 }
 export function recordObject(index) {
+  if (index?.$claimIndex) throw Error('claim_index_enumeration');
   if (!index?.$dmwIndex) return index ?? {};
   const out = { ...index.base };
   const visit = node => {
@@ -41,8 +45,23 @@ export function recordObject(index) {
   };
   visit(index.root); return out;
 }
-export const recordSize = index => index?.$dmwIndex ? index.size : Object.keys(index ?? {}).length;
+export const recordSize = index => {
+  if (index?.$claimIndex) throw Error('claim_index_enumeration');
+  return index?.$dmwIndex ? index.size : Object.keys(index ?? {}).length;
+};
+// Persistence needs only keys changed by this replay, not its hydrated base.
+export function recordChanges(index) {
+  if (index?.$claimIndex) return recordObject(index.changes);
+  if (!index?.$dmwIndex) return {};
+  const out = {}, visit = node => {
+    if (!node) return;
+    if (node.children) for (const child of Object.values(node.children)) visit(child);
+    else out[node.key] = node.value;
+  };
+  visit(index.root); return out;
+}
 export function recordDelete(index, key) {
+  if (index?.$claimIndex) throw Error('claim_index_append_only');
   if (recordGet(index, key) === undefined) return index;
   const map = wrap(index), path = hash(String(key));
   if (Object.hasOwn(map.base, key)) return { ...map, root: put(map.root, path, key, undefined), size: map.size - 1 };

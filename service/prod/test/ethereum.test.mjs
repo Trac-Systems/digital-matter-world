@@ -61,18 +61,21 @@ test('configured escrow reader verifies deposits and rejects shallow inclusion a
     ['releaseDigest(address,bytes32)', '0x' + digest]
   ].map(([signature, value]) => [calldata(signature, []).slice(0, 10), value]));
   const state = { inclusion: '0x5', reorg: false };
+  const txid = '0x' + '99'.repeat(32);
+  const event = () => ({ address: c.address, removed: false, blockNumber: state.inclusion, blockHash: inclusionHash, transactionHash: txid, logIndex: '0x0', topics: ['0x' + keccak(Buffer.from('Deposited(bytes32,address,uint256,uint256,bytes32,(address,uint256,address,uint256,address,uint256,address,uint256,uint256))')).toString('hex'), '0x' + id, encode([['address', payer]])], data: encode([['uint256', '100'], ['uint256', '100000'], ['bytes32', deposit.splitHash], ...splitFields]) });
   const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
   globalThis.fetch = async (_url, options) => {
     const r = JSON.parse(options.body); let result;
     if (r.method === 'eth_chainId') result = '0x1';
     else if (r.method === 'eth_call') result = getters.get(r.params[0].data.slice(0, 10));
     else if (r.method === 'eth_getBlockByNumber') result = r.params[0] === 'latest' || r.params[0] === '0xa' ? { number: '0xa', hash: blockHash, timestamp: '0x3e8' } : { hash: state.reorg ? blockHash : inclusionHash };
-    else if (r.method === 'eth_getLogs') result = [{ address: c.address, removed: false, blockNumber: state.inclusion, blockHash: inclusionHash, topics: ['0x' + keccak(Buffer.from('Deposited(bytes32,address,uint256,uint256,bytes32,(address,uint256,address,uint256,address,uint256,address,uint256,uint256))')).toString('hex'), '0x' + id, encode([['address', payer]])], data: encode([['uint256', '100'], ['uint256', '100000'], ['bytes32', deposit.splitHash], ...splitFields]) }];
+    else if (r.method === 'eth_getLogs') result = [event()];
+    else if (r.method === 'eth_getTransactionReceipt') result = { transactionHash: txid, status: '0x1', blockNumber: state.inclusion, blockHash: inclusionHash, logs: [event()] };
     else throw Error('unrecorded RPC');
     return Response.json({ id: r.id, result });
   };
-  const { escrow } = await createEthereum(c, { requestsPerSecond: 100 });
+  const client = await createEthereum(c, { requestsPerSecond: 100 }); t.after(() => client.close()); const { escrow } = client;
   assert.equal((await escrow.deposit(payer, id)).confirmations, 6);
-  state.inclusion = '0x6'; assert.equal((await escrow.deposit(payer,id)).confirmations,5);
+  state.inclusion = '0x6'; assert.equal((await escrow.deposit(payer,id, { depositTxid: txid })).confirmations,5);
   state.inclusion = '0x5'; state.reorg = true; await assert.rejects(escrow.deposit(payer, id), /escrow_event_reorg/);
 });

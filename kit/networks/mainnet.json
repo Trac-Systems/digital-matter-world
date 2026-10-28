@@ -32,7 +32,7 @@
   ],
   "trac": {
     "adminPublicKey": "12cdb5924412d67fc20dd7e765bf5ab4ee4df8f822585220fdba93615923a097",
-    "bootstrap": "f163aa4ba5a0ed1bcdaae2a624bb90aff89ead21bc2b4f9446d794b798823ce7",
+    "bootstrap": "0b27ce8990b5c142d7d68fd263bc4965c4cf16c0e53daf89c0146ba30fb81359",
     "committeePublicKey": "03ad8df5e1c8bdb1de2f9a009af545e7ad2e1797c7c0548a9cd8bb5ab9123c1829",
     "msbBootstrap": "acbc3a4344d3a804101d40e53db1dda82b767646425af73599d4cd6577d69685",
     "networkId": "918"
@@ -81,7 +81,159 @@
         }
       },
       "committee": "03ad8df5e1c8bdb1de2f9a009af545e7ad2e1797c7c0548a9cd8bb5ab9123c1829",
-      "network": "dmw-mainnet"
+      "network": "dmw-mainnet",
+      "v2": {
+        "manifest": {
+          "version": 1,
+          "network": "dmw-mainnet",
+          "fromRuleset": "dmw-v1",
+          "toRuleset": "dmw-v2",
+          "effectiveBatch": "155",
+          "previousBatchRoot": "b6e456e2a00548a7cfb5c00ed936fb35a639cf7a2a9b4294c8e2aa300f291c5c",
+          "bitcoinAnchor": {
+            "hash": "00000000000000000001d95be122b5a9557ec9f09db1185364fa3df9255b7bb8",
+            "height": "973581"
+          },
+          "settingsHash": "b5ee2fa7152accd64db42146543552eabc20224f90e9f1f336b3bb374a68c782",
+          "catalogRoot": "1eba8b9a41e9855dfaab41cff99f681c7ba1fa0285237e7c47f6b0cf5cd72bac",
+          "accountsRoot": "ecc0e58f1c433df2e38fb21e3302f28574090b8694caa8a9766105c67aad730d",
+          "receiptSegmentStart": "0",
+          "schemas": {
+            "batch": 2,
+            "file": 5,
+            "integer": 2,
+            "receipt": 2
+          },
+          "minimumKitVersion": "0.2.0",
+          "route": "terminal-import"
+        },
+        "manifestHash": "33a7e3525635fb9196afa25b52c7a53013496b43e4b56a3dd2c5f9298fbc7a0e",
+        "document": {
+          "effectiveBatch": "155",
+          "effectiveBitcoinWindow": "973581",
+          "network": "dmw-mainnet",
+          "previousRevisionHash": null,
+          "revision": "0",
+          "ruleset": "dmw-v2",
+          "values": {
+            "accountActions": 512,
+            "accountLeaves": 4096,
+            "accountProofBytes": 98304,
+            "accountProofNodes": 65536,
+            "adminDelayTips": 432,
+            "auditChunkBytes": 262144,
+            "auditTotalBytes": 1500000,
+            "batchAssets": 4096,
+            "batchBytes": 98304,
+            "batchDeadlineTips": 6,
+            "batchEnvelopeReserveBytes": 4096,
+            "batchHeaders": 20,
+            "batchKv": 16,
+            "batchMaxDeadlineTips": 36,
+            "batchOps": 512,
+            "challengeBudget": 32,
+            "challengeRewardAtoms": "0",
+            "claimWindowTips": 2,
+            "claimsPerWindow": 100,
+            "closureBacklogBytes": 67108864,
+            "closureBacklogPairs": 200000,
+            "closureBacklogWindows": 64,
+            "closureByteBudget": 67108864,
+            "closureReadBudget": 131072,
+            "closureWorkBudget": 2048,
+            "commitLifetime": 144,
+            "compoundBurnBps": 3500,
+            "compoundInputs": 8,
+            "compoundPrecisionBits": 256,
+            "compoundRatio": 64,
+            "compoundWorkBudget": 4096,
+            "discovererShareBps": 500,
+            "feePolicyRevision": "20babe879e8eb2370050aa513107f4ce2a0e1f656bbfccc4f3acf84ee5977256",
+            "findBurnBps": 2000,
+            "finderShareBps": 3000,
+            "finderWindow": 1008,
+            "firstMakerShareBps": 3000,
+            "headerPageSize": 4096,
+            "landownerShareBps": 1500,
+            "linkBurnBps": 5000,
+            "linkMultiplier": 1,
+            "linkOperationBudget": 16,
+            "linkRefundPadding": 144,
+            "lockMaxBlocks": 2016,
+            "lockMinBlocks": 6,
+            "minMatchingBlocks": 3,
+            "minRevealDelay": 2,
+            "mintAllocationBudget": 64,
+            "mintCreditBudget": 32,
+            "mintOperationBudget": 32,
+            "moveBytes": 16384,
+            "moveFreshnessTips": 2,
+            "movePatternsPerPlot": 64,
+            "movePlots": 1000,
+            "namedPairBudget": 10000,
+            "observationBudget": 512,
+            "observationsPerBatch": 1,
+            "occurrencePageSize": 100,
+            "operationAssets": 16,
+            "patternMaxAlternatives": 4,
+            "patternMaxAtoms": 12,
+            "patternMaxLength": 64,
+            "patternMaxLiteralDigits": 6,
+            "patternMaxQuantifiers": 4,
+            "pauseCooldownTips": 144,
+            "pauseTips": 144,
+            "paymentPage": 32,
+            "pendingBlocks": 432,
+            "proofBytes": 1048576,
+            "proofDepth": 256,
+            "puzzleBits": 12,
+            "quoteLifetimeMs": 300000,
+            "quoteLifetimeTips": 2016,
+            "receiptSegmentEntries": 32,
+            "recoveryHeaders": 20,
+            "requestMaxBlocks": 2016,
+            "requestMinBlocks": 6,
+            "revealBudget": 32,
+            "settlementPageRows": 100,
+            "settlementPagesPerObservation": 2,
+            "summaryBytes": 1000000,
+            "tierThresholds": [
+              "100",
+              "1000",
+              "10000",
+              "100000"
+            ],
+            "unlinkedBurnBps": 1500
+          },
+          "version": 1
+        },
+        "importRoot": "14ec08cbf71d15c862eee7751dd9aa815045ecdd8cb29be815754f1e7a985b9c",
+        "importRows": 8381,
+        "receiptProtocol": 1,
+        "gateway": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
+        "receiptSigners": [
+          {
+            "id": "operator1",
+            "identity": "8ae28e09badb67a0903f77054f9e2267eecc8925f9d591da497c7bd68d23c2cc"
+          },
+          {
+            "id": "operator2",
+            "identity": "79651ec97caf6ad6e6a63af0e20b012dc0bbc24fb410318e586d15e406ac3ed5"
+          },
+          {
+            "id": "operator3",
+            "identity": "4ed5280aeaef17a2d6b85cf0c4e07a76c880a992cc6630c77f5056f5812e251d"
+          },
+          {
+            "id": "operator4",
+            "identity": "635da5ed7316f53ec26db69972e1e02fd8df69c098eed16b948b5bf156585309"
+          },
+          {
+            "id": "operator5",
+            "identity": "ceaf32610d748ccdd619c64c7b23a4d47814fde07ee5c1aff1cfdebb51b9b72e"
+          }
+        ]
+      }
     }
   }
 }

@@ -1,10 +1,20 @@
 import b4a from 'b4a';
+import { checkBatchV2 } from './batch-v2.js';
+import { applyTerminalImport, validateV2Deployment } from './activation-v2.js';
+import { batchSettingsDocument, installSettings, proposeSettings, authorizeSettings } from './settings-v2.js';
+import { executionSettingsDocument, applyReceiptRenewalBatch } from './receipt-renewal.js';
+import { hashObject } from '../rules/src/core.js';
+import { decimalV2, compareUint, ordinalCodec, compareOrdinal } from '../rules/src/integers-v2.js';
 import Wallet from 'trac-wallet';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { BitcoinBeacon, MAINNET_PARAMS, targetFromBits } from './beacon/bitcoin.js';
 import { MAINNET_CHECKPOINT } from './launch.js';
 import { batchDigest, requestDigest, signingDigest, sha256, bytesToHex, hexToBytes, utf8ToBytes, jsonBytes, NETWORK } from './signing.js';
 import { parseJSON } from './json.js';
+import { applyRootAccounts } from './root-accounts.js';
+import { accountKey, readAccountLeaf } from './account-tree.js';
+import { applyPaymentPage } from './payment-pages.js';
+import { applyBeaconRecovery } from './beacon/recovery.js';
 import { DEFAULT_SETTINGS, SETTING_BOUNDS, validSetting, ADMIN_DELAY, PAUSE_MAX, PAUSE_COOLDOWN, MAX_ASSETS, MAX_AMOUNT_DIGITS, MAX_WIRE_BYTES, MAX_BATCH_HORIZON } from './settings.js';
 
 export const ADDRESS = /^[0-9a-f]{64}$/;
@@ -21,14 +31,14 @@ export function validKey(v) {
   if (typeof v !== 'string' || !/^(02|03)[0-9a-f]{64}$/.test(v)) return false;
   try { secp256k1.ProjectivePoint.fromHex(v); return true; } catch { return false; }
 }
-export const FUNCTIONS = Object.freeze(['tf', 'hl', 'hc', 'hr', 'rx', 'hd', 'bt', 'ad_key', 'ad_set', 'ad_admin', 'ad_apply', 'ad_accept', 'ad_pause']);
-const pendingIds = ['key', 'admin', ...Object.keys(SETTING_BOUNDS).map(k => `set/${k}`)];
+export const FUNCTIONS = Object.freeze(['tf', 'hl', 'hc', 'hr', 'rx', 'hd', 'bt', 'ad_import', 'ad_settings', 'ad_key', 'ad_set', 'ad_admin', 'ad_apply', 'ad_accept', 'ad_pause']);
+const pendingIds = ['key', 'admin', 'settings', ...Object.keys(SETTING_BOUNDS).map(k => `set/${k}`)];
 
 export function validateDeployment(options) {
   if (!options || !matches(NETWORK, options.network) || !matches(ADDRESS, options.admin) || !validKey(options.committee)) throw new Error('deployment_identity');
   const { checkpoint: c, params = MAINNET_PARAMS } = options.beacon ?? { checkpoint: MAINNET_CHECKPOINT };
-  if (!c || !uint(c.height) || !matches(ADDRESS, c.hash) || !uint(c.time) || !targetFromBits(c.bits) || !/^[1-9][0-9]*$/.test(c.chainwork)) throw new Error('deployment_checkpoint');
-  if (!Number.isSafeInteger(params.interval) || params.interval < 1 || c.height % params.interval !== 0 ||
+  if (!c || !(options.v2 ? ordinalCodec().valid(decimalV2(c.height)) : uint(c.height)) || !matches(ADDRESS, c.hash) || !uint(c.time) || !targetFromBits(c.bits) || !/^[1-9][0-9]*$/.test(c.chainwork)) throw new Error('deployment_checkpoint');
+  if (!Number.isSafeInteger(params.interval) || params.interval < 1 || BigInt(c.height) % BigInt(params.interval) !== 0n ||
       !Number.isSafeInteger(params.confirmations) || params.confirmations < 1 || !uint(params.branchDepth) ||
       !Number.isSafeInteger(params.timespan) || params.timespan < 4 || params.timespan % 4 !== 0 ||
       !targetFromBits(params.powLimitBits) || typeof params.retarget !== 'boolean') throw new Error('deployment_beacon');
@@ -39,22 +49,30 @@ export class StateTransition {
   constructor(read, options) {
     validateDeployment(options);
     this.read = read; this.options = { ...options, beacon: options.beacon ?? { checkpoint: MAINNET_CHECKPOINT, params: MAINNET_PARAMS } }; this.writes = new Map();
+    if (options.v2) this.options.batchActivation = validateV2Deployment(options).activation;
   }
   async get(key) { return this.writes.has(key) ? this.writes.get(key) : await this.read(key); }
   put(key, value) { this.writes.set(key, value); }
   del(key) { this.writes.set(key, undefined); }
-  beacon() { return new BitcoinBeacon(this, this.options.beacon); }
+  get clock() { return ordinalCodec(!!this.options.v2); }
+  beacon() { return new BitcoinBeacon(this, { ...this.options.beacon, ...(this.options.v2 ? { integerVersion: 2 } : {}) }); }
   async head() {
     const b = this.beacon(), counted = await b.countedHeight(), tip = await b.tip();
-    return { tip, counted, countedHash: await b.hashAt(counted), revision: await this.get('b/rev') ?? 0,
-      confirmed: Math.max(this.options.beacon.checkpoint.height, tip.height - b.params.confirmations + 1) };
+    return { tip, counted, countedHash: await b.hashAt(counted), revision: await b.revision(),
+      confirmed: this.clock.max(this.options.beacon.checkpoint.height, this.clock.add(tip.height, 1 - b.params.confirmations)) };
   }
-  async settings() { return { ...DEFAULT_SETTINGS, ...await this.get('s/current') }; }
-  async batchLast() { return await this.get('bt/last') ?? { n: 0, to: this.options.beacon.checkpoint.height }; }
+  async settings() {
+    const settings = { ...DEFAULT_SETTINGS, ...await this.get('s/current') }, document = await this.get('v2/settings');
+    if (document) Object.assign(settings, { ruleset: 'dmw-v2', batchVersion: 2, settingsHash: hashObject(document),
+      claimsPerWindow: document.values.claimsPerWindow, batch_bytes: document.values.batchBytes, batch_ops: document.values.batchOps,
+      batch_assets: document.values.batchAssets, batch_kv: document.values.batchKv });
+    return settings;
+  }
+  async batchLast() { const last = await this.get('bt/last') ?? { n: 0, to: this.options.beacon.checkpoint.height }; return { n: this.clock.value(last.n), to: this.clock.value(last.to) }; }
   async admin() { return await this.get('ad/current') ?? this.options.admin; }
   async committee() { return await this.get('s/key') ?? this.options.committee; }
-  async committeeEpoch() { return await this.get('s/epoch') ?? 0; }
-  async paused() { return (await this.head()).counted < (await this.get('ad/pause'))?.until; }
+  async committeeEpoch() { return this.clock.value(await this.get('s/epoch') ?? 0); }
+  async paused() { const pause = await this.get('ad/pause'); return !!pause && compareOrdinal((await this.head()).counted, pause.until) < 0; }
   async pending() {
     const out = [];
     for (const id of pendingIds) { const v = await this.get(`ad/p/${id}`); if (v) out.push({ id, ...v }); }
@@ -63,14 +81,20 @@ export class StateTransition {
   async agent(address, create = false) {
     if (!matches(ADDRESS, address)) return null;
     let n = await this.get(`a/${address}`);
-    if (n || !create) return n ?? null;
-    n = (await this.get('a/last') ?? 0) + 1;
-    if (!Number.isSafeInteger(n)) throw new Error('agent_exhausted');
+    if (n || !create) return n == null ? null : this.clock.value(n);
+    n = this.clock.add(await this.get('a/last') ?? 0);
     this.put('a/last', n); this.put(`a/${address}`, n); this.put(`an/${n}`, address);
     return n;
   }
-  async address(n) { return uint(n) && n > 0 ? await this.get(`an/${n}`) ?? null : null; }
-  async balance(owner, asset) {
+  async address(n) { return this.clock.valid(n) && compareOrdinal(n, 0) > 0 ? await this.get(`an/${n}`) ?? null : null; }
+  async balance(owner, asset, proof = null) {
+    const version = await this.get('s/assets');
+    if (version?.version === 2) {
+      const address = typeof owner === 'string' ? owner : await this.address(owner), account = await this.get('ar/' + address);
+      if (!account) return '0';
+      if (!proof) throw Error('account_proof_required');
+      return readAccountLeaf(account.root, proof, accountKey('balance', asset), version.settings)?.available ?? '0';
+    }
     if (!uint(owner) || owner < 1 || !matches(ASSET, asset)) return '0';
     const height = (await this.head()).counted;
     let value = BigInt(await this.get(`v/${owner}/${asset}`) ?? '0');
@@ -132,6 +156,10 @@ export class StateTransition {
       if (jsonBytes(value) > MAX_WIRE_BYTES) return 'size';
     } catch { return 'encoding'; }
     try {
+      if (type === 'ad_import') {
+        const error = await applyTerminalImport(this, value, address); if (error) this.writes = before; return error;
+      }
+      if (this.options.v2 && !await this.get('v2/ready')) return 'activation_import_required';
       const error = await this.apply(type, value, address);
       if (error) this.writes = before;
       return error;
@@ -146,6 +174,7 @@ export class StateTransition {
     const height = (await this.head()).counted, settings = await this.settings();
     if (type === 'bt') return this.batch(value, settings, address);
     if (type.startsWith('ad_')) return this.administration(type, value, address, height);
+    if ((await this.get('s/assets'))?.version === 2) return 'account_v2_required';
     if (type === 'rx') return this.cancel(value, height, true);
     if (type === 'tf' || type === 'hl') {
       if (!exactKeys(value, type === 'tf' ? ['to', 'assets'] : ['to', 'assets', 'hash', 'refund']) || !matches(ADDRESS, value.to) || !assets(value.assets)) return type;
@@ -191,12 +220,20 @@ export class StateTransition {
     this.put(nonce, 1); return null;
   }
   async batch(batch, settings, address) {
-    const keys = ['v', 'epoch', 'n', 'from', 'to', 'deadline', 'root', 'ops', 'sig', ...(batch && Object.hasOwn(batch, 'hx') ? ['hx'] : [])];
-    if (!exactKeys(batch, keys) || batch.v !== 1 || !uint(batch.epoch) || !uint(batch.n) || !uint(batch.from) || !uint(batch.to) || !uint(batch.deadline) || !matches(ADDRESS, batch.root) || !matches(SIG, batch.sig) || !Array.isArray(batch.ops)) return 'batch';
+    const keys = ['v', 'epoch', 'n', 'from', 'to', 'deadline', 'root', 'ops', 'sig', ...(batch?.v === 2 ? ['previous', 'ruleset', 'settingsRevision', 'execution', 'observation', 'receipts', 'finds', 'catalog', 'accounts', ...(batch.settingsHash ? ['settingsHash', 'previousClaims', 'claims', ...(Object.hasOwn(batch, 'renewal') ? ['renewal'] : [])] : [])] : []), ...(batch && Object.hasOwn(batch, 'hx') ? ['hx'] : [])];
+    const clock = ordinalCodec(batch?.v === 2 && !!this.options.v2);
+    if (!exactKeys(batch, keys) || ![1, 2].includes(batch.v) || !clock.valid(batch.epoch) || !clock.valid(batch.n) || !clock.valid(batch.from) || !clock.valid(batch.to) || !clock.valid(batch.deadline) || !matches(ADDRESS, batch.root) || !matches(SIG, batch.sig) || !Array.isArray(batch.ops)) return 'batch';
+    let document, effectiveDocument;
+    try { document = batch.v === 2 ? await executionSettingsDocument(this, batch) : null;
+      effectiveDocument = document && await batchSettingsDocument(this, batch.n, batch.execution?.height); }
+    catch (error) { return error.message; }
+    if (document) settings = { ...settings, batch_bytes: document.values.batchBytes, batch_ops: document.values.batchOps,
+      batch_assets: document.values.batchAssets, batch_kv: document.values.batchKv };
     if (jsonBytes(batch) > settings.batch_bytes || batch.ops.length > settings.batch_ops) return 'batch_size';
     if (batch.epoch !== await this.committeeEpoch()) return 'batch_epoch';
     const last = await this.batchLast();
-    if (batch.n !== last.n + 1 || batch.from !== last.to + 1 || batch.to < batch.from) return 'batch_sequence';
+    if (clock.compare(batch.n, clock.add(last.n)) !== 0 || clock.compare(batch.from, clock.add(last.to, batch.v === 2 ? 0 : 1)) !== 0 || clock.compare(batch.to, batch.from) < 0) return 'batch_sequence';
+    if (batch.v === 1 && this.options.batchActivation && compareOrdinal(batch.n, this.options.batchActivation.sequence) >= 0) return 'batch_activation';
     if (!secp256k1.verify(batch.sig, batchDigest(this.options.network, batch), await this.committee(), { lowS: true, prehash: false })) return 'batch_signature';
     if (Object.hasOwn(batch, 'hx')) {
       const result = await this.beacon().ingest(batch.hx, address);
@@ -204,12 +241,28 @@ export class StateTransition {
     }
     // Combined dispatch is atomic. During a pause anyone can still use standalone hd.
     const height = (await this.head()).counted;
-    if (height > batch.deadline || batch.deadline - height > MAX_BATCH_HORIZON) return 'batch_deadline';
+    const horizon = document?.values.batchMaxDeadlineTips ?? (batch.v === 2 ? this.options.batchActivation?.settings?.batchDeadlineMaxBlocks ?? MAX_BATCH_HORIZON : MAX_BATCH_HORIZON);
+    if (clock.compare(height, batch.deadline) > 0 || clock.compare(batch.deadline, clock.add(height, horizon)) > 0) return 'batch_deadline';
     if (await this.paused()) return 'paused';
-    if (batch.to > height) return 'batch_sequence';
+    if (clock.compare(batch.to, height) > 0) return 'batch_sequence';
+    const renewal = await this.get('v2/receipt-renewal');
+    if (batch.v === 2) {
+      const error = await checkBatchV2(this, batch, last); if (error) return error;
+      if (clock.compare(batch.execution.height, height) > 0) return 'batch_execution';
+      this.put('bt/observation', batch.observation);
+      if (document) installSettings(this, document);
+    }
     const budget = { assets: 0, kv: 0 };
     for (const op of batch.ops) { const error = await this.batchOp(op, height, settings, budget); if (error) return error; }
+    if (document) {
+      // An old-policy execution borrows its original account limits only for
+      // this transaction. It cannot roll back the authorized admission policy.
+      const effective = effectiveDocument, scheduled = await this.get('v2/settings-next');
+      if (batch.renewal?.kind !== 'reserve') { installSettings(this, effective); if (scheduled && hashObject(effective) === hashObject(scheduled)) this.del('v2/settings-next'); }
+      applyReceiptRenewalBatch(this, batch, renewal);
+    }
     this.put('bt/last', { n: batch.n, to: batch.to }); this.put(`bt/${batch.n}`, batch.root);
+    if (batch.settingsHash) { this.put('v2/catalog', batch.catalog); this.put('v2/accounts', batch.accounts); this.put('v2/claims', batch.claims); }
     return null;
   }
   async cancel(value, height, expiredOnly = false) {
@@ -224,6 +277,46 @@ export class StateTransition {
   }
   async batchOp(op, height, settings, budget) {
     if (!op || typeof op.op !== 'string') return 'operation';
+    const version = await this.get('s/assets');
+    if (op.op === 'br') {
+      try { await applyBeaconRecovery(this, op, { ...this.options.beacon, poster: null, settings: version?.settings, integerVersion: this.options.v2 ? 2 : 1 }); return null; }
+      catch (error) { return error.message; }
+    }
+    if (op.op === 'fp') {
+      if (version?.version !== 2) return 'account_v2_inactive';
+      budget.assets += op.proof?.leaves?.length ?? 0;
+      if (budget.assets > settings.batch_assets) return 'batch_assets';
+      try { await applyPaymentPage(this, op, { network: this.options.network, height, settings: version.settings }); return null; }
+      catch (error) { return error.message; }
+    }
+    if (op.op === 'mx') {
+      if ((await this.get('s/assetExits'))?.version !== 2 || version?.version === 2) return 'mint_exit_inactive';
+      if (!exactKeys(op, ['op', 'v', 'id', 'outcome', 'evidence']) || op.v !== 2 || !matches(ADDRESS, op.id) || !matches(ADDRESS, op.evidence) ||
+          !['credit', 'ethereum_refund'].includes(op.outcome)) return 'mint_exit';
+      const m = await this.get('m/' + op.id);
+      if (!m || ![0, 2].includes(m.s) || m.permitHash) return 'mint_exit_terminal';
+      if (++budget.assets > settings.batch_assets) return 'batch_assets';
+      if (m.h) {
+        await this.escrow(m.o, m.asset, Number.MAX_SAFE_INTEGER, -BigInt(m.amount));
+        await this.change(m.o, m.asset, BigInt(m.amount), height);
+      } else if (height <= m.e) {
+        await this.escrow(m.o, m.asset, m.e, -BigInt(m.amount));
+        await this.change(m.o, m.asset, BigInt(m.amount), height);
+      } else await this.settle(m.o, m.asset, height);
+      this.put('m/' + op.id, { ...m, s: 3, h: false, exit: op.outcome, evidence: op.evidence });
+      return null;
+    }
+    if (op.op === 'ar') {
+      if (version?.version !== 2) return 'account_v2_inactive';
+      try {
+        const result = await applyRootAccounts(this, op, { network: this.options.network, height, settings: version.settings });
+        budget.assets += result.assetTouches;
+        return budget.assets > settings.batch_assets ? 'batch_assets' : null;
+      }
+      catch (error) { return error.message; }
+    }
+    // A cutover cannot leave any legacy monetary write path enabled.
+    if (version?.version === 2 && op.op !== 'kv') return 'account_v2_required';
     if (op.op === 'mk') {
       if (!exactKeys(op, ['op', 'to', 'asset', 'amount']) || !matches(ADDRESS, op.to) || !matches(ASSET, op.asset) || !amount(op.amount)) return 'mk';
       if (++budget.assets > settings.batch_assets) return 'batch_assets';
@@ -300,19 +393,24 @@ export class StateTransition {
   }
   async administration(type, value, address, height) {
     if (!['ad_apply', 'ad_accept'].includes(type) && address !== await this.admin()) return 'admin';
+    const policy = (await this.get('v2/settings'))?.values;
+    if (type === 'ad_settings') {
+      if (!exactKeys(value, ['document'])) return 'settings_proposal';
+      try { return await proposeSettings(this, value.document, height); } catch (error) { return error.message; }
+    }
     if (type === 'ad_pause') {
       if (!exactKeys(value, ['on']) || typeof value.on !== 'boolean') return 'pause';
       const pause = await this.get('ad/pause');
       if (value.on) {
-        if (pause && height < pause.until) return 'pause_active';
-        if (pause && height < pause.until + PAUSE_COOLDOWN) return 'pause_cooldown';
-        this.put('ad/pause', { until: height + PAUSE_MAX });
-      } else if (pause && height < pause.until) this.put('ad/pause', { until: height });
+        if (pause && compareOrdinal(height, pause.until) < 0) return 'pause_active';
+        if (pause && compareOrdinal(height, pause.cooldownUntil ?? this.clock.add(pause.until, PAUSE_COOLDOWN)) < 0) return 'pause_cooldown';
+        this.put('ad/pause', { until: this.clock.add(height, policy?.pauseTips ?? PAUSE_MAX), ...(policy ? { cooldownUntil: this.clock.add(this.clock.add(height, policy.pauseTips), policy.pauseCooldownTips) } : {}) });
+      } else if (pause && compareOrdinal(height, pause.until) < 0) this.put('ad/pause', { ...pause, until: height });
     } else if (type === 'ad_accept') {
       if (!exactKeys(value, ['id']) || value.id !== 'admin') return 'admin_action';
       const action = await this.get('ad/p/admin');
       if (!action) return 'admin_unknown';
-      if (height < action.at) return 'admin_delay';
+      if (compareUint(decimalV2(height), decimalV2(action.at)) < 0) return 'admin_delay';
       if (address !== action.value) return 'admin_acceptor';
       this.put('ad/current', address);
       for (const id of pendingIds) this.del(`ad/p/${id}`);
@@ -320,11 +418,13 @@ export class StateTransition {
       if (!exactKeys(value, ['id']) || !pendingIds.includes(value.id)) return 'admin_action';
       const action = await this.get(`ad/p/${value.id}`);
       if (!action) return 'admin_unknown';
-      if (height < action.at) return 'admin_delay';
+      if (compareUint(decimalV2(height), decimalV2(action.at)) < 0) return 'admin_delay';
       if (value.id === 'admin') return 'admin_accept_required';
-      if (value.id === 'key') {
-        const epoch = await this.committeeEpoch() + 1;
-        if (!Number.isSafeInteger(epoch)) return 'committee_epoch_exhausted';
+      if (value.id === 'settings') {
+        try { const error = await authorizeSettings(this, action.value); if (error) return error; } catch (error) { return error.message; }
+      } else if (value.id === 'key') {
+        if (!this.options.v2 && await this.committeeEpoch() === Number.MAX_SAFE_INTEGER) return 'committee_epoch_exhausted';
+        const epoch = this.clock.add(await this.committeeEpoch());
         this.put('s/key', action.value); this.put('s/epoch', epoch);
       } else this.put('s/current', { ...await this.get('s/current'), [value.id.slice(4)]: action.value });
       this.del(`ad/p/${value.id}`);
@@ -332,9 +432,9 @@ export class StateTransition {
       let id, proposed;
       if (type === 'ad_key' && exactKeys(value, ['key']) && validKey(value.key)) { id = 'key'; proposed = value.key; }
       else if (type === 'ad_admin' && exactKeys(value, ['address']) && matches(ADDRESS, value.address)) { id = 'admin'; proposed = value.address; }
-      else if (type === 'ad_set' && exactKeys(value, ['key', 'value']) && validSetting(value.key, value.value)) { id = `set/${value.key}`; proposed = value.value; }
+      else if (type === 'ad_set' && !policy && exactKeys(value, ['key', 'value']) && validSetting(value.key, value.value)) { id = `set/${value.key}`; proposed = value.value; }
       else return 'admin_proposal';
-      this.put(`ad/p/${id}`, { value: proposed, at: height + ADMIN_DELAY });
+      this.put(`ad/p/${id}`, { value: proposed, at: this.clock.add(height, policy?.adminDelayTips ?? ADMIN_DELAY) });
     }
     return null;
   }

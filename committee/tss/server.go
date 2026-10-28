@@ -33,7 +33,7 @@ import (
 type Config struct {
 	ID        string `json:"id"`
 	Network   string `json:"network"`
-	Epoch     int    `json:"epoch"`
+	Epoch     Epoch  `json:"epoch"`
 	Listen    string `json:"listen"`
 	Directory string `json:"directory"`
 	Secrets   string `json:"secrets"`
@@ -55,7 +55,7 @@ type Vault struct {
 	Decision  string                     `json:"decision"`
 	SessionID string                     `json:"sessionId"`
 	Network   string                     `json:"network"`
-	Epoch     int                        `json:"epoch"`
+	Epoch     Epoch                      `json:"epoch"`
 	Retired   bool                       `json:"retired"`
 	Peers     []Peer                     `json:"peers"`
 	Public    string                     `json:"public"`
@@ -162,7 +162,7 @@ func checkPeers(peers []Peer, n int) error {
 	return nil
 }
 func (s *Server) prepare(st Start) error {
-	if !hex32.MatchString(st.ID) || st.Network != s.config.Network || st.Epoch < 1 || st.Timeout < 1 || st.Timeout > 1800 {
+	if !hex32.MatchString(st.ID) || st.Network != s.config.Network || !st.Epoch.positive() || st.Timeout < 1 || st.Timeout > 1800 {
 		return errors.New("session_parameters")
 	}
 	if s.used[st.ID] {
@@ -172,7 +172,7 @@ func (s *Server) prepare(st Start) error {
 		return errors.New("session_busy")
 	}
 	if st.Kind == "sign" {
-		if len(st.NewPeers) != 0 || len(st.Peers) != 3 || !hex32.MatchString(st.Digest) || s.vault == nil || s.vault.Retired || st.Epoch != s.vault.Epoch {
+		if len(st.NewPeers) != 0 || len(st.Peers) != 3 || !hex32.MatchString(st.Digest) || s.vault == nil || s.vault.Retired || !st.Epoch.equal(s.vault.Epoch) {
 			return errors.New("sign_state")
 		}
 		if e := checkPeers(st.Peers, 3); e != nil {
@@ -190,7 +190,7 @@ func (s *Server) prepare(st Start) error {
 			}
 		}
 	} else if st.Kind == "keygen" {
-		if s.vault != nil || st.Epoch != max(1, s.config.Epoch) || len(st.NewPeers) != 0 || !bytes.Equal(encode(st.Peers), encode(s.config.Peers)) {
+		if s.vault != nil || !st.Epoch.equal(s.config.Epoch.initial()) || len(st.NewPeers) != 0 || !bytes.Equal(encode(st.Peers), encode(s.config.Peers)) {
 			return errors.New("keygen_state")
 		}
 		if e := checkPeers(st.Peers, 5); e != nil {
@@ -207,7 +207,7 @@ func (s *Server) prepare(st Start) error {
 			return e
 		}
 		if hasID(st.Peers, s.config.ID) {
-			if s.vault == nil || s.vault.Retired || st.Epoch != s.vault.Epoch+1 || !bytes.Equal(encode(st.Peers), encode(s.vault.Peers)) {
+			if s.vault == nil || s.vault.Retired || !st.Epoch.equal(s.vault.Epoch.next()) || !bytes.Equal(encode(st.Peers), encode(s.vault.Peers)) {
 				return errors.New("reshare_state")
 			}
 		} else if s.vault != nil || !bytes.Equal(encode(st.NewPeers), encode(s.config.Peers)) {

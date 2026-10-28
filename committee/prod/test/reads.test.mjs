@@ -8,6 +8,7 @@ import { productionReads } from '../../../service/prod/reads.mjs';
 import { configFixture, MemoryStore, genesis, genesisTx, genesisTxid, genesisInfo, genesisBlock } from '../../../service/prod/test/helpers.mjs';
 import { GENESIS } from '../../../contract/beacon/bitcoin.js';
 import { createReads } from '../reads.mjs';
+import { migrateRegistry, updateRegistryFees } from '../../../service/src/registry.mjs';
 
 test('committee entry exports the configured reader factory', () => { assert.equal(typeof createReads, 'function'); });
 test('production readers compose independent fixtures and preserve monotone observed tip', async t => {
@@ -19,6 +20,7 @@ test('production readers compose independent fixtures and preserve monotone obse
   config.prod.http = { requestsPerSecond: 100 };
   const registry = { feePolicy: createFeePolicy('100'), assets: {}, link: { treasury: 'fixture-treasury' } };
   config.prod.registry = await file('registry-read', registry);
+  await migrateRegistry(config.prod.registry);
   const feeSecret = Buffer.alloc(32, 9), gateway = edPublic(feeSecret);
   const issuer = new FeeQuotes({ network: config.network, secret: feeSecret, registry: async () => registry });
   const state = { tip: 0, consumed: false, bitmapOwner: holder, conditions: { type: 'hashlock', hash: 'bb'.repeat(32) }, closed: false };
@@ -56,8 +58,9 @@ test('production readers compose independent fixtures and preserve monotone obse
         feeAuthorization: await issuer.accept(quote, scope, id, 100, 0) } };
       await reads.validateFeeTerms(kind, row); return { kind, row };
     }));
-    Object.assign(registry, changeBaseFee(registry, '250'));
-    await file('registry-read', registry);
+    const changedAt = Date.now();
+    Object.assign(registry, changeBaseFee(registry, '250', changedAt));
+    await updateRegistryFees(config.prod.registry, { baseFee: '250' }, changedAt);
     for (const { kind, row } of feeRows) {
       assert.equal((await reads.validateFeeTerms(kind, row)).baseFee, '100');
       await assert.rejects(reads.validateFeeTerms(kind, { ...row, terms: { ...row.terms, feeAuthorization: undefined } }), /fee_quote_signature/);

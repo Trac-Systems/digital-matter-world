@@ -116,6 +116,10 @@ test('expired unaccepted rq inputs retire and free the bounded queue', async () 
       await f.operations.ensure('rq/' + id, { op: 'rq', request: b.request, sig: b.signature });
     }
     assert.deepEqual(await f.operations.inputs({ counted: 600, files: [], last: {}, view: {}, limit: 8 }), []);
+    assert.equal(s.count('mintInputs'), 128); assert.equal(s.count('mintRejected'), 128);
+    // Maintenance retires one configured page per turn, then resumes at the
+    // next key so a full queue cannot monopolize the batch builder.
+    assert.deepEqual(await f.operations.inputs({ counted: 600, files: [], last: {}, view: {}, limit: 8 }), []);
     const b = f.body(256), id = rules.pendingId(network, b.request);
     await s.put('mints', id, { id, request: b.request });
     assert.equal(s.count('mintInputs'), 0); assert.equal(s.count('mintRejected'), 256);
@@ -149,7 +153,8 @@ test('cumulative receipt state exceeds the journal frame and is paged without po
     for (let i = 0; i < 20000; i++) seals = rules.recordSet(seals, `${i}/${hash('block-' + i)}`, hash('receipt-' + i));
     const state = { ...initialState(6, hash('start'), 1), receiptSeals: seals };
     const bytes = Buffer.byteLength(JSON.stringify(state)); assert.ok(bytes > 4_000_000);
-    assert.throws(() => s.put('meta', 'ruleState', state), /journal_frame_size/);
+    await s.put('meta', 'ruleState', state);
+    assert.equal(rules.recordGet(s.get('meta', 'ruleState').receiptSeals, `19999/${hash('block-19999')}`), hash('receipt-19999'));
     await s.put('meta', 'workerStatus', {});
     const { archiveState, hotState, hydrateState } = await import('../../src/replay-state.mjs');
     await archiveState(s, state);

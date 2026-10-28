@@ -10,7 +10,6 @@ import { receiveAddress, waitIndexed } from '../../local/common.mjs';
 import { harness, deployment as testDeployment } from '../../contract/tests/helpers/harness.mjs';
 import { REGTEST_PARAMS, parseHeader, workFor } from '../../contract/beacon/bitcoin.js';
 import { TapReader } from '../prod/tap.mjs';
-import { installNamedReads } from '../prod/named-reads.mjs';
 import { createBitcoin } from '../prod/bitcoin.mjs';
 import { createAdapters } from '../local/adapter.mjs';
 import { createReads } from '../local/reads.mjs';
@@ -106,18 +105,6 @@ test('gateway and committee read real TAP payments, a receiver-bound mint and re
   row.context.deployment.privilegePublicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex'); row.permit = permit;
   const mint = await write(permit, receiver, 1); row.mintInscription = mint; await gatewayStore.put('mints', id, row); await follow();
   for (const reader of [adapter.reads, committee]) { const result = await reader.mint(id); assert.equal(result.inscription, mint); assert.equal(result.receiver, receiver); assert.equal(result.confirmations, 1); }
-  const namedIndexer = new TapReader({ sources: [client.source], bitcoin: client, sharedTransport: true, agreement: 1 });
-  namedIndexer.history = (height, hash) => observer.views.view(height, hash);
-  const named = installNamedReads({}, namedIndexer);
-  await namedIndexer.at(undefined, async () => {
-    assert.equal((await named.privilegeAuthority(privilege, { id: privilege, offset: 0 })).ins, privilege);
-    assert.equal((await named.paymentAuthority(payer, auth, { id: auth, offset: 0 })).ins, auth);
-    const transfers = await named.paymentTransfers(payment);
-    assert.equal(transfers.length, payableFees.length);
-    assert.deepEqual(await named.paymentTransfers(payment, transfers.map(({ index }) => ({ id: payment, offset: index }))), transfers);
-    assert.equal((await named.mintedItem(mint)).ins, mint);
-    assert.equal((await named.mintedItem(mint, { id: mint, offset: 0 })).ins, mint);
-  });
   // Capture actual route shapes (including inscription metadata and witness tx).
   const info = await observer.inscription(mint), hash = await client.blockHash(info.height), paths = ['/r/blockheight', '/r/blockhash', '/r/blockhash/0', '/r/blockinfo/' + hash, '/block/' + hash, '/r/tx/' + mint.slice(0, 64), '/inscription/' + mint];
   const captured = Object.fromEntries(await Promise.all(paths.map(async path => [path, await client.source.request(path)])));
@@ -128,10 +115,6 @@ test('gateway and committee read real TAP payments, a receiver-bound mint and re
   const old = { ...previous }, orphan = hash;
   await produce(async () => { await r.rpc('invalidateblock', [orphan]); for (let n = 0; n < 7; n++) await r.rpc('generateblock', [r.manifest.bitcoin.miningAddress, []]); await waitIndexed(r.manifest); });
   await follow(); assert.notEqual(previous.hash, old.hash); assert.ok(previous.counted >= old.counted);
-  await namedIndexer.at(undefined, async () => {
-    const currentMint = await named.mintedItem(mint);
-    if (currentMint) assert.notEqual((await observer.included(mint)).blockHash, orphan);
-  });
   for (const reader of [adapter.reads, observer]) assert.equal(await reader.included(mint, { tip: old.tip, tipHash: old.hash, height: old.counted }), null);
   // ord may re-index the same revealed mint if the producer re-mines it; either
   // outcome must be proved on the new branch, never on the previous one.

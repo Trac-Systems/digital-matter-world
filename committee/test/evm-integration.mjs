@@ -12,6 +12,9 @@ import { ethereumPayments } from '../../service/src/ethereum.mjs';
 import { signProposal } from '../client.mjs';
 import { ethereumFixture } from './ethereum-fixture.mjs';
 import { network } from './fixture.mjs';
+import { createReads } from './mock-reads.mjs';
+import { Policy } from '../signer/policy.mjs';
+import { signerError } from '../signer/errors.mjs';
 
 const disk = await statfs('/'); assert.ok(disk.bavail * disk.bsize >= 100_000_000_000, '100 GB free space required');
 const directory = resolve(buildRoot, `evm-${Date.now()}`), children = [], pids = [], checks = [], transactions = [];
@@ -93,6 +96,8 @@ try {
           if (mutation === 'amount') value[0].data = '0x' + word('uint256', '1') + value[0].data.slice(66);
           if (mutation === 'removed') value[0].removed = true;
         }
+        if (method === 'eth_getTransactionReceipt' && mutation === 'amount')
+          for (const log of value.logs.filter(log => log.address === contract)) log.data = '0x' + word('uint256', '1') + log.data.slice(66);
         if (method === 'eth_getBlockByNumber' && params[0] === deposit.blockNumber && mutation === 'reorg') value.hash = '0x' + '00'.repeat(32);
         return value;
       };
@@ -114,8 +119,15 @@ try {
     assert.equal(healthy, true);
   }
   let permit, release;
+  const policy = new Policy({ network, publicKey, escrow, reads: await createReads({ file: files[0] }) });
+  const refused = async (proposal, expected) => {
+    let reason;
+    await assert.rejects(policy.approve(proposal), error => { assert.match(error.message, expected); reason = error; return true; });
+    // Policy reasons are checked above; HTTP exposes only its allowlisted code.
+    await assert.rejects(signProposal(clients, proposal), error => error.message === signerError(reason).error);
+  };
   await test('no permanent mint permit exists before release and Trac consumption', async () => {
-    await assert.rejects(signProposal(clients, f.proposal), /payment_incomplete|units_not_consumed/);
+    await refused(f.proposal, /payment_incomplete|units_not_consumed/);
   });
   const releaseProposal = { network, kind: 'ethereum-payment-release', id: f.id };
   await test('real 3-of-5 release agrees with contract digest, Anvil typed data and EVM ecrecover', async () => {
@@ -139,7 +151,7 @@ try {
   });
   await test('one-block release and Trac consumption allow three policy services to sign the permanent permit', async () => {
     assert.equal((await ethereumPayments({ rpc, escrow }).settled('ethereum', f.id, payer)).confirmations, 1);
-    await assert.rejects(signProposal(clients, f.proposal), /units_not_consumed/);
+    await refused(f.proposal, /units_not_consumed/);
     options.consumed = true; // Simulated accepted Trac mc, tested separately against the real contract reducer.
     for (const file of files) await writeFile(file, JSON.stringify(options));
     permit = await signProposal(clients, f.proposal);
@@ -149,7 +161,7 @@ try {
   });
   await test('terminal release and repeated signer contribution are refused', async () => {
     await assert.rejects(rpc('eth_call', [{ from: relayer, to: contract, data: releaseData() }, 'latest']), /revert/);
-    await assert.rejects(signProposal(clients, releaseProposal), /pending_not_held|escrow_expired|slot_already_reserved/);
+    await refused(releaseProposal, /pending_not_held|escrow_expired/);
   });
   await test('payer-bound refund closes only the colliding namespace', async () => {
     await rpc('evm_setNextBlockTimestamp', [Number(collisionExpiry)]); await rpc('evm_mine');
@@ -164,7 +176,7 @@ try {
     const block = await rpc('eth_getBlockByNumber', ['latest', false]);
     options.rotation = { newCommittee: successor, nonce: '0', committeeEpoch: '0', deadline: (BigInt(block.timestamp) + 3600n).toString() };
     rotationProposal = { network, kind: 'ethereum-rotation', ...options.rotation };
-    await assert.rejects(signProposal(clients.slice(0, 3), rotationProposal), /rotation_not_authorized/);
+    await refused(rotationProposal, /rotation_not_authorized/);
     for (const file of files) await writeFile(file, JSON.stringify(options));
     rotation = await signProposal(clients.slice(0, 3), rotationProposal);
     assert.equal(rotation.digest, (await reader.rotation(successor, options.rotation.deadline)).rotationDigest);
@@ -176,7 +188,7 @@ try {
     assert.equal('0x' + (await call(contract, 'committee()')).slice(-40), committee);
   });
   await test('rotation rejects replay and premature application, then activates after three days', async () => {
-    await assert.rejects(signProposal(clients.slice(0, 3), rotationProposal), /rotation_stale/);
+    await refused(rotationProposal, /rotation_stale/);
     await assert.rejects(rpc('eth_call', [{ from: relayer, to: contract, data: signedCall('proposeCommittee(address,uint256,bytes)', [['address', successor], ['uint256', options.rotation.deadline]], rotation.ethereumSignature) }, 'latest']), /revert/);
     await assert.rejects(call(contract, 'applyCommittee()'), /revert/);
     await rpc('evm_increaseTime', [259200]); await rpc('evm_mine');
@@ -184,7 +196,7 @@ try {
     assert.equal('0x' + (await call(contract, 'committee()')).slice(-40), successor);
     assert.equal(BigInt(await call(contract, 'committeeEpoch()')), 1n);
     assert.notEqual((await reader.deposit(payer, f.id)).releaseDigest, release.digest);
-    await assert.rejects(signProposal(clients.slice(0, 3), rotationProposal), /escrow_committee/);
+    await refused(rotationProposal, /escrow_committee/);
   });
   await test('reader exposes admin recovery origin before and after maturity; signing refuses interference', async () => {
     // Restore the threshold key through the admin's delayed route.
@@ -199,10 +211,10 @@ try {
     options.rotation = { newCommittee: otherParty, nonce: state.rotationNonce, committeeEpoch: state.committeeEpoch, deadline: (BigInt(state.pendingCommittee.executableAt) + 100n).toString() };
     for (const file of files) await writeFile(file, JSON.stringify(options));
     const proposal = { network, kind: 'ethereum-rotation', ...options.rotation };
-    await assert.rejects(signProposal(clients.slice(0, 3), proposal), /admin_recovery_pending/);
+    await refused(proposal, /admin_recovery_pending/);
     await rpc('evm_setNextBlockTimestamp', [Number(state.pendingCommittee.executableAt)]); await rpc('evm_mine');
     assert.equal((await reader.rotation(otherParty, options.rotation.deadline)).pendingCommittee.adminOrigin, true);
-    await assert.rejects(signProposal(clients.slice(0, 3), proposal), /admin_recovery_pending/);
+    await refused(proposal, /admin_recovery_pending/);
     await transact(relayer, contract, 'applyCommittee()', []);
     assert.equal((await reader.rotation(otherParty, options.rotation.deadline)).pendingCommittee.adminOrigin, false);
   });

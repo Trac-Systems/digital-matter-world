@@ -60,7 +60,8 @@ test('independent link reads follow current Bitmap ownership and bind every actu
     let payment = await reads.linkPayment(id); assert.equal(payment.settlement.confirmations, 6);
     rules.verifyLinkInput({ request, sig: row.sig, terms, payment }, network, 10, 'link');
     const originalLock = lock;
-    lock = { ...lock, total: undefined, amt: '1', al: [] };
+    const { total: _total, ...withoutTotal } = lock;
+    lock = { ...withoutTotal, amt: '1', al: [] };
     const dust = await reads.tapPayment(lockId, { requestId: id, payer: terms.payer });
     assert.equal(dust.total, '1'); assert.equal(dust.base, '1'); assert.deepEqual(dust.allocations, []);
     lock = originalLock;

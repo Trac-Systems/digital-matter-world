@@ -1,4 +1,4 @@
-import { tapBurnAddress } from '../rules/src/tap-burn.js';
+import { TAP_BURN, tapBurnAddress } from '../rules/src/tap-burn.js';
 export { TAP_BURN, tapBurnAddress } from '../rules/src/tap-burn.js';
 
 function decimal(atoms, decimals) {
@@ -13,9 +13,9 @@ export function paymentLock({ tick = 'tap', priceAtoms, decimals = 18, payer, fi
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) throw new Error('Invalid decimals');
   if (!Number.isSafeInteger(expiry) || expiry < 1 || expiry > 0xffffffff) throw new Error('Invalid expiry height');
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error('Expected SHA256 hex hash');
-  const burn = tapBurnAddress(bitcoinNetwork);
-  const recipients = [payer, finder, treasury, ...(landowner === null ? [] : [landowner]), burn];
-  if (recipients.some(a => typeof a !== 'string' || !a) || new Set(recipients).size !== recipients.length) throw new Error('Payment roles must have distinct addresses');
+  const networkBurn = tapBurnAddress(bitcoinNetwork);
+  const recipients = [payer, finder, treasury, ...(landowner === null ? [] : [landowner])];
+  if (recipients.some(a => typeof a !== 'string' || !a || a === TAP_BURN || a === networkBurn) || new Set(recipients).size !== recipients.length) throw new Error('Payment roles must have distinct addresses');
   const share = percent => decimal(priceAtoms * BigInt(percent) / 100n, decimals);
   return {
     op: 'lock', kind: 'htlc', tick, amt: share(35), claim: treasury, refund: payer,
@@ -23,7 +23,8 @@ export function paymentLock({ tick = 'tap', priceAtoms, decimals = 18, payer, fi
     al: [
       { tt: 'a', to: finder, amt: share(30), rl: 'of' },
       ...(landowner === null ? [] : [{ tt: 'a', to: landowner, amt: share(15), rl: 'sr' }]),
-      { tt: 'b', to: burn, amt: share(landowner === null ? 35 : 20), rl: 'bn' },
+      // ord-tap interprets this as a protocol marker on every network.
+      { tt: 'b', to: TAP_BURN, amt: share(landowner === null ? 35 : 20), rl: 'bn' },
     ],
   };
 }

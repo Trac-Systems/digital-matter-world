@@ -1,7 +1,8 @@
 # Production launch and evidence protocol
 
-DMW uses Node 24 LTS (24.22.1 or newer 24.x). Configure the application services
-to use that runtime.
+DMW uses Node 24 LTS (24.22.1 or newer 24.x). On host 157, keep it under
+`/opt/dmw/node-v24.22.1-linux-x64` via `/opt/dmw/node`; leave the system Node
+and other services unchanged. Follow the [host run sheet](host-157/RUN-SHEET.md).
 
 The runner operates on existing services. It does not install hosts, use SSH,
 generate production role keys, run DKG on behalf of operators, or publish a
@@ -15,7 +16,7 @@ node deploy/launch.mjs --execute --target /absolute/private/target.json
 `node deploy/production-preflight.mjs --target FILE` is also an executable
 offline audit (exit 1 for unresolved inputs). Both CLIs accept the annotated
 `inputs/mainnet-inputs.template.json` worksheet through its strict `target`
-projection. See [server examples](servers/README.md) for adaptable service definitions.
+projection. See [GO-LIVE-TODAY.md](GO-LIVE-TODAY.md) for the complete host installation procedure.
 
 Execute only with approved deployment inputs. To exercise an isolated local stack, use
 `launch.mjs --target FILE --dry-run --regtest`.
@@ -32,7 +33,7 @@ operator, group key and roster to the operator's pinned identity.
 The Trac runtime file needs `mode: "prod"`, `directory` for the writer,
 `hostDirectory` for the host, `msbWallet`, `msbBootstrap`, `msbChannel`,
 `peerChannel`, normal mainnet `dhtBootstrap` addresses and `validators:"auto"`.
-The checked-in example supplies the public Trac mainnet defaults (network 918).
+The checked-in worksheet supplies RESET's mainnet defaults (network 918).
 The MSB observer discovers validators; startup and paid sends still require
 three connections, and the wrapper sends to three validators. Optional explicit
 validator lists remain supported. The one indexer is also the application admin;
@@ -61,7 +62,7 @@ requires one canonical inclusion confirmation, with no additional depth or
 time delay. There is no TAP payment-release authority.
 
 New mints pay every recipient directly; no periodic treasury payout policy is
-needed. See [the implemented flow](PAYMENTS.md) and
+needed. See [the implemented flow](GO-LIVE-TODAY.md) and
 [operator inscription bundle](LAUNCH-INSCRIPTIONS.md).
 
 ## Interruption and operator configuration
@@ -94,16 +95,17 @@ Completed authority, Trac and escrow phases are retained in the journal. A later
 admission resume does not reopen provisioning or the Trac writer already owned by
 the live gateway. Let the first launch process exit before starting those units.
 Run the emitted host runtime with `deploy/trac-host.mjs` (the dedicated host unit)
-and open public admission once the configured services pass validation.
-Use your installation's service and proxy management procedures to enable
-admission or close it while preserving durable state.
+and open public admission once the checks pass. On host 157, follow the
+[run sheet](host-157/RUN-SHEET.md): `host.py phase admission`, then
+`caddy.py open --owner-approved` (the Caddy reload needs the operator's OK), then
+enable the units. Keep `caddy.py close --owner-approved` ready for rollback.
 
 ## Independent operator evidence
 
 Each private `runtime.signerReads` file must include `evidence`, an endpoint
 descriptor with `urlFile` and optional authentication-file references pointing
-to the gateway. It also supplies that account's configured Bitcoin, Ethereum
-and TAP connection files, its own Trac observer, identity/domain,
+to the gateway. It also supplies that account's connection files for the shared
+Bitcoin, Ethereum and single TAP source, its own Trac observer, identity/domain,
 and separate `evidenceDirectory`,
 `contexts` and `readerData`. There is no production signer SQLite-mirror fallback.
 The renderer never opens another operator's credentials or gateway signing key.

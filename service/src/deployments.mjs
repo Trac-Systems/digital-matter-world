@@ -15,10 +15,12 @@ export function generationDigest(entry) {
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
 // well as the exact inscription. Sharing an authority is not an approval.
-export async function verifyDeployment(reads, entry, { confirmations = 1, view, scoped = false } = {}) {
-  if (reads.withSnapshot && !scoped) return reads.withSnapshot(view, () => verifyDeployment(reads, entry, { confirmations, view, scoped: true }));
+export async function verifyDeployment(reads, entry, options = {}) {
+  return reads.withTapSnapshot ? reads.withTapSnapshot(options.view, () => verifyDeploymentRecords(reads, entry, options)) : verifyDeploymentRecords(reads, entry, options);
+}
+async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view } = {}) {
   check(entry && entry.suspended !== true, 'asset_provisioning');
-  const d = await (reads.indexedDeployment ? reads.indexedDeployment(entry.indexTick ?? entry.tick) : reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick)));
+  const d = await reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick));
   check(d?.ins === entry.id && d.prv === entry.privilege, 'deployment_binding');
   const payload = await reads.content(entry.id);
   const elementId = entry.elementId ?? payload.elem, dt = entry.dt ?? entry.pattern?.dt;
@@ -27,7 +29,8 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view, 
   check(d.tick === (entry.indexTick ?? entry.tick) && Number(d.dec) === 0, 'deployment_semantics');
   if (entry.kind === 'dmt') {
     check(d.elem === elementId && d.dt === dt, 'deployment_definition');
-    const element = reads.element ? await reads.element(elementId, entry.sourceLocators?.element) : (await elementSnapshot(reads)).find(e => e.ins === elementId);
+    check(typeof reads.element === 'function', 'tap_element_lookup_required');
+    const element = await reads.element(elementId);
     check(element?.ins === elementId && element.pat === entry.pattern.pat && Number(element.fld) === entry.pattern.fld, 'element_binding');
     check(typeof element.tick === 'string' && (!entry.elementName || element.tick === entry.elementName), 'element_name');
     const text = await reads.content(elementId), parts = typeof text === 'string' ? text.trim().split('.') : [];
@@ -35,13 +38,9 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view, 
       parts.at(-2) === String(element.fld) && parts.slice(1, -2).join('.') === element.pat, 'element_content');
     check((await reads.included(elementId, view))?.confirmations >= confirmations, 'element_confirmations');
   } else check(d.max === normalized.options.max && (d.lim ?? '0') === (normalized.options.lim ?? '0'), 'deployment_supply');
-  let authority = reads.privilegeAuthority ? await reads.privilegeAuthority(entry.privilege, entry.sourceLocators?.authority) : null;
-  for (let offset = 0; !authority && offset < 1000000; offset += 500) {
-    const page = await reads.tap(offset ? `getPrivilegeAuthList?offset=${offset}&max=500` : 'getPrivilegeAuthList');
-    check(Array.isArray(page) && page.length <= 500, 'privilege_list_invalid');
-    authority = page.find(a => a.ins === entry.privilege);
-    if (authority || page.length < 500) break;
-  }
+  check(typeof reads.privilegeAuthority === 'function', 'tap_authority_lookup_required');
+  const authority = await reads.privilegeAuthority(entry.privilege);
+  check(!authority || authority.ins === entry.privilege, 'privilege_binding');
   check(authority, 'privilege_inactive');
   check(await reads.tap('getPrivilegeAuthCancelled/' + entry.privilege) === false, 'privilege_cancelled');
   const auth = await reads.content(entry.privilege), digest = hash(JSON.stringify(auth.auth) + auth.salt);
@@ -53,22 +52,18 @@ export async function verifyDeployment(reads, entry, { confirmations = 1, view, 
   check(inclusion?.confirmations >= confirmations, 'deployment_confirmations');
   if (entry.receiver) check((await reads.inscription(entry.id, view))?.address === entry.receiver, 'deployment_receiver');
   if (entry.approval) check(entry.approval === generationDigest(entry), 'deployment_approval');
-  return { deployment: d, inclusion, authority, authorityKey: key, elementId, dt, auth };
+  return { deployment: d, inclusion, authority, authorityKey: key, elementId, dt };
 }
 
-// Enumerate using the declared count, and reject pagination gaps, duplicates,
-// changing tips or a lagging index. Absence is only meaningful in a full view.
-export async function elementSnapshot(reads) {
-  const tip = await reads.tip(), height = await reads.tap('getCurrentBlock');
-  check(height === tip.tip, 'provisioning_index_lag');
-  const n = Number(await reads.tap('getDmtElementsListLength'));
-  check(Number.isSafeInteger(n) && n >= 0 && n <= 1000000, 'element_list_bound');
-  const rows = [];
-  for (let offset = 0; offset < n; offset += 500) {
-    const page = await reads.tap(`getDmtElementsList?offset=${offset}&max=500`);
-    check(Array.isArray(page) && page.length === Math.min(500, n - offset), 'element_list_incomplete'); rows.push(...page);
-  }
-  const after = await reads.tip();
-  check(new Set(rows.map(e => e.ins)).size === n && Number(await reads.tap('getDmtElementsListLength')) === n && await reads.tap('getCurrentBlock') === height && after.tip === height && after.tipHash === tip.tipHash, 'element_snapshot_changed');
-  return rows;
+// Absence checks must come from a complete current indexed view, never a list
+// search hidden in deployment verification or provisioning.
+export async function elementByDefinition(reads, pattern) {
+  check(typeof reads.elementByDefinition === 'function', 'tap_element_lookup_required');
+  const row = await reads.elementByDefinition(pattern.pat, pattern.fld);
+  check(!row || row.pat === pattern.pat && Number(row.fld) === pattern.fld, 'element_binding'); return row;
+}
+export async function elementByName(reads, name) {
+  check(typeof reads.elementByName === 'function', 'tap_element_lookup_required');
+  const row = await reads.elementByName(name);
+  check(!row || row.tick.toLowerCase() === name.toLowerCase(), 'element_name'); return row;
 }

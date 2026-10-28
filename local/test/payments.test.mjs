@@ -39,8 +39,9 @@ test('payment builder rejects ambiguous rounding and colliding payment roles', (
   assert.throws(() => paymentLock({ ...input, hash: 'bad' }), /SHA256/);
 });
 
-test('local regtest locks use the shared burn destination and reject colliding roles', () => {
+test('local regtest locks use the native burn marker and reject both burn address forms as roles', () => {
   const burn = tapBurnAddress('regtest');
-  assert.equal(paymentLock({ ...input, bitcoinNetwork: 'regtest' }).al.at(-1).to, burn);
+  assert.equal(paymentLock({ ...input, bitcoinNetwork: 'regtest' }).al.at(-1).to, TAP_BURN);
   assert.throws(() => paymentLock({ ...input, bitcoinNetwork: 'regtest', landowner: burn }), /distinct/);
+  assert.throws(() => paymentLock({ ...input, bitcoinNetwork: 'regtest', landowner: TAP_BURN }), /distinct/);
 });

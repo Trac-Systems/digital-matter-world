@@ -123,18 +123,6 @@
         "http": {
           "type": "object",
           "properties": {
-            "publicRequestsPerSecond": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "maximum": 100,
-              "default": 1
-            },
-            "publicMaxQueue": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1024,
-              "default": 16
-            },
             "requestsPerSecond": {
               "type": "number",
               "exclusiveMinimum": 0,
@@ -159,37 +147,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 1024
-            },
-            "clockMaxQueue": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1024,
-              "default": 8
-            },
-            "backgroundMaxQueue": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1024,
-              "default": 16
-            },
-            "backgroundRequestsPerSecond": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "maximum": 100,
-              "default": 1
             }
-          }
-        },
-        "bitmapCache": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "maxEntries": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 128 },
-            "maxRows": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 10000 },
-            "maxInscriptions": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 10000 },
-            "maxConcurrentLoads": { "type": "integer", "minimum": 1, "maximum": 16, "default": 2 },
-            "ttlMs": { "type": "integer", "minimum": 1, "maximum": 86400000, "default": 600000 },
-            "tipMaxAgeMs": { "type": "integer", "minimum": 1, "maximum": 60000, "default": 5000 }
           }
         },
         "bitcoin": {
@@ -384,84 +342,6 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 65535
-            }
-          }
-        },
-        "sourceReads": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "contentBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 8000000
-            },
-            "transactionBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 16000000
-            },
-            "blockBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 32000000
-            },
-            "proofBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 8000000
-            },
-            "indexedBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 4000000
-            },
-            "scopeBytes": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 256000000,
-              "default": 8000000
-            },
-            "maxScopeMs": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 600000,
-              "default": 120000
-            },
-            "pageSize": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 500,
-              "default": 500
-            },
-            "maxItems": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 4096,
-              "default": 64
-            },
-            "contentMaxBytes": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 16000000,
-              "default": 200000
-            },
-            "tapMaxBytes": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 16000000,
-              "default": 2000000
-            },
-            "bitcoinMaxBytes": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 16000000,
-              "default": 16000000
             }
           }
         }

@@ -3,7 +3,8 @@ import { join, dirname } from 'node:path';
 import { atomicWrite, hash, check, syncDirectory } from './util.mjs';
 export class Files {
   constructor(directory) { this.directory = directory; }
-  path(name) { check(/^[a-zA-Z0-9/_\-.]+$/.test(name) && !name.split('/').some(p => p === '..' || p === '.' || !p), 'file_name'); return join(this.directory, name); }
+  receiptName(root, observation) { return root.settingsHash ? `receipts/v2/${hash(JSON.stringify(root))}.json` : `receipts/${observation.id}${observation.receiptSuffix ?? ''}.json`; }
+  path(name) { check(/^[a-zA-Z0-9/:_\-.]+$/.test(name) && !name.split('/').some(p => p === '..' || p === '.' || !p), 'file_name'); return join(this.directory, name); }
   async immutable(name, bytes) {
     const path = this.path(name); await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const tmp = path + '.' + process.pid + '.stage';
@@ -20,10 +21,12 @@ export class Files {
     await atomicWrite(this.path(name), bytes); return { path: '/' + name, hash: hash(bytes), bytes: bytes.length };
   }
   async publish(output, observation) {
-    const digest = hash(output.auditBytes), stem = `blocks/${output.file.observation}-${output.file.height}-${digest}`;
+    const digest = hash(output.auditBytes), decimal = !!output.file.settingsHash;
+    const stem = decimal ? `blocks/v2/${digest}` : `blocks/${output.file.observation}-${output.file.height}-${digest}`;
     const audit = await this.immutable(stem + '.bin', output.auditBytes);
     const summary = await this.immutable(stem + '.json', output.viewerBytes);
-    const receipts = await this.json(`receipts/${observation.id}${observation.receiptSuffix ?? ""}.json`, output.file.receiptRoot, { immutable: true });
+    const receiptName = this.receiptName(output.file.receiptRoot, observation);
+    const receipts = await this.json(receiptName, output.file.receiptRoot, { immutable: true });
     return { observation: output.file.observation, height: output.file.height, tip: output.file.tip, audit, summary, receipts };
   }
   async serve(req, res) {

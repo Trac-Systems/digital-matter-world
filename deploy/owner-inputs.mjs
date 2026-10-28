@@ -14,7 +14,7 @@ export function ownerInputReport(w) {
     !t.bitcoin.witnessRpc.urlFile && !t.indexer.independentEndpoint.urlFile, 'single_host_defaults');
   const checks = [
     { name: 'Server IP and SSH access', ok: isIP(owner.serverIP ?? '') > 0 && !!owner.sshAccess?.trim(), detail: 'Supply access to the one Ubuntu host.' },
-    { name: 'DNS pointing', ok: owner.dnsPointed === true, detail: 'Point the configured gateway domain at that host.' },
+    { name: 'DNS pointing', ok: owner.dnsPointed === true, detail: 'Point dmtworld.much.fun at that host.' },
     { name: 'Bitcoin/TAP connection files', ok: owner.bitcoinTapFilesInstalled === true, detail: 'Install files for the one selected source.' },
     { name: 'Ethereum RPC connection files', ok: owner.ethereumFilesInstalled === true, detail: 'Install the Ethereum RPC files.' },
     { name: 'Funded role key files', ok: owner.roleFilesInstalled === true, detail: 'Install the funded role keys and their public addresses.' }

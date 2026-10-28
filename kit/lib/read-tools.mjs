@@ -7,7 +7,7 @@ import { check } from './check.mjs';
 const height = z.number().int().nonnegative().safe();
 const key = z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
-const asset = z.string().regex(/^[0-9a-z]{1,24}$/);
+const asset = z.string().regex(/^(?:[0-9a-z]{1,24}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
 const page = { cursor: z.string().min(1).max(8192).optional(), limit: height.min(1).max(200).optional(),
   sort: z.string().min(1).max(64).optional(), order: z.enum(['asc', 'desc']).optional() };
 const fields = {
@@ -42,7 +42,10 @@ export function readTools(agent) {
     compounds: tool('Read a cursor page of compound recipes and exact properties.', list, args => agent.service.compounds(options(args))),
     finds: tool('Read a cursor page of settled finds and attribution.', list, args => agent.service.finds(options(args))),
     receipts: tool('Read public receipt publications. Verify signatures separately.', list, args => agent.service.receipts(options(args))),
-    pattern_matches: tool('Read all historical matching blocks for a pattern, using cursor/limit.', { asset, ...list }, ({ asset, ...args }) => agent.service.readPage(`/patterns/${asset}/blocks`, { ...options(args) })),
+    pattern_matches: tool('Page matching blocks with cursor/limit. After v2 activation these are submitted and verified blocks only, never an exhaustive history search. Check the catalog revision and found/minted state.', { asset, ...list }, ({ asset, ...args }) => asset.startsWith('p2:') ? agent.service.claimedBlocks(asset, options(args)) : agent.service.readPage(`/patterns/${asset}/blocks`, options(args))),
+    claimed_blocks: tool('Page submitted and verified matching blocks. Missing rows do not exclude a deferred header award; consult window eligibility.', { asset, ...list }, ({ asset, ...args }) => agent.service.claimedBlocks(asset, options(args))),
+    submit_bitmap: tool('Verify one named Bitmap for the public inventory. This submits public evidence and does not sign or pay. Wallet discovery stays local.',
+      { block: height, inscription: z.string().regex(/^[0-9a-f]{64}i(0|[1-9][0-9]*)$/).optional() }, args => agent.service.submitBitmap(args)),
     block: tool('Read block detail and bounded previews. Set collection to page matches, slotList, claims, draws, finds or mintRights.',
       { height, collection: z.enum(['matches', 'slotList', 'claims', 'draws', 'finds', 'mintRights']).optional(), ...list }, ({ height, ...args }) => agent.block(height, options(args))),
     mint_rights: tool('Read your mintable slots and compound units, finder deadlines, Bitmap rights and balance/hold restrictions.', list, args => agent.mintRights(options(args))),

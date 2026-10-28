@@ -8,6 +8,9 @@ test('canonical JSON rejects ambiguous or unsupported values and duplicate keys'
   for (const v of [undefined, NaN, Infinity, 1.5, -0, 1n, new Date(), [, 1]]) assert.throws(() => stableJSON(v));
   for (const s of ['{"a":1,"a":2}', '{"a":1,"\\u0061":2}', '{ "a":1}', '1e0', '-0']) assert.throws(() => parseCanonical(s));
   assert.deepEqual(parseCanonical('{"a":1}'), { a: 1 });
+  for (const value of ['\ud800', { nested: ['\udc00'] }, { ['bad\ud800']: 'value' }]) assert.throws(() => stableJSON(value), /unicode_surrogate/);
+  const cycle = {}; cycle.next = cycle;
+  assert.throws(() => stableJSON(cycle), /json_depth/);
 });
 test('spiral orientation, adjacency and inversion across 210,001 heights', () => {
   assert.deepEqual(Array.from({ length: 9 }, (_, i) => heightToPlot(i)), [

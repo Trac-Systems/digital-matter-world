@@ -9,6 +9,7 @@ import { REGTEST_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { runtimeTransport } from '../src/transport.mjs';
 import { Store } from '../src/store.mjs';
 import { rules } from '../src/rules.mjs';
+import { financialInventoryPage } from '../src/financial-inventory.mjs';
 import { check, diskCheck, atomicWrite, serial } from '../src/util.mjs';
 import { localURL } from '../src/config.mjs';
 import { jsonRequest } from '../src/http-client.mjs';
@@ -51,8 +52,20 @@ export async function startTrac(config) {
         return Object.fromEntries([...assets].map(([asset, amount]) => [asset, amount.toString()]));
       },
       deployment: () => ({ ...dmw, admin: indexer.wallet.publicKey.toString('hex') }),
-      read: async (key, at) => { check((await api.dmwHead()).counted === at.counted && rules.stableJSON(await api.dmwBatchLast()) === rules.stableJSON(at.last), 'snapshot_changed'); return row(key); },
-      head: () => api.dmwHead(), authority: () => api.dmwAuthority(), batchLast: () => api.dmwBatchLast(), settings: () => api.dmwSettings(),
+      read: async (key, at) => {
+        const before = await methods.stamp(); at ??= before;
+        check(before.counted === at.counted && rules.stableJSON(before.last) === rules.stableJSON(at.last) &&
+          (at.revision === undefined || before.revision === at.revision), 'snapshot_changed');
+        const value = await row(key); check(rules.stableJSON(before) === rules.stableJSON(await methods.stamp()), 'snapshot_changed'); return value;
+      },
+      financialPage: async (range, at) => {
+        const before = await methods.stamp();
+        check(rules.stableJSON(before) === rules.stableJSON(at), 'snapshot_changed');
+        const view = writer.base.view.checkout(before.revision);
+        try { return await financialInventoryPage(view, range, (await view.get('s/assets'))?.value?.settings); }
+        finally { await view.close(); check(rules.stableJSON(before) === rules.stableJSON(await methods.stamp()), 'snapshot_changed'); }
+      },
+      head: () => api.dmwHead(), authority: () => api.dmwAuthority(), batchLast: () => api.dmwBatchLast(), settings: () => api.dmwSettings(), rulesContext: () => api.dmwRulesContext(), settingsByHash: hash => api.dmwSettingsByHash(hash),
       balance: (owner, asset) => api.dmwBalance(owner, asset), pending: id => api.dmwMint(id), agentAddress: id => api.dmwAgentAddress(id),
       paymentUsed: key => row('pay/' + key),
       record: key => api.dmwRecord(key), root: n => api.dmwBatchRoot(n),

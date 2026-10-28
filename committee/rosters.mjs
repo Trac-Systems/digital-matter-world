@@ -3,6 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { canonicalJSON, check, sha256 } from './signer/crypto.mjs';
 import { atomicWrite } from '../service/src/util.mjs';
 import { post } from '../service/src/committee.mjs';
+import { compareOrdinal } from '../rules/src/integers-v2.js';
 
 export const rosterId = members => sha256(canonicalJSON(members));
 export function validateRoster(members) {
@@ -27,12 +28,14 @@ export async function rotateRoster(filename, { replace, replacement, dryRun = tr
   const config = JSON.parse(await readFile(filename, 'utf8')), before = config.committee.map(s => s.peer);
   check(config.committee.some(s => s.id === replace) && replacement?.id === replacement?.peer?.id, 'rotation_member');
   const clients = config.committee.map(s => s.id === replace ? replacement : s), after = clients.map(s => s.peer);
-  const statuses = await Promise.all(clients.map(s => post(s, '/health', {})));
+  const resources = config.v2?.resources?.values ?? config.resources?.values;
+  const request = (s, path, value, timeout) => post(s, path, value, timeout ?? resources?.committeeRequestMs, resources?.committeeResponseBytes);
+  const statuses = await Promise.all(clients.map(s => request(s, '/health', {}, resources?.committeeHealthMs)));
   const publicKey = statuses[0].publicKey;
-  check(statuses.every((s, i) => s.id === clients[i].id && s.network === config.network && s.publicKey === publicKey && s.epoch === (config.epoch ?? 1)), 'rotation_share_continuity');
+  check(statuses.every((s, i) => s.id === clients[i].id && s.network === config.network && s.publicKey === publicKey && compareOrdinal(s.epoch, config.epoch ?? 1) === 0), 'rotation_share_continuity');
   const body = rotationBody(config.network, before, after, publicKey);
   if (dryRun) return { dryRun, body, healthy: statuses.length };
-  const replies = await Promise.allSettled(config.committee.map(s => post(s, '/attest-roster', body)));
+  const replies = await Promise.allSettled(config.committee.map(s => request(s, '/attest-roster', body)));
   const votes = replies.filter(r => r.status === 'fulfilled').map(r => r.value); verifyRotation(body, votes, before);
   const history = config.rosterHistory ?? [];
   for (const members of [before, after]) if (!history.some(r => rosterId(r.members) === rosterId(members))) history.push({ id: rosterId(members), members });

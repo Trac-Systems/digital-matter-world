@@ -1,0 +1,42 @@
+import { hashObject, stableJSON, decimalV2, addUint, validateSettingsDocument } from '../../rules/src/index.js';
+import { wireIdentities } from '../../rules/src/trac-address.js';
+import { financialLinkDigest, financialLinkId } from '../../rules/src/financial-link.js';
+import { lifecycleDigest } from '../../contract/financial-lifecycle.js';
+import { check, sha256, nonce } from './check.mjs';
+import { signBytes } from './signing.mjs';
+
+export async function makeFinancialLink(agent, { actionId, height, payer }, context) {
+  const { journal, service, network, wallet, owner } = agent, key = `link/${actionId}`, block = decimalV2(height), intent = { block, payer }, old = journal.get(key);
+  if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting plot action ID');
+  if (!agent.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
+  const settingsHash = old?.body.request.settingsHash ?? context.settingsHash;
+  const settings = validateSettingsDocument(settingsHash === context.settingsHash ? context.settings : await agent.trac.settingsByHash(settingsHash));
+  check(settings.network === network && hashObject(settings) === settingsHash, 'Link settings mismatch');
+  const head = await agent.trac.head(); check(BigInt(block) <= BigInt(head.counted), 'Plot is ahead of Bitcoin tip');
+  const quote = old?.body.feeQuote ?? (await service.linkQuote({ block, payer })).feeQuote;
+  check(quote.settingsHash === settingsHash, 'Link quote settings mismatch');
+  const request = old?.body.request ?? { v: 2, kind: 'link', owner, block, payer, nonce: nonce(),
+    until: addUint(decimalV2(head.counted), String(settings.values.pendingBlocks)), settingsHash, quoteHash: hashObject(quote) };
+  if (agent.dryRun) return { state: 'dry-run', action: 'link', request, payer, signed: false };
+  const body = old?.body ?? { version: 2, request, feeQuote: quote, signature: signBytes(wallet, financialLinkDigest(network, request)) };
+  const saved = journal.reserve(key, intent, body), id = financialLinkId(network, request), reservationKey = key + '/reservation-v2';
+  await journal.waitTurn(() => agent.trac.head()); journal.mark(key, 'sending');
+  try {
+    let reserved = journal.get(reservationKey);
+    if (!reserved) {
+      const response = wireIdentities(await service.requestLink(saved.body)), a = response.reservationAction, e = response.reservationEvidence;
+      check(response.id === id && response.state === 'authorizing' && e?.version === 2 && e.state === 'reservable' && e.requestId === id &&
+        e.owner === owner && e.bitmapOwner === owner && e.block === block && e.until === request.until && e.payer === payer && e.receiver === payer &&
+        e.rail === 'tap' && e.settingsHash === settingsHash && stableJSON(e.request) === stableJSON(request) && stableJSON(e.quote) === stableJSON(quote) &&
+        e.signature === saved.body.signature, 'Link reservation terms mismatch');
+      check(stableJSON(a) === stableJSON({ type: 'link-reserve', id, owner, block, terms: hashObject(e), until: request.until }), 'Link reservation action mismatch');
+      reserved = journal.reserve(reservationKey, { id, terms: a.terms }, { version: 2, reserve: { ...a, sig: signBytes(wallet, lifecycleDigest(network, a)) } });
+    }
+    const response = wireIdentities(await service.requestLink({ ...saved.body, reserve: reserved.body.reserve }));
+    check(response.id === id && response.state !== 'authorizing', 'Link reservation not acknowledged');
+    const result = { state: 'submitted', request: response, paymentLink: service.paymentLink(id, agent.paymentOrigin, 'link'),
+      next: [{ tool: 'poll_link', arguments: { id } }, { tool: 'pay_link', arguments: { id } }] };
+    journal.mark(reservationKey, 'submitted', { id }); journal.mark(key, 'submitted', result); return result;
+  } catch (error) { journal.mark(key, 'unknown'); throw error; }
+  finally { journal.finishTurn(); }
+}

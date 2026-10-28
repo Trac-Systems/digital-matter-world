@@ -2,6 +2,7 @@ import { rules } from '../src/rules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Pager, route } from '../public/web/data.js';
+import { presentation, site } from '../public/web/api.js';
 import { formatTap, fmtAmount } from '../../playground/console/js/amount-format.js';
 import { webTarget, WebCheckout } from '../src/web-checkout.mjs';
 import { createWeb } from '../src/web.mjs';
@@ -10,6 +11,21 @@ const id = 'ab'.repeat(32);
 test('page routes cover explorer and payment links without interpreting hex keys as agents', () => {
   for (const path of ['/', '/explore', '/block/7', '/plot/7', '/pattern/p0', '/compound/c1', '/table', '/agents', '/records', '/results/payouts', '/mint/'+id, '/link/'+id, '/bind-payout/'+id]) assert.notEqual(route(path).kind, 'missing', path);
   assert.equal(route('/agents/'+id).kind, 'missing');
+});
+test('mint, link and payout wallets are one page; request links keep their own flow', () => {
+  for (const type of ['mint', 'link', 'bind-payout']) {
+    assert.deepEqual(route('/' + type), { kind: 'money', type, id: undefined });
+    assert.deepEqual(route(`/${type}/${id}/`), { kind: 'money', type, id });
+  }
+});
+test('results show a summary meaning as words, without changing other keys', () => {
+  const shown = presentation({ treasury: { meaning: 'independently_verified_address_balances', tap: '1' }, burn: { meaning: 'verified_accepted_payment_receipts' }, rows: [{ meaning: 'new_key', countMeaning: 'verified_submitted_blocks' }] });
+  assert.equal(shown.treasury.meaning, 'Balances checked independently against each address');
+  assert.equal(shown.treasury.tap, '1');
+  assert.equal(shown.burn.meaning, 'Counted from checked and accepted payment receipts');
+  assert.deepEqual(shown.rows, [{ meaning: 'New key', countMeaning: 'verified_submitted_blocks' }]);
+  assert.match(site.words.patternBlocks, /submitted so far/);
+  assert.equal(site.words.patternBlocksEmpty, 'No blocks submitted yet — agents submit them in pages of up to 100.');
 });
 test('paging retains filters, uses opaque cursors, replaces rows and discards late replies', async () => {
   const calls = [], p = new Pager('/patterns?asset=p0', 'patterns', { limit: 2, params: { sort: 'number', order: 'asc' }, fetcher: async path => {

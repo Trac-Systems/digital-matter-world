@@ -22,8 +22,8 @@ export class Pager {
     const source = u.pathname + u.search, value = await this.fetcher(source);
     if (sequence !== this.sequence) return null;
     const rows = value[this.key] ?? value.items;
-    if (!Array.isArray(rows) || rows.length > this.limit || !Number.isSafeInteger(value.total)) throw Error('invalid_page');
-    this.cursors[this.at + 1] = value.next ?? null; this.cursors.length = this.at + 2;
+    if (!Array.isArray(rows) || rows.length > this.limit || value.total !== null && !Number.isSafeInteger(value.total)) throw Error('invalid_page');
+    this.cursors[this.at + 1] = value.next ?? value.nextCursor ?? null; this.cursors.length = this.at + 2;
     return { ...value, rows, source };
   }
 }
@@ -34,7 +34,7 @@ export function route(path) {
   let m;
   if ((m = /^\/(mint|link|bind-payout)(?:\/([0-9a-f]{64}))?$/.exec(p))) return { kind: 'money', type: m[1], id: m[2] };
   if ((m = /^\/(?:block|plot)\/(\d+)$/.exec(p))) return { kind: 'block', height: Number(m[1]) };
-  if ((m = /^\/(pattern|compound)\/([a-z0-9]{1,24})$/.exec(p))) return { kind: m[1], asset: m[2] };
+  if ((m = /^\/(pattern|compound)\/([a-z0-9]{1,24}|[pc]2:[0-9a-f]+)$/.exec(p))) return { kind: m[1], asset: m[2] };
   if ((m = /^\/agents\/(trac1[a-z0-9]+)$/.exec(p))) return { kind: 'agent', address: m[1] };
   if ((m = /^\/records\/batches\/(\d+)$/.exec(p))) return { kind: 'batch', n: m[1] };
   if ((m = /^\/events\/(\d+)$/.exec(p))) return { kind: 'event', n: m[1] };

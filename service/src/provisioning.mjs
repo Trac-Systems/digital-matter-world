@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { check, hash, serial, atomicWrite } from './util.mjs';
 import { rules } from './rules.mjs';
-import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementSnapshot } from './deployments.mjs';
-import { updateRegistry } from './registry.mjs';
+import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementByDefinition, elementByName } from './deployments.mjs';
+import { updateRegistryAsset } from './registry.mjs';
 
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy }) {
@@ -19,7 +19,7 @@ export class Provisioner {
     const entry = (await this.reads.registry()).assets[asset];
     job = { asset, network: this.network, generation: entry?.generation ?? 1, definition, displayLabel: definition.name ?? asset,
       kind: asset.startsWith('p') ? 'dmt' : 'compound', salt: randomBytes(32).toString('hex'), elementAttempt: 0, tickerAttempt: 0,
-      privilege: this.policy.privilege, authorityKey: this.policy.authorityKey, ...(this.policy.sourceLocators ? { sourceLocators: this.policy.sourceLocators } : {}),
+      privilege: this.policy.privilege, authorityKey: this.policy.authorityKey,
       attempts: [], spentSats: '0', state: entry ? 'confirming' : 'queued', ...(entry ? { entry } : {}) };
     return this.save(job);
   }
@@ -34,7 +34,7 @@ export class Provisioner {
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
       for (const [asset, definition] of definitions) {
         const job = await this.enqueue(asset, definition);
-        if (job.state !== 'registered' && (job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
+        if ((job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
       }
       const next = { pattern: patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '' };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
@@ -58,19 +58,10 @@ export class Provisioner {
     }
     return { job, item };
   }
-  async submit(asset, { phase, inscription, sourceLocators }) {
+  async submit(asset, { phase, inscription }) {
     return this.gate(async () => {
       let job = this.store.get('provisioning', asset);
       check(job && ['element', 'deployment'].includes(phase) && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(inscription), 'deployment_submission');
-      if (sourceLocators) job = { ...job, sourceLocators, ...(job.entry ? { entry: { ...job.entry, sourceLocators } } : {}) };
-      if (this.reads.namedSources && phase === 'element') {
-        const element = await this.reads.element(inscription, job.sourceLocators?.element);
-        check(element.pat === job.definition.pat && Number(element.fld) === job.definition.fld, 'element_binding');
-        check((await this.reads.included(inscription))?.confirmations >= this.policy.confirmations, 'element_confirmations');
-        job = await this.save(job, { elementId: inscription, elementName: element.tick, state: 'inscribed' });
-        return this.advance(job);
-      }
-      if (job.entry?.id === inscription && sourceLocators) return this.advance(await this.save(job));
       const attempt = phase === 'element' ? job.elementAttempt : job.tickerAttempt;
       const item = job.attempts.find(a => a.phase === phase && a.attempt === attempt);
       check(item && same(await this.reads.content(inscription), item.text), 'deployment_content');
@@ -93,20 +84,15 @@ export class Provisioner {
   }
   async suspend(job, reason) {
     const registry = await this.reads.registry(), entry = registry.assets[job.asset];
-    if (entry && !entry.suspended) await updateRegistry(this.registryPath, latest => { latest.assets[job.asset] = { ...latest.assets[job.asset], suspended: true }; return latest; });
+    if (entry && !entry.suspended) await updateRegistryAsset(this.registryPath, job.asset, latest => ({ ...latest, suspended: true }));
     return this.save(job, { state: 'confirming', reason, nextRetry: Date.now() + 1000 });
   }
   async advance(job) {
     try {
-      if (this.reads.namedSources) {
-        const registry = await this.reads.registry();
-        const sourceLocators = job.sourceLocators ?? job.entry?.sourceLocators ?? registry.assets[job.asset]?.sourceLocators ?? registry.operator?.provisioning?.sourceLocators;
-        job = { ...job, sourceLocators, ...(job.entry ? { entry: { ...job.entry, sourceLocators } } : {}) };
-      }
       if (job.entry) {
         try {
-          const verified = await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });
-          return await this.register(job, verified);
+          await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });
+          return await this.register(job);
         } catch (error) {
           await this.suspend(job, error.message);
           const winner = await this.reads.tap('getDeployment/' + encodeURIComponent(job.entry.indexTick ?? job.entry.tick));
@@ -115,25 +101,21 @@ export class Provisioner {
           if (canonical && (canonical.confirmations < this.policy.confirmations || winner)) return this.store.get('provisioning', job.asset);
           // A still-included inscription can become an ignored deployment when
           // its element loses after a reorg. Only decide absence at a complete tip.
-          if (canonical && !this.reads.namedSources) await elementSnapshot(this.reads);
-          if (this.reads.namedSources) return this.store.get('provisioning', job.asset);
+          if (canonical && job.kind === 'dmt') await elementByDefinition(this.reads, job.definition);
           // A reorg never silently replaces a still-confirmed mapping. Retain
           // its generation, reconcile the same package before another attempt.
           job = await this.save(job, { entry: null, state: 'resolving-element', reason: 'deployment_reorg' });
         }
       }
-      const namedElement = job.sourceLocators?.element;
-      const rows = this.reads.namedSources ? namedElement ? [await this.reads.element(namedElement.id, namedElement)] : [] : await elementSnapshot(this.reads);
       if (job.kind === 'dmt') {
-        const pairs = rows.filter(e => e.pat === job.definition.pat && Number(e.fld) === job.definition.fld);
-        check(pairs.length <= 1, 'element_pair_conflict');
-        if (pairs.length) {
-          const element = pairs[0], inclusion = await this.reads.included(element.ins);
+        const element = await elementByDefinition(this.reads, job.definition);
+        if (element) {
+          const inclusion = await this.reads.included(element.ins);
           check(inclusion?.confirmations >= this.policy.confirmations, 'element_confirmations');
           job = await this.save(job, { elementId: element.ins, elementName: element.tick, reused: !job.attempts.some(a => a.inscription === element.ins), state: 'inscribed' });
         } else {
           const name = job.elementAttempt === 0 ? job.displayLabel.toLowerCase() : candidate(job, 'element', job.elementAttempt);
-          if (rows.some(e => e.tick.toLowerCase() === name)) return this.save(job, { elementAttempt: job.elementAttempt + 1, state: 'retrying-collision', reason: 'element_name_occupied', nextRetry: 0 });
+          if (await elementByName(this.reads, name)) return this.save(job, { elementAttempt: job.elementAttempt + 1, state: 'retrying-collision', reason: 'element_name_occupied', nextRetry: 0 });
           const sent = await this.package(job, 'element', `${name}.${job.definition.pat}.${job.definition.fld}.element`);
           if (!sent) return this.store.get('provisioning', job.asset);
           const inclusion = await this.reads.included(sent.item.inscription).catch(() => null);
@@ -161,8 +143,8 @@ export class Provisioner {
       }
       if (occupied && occupied.ins !== prior?.inscription) return this.save(job, { tickerAttempt: job.tickerAttempt + 1, state: 'retrying-collision', reason: 'ticker_occupied', nextRetry: 0 });
       let entry = { network: this.network, asset: job.asset, generation: job.generation, kind: job.kind, displayLabel: job.displayLabel, tick, indexTick,
-        privilege: this.policy.privilege, authorityKey: this.policy.authorityKey, ...(this.policy.sourceLocators ? { sourceLocators: this.policy.sourceLocators } : {}), options: deploymentOptions(job.kind),
-        receiver: job.receiver, ...(job.sourceLocators ? { sourceLocators: job.sourceLocators } : {}),
+        privilege: this.policy.privilege, authorityKey: this.policy.authorityKey, options: deploymentOptions(job.kind),
+        receiver: job.receiver,
         ...(job.kind === 'dmt' ? { elementId: job.elementId, elementName: job.elementName, dt: job.definition.dt, pattern: job.definition } : { firstMaker: job.definition.firstMaker }),
         tap: { treasury: this.policy.tapTreasury }, ethereum: { treasury: this.policy.ethereumTreasury } };
       if (prior && !same(prior.text, deploymentPayload(entry))) return this.save(job, { tickerAttempt: job.tickerAttempt + 1,
@@ -173,26 +155,22 @@ export class Provisioner {
       entry = { ...entry, id: sent.item.inscription }; entry.approval = generationDigest(entry);
       job = await this.save(sent.job, { entry, state: 'confirming', reason: 'deployment_index_pending', nextRetry: Date.now() + 1000 });
       if (!occupied) return job;
-      const verified = await verifyDeployment(this.reads, entry, { confirmations: this.policy.confirmations });
-      return this.register(job, verified);
+      await verifyDeployment(this.reads, entry, { confirmations: this.policy.confirmations });
+      return this.register(job);
     } catch (error) {
       return this.save(this.store.get('provisioning', job.asset) ?? job, { state: /fund|budget|cost|fee_rate/.test(error.message) ? 'waiting-for-funds' : 'confirming',
         reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'provisioning_dependency', nextRetry: Date.now() + 1000 });
     }
   }
-  async register(job, verified) {
-    const { inclusion, authorityKey, elementId, dt } = verified ?? await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });
+  async register(job) {
+    const { inclusion, authorityKey, elementId, dt } = await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });
     const old = (await this.reads.registry()).assets[job.asset];
     const generation = Math.max(job.generation, (old?.generation ?? 0) + (old && old.id !== job.entry.id ? 1 : 0));
     const entry = { ...job.entry, network: job.network, asset: job.asset, generation, authorityKey, ...(job.kind === 'dmt' ? { elementId, dt } : {}),
       options: job.entry.options ?? deploymentOptions(job.kind), displayLabel: job.displayLabel,
       suspended: false, inclusion: { height: inclusion.height, blockHash: inclusion.blockHash }, confirmations: this.policy.confirmations };
     entry.approval = generationDigest(entry);
-    if (!same(old, entry) || !job.registeredAt) await updateRegistry(this.registryPath, registry => {
-      registry.generations ??= {}; const history = registry.generations[job.asset] ??= [];
-      for (const e of [registry.assets[job.asset], entry].filter(Boolean)) if (!history.some(h => h.id === e.id)) history.push(e);
-      registry.assets[job.asset] = entry; return registry;
-    });
+    if (!same(old, entry) || !job.registeredAt) await updateRegistryAsset(this.registryPath, job.asset, () => entry);
     return this.save(job, { entry, generation, state: 'registered', reason: null, registeredAt: job.registeredAt ?? Date.now(), nextRetry: Date.now() + 10000 });
   }
 }

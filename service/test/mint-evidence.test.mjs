@@ -1,3 +1,4 @@
+import { TapLookupIndex, installTapLookups } from '../prod/tap-index.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, network } from '../../committee/test/fixture.mjs';
@@ -12,20 +13,23 @@ test('compound watcher pages past the indexer cap and finds the latest player in
     if(path.startsWith('getAccountMintListLength/'))return 1200;
     if(path.startsWith('getAccountMintList/')){
       const query=new URL('http://fixture.invalid/'+path).searchParams,offset=Number(query.get('offset'));offsets.push(offset);
-      return Array.from({length:Math.min(500,1200-offset)},(_,i)=>offset+i===1199?minted:{fail:false,dta:'other',amt:'1'});
+      return Array.from({length:Math.min(Number(query.get('max')),1200-offset)},(_,i)=>offset+i===1199?minted:{ins:'other-'+(offset+i),fail:false,dta:'other',amt:'1'});
     }
+    if(path.startsWith('getMintedListLength/'))return 1;
     if(path.startsWith('getMintedList/'))return [minted];
     throw Error('unexpected_read');
   },included:async()=>({confirmations:1}),content:async()=>permit};
-  const result=await winningMint(reads,row,null,()=> 'committee');
-  assert.deepEqual(offsets,[200,700]);assert.equal(result.inscription,id);assert.equal(result.receiver,receiver);
+  const index = new TapLookupIndex({ indexer: { tap: path=>reads.tap(path), stamp: async()=>({height:1,hash:'aa'}), bitcoin:{blockHash:async()=> 'aa'}, at:async(_v,fn)=>fn() } });
+  installTapLookups(reads,index);
+  try { const result=await winningMint(reads,row,null,()=> 'committee');
+  assert.deepEqual(offsets,[0,500,1000,1199]);assert.equal(result.inscription,id);assert.equal(result.receiver,receiver); } finally { index.close(); }
 });
 
 test('accepted reservation freezes Bitmap ownership and rejects missing or rejected audit evidence', async()=>{
   const f=fixture(), original={agent:f.proposal.request.owner,address:'original-holder'};
   const input={op:'rq',request:f.proposal.request,sig:f.proposal.signature,evidence:{context:{deployment:f.data.context.deployment,link:{block:10,linkHeight:90}},bitmap:original}};
-  const file={mintOperations:[input],mintOutcomes:[{reason:'accepted'}]};
-  const store={list:()=>[{id:'1',value:{batch:{n:1,to:100}}}]}, reads={pendingAcceptance:async()=>f.data.acceptance};
+  const file={height:100,mintOperations:[input],mintOutcomes:[{reason:'accepted'}]};
+  const store={get:space=>space==='batches'?{batch:{to:100}}:{n:1,file:0,index:0}}, reads={pendingAcceptance:async()=>f.data.acceptance};
   const snapshot=await admittedMint({store,reads,audits:async()=>[file],network,id:f.id});
   assert.deepEqual(snapshot.bitmap,original);
   f.data.context.link=snapshot.context.link;f.data.context.bitmapHolder=snapshot.bitmap;f.data.bitmap=original;f.reprice();

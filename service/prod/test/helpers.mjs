@@ -1,3 +1,4 @@
+import { migrateRegistry } from '../../src/registry.mjs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { BUILD as configuredBuildRoot } from '../../../local/common.mjs';
@@ -33,13 +34,14 @@ export async function configFixture(t) {
   const dir = async name => { const path = join(root, name); await mkdir(path, { mode: 0o700 }); return path; };
   const endpoint = async name => ({ urlFile: await file(name + '-url', 'https://' + name + '.invalid') });
   const deployment = { network: 'fixture-main', admin: '99'.repeat(32), committee: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', beacon: { checkpoint: GENESIS, params: MAINNET_PARAMS } };
-  const config = { version: 1, mode: 'prod', network: 'fixture-main', listen:{host:'127.0.0.1',port:58910}, adapter:fileURLToPath(new URL('../adapter.mjs',import.meta.url)), data: await dir('data'), gatewayKey: await file('gateway-key', '01'.repeat(32)), committee: Array.from({ length: 5 }, (_, i) => ({ id: `member-${i+1}`, peer: { id: `member-${i+1}`, identity: String(i + 1).padStart(64, '0') } })), prod: {
+  const config = { version: 1, mode: 'prod', network: 'fixture-main', listen:{host:'127.0.0.1',port:58910}, adapter:fileURLToPath(new URL('../adapter.mjs',import.meta.url)), data: await dir('data'), gatewayKey: await file('gateway-key', '01'.repeat(32)), committee: Array.from({ length: 5 }, (_, i) => ({ id: `member-${i+1}`, peer: { id: `member-${i+1}`, identity: String(i + 1).padStart(64, '0') } })), prod: { lookupSettings: { refreshMs: 2147483647 },
     contexts: await dir('contexts'), readerData: await dir('reader'), registry: await file('registry', { feePolicy: createFeePolicy('100'), assets: {} }), deployment: await file('deployment', deployment), startTip: 6, maxHeadersPerView: 20,
     bitcoin: { kind: 'ord', ...await endpoint('bitcoin') },
     tap: { endpoints: [{ urlFile: join(root, 'bitcoin-url') }], agreement: 1 },
     ethereum: { ...await endpoint('ethereum'), chainId: '1', address: '0x' + '22'.repeat(20), token: '0x' + '33'.repeat(20), fromBlock: '0x0', confirmations: 1, maxLogRange: 100, maxLogPages: 10 },
     trac: { bootstrap: '44'.repeat(32), msbBootstrap: '55'.repeat(32), networkId: 918, runtimeConfig: await file('runtime', { mode: 'prod' }) },
   } };
+  await migrateRegistry(config.prod.registry);
   return { config, root, file, deployment };
 }
 

@@ -7,7 +7,7 @@
     "paths": {
       "output": "/var/lib/dmw/gateway/launch",
       "costsFile": "/etc/dmw/private/costs.json",
-      "costsSHA256": null
+      "costsSHA256": "03874a628a958674948974d0c80e748516b37d650bb9767b9e44b6f0c5bf5b45"
     },
     "bitcoin": {
       "chain": "main",
@@ -26,8 +26,8 @@
       "authorityInscription": null,
       "checkpointHeight": 0,
       "checkpointFile": "/etc/dmw/private/checkpoint.json",
-      "feeRate": 0,
-      "estimateFeeRate": 0,
+      "feeRate": 1,
+      "estimateFeeRate": 1,
       "postage": 10000,
       "authorityHolderAddress": null,
       "payerAddress": null,
@@ -60,7 +60,7 @@
       "payerAddress": null,
       "signing": "files",
       "adminKeyFile": "/etc/dmw/private/ethereum-admin.hex",
-      "estimateGasPriceGwei": null,
+      "estimateGasPriceGwei": "4",
       "sourceVerificationFile": "/etc/dmw/private/escrow-verification.json",
       "tokenVerificationFile": "/etc/dmw/private/token-verification.json"
     },
@@ -101,7 +101,7 @@
           "id": "operator1",
           "identity": null,
           "encryption": null,
-          "server": "gateway.example.invalid",
+          "server": "dmtworld.much.fun",
           "signer": {
             "urlFile": "/etc/dmw/private/operator1-signer.url",
             "tokenFile": "/etc/dmw/private/operator1-signer.token",
@@ -120,7 +120,7 @@
           "id": "operator2",
           "identity": null,
           "encryption": null,
-          "server": "gateway.example.invalid",
+          "server": "dmtworld.much.fun",
           "signer": {
             "urlFile": "/etc/dmw/private/operator2-signer.url",
             "tokenFile": "/etc/dmw/private/operator2-signer.token",
@@ -139,7 +139,7 @@
           "id": "operator3",
           "identity": null,
           "encryption": null,
-          "server": "gateway.example.invalid",
+          "server": "dmtworld.much.fun",
           "signer": {
             "urlFile": "/etc/dmw/private/operator3-signer.url",
             "tokenFile": "/etc/dmw/private/operator3-signer.token",
@@ -158,7 +158,7 @@
           "id": "operator4",
           "identity": null,
           "encryption": null,
-          "server": "gateway.example.invalid",
+          "server": "dmtworld.much.fun",
           "signer": {
             "urlFile": "/etc/dmw/private/operator4-signer.url",
             "tokenFile": "/etc/dmw/private/operator4-signer.token",
@@ -177,7 +177,7 @@
           "id": "operator5",
           "identity": null,
           "encryption": null,
-          "server": "gateway.example.invalid",
+          "server": "dmtworld.much.fun",
           "signer": {
             "urlFile": "/etc/dmw/private/operator5-signer.url",
             "tokenFile": "/etc/dmw/private/operator5-signer.token",
@@ -205,15 +205,15 @@
       "registryFile": "/var/lib/dmw/gateway/registry.json"
     },
     "servers": {
-      "gateway": "gateway.example.invalid",
+      "gateway": "dmtworld.much.fun",
       "bitcoinIndexer": "single-owner-source",
-      "trac": "gateway.example.invalid",
+      "trac": "dmtworld.much.fun",
       "sshKeyFile": null,
       "backupDirectory": "/var/backups/dmw"
     },
     "release": {
-      "webDomain": "gateway.example.invalid",
-      "gatewayDomain": "gateway.example.invalid",
+      "webDomain": "dmtworld.much.fun",
+      "gatewayDomain": "dmtworld.much.fun",
       "repository": null,
       "revision": null,
       "publicManifestFile": "/var/lib/dmw/gateway/launch/kit-public.json"
@@ -297,9 +297,9 @@
       "authorityEpoch": 0
     },
     "public": {
-      "gateway": "https://gateway.example.invalid",
-      "headerSource": "https://gateway.example.invalid",
-      "paymentOrigin": "https://gateway.example.invalid",
+      "gateway": "https://dmtworld.much.fun",
+      "headerSource": "https://dmtworld.much.fun",
+      "paymentOrigin": "https://dmtworld.much.fun",
       "gatewayKey": null,
       "tracRuntimeModule": "/opt/dmw/current/service/prod/runtime.mjs",
       "tracRuntimeConfigFile": null
@@ -522,10 +522,10 @@
       "address": "0x5e7f6e008c6d9d7ad4c7eb75bd4ce62864cc7454",
       "artifactFile": "/var/lib/dmw/gateway/launch/verification/token-artifact.json",
       "inputFile": "/var/lib/dmw/gateway/launch/verification/token-input.json",
-      "artifactURL": "https://gateway.example.invalid/verification/token-artifact.json",
-      "inputURL": "https://gateway.example.invalid/verification/token-input.json",
-      "artifactSHA256": null,
-      "inputSHA256": null,
+      "artifactURL": "https://dmtworld.much.fun/verification/token-artifact.json",
+      "inputURL": "https://dmtworld.much.fun/verification/token-input.json",
+      "artifactSHA256": "9796d3cbd97dae3722dcab16e5a7c6e9e1c1f03339dcc5a4cc90978de3ae534a",
+      "inputSHA256": "ecf9fdb655207a36ab321dd772a7b87144034a96f9f7fcb8a4711395df500c61",
       "runtimeSHA256": null,
       "implementation": "0x8a2042b4e010b715f8e2a5a8baf0d52ac6edae8b",
       "proxyKind": "eip1167"
@@ -535,8 +535,8 @@
       "address": null,
       "artifactFile": "/var/lib/dmw/gateway/launch/verification/escrow-artifact.json",
       "inputFile": "/var/lib/dmw/gateway/launch/verification/escrow-input.json",
-      "artifactURL": "https://gateway.example.invalid/verification/escrow-artifact.json",
-      "inputURL": "https://gateway.example.invalid/verification/escrow-input.json",
+      "artifactURL": "https://dmtworld.much.fun/verification/escrow-artifact.json",
+      "inputURL": "https://dmtworld.much.fun/verification/escrow-input.json",
       "artifactSHA256": null,
       "inputSHA256": null,
       "runtimeSHA256": null
@@ -642,53 +642,92 @@
     }
   },
   "operations": {
+    "playbay": {
+      "account": "much.fun",
+      "title": "Digital Matter World",
+      "gameId": null,
+      "visibility": "public",
+      "sourceDirectory": "world",
+      "archiveFile": "/absolute/private/playbay/digital-matter-world.zip",
+      "releaseId": null,
+      "publicURL": null
+    },
     "hosts": {
+      "os": "Ubuntu 24.04 LTS",
+      "architecture": "amd64",
       "gateway": {
-        "hostname": "gateway.example.invalid",
+        "hostname": "dmtworld.much.fun",
         "ipv4": null,
         "ipv6": null,
+        "cpu": 8,
+        "ramGiB": 32,
+        "diskGiB": 500,
         "internalURL": "http://127.0.0.1:58910"
       },
       "operators": [
         {
           "id": "operator1",
-          "hostname": "gateway.example.invalid",
+          "hostname": "dmtworld.much.fun",
           "unixUser": "dmw-operator1",
           "signerURL": "http://127.0.0.1:58800",
           "sidecarURL": "http://127.0.0.1:58700"
         },
         {
           "id": "operator2",
-          "hostname": "gateway.example.invalid",
+          "hostname": "dmtworld.much.fun",
           "unixUser": "dmw-operator2",
           "signerURL": "http://127.0.0.1:58801",
           "sidecarURL": "http://127.0.0.1:58701"
         },
         {
           "id": "operator3",
-          "hostname": "gateway.example.invalid",
+          "hostname": "dmtworld.much.fun",
           "unixUser": "dmw-operator3",
           "signerURL": "http://127.0.0.1:58802",
           "sidecarURL": "http://127.0.0.1:58702"
         },
         {
           "id": "operator4",
-          "hostname": "gateway.example.invalid",
+          "hostname": "dmtworld.much.fun",
           "unixUser": "dmw-operator4",
           "signerURL": "http://127.0.0.1:58803",
           "sidecarURL": "http://127.0.0.1:58703"
         },
         {
           "id": "operator5",
-          "hostname": "gateway.example.invalid",
+          "hostname": "dmtworld.much.fun",
           "unixUser": "dmw-operator5",
           "signerURL": "http://127.0.0.1:58804",
           "sidecarURL": "http://127.0.0.1:58704"
         }
       ],
+      "existingBitcoinAndTapProviders": true,
+      "existingTracValidators": true,
       "backupLocation": "/var/backups/dmw",
       "indexers": 1,
       "indexerIsAdmin": true
+    },
+    "release": {
+      "authorName": "Markus Bopp",
+      "authorEmail": null,
+      "sourceArchive": "/root/dmw-source.tar.gz",
+      "sourceArchiveSHA256": null,
+      "linuxSidecarFile": "/root/dmw-tss",
+      "linuxSidecarSHA256": null,
+      "linuxNodeArchiveSHA256": "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6",
+      "publicVerificationDirectory": "/srv/dmw/public/verification"
+    },
+    "feeAssumptions": {
+      "dateUTC": "2026-10-26",
+      "bitcoinSource": "https://mempool.space/api/v1/fees/recommended",
+      "bitcoinFastSatPerVbyte": 1,
+      "ethereumSource": "https://api.blockcypher.com/v1/eth/main",
+      "ethereumHighWei": "3324553190",
+      "ethereumBudgetGwei": "4",
+      "cancelSatPerVbyte": 20,
+      "bitcoinReserveSats": "1000000",
+      "minimumParallelCardinalUTXOs": 36,
+      "refreshBeforeExecution": true
     },
     "ruleConstants": {
       "baseFeeTAP": "22.6",
@@ -758,10 +797,30 @@
     }
   },
   "notes": {
-    "example": "Illustrative single-host configuration for a new installation. Domains, paths and listener ports are examples, not information about the public service. Replace them for your environment.",
-    "privateInputs": "Install credentials and provider connection files outside the checkout. Never commit completed worksheets.",
-    "nullValues": "Null marks an unused or unresolved slot. loadTarget normalizes null strings; preparation and admission still require complete, validated inputs.",
-    "funding": "Choose current fee estimates, cost digests and funding budgets before execution. Players fund their own payments and inscriptions.",
-    "publicPins": "Public Trac network constants and the TAP token address identify the supported network. Generate and review the deployment-specific identities separately."
+    "ownerInputs": "Only operations.owner is an owner checklist. Funded keys and private provider URLs are installed outside this repository; never paste them here.",
+    "nullValues": "Null means unused or produced by preparation/deployment, not an owner question. loadTarget converts null string slots to the legacy empty sentinel; all live readiness checks still apply.",
+    "generatedBeforeLaunch": [
+      "Role public addresses and Trac host/admin equality: hydrate from roles-public.json, derived locally from funded role keys.",
+      "Gateway public pin and five committee identity/encryption pins: local per-account provisioning.",
+      "Committee group public key and ceremony session: local 3-of-5 key generation.",
+      "Bitcoin checkpoint height, startTip and header archive: the one Bitcoin source, with full proof-of-work/history verification.",
+      "Source revision, archive/artifact/compiler hashes, token verification receipt: release preparation, not owner-supplied network details."
+    ],
+    "generatedByLaunch": [
+      "bitcoin.authorityInscription, supplied after owner inscription and activation",
+      "trac.bootstrap (the new DMW subnet, never RESET's subnet)",
+      "ethereum.escrowAddress and deployed-target.json",
+      "Public manifest and verification receipts; record Playbay release IDs from its separate repository."
+    ],
+    "unused": [
+      "bitcoin.witnessRpc and indexer.independentEndpoint",
+      "Trac HTTP/balance-file fields: native mainnet runtime is used.",
+      "local.*: legacy regtest-only schema slots; never start the local stack on production.",
+      "release.repository and authorEmail: separate optional source publication; unnecessary for service setup."
+    ],
+    "funding": "The operator funds the privilege-authority inscription and activation in their wallet, escrow deployment gas, and Trac host/writer accounts. Players fund asset deployments, mint payments and inscription fees.",
+    "custody": "One machine, all five signers operated together, each under its own Unix account, owned 0600 credentials and 0700 stores. Root controls the whole committee; this is not five independent custodians.",
+    "tracSource": "Official pinned trac-msb/trac-peer src/config/env.js. Validator identities are discovered from mainnet state; transactions still require three connected validators.",
+    "sameSource": "Each account owns a copy of connection files for the same Bitcoin/TAP and Ethereum sources. No second provider or external operator is required."
   }
 }

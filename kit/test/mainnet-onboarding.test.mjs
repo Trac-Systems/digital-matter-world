@@ -138,6 +138,9 @@ test('mainnet free header, claim, discovery/reveal and craft never touch an MSB 
   p.runtime.deployment.beacon.checkpoint = { height: 0, hash: genesis.hash, bits: genesis.bits, time: genesis.time, chainwork: '4295032833', times: [genesis.time] };
   p.gatewayKey = fake.gateway; p.receiptSigners = fake.witness.members;
   const local = fakeTrac({ get: h => history.get(h), hashAt: h => history.get(h)?.hash }, { network: p.network, tip: 61 });
+  const largeBatch = '9'.repeat(80), renewalCommitment = 'ab'.repeat(32), savedCommitment = 'cd'.repeat(32);
+  local.trac.api.dmwReceiptRenewalSlice = async n => { assert.equal(n, largeBatch); return renewalCommitment; };
+  local.trac.api.dmwDiscoveryCommitment = async (owner, commitment) => ({ owner, commitment, accepted: true });
   let paidCalls = 0, closed = 0;
   const noPaid = () => { paidCalls++; throw Error('Free moves must never touch the MSB account'); };
   const service = new ServiceClient({ mode: 'mainnet', origin: p.gateway, network: p.network, gateway: p.gatewayKey, receiptSigners: p.receiptSigners,
@@ -157,6 +160,9 @@ test('mainnet free header, claim, discovery/reveal and craft never touch an MSB 
   };
   const adapter = await createAdapter({ wallet, network: p.network, config: { ...p, directory }, pins: p, service, dryRun: false, openRuntime: async () => runtime });
   cleanup(t, () => adapter.close());
+  assert.equal(await adapter.trac.renewalSlice(largeBatch), renewalCommitment);
+  assert.deepEqual(await adapter.trac.discoveryCommitment(publicKey(wallet), savedCommitment),
+    { owner: publicKey(wallet), commitment: savedCommitment, accepted: true });
   const journal = await Journal.open(join(directory, 'journal'), p.network, { intervalMs: 0 }); cleanup(t, () => journal.close());
   const agent = new Agent({ wallet, network: p.network, service, trac: adapter.trac, journal, dryRun: false, puzzleBits: 12, powLimitBits: 0x1d00ffff });
   assert.equal((await agent.headers({ height: 61, raw: Buffer.from(history.raw(61)).toString('hex') })).state, 'received');

@@ -5,6 +5,7 @@ import { validatePlayerConfig } from './network.mjs';
 import { productionTrac } from './trac.mjs';
 import { headerSource } from './headers.mjs';
 import { openPlayerRuntime } from './player-runtime.mjs';
+import { decimalV2, safeNumberV2 } from '../../rules/src/index.js';
 
 async function collect(read, field) {
   const rows = [], seen = new Set(); let cursor;
@@ -19,7 +20,7 @@ export async function create({ wallet, network, config, service, dryRun = true, 
   await validatePlayerConfig(config, { pins });
   check(config.mode === 'mainnet' && config.network === network, 'Production network required');
   // Capture the bounded HTTP transport before native modules can install hooks.
-  const source = headerSource(config.headerSource, { fetchImpl: service.fetchImpl });
+  const source = headerSource(config.headerSource, { ...config.headerHTTPSettings, fetchImpl: service.fetchImpl });
   let runtime;
   // Lazy connection lets MCP initialize/list tools immediately and lets rules,
   // address and public gateway reads work while P2P is still synchronizing.
@@ -29,7 +30,8 @@ export async function create({ wallet, network, config, service, dryRun = true, 
     try {
       check(publicKey(runtime.peer.wallet) === publicKey(wallet), 'Runtime must belong to this signer');
       const trac = productionTrac(runtime.peer, { network, msb: runtime.bus, pins: config.trac });
-      const health = await service.health(), tip = health.tip;
+      trac.balanceProof = (owner, asset, limit) => service.accountProof(owner, asset, limit);
+      const health = await service.health(), tip = safeNumberV2(decimalV2(health.tip));
       check(Number.isSafeInteger(tip) && tip >= config.runtime.deployment.beacon.checkpoint.height, 'Gateway has no current mainnet tip');
       const hash = await source.hash(tip);
       check(hex32(hash), 'Public header source has no current mainnet tip hash');
@@ -40,6 +42,10 @@ export async function create({ wallet, network, config, service, dryRun = true, 
         if (head.tip.height >= tip && await trac.hashAt(tip) === hash) break;
         check(Date.now() < end, 'Trac synchronization timed out; retry with the same signer and stores');
         await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      if (config.runtime.deployment.v2) {
+        const context = await trac.rulesContext();
+        check(context.ready && context.manifestHash === config.runtime.deployment.v2.manifestHash, 'Notary activation differs from reviewed release');
       }
       const requireValidators = () => check(new Set(runtime.bus.network.validatorConnectionManager.connectedValidators()).size >= 3,
         'Paid transfer requires three connected validators');
@@ -60,7 +66,7 @@ export async function create({ wallet, network, config, service, dryRun = true, 
       return trac;
     } catch (error) { await runtime.close(); runtime = null; throw error; }
   })();
-  const methods = ['head', 'hashAt', 'balance', 'settings', 'mint', 'batchLast', 'batchRoot', 'record', 'preflight', 'prepare', 'submit', 'transactionStatus'];
+  const methods = ['head', 'hashAt', 'balance', 'settings', 'rulesContext', 'settingsByHash', 'renewalSlice', 'discoveryCommitment', 'accountRoot', 'financialRecord', 'mint', 'batchLast', 'batchRoot', 'record', 'preflight', 'prepare', 'submit', 'transactionStatus'];
   const trac = { network, ...Object.fromEntries(methods.map(method => [method, async (...args) => (await connect())[method](...args)])) };
   return { trac, source,
     candidates: async (asset, { block } = {}) => collect(cursor => service.mintRights(publicAddress(wallet), {

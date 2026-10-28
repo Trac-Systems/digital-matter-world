@@ -1,3 +1,4 @@
+import { uintV2 } from './integers-v2.js';
 import { assert, integer, hexToBytes, bytesToHex, hashBytes, hash } from './core.js';
 export const GENESIS_HASH = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f';
 export function targetFromBits(bits) {
@@ -16,7 +17,7 @@ export function bitsFromTarget(n) {
 }
 export function parseHeader(input, height = 0) {
   const raw = typeof input === 'string' ? hexToBytes(input) : input;
-  assert(raw instanceof Uint8Array && raw.length === 80 && integer(height, 0xffffffff), 'header');
+  assert(raw instanceof Uint8Array && raw.length === 80 && (typeof height === 'string' ? uintV2(height) !== undefined : integer(height, 0xffffffff)), 'header');
   const v = new DataView(raw.buffer, raw.byteOffset, 80);
   return { height, hash: bytesToHex(hashBytes(hashBytes(raw)).reverse()),
     prev: bytesToHex(Uint8Array.from(raw.subarray(4, 36)).reverse()), version: v.getInt32(0, true),
@@ -28,12 +29,16 @@ export class HeaderHistory {
     this.bytes = new Uint8Array(bytes); this.length = bytes.length / 80;
     this.view = new DataView(this.bytes.buffer);
   }
-  raw(height) { assert(integer(height) && height < this.length, 'history_height'); return this.bytes.slice(height * 80, (height + 1) * 80); }
+  raw(height) {
+    assert(typeof height === 'string' ? BigInt(uintV2(height)) < BigInt(this.length) : integer(height) && height < this.length, 'history_height');
+    const offset = Number(height); // A bounded in-memory row offset, never a persisted height.
+    return this.bytes.slice(offset * 80, (offset + 1) * 80);
+  }
   get(height) { return parseHeader(this.raw(height), height); }
   field(height, field, dt = 'n') {
-    assert(integer(height) && height < this.length, 'history_height');
+    assert(typeof height === 'string' ? BigInt(uintV2(height)) < BigInt(this.length) : integer(height) && height < this.length, 'history_height');
     assert((field === 4 || field === 10) ? dt === 'n' : field === 11 && (dt === 'n' || dt === 'h'), 'field');
-    const n = field === 4 ? height : this.view.getUint32(height * 80 + (field === 10 ? 76 : 72), true);
+    const n = field === 4 ? height : this.view.getUint32(Number(height) * 80 + (field === 10 ? 76 : 72), true);
     return n.toString(dt === 'h' ? 16 : 10);
   }
 }
@@ -60,5 +65,6 @@ export function verifyHistory(history) {
     times.push(h.time); if (times.length > 11) times.shift();
     work += (1n << 256n) / (target + 1n); previous = h;
   }
-  return { count: history.length, tip: previous.hash, chainwork: work.toString(), sha256: hash(history.bytes) };
+  return { count: history.length, tip: previous.hash, chainwork: work.toString(),
+    ...(history.bytes ? { sha256: hash(history.bytes) } : {}) };
 }

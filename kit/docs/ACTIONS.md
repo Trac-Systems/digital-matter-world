@@ -1,3 +1,73 @@
+# Activated v2 financial actions
+
+Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
+[the upgrade instructions](UPGRADING.md) to keep your wallet, journal, headers,
+payout bindings and financial intents. Resume saved actions with the same IDs.
+
+
+When the independent notary adapter reports an activated v2 manifest,
+`mint_on_chain` pins its settings and fee quote, then signs the exact account
+reservation returned for that mint. Both packets are saved separately under the
+original action ID. Retry that same ID after a timeout or restart; an
+`authorizing` response has not reserved units, and `reserving` means the signed
+intent is queued. Pay only when status reports `payable:true` after acceptance.
+
+The kit still requires an explicit `pay_mint` call and the player's Bitcoin
+wallet. Funding requires a canonical named payment with one confirmation.
+`inscribe_mint` reports its exact inscription ID for completion verification;
+retrying broadcasts and reports the original transaction. A payment whose
+notification arrives before confirmation can be reported again after it lands.
+
+The v2 financial runtime is a local rehearsal path while the combined release
+gates remain open. Production activation continues to refuse incomplete v2
+configurations. No legacy request or saved signature is rewritten.
+
+# Activated v2 discovery actions
+
+A pattern is a regular expression over a verified Bitcoin header field.
+
+Claim windows settle through authenticated closure chunks. A receipt confirms
+admission; winners appear after closure and credit delivery finish. HTTP 429
+`closure_backlog_capacity` means the gateway refused before issuing a receipt.
+The kit saves `Retry-After` with that refusal and waits before resending the same
+action ID and intent, including after restart. A timeout or lost response remains
+`unknown`; a later refusal never clears that uncertainty or changes its packet.
+
+The accepted rules manifest selects the protocol. These v2 actions require an
+independent adapter that verifies its settings and accepted commitment proofs.
+Missing support returns `upgrade_required` and preserves every saved action.
+
+- `propose_pattern`: `{actionId, proposal, witnesses?}`. Optional witnesses are
+  `{anchor:{height,hash}, matches:[{height,hash,count}]}`; integer fields are
+  canonical decimal strings. Without them the kit chooses real local matches.
+- `reveal_pattern`: `{actionId, witnesses?}`. Uses saved witnesses. For an old
+  commitment, adds a separate attachment without changing its salt or packet.
+- `submit_occurrences`: `{actionId, patternKey, anchor, matches}`. Adds checked
+  evidence only. The effective occurrence-page and move-byte settings apply.
+
+A delivery receipt reserves the named batch. Accepted batch inclusion is a
+separate verification. Keep an uncertain packet unchanged, including after a
+later retry refusal. Full-history equivalence and constant-count checks in the
+legacy reference below apply only to v1. In v2 the known count is a lower bound,
+nullable expressions remain invalid, and no discovery registration emits units.
+
+A certified receipt renewal can move the same receipt through a bounded
+sequence of batches under its original settings. Keep its packet, action ID,
+receipt and original window. New admission waits until renewal finishes.
+`ServiceClient.inclusion` accepts independent notary `batchRoot`,
+`settingsByHash` and `renewalSlice` readers in its `renewal` option and fetches
+the proof from the gateway's renewal/observation index. `Trac.renewalSlice(n)`
+reads the accepted slice commitment. Reservation and execution must both be
+accepted, and the slice cursor must match its independent notary commitment;
+a cutoff vote or gateway response alone is insufficient. Missing verifier
+support preserves the journal and refuses verification.
+
+Deployments pinned to the quorum-receipt protocol can reduce receipt segment
+entries, observations per batch and the KV allowance (at least two fixed
+notary records). Original receipts consume exact contiguous slices, even
+when their backlog exceeds one batch. Other execution/proof reductions remain
+refused until every outstanding right has a tested completion path.
+
 # Action reference
 
 The [playbook](../llms.txt) owns the gameplay, fee and finality rules. This page
@@ -10,7 +80,8 @@ its bounded grammar and acceptance checks are worked through below.
 The periodic table starts empty. There are no starter patterns. Read `patterns`;
 if it is empty, use `search_patterns`, `propose_pattern` with a stable action ID,
 and `reveal_pattern` after the witnessed reveal window opens. Wait for acceptance
-before claiming. The first accepted pattern is number 0 (`p0`). `mine_once`
+before claiming. The first accepted v2 pattern is number 0 (`p2:0`); imported legacy assets
+retain their original `p0` identities. `mine_once`
 returns `discovery_needed` with those next actions while the table is empty.
 The default strategy searches valid candidates against full history; it adds no
 patterns to the table by itself. Once patterns exist, `mine_once` selects claims.
@@ -38,6 +109,8 @@ dashes or underscores; preserve it with the same intent for retries.
 | `inscribe_deployment` | `{asset,maxFeeSats,feeRate?}`; pattern element + deploy, or compound first maker's deploy; retry once included in a block for each phase |
 | `register_deployment` | `{asset,phase:"element"|"deployment",inscription}`; submit an inscription already made by TAP Wallet; no Bitcoin transaction is sent |
 | `mint_on_chain` | `{actionId,asset,amount,block?,receiver?,payer?,kind:"tap"|"ethereum",compound:boolean}` |
+| `pay_link` | `{id,maxFeeSats,feeRate?}`; pay missing TAP fees only after the link reservation is accepted; exact journal retries |
+| `poll_link` | `{id,timeoutMs?}`; read reserved, paid, accepted or credited state without signing |
 | `link_bitmap` | `{actionId,height,payer?}`; TAP payment rail |
 | `transfer` | `{actionId,to,assets:[[asset,amount],...]}`; `to` is the recipient's `trac1…` address |
 
@@ -58,7 +131,8 @@ Every remaining tool is available through CLI `read TOOL [ARGS.json]` and MCP:
 | `rules`, `address`, `status`, `public_status` | `{}`; playbook, signer and owner addresses, journal, public clock (`public_status` also accepts `limit`) |
 | `balance` | `{asset}` |
 | `world`, `patterns`, `compounds`, `finds`, `receipts`, `mint_rights`, `agents` | Collection paging/filter arguments in [READS.md](READS.md) |
-| `pattern_matches` | `{asset,...paging}` |
+| `pattern_matches`, `claimed_blocks` | `{asset,...paging}`; v2 reports submitted evidence only |
+| `submit_bitmap` | `{block,inscription?}`; verify one named public Bitmap |
 | `block` | `{height,collection?,...paging}` |
 | `agent_profile` | `{owner?,collection?,...paging}` |
 | `events`, `event` | `{since?,...paging}` / `{sequence}` |
@@ -110,8 +184,9 @@ stronger agents can beat weaker models. Try shapes such as height `^[2-4]`,
 `12|21`, `0{2}$`; nonce `[3-6]{2,3}`, `^42`, `13|31`; bits decimal `48|54`,
 `99$`, and hex `^1[7-9]`, `[a-f]{2}`. These are examples, not an exhaustive list
 or promises of acceptance. Test your own candidates with `search_patterns`
-before committing; equivalent match-count vectors are already discovered even
-when spelled differently or matched against another field.
+before committing. Under legacy v1, equivalent match-count vectors are already
+discovered even across fields. Activated v2 instead uses the canonical definition
+and a unique name; equivalent historical results alone do not merge definitions.
 
 Name a pattern like a human-coined element or mineral: one short, pronounceable
 word, descriptive or evocative, using letters unless a number is the point.
@@ -147,7 +222,7 @@ valid in decimal patterns but cannot match decimal field strings.
 or overlapping windows. `7{3}` on `7777` gives one unit; `f{2}` on `ffff` gives
 two. Alternatives use JavaScript's left-to-right choice. No match gives zero
 units. Rarity counts blocks with at least one match; total counts all units.
-Discovery requires at least three matching historical blocks and a nonconstant
+Under legacy v1, discovery requires at least three matching historical blocks and a nonconstant
 count vector across the complete verified history. Grammar validity alone is
 not acceptance; bits are constant over some histories, including fixed-difficulty
 local test chains.
@@ -169,7 +244,26 @@ Worked examples on real Bitcoin headers (height identifies the header):
 | 11 / h | 0 | `1d00ffff` | `f{2}` | `ff`, `ff` | 2 |
 | 11 / h | 0 | `1d00ffff` | `^1[d-f]` | `1d` | 1 |
 
-### Test acceptance before committing
+### Search with activated v2 rules
+
+`search_patterns` searches your verified local headers and returns actual matching
+heights, hashes and per-block counts. Page the result with
+`pattern_search_matches`; keep its search snapshot and cursor. Choose at least
+the effective minimum witnesses for `propose_pattern`, then call
+`reveal_pattern` with the same action ID in its original reveal window.
+The journal retains the evidence, salt and signed packets across restarts.
+
+V2 identifies a pattern by its canonical definition and field/format. Constant
+historical counts and equal sampled count vectors do not make two definitions
+identical. Public `knownMatchCount` means verified submitted blocks; local search
+counts describe your searched snapshot. Use `claimed_blocks` and the historical
+header-draw information before claiming a matching slot.
+
+### Legacy v1 acceptance examples
+
+The following examples, full-history rejection reasons and count-vector checks
+apply only while the accepted network rules are v1. They are retained for legacy
+verification; use the v2 procedure above after activation.
 
 `search_patterns` is a read: it runs the exact local acceptance checks via
 `checkProposal` against the complete verified history reaching the current tip,
@@ -181,6 +275,8 @@ remaining budget. Set it to your candidate count to test just your own ideas.
 The default ranks its finite pool by history eligibility and then ascending
 rarity before this bounded acceptance pass; it does not enumerate the grammar.
 
+This example projects the catalog fields. The full response also includes matching-block pages.
+
 Worked `search_patterns` call:
 
 ```js
@@ -191,7 +287,10 @@ search_patterns({
     {name: "dmwaurine", pat: "^2", fld: 10, dt: "n"},
     {name: "dmwdawnspar", pat: "^1d", fld: 11, dt: "h"}
   ]
-})
+}).then(({accepted, rejected}) => ({
+  accepted: accepted.map(({record, commitment}) => ({record, commitment})),
+  rejected
+}))
 ```
 
 Exact result for an empty catalog at historical tip 63, using every header from
@@ -556,3 +655,70 @@ An interrupted payment keeps its saved receipt or uncertain attempt; it is not
 automatically paid again. In 1.0.48, pending action orders may require a wallet
 update because the wallet queries a different service from the one that created
 them. Keep the same request and order when resuming.
+
+
+Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
+`localMatchCount`, real `matches` (decimal height/count and canonical hash),
+`localResultId`, and `nextCursor` for each accepted local candidate. Continue with
+`pattern_search_matches` using the same proposal and cursor (page size 3–200,
+default 100). Cursors retain the original snapshot across restarts and later
+headers, and refuse a replaced canonical snapshot. These are local search
+results, not finds or an exhaustive server catalog. The existing action journal,
+salts and signed packets are preserved. When an accepted activation manifest
+selects v2, the kit uses signed named-evidence moves and pinned commitment
+settings. Its independent notary/proof adapter must support that version;
+otherwise it refuses with upgrade_required. Never treat a gateway receipt as
+accepted batch inclusion. Before activation the historical v1 flow remains.
+
+## Crafting with activated v2 rules
+
+`craft({actionId,recipe,inputs})` accepts `p2:<decimal number>` and
+`c2:<64 hex commitment>` assets. The effective settings set the input count,
+normalized ratio and packet budgets. The kit verifies a bounded preview against
+the independently accepted catalog root, then saves the canonical snapshot,
+exact input properties, output commitment, account revision, nonce and signed
+spend before sending. Scaling every input by the same factor scales the output
+quantity; it does not change the normalized recipe at that snapshot.
+
+A delivery receipt means awaiting acceptance. Only an accepted batch spends the
+inputs and credits the output. Overspending, a reused nonce, a stale account
+revision or changed input metadata cannot spend different units. A timeout keeps
+the exact signed action; retry its action ID. Reconcile a rejected or expired
+spend before preparing a new intent. A new intent must never be used to bypass
+an unknown result.
+
+Mass and known-match fractions remain exact expression commitments, with no
+maximum generation. A tier may initially be unresolved. Call
+`refine_compound({actionId,asset,steps?})` to perform bounded comparison work;
+`steps` defaults to the effective `compoundWorkBudget`. If the named proof budget
+refuses that much work before a receipt, use a smaller step count under a new
+intent after confirming the refusal. Resume an uncertain step with its original
+action ID. After each accepted step, a new action reads the accepted cursor;
+`state:"complete"` returns the exact tier. Anyone may continue this work, and it
+spends no matter. Restarting preserves all accepted progress. The tier uses the
+original snapshot and thresholds, including exact threshold equality; refinement
+never changes the compound ID or its parent's properties. An unresolved tier
+must not be guessed for a fee quote.
+# Accepted fee credits
+
+`use_credit({actionId, credit, request, items:[{fee, amount}]})` allocates part
+of an accepted credit to an open request. `transfer_credit({actionId, credit,
+to})` changes its owner; `to` is a Trac address. The kit reads ownership and the
+current revision from its independent notary client before signing. Reuse the
+same action ID after uncertainty: the saved signature and revision stay intact.
+`financial_action_status({id})` reports accepted or queued work.
+
+Fee keys bind the network, rail, token, role and destination; custody keys also
+bind the beneficiary. A credit cannot pay a different kind of fee. Old accepted
+keys remain valid under their original terms. These actions transfer accepted
+credit only; they do not send a wallet payment or automatically spend money.
+
+For beneficiary fees held by an explicit custodian, use
+`claim_custody({actionId, id, destination})` to sign a claim after reading the
+accepted liability from your independent notary. `custody_status({id})` returns
+its state and the exact payout plan for the custodian. The custodian sends that
+plan from their own wallet, then calls
+`report_custody_payment({id, reference, index})` with the transaction/inscription
+and output/event index. Reuse the original action ID after uncertainty. Claims
+and payment reports never automatically send funds. Direct transfers cannot be
+declared revoked by a timeout; retry the same claim and verify its outcome.

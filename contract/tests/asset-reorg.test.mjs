@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { harness, deployment, nonce, alice } from './helpers/harness.mjs';
+import { checkpoint, chain, parseHeader } from './helpers/chain.mjs';
+import { REGTEST_PARAMS } from '../beacon/bitcoin.js';
+import { accountKey, accountTree } from '../account-tree.js';
+import { applyBeaconRecovery } from '../beacon/recovery.js';
+
+test('a pruned-ancestor branch recovers in bounded pages and adopts only with pinned reconciliation', async () => {
+  const params = { ...REGTEST_PARAMS, interval: 4, branchDepth: 2 }, h = harness({ ...deployment, beacon: { checkpoint, params } });
+  await h.advance(16);
+  const rootKey = accountKey('bitcoin-checkpoint', '0'), tree = accountTree(new Map([[rootKey, checkpoint]])), id = nonce(1);
+  const alternative = chain(18, checkpoint, 601, 77);
+  assert.equal(await h.run('hd', { headers: alternative.slice(0, 2) }), 'header_parent');
+  const apply = async op => {
+    const state = h.state();
+    await applyBeaconRecovery(state, op, { params, checkpoint, poster: alice.address, settings: { recoveryHeaders: 3 } });
+    for (const [key, value] of state.writes) if (value === undefined) h.db.delete(key); else h.db.set(key, value);
+  };
+  const begin = { op: 'br', v: 2, type: 'begin', id, anchor: checkpoint, previous: (await h.state().head()).tip.hash, proof: tree.prove([rootKey]) };
+  await assert.rejects(apply(begin), /recovery_inactive/);
+  h.db.set('s/beaconRecovery', { version: 2, archiveRoot: tree.root });
+  await apply(begin);
+  for (let i = 0; i < 18; i += 3) await apply({ op: 'br', v: 2, type: 'append', id, sequence: String(i / 3), headers: alternative.slice(i, i + 3) });
+  const previous = (await h.state().head()).tip.hash, tip = parseHeader(alternative.at(-1)).hash;
+  const adopt = { op: 'br', v: 2, type: 'adopt', id, previous, tip, reconciliation: nonce(2) };
+  await assert.rejects(apply(adopt), /recovery_reconciliation/);
+  h.db.set('recoveryApproved/' + id, { previous, tip, root: nonce(2), lastBatch: 0 });
+  h.db.set('m/' + nonce(3), { s: 0, h: true, amount: '3' });
+  await apply(adopt);
+  assert.equal((await h.state().head()).tip.hash, tip); assert.equal((await h.state().head()).counted, 18);
+  assert.equal((await h.state().head()).revision, 1);
+  assert.equal(h.db.get('m/' + nonce(3)).h, true, 'adoption cannot erase an unresolved financial obligation');
+  assert.equal(await h.state().beacon().hashAt(1), parseHeader(alternative[0]).hash);
+  const extension = chain(1, parseHeader(alternative.at(-1)));
+  assert.equal(await h.run('hd', { headers: extension }), null);
+  assert.equal((await h.state().head()).tip.hash, parseHeader(extension[0]).hash);
+  assert.ok(h.db.has('b/best'), 'legacy chain remains available for audit');
+  await assert.rejects(apply(adopt), /recovery_state/);
+});

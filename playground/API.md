@@ -187,7 +187,7 @@ The Lab feed separately retains 2,000 local diagnostic events.
 | `/api/mining` | `{enabled:true,intervalMs:10000}` (1000–3600000) | Current mining settings; `enabled:false` pauses. |
 | `/api/time-travel` | `{blocks:1008}` (1–10000) | `{before,tip,counted,mined}`. Advances real regtest blocks and drains gateway batches, including finder deadlines and regions. |
 | `/api/reorg` | `{depth:1}` (1–7) | `{depth,before,tip,oldHash,newHash,replacementBlocks}` |
-| `/api/fee` | `{baseFee:"22.6"}` (decimal TAP) | Updated fee policy with atomic `baseFee` and `unit` metadata. Outstanding signed quotes retain their original B. |
+| `/api/fee` | `{baseFee:"22.6"}` (decimal TAP) | Updated fee policy with atomic `baseFee` and `unit` metadata. Outstanding signed quotes retain their original base price. |
 | `/api/bots` | `{count:12,intervalMs:15000,paused:false,resetErrors:false}` (count 0–100, interval 1000–3600000; fields optional) | Current bot settings. |
 
 | `/api/bots/step` | `{}` | One bot tick even while bots are paused: claims for all, then at most one economic action. |

@@ -8,6 +8,9 @@ const positive = value => typeof value === 'string' && /^[1-9][0-9]{0,37}$/.test
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const bytes = (domain, value) => Buffer.from(domain + '|' + rules.stableJSON(value));
 const settingsField = feeSettings => feeSettings === undefined ? {} : { feeSettings };
+const withinQuote = (q, counted, until) => q.settingsHash ?
+  rules.compareUint(rules.decimalV2(counted), q.validFrom) >= 0 && rules.compareUint(rules.decimalV2(until), rules.decimalV2(counted)) > 0 && rules.compareUint(rules.decimalV2(until), q.validUntil) <= 0 :
+  integer(counted) && counted >= q.validFrom && integer(until) && until > counted && until <= q.validUntil;
 // Omitted settings retain the original revision hash and the original defaults.
 const revisionId = (baseFee, activeFrom, feeSettings) => hash(bytes('dmw-fee-policy-v1', { baseFee, activeFrom, ...settingsField(feeSettings) }));
 export const LAUNCH_FEE_SETTINGS = Object.freeze({ ...rules.FEE_DEFAULTS, link: 3 });
@@ -20,14 +23,29 @@ export function validateFeeSettings(settings) {
 }
 export const feeSettingsField = settingsField;
 export const mintFeeScope = (asset, block, kind) => rules.stableJSON(['mint', asset, block ?? null, kind]);
+export function mintOwnershipMatches(quote, { bitmap, link, assetRevision }) {
+  const old = { bitmap, link };
+  return quote.mintOwnershipHash === hash(rules.stableJSON({ ...old, ...(assetRevision ? { assetRevision } : {}) })) ||
+    !quote.settingsHash && quote.mintOwnershipHash === hash(rules.stableJSON(old));
+}
 
 export async function issueFeeTerms(reads, kind, id, until, counted) {
   const policy = (await reads.registry())[kind]; check(policy, kind + '_unconfigured');
   const scope = `${kind}/${id}`, quote = await reads.feeQuotes.issue(scope, counted);
   return { ...policy, baseFee: quote.baseFee, ...settingsField(quote.feeSettings),
+    ...(quote.settingsHash ? { settingsHash: quote.settingsHash } : {}),
     feeAuthorization: await reads.feeQuotes.accept(quote, scope, id, until, counted) };
 }
 export async function validateQuotedTerms(reads, kind, row) {
+  // An activated legacy link is pinned by the terminal notary. Registry
+  // destination changes cannot replace the terms of its original lock.
+  const imported = kind === 'link' && await reads.financialRecord?.('fi/source/' + row.id);
+  if (imported?.legacy?.kind === 'link') {
+    const original = imported.legacy.original;
+    check(row.id === imported.requestId && ['request', 'sig', 'terms'].every(key =>
+      rules.stableJSON(row[key]) === rules.stableJSON(original[key])), 'link_import_terms');
+    return row.terms;
+  }
   const configured = (await reads.registry())[kind]; check(configured, kind + '_unconfigured');
   const { payer, hash, feeAuthorization, ...policy } = row.terms;
   const fee = await reads.feeQuotes.accepted(feeAuthorization, `${kind}/${row.id}`, row.id, row.request.until);
@@ -43,6 +61,7 @@ export function createFeePolicy(baseFee, activeFrom = 0, feeSettings) {
 }
 
 export function validateFeePolicy(registry) {
+  if (typeof registry.currentFee === 'function') return { current: registry.metadata.feeCurrent, revisions: [registry.currentFee()] };
   const p = registry.feePolicy;
   check(p, 'feePolicy is required in the operator registry');
   check(Object.keys(p).every(k => ['current', 'revisions'].includes(k)) && Array.isArray(p.revisions) && p.revisions.length > 0, 'fee_policy');
@@ -95,8 +114,8 @@ export function changeFeePolicy(registry, changes, now = Date.now()) {
 }
 
 export class FeeQuotes {
-  constructor({ network, gateway, secret, registry, now = Date.now }) {
-    Object.assign(this, { network, registry, now });
+  constructor({ network, gateway, secret, registry, now = Date.now, settings, settingsHistory }) {
+    Object.assign(this, { network, registry, now, settings, settingsHistory });
     if (secret) this.privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(secret)]), format: 'der', type: 'pkcs8' });
     this.publicKey = gateway ? createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(gateway, 'hex')]), format: 'der', type: 'spki' }) : this.privateKey ? createPublicKey(this.privateKey) : null;
   }
@@ -106,35 +125,56 @@ export class FeeQuotes {
     const { signature, ...payload } = signed;
     check(verify(null, bytes(domain, payload), this.publicKey, Buffer.from(signature, 'hex')), 'fee_quote_signature'); return payload;
   }
-  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash, sourceLocators) {
+  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash) {
     const started = this.now(), registry = await this.registry(), revision = currentFee(registry);
+    const document = await this.settings?.() ?? this.document, policy = document?.values;
+    if (document) {
+      rules.validateSettingsDocument(document);
+      check(document.network === this.network && policy.feePolicyRevision === revision.id &&
+        policy.linkMultiplier === (revision.feeSettings ?? rules.FEE_DEFAULTS).link, 'fee_settings_pin');
+    }
+    const blocks = policy?.quoteLifetimeTips ?? QUOTE_BLOCKS, milliseconds = policy?.quoteLifetimeMs ?? QUOTE_MILLISECONDS;
     // A replacement may land while the registry read is in flight. Either
     // snapshot has a valid issuance instant without delaying the new rate.
     const issuedAt = Math.max(started, revision.activeFrom);
-    check(integer(issuedAt) && issuedAt <= this.now() && integer(counted) && integer(counted + QUOTE_BLOCKS), 'fee_quote_clock');
+    const validFrom = document ? rules.decimalV2(counted) : counted, validUntil = document ? rules.addUint(validFrom, String(blocks)) : counted + blocks;
+    check(integer(issuedAt) && issuedAt <= this.now() && integer(issuedAt + milliseconds) &&
+      (document || integer(validFrom) && integer(validUntil)), 'fee_quote_clock');
     return this.sign('dmw-fee-quote-v1', { network: this.network, scope, revision: revision.id, baseFee: revision.baseFee, unit: rules.TAP_UNIT,
       ...settingsField(revision.feeSettings),
-      issuedAt, expiresAt: issuedAt + QUOTE_MILLISECONDS, validFrom: counted, validUntil: counted + QUOTE_BLOCKS, ...(payouts ? { payouts } : {}), ...(deploymentId ? { deploymentId } : {}), ...(mintOwnershipHash ? { mintOwnershipHash } : {}), ...(sourceLocators ? { sourceLocators } : {}) });
+      ...(document ? { settingsHash: rules.hashObject(document) } : {}),
+      issuedAt, expiresAt: issuedAt + milliseconds, validFrom, validUntil, ...(payouts ? { payouts } : {}), ...(deploymentId ? { deploymentId } : {}), ...(mintOwnershipHash ? { mintOwnershipHash } : {}) });
   }
   async validate(quote, scope) {
     const q = this.verify('dmw-fee-quote-v1', quote), registry = await this.registry();
-    const revision = validateFeePolicy(registry).revisions.find(r => r.id === q.revision);
+    const revision = typeof registry.feeRevision === 'function' ? registry.feeRevision(q.revision) : validateFeePolicy(registry).revisions.find(r => r.id === q.revision);
+    let policy;
+    if (q.settingsHash !== undefined) {
+      const document = await this.settingsHistory?.get(q.settingsHash) ?? this.document;
+      check(document && rules.hashObject(document) === q.settingsHash && document.network === this.network, 'fee_settings_history');
+      rules.validateSettingsDocument(document); policy = document.values;
+      check(policy.feePolicyRevision === q.revision && policy.linkMultiplier === (q.feeSettings ?? rules.FEE_DEFAULTS).link, 'fee_settings_pin');
+    }
     check(q.network === this.network && q.scope === scope && rules.stableJSON(q.unit) === rules.stableJSON(rules.TAP_UNIT) && positive(q.baseFee) && revision && revision.id === q.revision && revision.baseFee === q.baseFee &&
       revision.id === revisionId(revision.baseFee, revision.activeFrom, revision.feeSettings) &&
       rules.stableJSON(settingsField(q.feeSettings)) === rules.stableJSON(settingsField(revision.feeSettings)), 'fee_quote_policy');
+    const heightWindow = policy ? rules.uintV2(q.validUntil) === rules.addUint(rules.uintV2(q.validFrom), String(policy.quoteLifetimeTips)) :
+      integer(q.validFrom) && integer(q.validUntil) && q.validUntil === q.validFrom + QUOTE_BLOCKS;
     check(integer(q.issuedAt) && q.issuedAt >= revision.activeFrom && (revision.retiredAt === null || q.issuedAt <= revision.retiredAt) &&
-      q.expiresAt === q.issuedAt + QUOTE_MILLISECONDS && integer(q.validFrom) && integer(q.validUntil) && q.validUntil === q.validFrom + QUOTE_BLOCKS, 'fee_quote_window');
+      integer(q.expiresAt) && q.expiresAt === q.issuedAt + (policy?.quoteLifetimeMs ?? QUOTE_MILLISECONDS) && heightWindow, 'fee_quote_window');
     return q;
   }
   async accept(quote, scope, id, until, counted) {
     const q = await this.validate(quote, scope), at = this.now();
-    check(at >= q.issuedAt && at <= q.expiresAt && integer(counted) && counted >= q.validFrom && integer(until) && until > counted && until <= q.validUntil, 'fee_quote_expired', 409);
+    if (q.settingsHash) { counted = rules.decimalV2(counted); until = rules.decimalV2(until); }
+    check(at >= q.issuedAt && at <= q.expiresAt && withinQuote(q, counted, until), 'fee_quote_expired', 409);
     return this.sign('dmw-fee-acceptance-v1', { network: this.network, quote, id, until, counted, at });
   }
   async accepted(authorization, scope, id, until) {
     const a = this.verify('dmw-fee-acceptance-v1', authorization), q = await this.validate(a.quote, scope);
-    check(a.network === this.network && a.id === id && a.until === until && integer(a.counted) && a.counted >= q.validFrom && integer(until) && until > a.counted && until <= q.validUntil &&
+    if (q.settingsHash) until = rules.decimalV2(until);
+    check(a.network === this.network && a.id === id && a.until === until && withinQuote(q, a.counted, until) &&
       integer(a.at) && a.at >= q.issuedAt && a.at <= q.expiresAt, 'fee_quote_binding');
-    return { baseFee: q.baseFee, ...settingsField(q.feeSettings) };
+    return { baseFee: q.baseFee, ...settingsField(q.feeSettings), ...(q.settingsHash ? { settingsHash: q.settingsHash } : {}) };
   }
 }

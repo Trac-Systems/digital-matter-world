@@ -24,7 +24,9 @@ export async function append(path, value) {
 }
 export async function diskFloor(path = '/') {
   const s = await statfs(path), freeBytes = s.bavail * s.bsize;
-  assert.ok(freeBytes >= 100 * 1024 ** 3, 'disk_floor_100_GiB');
+  const minimum = Number(process.env.DMW_LOCAL_MIN_FREE_GIB ?? 100);
+  assert.ok(Number.isFinite(minimum) && minimum >= 40, 'invalid_local_disk_reserve');
+  assert.ok(freeBytes >= minimum * 1024 ** 3, `disk_floor_${minimum}_GiB`);
   return freeBytes;
 }
 export function options(args) {

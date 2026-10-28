@@ -11,6 +11,8 @@ export const PURPOSE = {
   ethereum: 'Pays with bridged TAP on Ethereum and receives Ethereum-side earnings.',
 };
 const RAILS = ['tap', 'ethereum'], KEY = 'dmw-web-v1/wallets';
+const ADDRESS = { tap: /^(bc1p|bcrt1p)[0-9a-z]{20,90}$/, ethereum: /^0x[0-9a-f]{40}$/ };
+const provider = rail => rail === 'tap' ? window.tapprotocol : window.ethereum;
 const listeners = new Set();
 let target, opener;
 
@@ -23,15 +25,26 @@ export const wallet = {
   player() { for (const r of RAILS) { const p = this[r]?.players?.[0]; if (p) return p; } return null; },
   async connect(rail) {
     target ??= api('/web-api/target').catch(e => { target = undefined; throw e; });
-    const found = await (rail === 'tap' ? tapAccount(await target) : ethAccount(await target));
-    this[rail] = { address: found.address, players: null };
-    save(); changed(); await lookup(rail);
+    const found = await (rail === 'tap' ? tapAccount(await target) : ethAccount(await target, undefined, { pick: true }));
+    use(rail, found.address); await lookup(rail);
   },
-  forget(rail) { this[rail] = null; save(); changed(); },
+  // Disconnect also withdraws the site's MetaMask grant where supported, so the next connect asks again.
+  forget(rail) {
+    this[rail] = null; save(); changed();
+    if (rail === 'ethereum') provider(rail)?.request?.({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] })?.catch?.(() => {});
+  },
   // After a payout binding is accepted the wallet's player changes.
   refresh() { return Promise.all(RAILS.filter(r => this[r]).map(lookup)); },
   open() { opener?.(); },
 };
+function use(rail, address) { wallet[rail] = { address, players: null }; save(); changed(); }
+// The wallet switched accounts (or locked: no accounts) while the site was connected to it.
+function switched(rail, accounts) {
+  if (!wallet[rail] || !Array.isArray(accounts)) return;
+  const address = rail === 'ethereum' ? accounts[0]?.toLowerCase() : accounts[0];
+  if (!ADDRESS[rail].test(address ?? '')) { wallet[rail] = null; save(); changed(); return; }
+  if (address !== wallet[rail].address) { use(rail, address); void lookup(rail); }
+}
 function changed() { for (const fn of listeners) { try { fn(wallet); } catch (e) { console.error(e); } } }
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(RAILS.filter(r => wallet[r]).map(r => [r, wallet[r].address])))); } catch {}
@@ -50,8 +63,15 @@ async function lookup(rail) {
 {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}; } catch {}
-  for (const r of RAILS) if (typeof saved[r] === 'string' && (r === 'tap' ? /^(bc1p|bcrt1p)[0-9a-z]{20,90}$/ : /^0x[0-9a-f]{40}$/).test(saved[r])) wallet[r] = { address: saved[r], players: null };
+  for (const r of RAILS) if (typeof saved[r] === 'string' && ADDRESS[r].test(saved[r])) wallet[r] = { address: saved[r], players: null };
   void wallet.refresh();
+  for (const r of RAILS) {
+    const p = provider(r);
+    try { p?.on?.('accountsChanged', accounts => switched(r, accounts)); } catch {}
+    // An account switched while the page was closed: ask quietly, without a prompt. A locked wallet answers nothing; keep the choice then.
+    if (wallet[r]) Promise.resolve(r === 'tap' ? p?.getAccounts?.() : p?.request?.({ method: 'eth_accounts' }))
+      .then(accounts => { if (accounts?.length) switched(r, accounts); }, () => {});
+  }
 }
 
 // The message a person sends their agent (README prompt, step 4).
@@ -85,7 +105,7 @@ export function connectButtons(rails = RAILS, status) {
     h('div.small.muted', {}, PURPOSE[rail])));
 }
 
-// Header: "Connect wallet", or the connected address. The menu lists the wallets, their player and the three jobs.
+// Header: "Connect wallet", or the connected address. The menu lists the wallets, their player and the Mint & wallets page.
 export function walletControl() {
   const button = h('button.btn.sm.wallet-btn', { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' });
   const menu = h('div.wallet-menu', { role: 'dialog', 'aria-label': 'Wallet', hidden: true });
@@ -103,8 +123,8 @@ export function walletControl() {
       h('div.wallet-sec', {}, h('h3', {}, any ? 'Connected wallets' : 'Connect a wallet'),
         any ? null : h('p.small.muted', {}, 'One connection for the whole site: minting, Bitmap links and payout wallets.'),
         ['tap', 'ethereum'].map(r => walletSummary(r, { forget: true, purpose: true })), connectButtons(undefined, status), status),
-      h('nav.wallet-sec.wallet-jobs', { 'aria-label': 'Wallet pages' },
-        h('a', { href: '/mint' }, 'Mint'), h('a', { href: '/link' }, 'Link a Bitmap'), h('a', { href: '/bind-payout' }, 'Payout wallets')));
+      h('nav.wallet-sec.wallet-jobs', { 'aria-label': 'Wallet page' },
+        h('a', { href: '/mint' }, 'Mint & wallets')));
   };
   const close = () => { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); };
   const open = () => { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); draw(); };

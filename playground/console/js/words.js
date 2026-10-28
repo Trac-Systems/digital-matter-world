@@ -67,7 +67,7 @@ export function mintRule(r, counted) {
 }
 
 const JOB_NAMES = {
-  mine: 'Mine blocks', mining: 'Auto-mine', 'time-travel': 'Time travel', reorg: 'Reorg', fee: 'Change base fee', bots: 'Bot settings',
+  mine: 'Mine blocks', mining: 'Auto-mine', 'time-travel': 'Time travel', reorg: 'Reorg', fee: 'Change base price', bots: 'Bot settings',
   header: 'Send header', claim: 'Claim', 'discovery-commit': 'Discovery commit', 'discovery-reveal': 'Discovery reveal', commit: 'Discovery commit', reveal: 'Discovery reveal',
   craft: 'Craft', transfer: 'Transfer',
   'mint-quote': 'Mint quote', mint: 'Mint request', 'compound-mint': 'Compound mint', pay: 'Payment', bitmap: 'Inscribe Bitmap', link: 'Bitmap link',

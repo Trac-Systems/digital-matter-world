@@ -8,6 +8,7 @@ import { Files } from '../../src/files.mjs';
 import { serve } from '../../src/http.mjs';
 import { Limiter } from '../../src/limiter.mjs';
 import { loadConfig } from '../../src/config.mjs';
+import { RESOURCE_PROFILE } from '../../../rules/src/resource-settings.js';
 
 const root = `${configuredBuildRoot}/service/regressions/http-data`;
 const send = (url, path, parts, headers = {}) => new Promise((resolve, reject) => {
@@ -33,7 +34,7 @@ test('control: HTTP bodies, traversal, errors, HEAD and ETags stay bounded/publi
     const r = await fetch(server.url + '/latest.json'); assert.equal(r.headers.get('cache-control'), 'public, max-age=1, must-revalidate');
     assert.equal((await fetch(server.url + '/latest.json', { headers: { 'if-none-match': r.headers.get('etag') } })).status, 304);
     const head = await fetch(server.url + '/blocks/one.bin', { method: 'HEAD' }); assert.equal(await head.text(), ''); assert.equal(head.headers.get('content-length'), '5'); assert.match(head.headers.get('cache-control'), /immutable/);
-    assert.equal(server.server.headersTimeout, 5000); assert.equal(server.server.requestTimeout, 10000); assert.equal(server.server.timeout, 15000); assert.equal(server.server.maxConnections, 1200);
+    assert.equal(server.server.headersTimeout, RESOURCE_PROFILE.httpHeaderTimeoutMs); assert.equal(server.server.requestTimeout, RESOURCE_PROFILE.requestTimeoutMs); assert.equal(server.server.timeout, RESOURCE_PROFILE.httpSocketTimeoutMs); assert.equal(server.server.maxConnections, RESOURCE_PROFILE.httpConnections);
   } finally { await server.close(); }
 });
 

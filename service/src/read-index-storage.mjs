@@ -6,6 +6,24 @@ import { IndexedRows, pageCursor, tieFor } from './paging.mjs';
 // Persistent triggers also capture writes before PublicViews is constructed and
 // during journal recovery. A failed refresh never consumes its invalidations.
 export function readIndexSchema(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS claimedBlocksV2(asset TEXT,heightKey TEXT,value TEXT,found INTEGER,minted INTEGER,PRIMARY KEY(asset,heightKey)) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS claimedBlocksV2Found ON claimedBlocksV2(asset,found,heightKey);
+    CREATE INDEX IF NOT EXISTS claimedBlocksV2Minted ON claimedBlocksV2(asset,minted,heightKey);
+    CREATE INDEX IF NOT EXISTS claimedBlocksV2Status ON claimedBlocksV2(asset,found,minted,heightKey);`);
+  for (const operation of ['INSERT', 'UPDATE']) db.exec(`CREATE TRIGGER IF NOT EXISTS claimedBlocksV2${operation} AFTER ${operation} ON records WHEN new.space LIKE 'claimed2/%'
+    BEGIN INSERT INTO claimedBlocksV2 VALUES(substr(new.space,10),new.id,new.value,coalesce(json_extract(new.value,'$.found'),0),coalesce(json_extract(new.value,'$.minted'),0))
+    ON CONFLICT(asset,heightKey) DO UPDATE SET value=excluded.value,found=excluded.found,minted=excluded.minted; END;`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS claimedBlocksV2DELETE AFTER DELETE ON records WHEN old.space LIKE 'claimed2/%'
+    BEGIN DELETE FROM claimedBlocksV2 WHERE asset=substr(old.space,10) AND heightKey=old.id; END;`);
+  db.exec(`CREATE TABLE IF NOT EXISTS claimedBlocks(asset TEXT,height INTEGER,value TEXT,found INTEGER,minted INTEGER,PRIMARY KEY(asset,height)) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS claimedBlocksFound ON claimedBlocks(asset,found,height);
+    CREATE INDEX IF NOT EXISTS claimedBlocksMinted ON claimedBlocks(asset,minted,height);
+    CREATE INDEX IF NOT EXISTS claimedBlocksStatus ON claimedBlocks(asset,found,minted,height);`);
+  for (const operation of ['INSERT', 'UPDATE']) db.exec(`CREATE TRIGGER IF NOT EXISTS claimedBlocks${operation} AFTER ${operation} ON records WHEN new.space LIKE 'claimed/%'
+    BEGIN INSERT INTO claimedBlocks VALUES(substr(new.space,9),CAST(new.id AS INTEGER),new.value,coalesce(json_extract(new.value,'$.found'),0),coalesce(json_extract(new.value,'$.minted'),0))
+    ON CONFLICT(asset,height) DO UPDATE SET value=excluded.value,found=excluded.found,minted=excluded.minted; END;`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS claimedBlocksDELETE AFTER DELETE ON records WHEN old.space LIKE 'claimed/%'
+    BEGIN DELETE FROM claimedBlocks WHERE asset=substr(old.space,9) AND height=CAST(old.id AS INTEGER); END;`);
   db.exec(`CREATE TABLE IF NOT EXISTS publicReadChanges(space TEXT,id TEXT,PRIMARY KEY(space,id)) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS publicReadState(kind TEXT,id TEXT,value TEXT,PRIMARY KEY(kind,id)) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS publicReadRows(kind TEXT,id TEXT,value TEXT,position,PRIMARY KEY(kind,id)) WITHOUT ROWID;

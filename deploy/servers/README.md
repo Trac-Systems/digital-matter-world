@@ -3,11 +3,10 @@
 These definitions are preparation artifacts. No script installs them, connects
 over SSH, changes DNS, obtains certificates or starts a real service.
 
-These are example layouts for a new installation, not a description of the
-public service's infrastructure. Adapt paths, accounts, ports and domains to
-your environment. `Caddyfile.gateway` serves the gateway; `Caddyfile.operator`
-provides an example for a separately hosted operator. The
-[input template](../inputs/mainnet-inputs.template.json) illustrates configuration.
+[GO-LIVE-TODAY.md](../GO-LIVE-TODAY.md) gives the server-console installation
+commands and the annotated input worksheet. The current deployment uses one
+Ubuntu host, `Caddyfile.gateway`, five local operator accounts and no operator
+DNS names. `Caddyfile.operator` is an optional remote-host example.
 Keep `admission.closed.caddy` installed as
 `/etc/dmw/admission.caddy` until acceptance. It blocks new mutations while
 allowing reads, authenticated operator evidence and payment notices for existing
@@ -19,7 +18,8 @@ Without it, automatic directive sorting can place a catch-all proxy before the d
 Pin Node 24.22.1 at `/usr/bin/node`. Linux native database bindings also require
 `libatomic1` (verified on Ubuntu 24.04). Install reviewed source at
 `/opt/dmw/current`, and the reviewed sidecar at `/opt/dmw/bin/dmw-tss`.
-Provision one service account and one private directory per operator. A gateway account must not read operator share directories. Local listeners
+Provision one service account and one private directory per operator on the same
+host. A gateway account must not read operator share directories. Local listeners
 remain on loopback: gateway 58910, headers 58912, signers 58800–58804 and sidecars
 58700–58704. Only the public gateway domain needs TLS. The
 gateway `/health` route remains available; `/operator/*` and `/internal/*` are

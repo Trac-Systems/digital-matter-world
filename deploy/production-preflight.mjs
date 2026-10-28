@@ -1,3 +1,4 @@
+import { privateRegistry as readRegistry } from './registry.mjs';
 import { publicVerification } from './public-verification.mjs';
 import { randomBytes } from 'node:crypto';
 import { need, privateJSON, privateBytes, secret, sha256 } from './target.mjs';
@@ -60,7 +61,7 @@ export async function productionPreflight(t, { stage = 'preparation', online = f
       else verifyOperatorAttestation(await reads.signer(m, '/attest-deployment', { challenge }), { target: t, member: m, challenge });
     }, 'Provision each local signer and bind its reader, identity, network, epoch and roster.');
     if (stage === 'admission') {
-      await check('Rendered runtime and registry', async () => { await renderTargetRuntime(t, { persist: false }); await reads.registry(await privateJSON(t.gateway.registryFile)); }, 'Match deployment outputs, confirmed registry entries and private runtime references.');
+      await check('Rendered runtime and registry', async () => { await renderTargetRuntime(t, { persist: false }); await reads.registry(await readRegistry(t.gateway.registryFile)); }, 'Match deployment outputs, confirmed registry entries and private runtime references.');
       await check('Escrow code and authorities', async () => {
         for (const address of [t.ethereum.tokenAddress, t.ethereum.escrowAddress]) need((await reads.ethereum('eth_getCode', [address, 'latest'])).length > 2, 'deployed_code');
         for (const [fn, expected] of [['token()', t.ethereum.tokenAddress], ['admin()', t.ethereum.adminAddress], ['committee()', committeeAddress(t.committee.publicKey)]]) need('0x' + (await reads.ethereum('eth_call', [{ to: t.ethereum.escrowAddress, data: calldata(fn, []) }, 'latest'])).slice(-40) === expected.toLowerCase(), 'authority');

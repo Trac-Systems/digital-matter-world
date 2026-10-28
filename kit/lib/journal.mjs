@@ -3,7 +3,7 @@ import { open, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { check, privateDirectory, sha256 } from './check.mjs';
-import { stableJSON, DISCOVERY_LIMITS, moveId } from '../../rules/src/index.js';
+import { stableJSON, DISCOVERY_LIMITS, moveId, moveIdV2, decimalV2, addUint } from '../../rules/src/index.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 // One durable intent per logical action; ambiguous sends retain the exact packet.
@@ -165,9 +165,11 @@ export class Journal {
         receiptTip: receipt?.tip ?? null };
       const actionId = row.id.slice(10, -7), parent = this.get(`discovery/${actionId}`), reveal = this.get(`discovery/${actionId}/reveal`);
       const witnessed = parent?.result?.receipt, tip = receipt?.tip ?? witnessed?.tip ?? null;
+      const settings = parent?.body?.settings?.values;
       return { type: 'discovery', actionId, state: row.state, sealed: true, commitment: body.p.commitment,
-        receiptTip: tip, revealFrom: tip === null ? null : tip + 2, revealUntil: tip === null ? null : tip + DISCOVERY_LIMITS.lifetime,
-        witnessRecorded: !!witnessed, revealState: reveal?.state ?? null, revealMove: reveal ? moveId(reveal.body) : null,
+        receiptTip: tip, revealFrom: tip === null ? null : settings ? addUint(decimalV2(tip), String(settings.minRevealDelay)) : tip + 2,
+        revealUntil: tip === null ? null : settings ? addUint(decimalV2(tip), String(settings.commitLifetime)) : tip + DISCOVERY_LIMITS.lifetime,
+        witnessRecorded: !!witnessed, revealState: reveal?.state ?? null, revealMove: reveal ? (reveal.body.v === 2 ? moveIdV2 : moveId)(reveal.body) : null,
         revealRefusal: reveal?.state === 'refused' ? reveal.result : null };
     });
     const total = this.db.prepare(`SELECT count(*) AS n FROM actions a WHERE ${where}`).get(this.scope).n;

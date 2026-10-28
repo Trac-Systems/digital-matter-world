@@ -18,16 +18,18 @@ const require=createRequire(new URL('../local/package.json',import.meta.url));
 const {secp256k1}=require('@noble/curves/secp256k1'),btc=require('@scure/btc-signer');
 
 async function evidenceFixture(t) {
-  let store; const root=await temporary(t,()=>store?.close()),directory=join(root,'gateway'),contexts=join(root,'contexts');await mkdir(contexts,{mode:0o700});
+  let store,publisher; const root=await temporary(t,()=>{publisher?.close();return store?.close();}),directory=join(root,'gateway'),contexts=join(root,'contexts');await mkdir(contexts,{mode:0o700});
   store=await Store.open(directory);
   const secret=randomBytes(32),identities=Array.from({length:5},()=>randomBytes(32));
   const config={data:directory,prod:{contexts},network:'rehearsal-production-shaped',epoch:1,committee:identities.map((key,i)=>({id:'operator-'+i,peer:{identity:edPublic(key)}}))};
   const stamp={tip:2022,tipHash:'aa'.repeat(32),counted:2017,last:{n:0,to:2016},revision:1};
   let time=Date.now(),fork=false,down=false,request;
-  const publisher=evidencePublisher({config,store,reads:{trac:async()=>stamp},secret,now:()=>time});
+  publisher=evidencePublisher({config,store,reads:{trac:async()=>stamp},secret,now:()=>time});
   await store.put('meta','patterns',[]);await store.put('meta','gatewaySecret',secret.toString('hex'));
   await store.put('mints','mint',{id:'mint',request:{owner:'bb'.repeat(32)},receiver:'bc1-fixture',secret:secret.toString('hex'),preimage:'private-preimage'});
-  await writeFile(join(contexts,'1.json'),JSON.stringify({last:stamp.last,inputs:[]}),{mode:0o600});
+  const context=JSON.stringify({last:stamp.last,inputs:[]}),contextHash=hash(context);
+  await writeFile(join(contexts,contextHash+'.json'),context,{mode:0o600});
+  await store.put('evidenceContexts','1',{path:contextHash+'.json',hash:contextHash});
   const operators=[];
   for(let i=0;i<5;i++) {
     const dir=join(root,'operator-'+i);await mkdir(dir,{mode:0o700});
@@ -35,30 +37,30 @@ async function evidenceFixture(t) {
       now:()=>time,clock:async()=>({tip:stamp.tip,tipHash:fork?'ff'.repeat(32):stamp.tipHash}),stamp:async()=>stamp,
       source:{request:async(_path,{body})=>{if(down)throw Error('missing_evidence');request=body;return publisher(body);}}}));
   }
-  t.after(()=>operators.forEach(o=>o.close()));
+  t.after(()=>Promise.all(operators.map(o=>o.close())));
   return {root,store,operators,publisher,stamp,secret,identities,request:()=>request,advance:n=>{time+=n;},fork:()=>{fork=true;},down:()=>{down=true;}};
 }
 test('five isolated operator stores receive authenticated evidence without gateway credentials',async t=>{
   const f=await evidenceFixture(t);
-  for(const operator of f.operators){await operator.refresh();assert.equal(operator.get('mints','mint').id,'mint');assert.equal(operator.get('meta','gatewaySecret'),null);assert.equal(operator.context(1).last.n,0);const disk=await readFile(join(operator.config.directory,'evidence.json'),'utf8');assert.ok(!disk.includes(f.secret.toString('hex')));assert.ok(!disk.includes('private-preimage'));}
+  for(const operator of f.operators){await operator.refresh();const row=await operator.get('mints','mint');assert.equal(row.id,'mint');assert.equal(await operator.get('meta','gatewaySecret'),null);assert.equal((await operator.context(1)).last.n,0);const disk=await readFile(join(operator.config.directory,'evidence-checkpoint.json'),'utf8');assert.ok(!JSON.stringify(row).includes(f.secret.toString('hex')));assert.ok(!JSON.stringify(row).includes('private-preimage'));assert.ok(!disk.includes(f.secret.toString('hex')));assert.ok(!disk.includes('private-preimage'));}
   assert.equal(new Set(f.operators.map(o=>o.config.directory)).size,5);
 });
 test('evidence rejects unauthenticated operators, replay, wrong network and malformed scopes',async t=>{
   const f=await evidenceFixture(t);await f.operators[0].refresh();const request=f.request();
   await assert.rejects(f.publisher(request),/replay/);
   await assert.rejects(f.publisher({...request,signature:'00'.repeat(64)}),/authentication/);
-  await assert.rejects(f.publisher({...request,network:'other'}),/domain/);
+  await assert.rejects(f.publisher({...request,network:'other'}),/version/);
   assert.throws(()=>projectEvidence('gatewayKeys','key',{}),/space/);
 });
 test('missing evidence, stale snapshots and same-height reorgs fail closed and clear old evidence',async t=>{
-  const f=await evidenceFixture(t),o=f.operators[0];assert.throws(()=>o.get('meta','patterns'),/missing/);await o.refresh();f.advance(30001);assert.throws(()=>o.get('meta','patterns'),/stale/);
-  await o.refresh();f.fork();await assert.rejects(o.refresh(),/reorg/);assert.throws(()=>o.get('meta','patterns'),/missing/);f.down();await assert.rejects(o.refresh(),/missing_evidence/);
+  const f=await evidenceFixture(t),o=f.operators[0];await assert.rejects(o.get('meta','patterns'),/missing/);await o.refresh();f.advance(30001);await assert.rejects(o.get('meta','patterns'),/stale/);
+  await o.refresh();f.fork();await assert.rejects(o.refresh(),/reorg/);await assert.rejects(o.get('meta','patterns'),/missing/);f.down();await assert.rejects(o.refresh(),/missing_evidence/);
 });
-test('evidence rejects secret-bearing nested records and oversized snapshots',async t=>{
-  const f=await evidenceFixture(t);await f.store.put('finds','x',{gatewaySecret:'do-not-export'});await assert.rejects(f.operators[0].refresh(),/secret_field/);await f.store.put('finds','x');
+test('evidence rejects secret-bearing requested records and oversized response pages',async t=>{
+  const f=await evidenceFixture(t);await f.store.put('finds','x',{gatewaySecret:'do-not-export'});await f.operators[0].refresh();await assert.rejects(f.operators[0].get('finds','x'),/secret_field/);await f.store.put('finds','x');
   // Oversized wire envelopes are rejected independently of producer limits.
-  const o=f.operators[0];o.source={request:async(_p,{body})=>{const payload={version:1,network:o.config.network,epoch:1,member:o.config.member,nonce:body.nonce,observedAt:Date.now(),rows:Array.from({length:4096},(_,i)=>({space:'opened',id:String(i),value:true})),stamp:f.stamp,contexts:{},archives:{}};return{payload,signature:signEvidence(payload,f.secret)};}};
-  await assert.rejects(o.refresh(),/capacity/);
+  const o=f.operators[0];o.source={request:async(_p,{body})=>{const payload={version:2,network:body.network,epoch:body.epoch,member:body.member,nonce:body.nonce,query:body.query,result:{bytes:'x'.repeat(o.settings.pageBytes)}};return{payload,signature:signEvidence(payload,f.secret)};}};
+  await assert.rejects(o.refresh(),/page_bytes/);
 });
 
 function costFixture() {

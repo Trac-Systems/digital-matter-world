@@ -3,12 +3,13 @@ import { rosterHash } from '../committee/provision.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir,chmod,realpath,mkdtemp,rm} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';import {fileURLToPath} from 'node:url';
 import {sharedTarget} from './test-target.mjs';import {playgroundTarget} from './playground-target.mjs';import {targetReads,msbFunding} from './reads.mjs';import {publicTarget,validatePublicTarget} from './public-target.mjs';import {renderTargetRuntime} from './runtime.mjs';
-import {configFixture} from '../service/prod/test/helpers.mjs';import {ServiceClient} from '../kit/lib/service-client.mjs';import {edPublic} from '../service/src/util.mjs';import {encodeTracAddress} from '../rules/src/trac-address.js';import {provisionOperator,operatorAttestation,verifyOperatorAttestation} from '../committee/provision.mjs';
+import {configFixture} from '../service/prod/test/helpers.mjs';import {ServiceClient} from '../kit/lib/service-client.mjs';import {edPublic} from '../service/src/util.mjs';import {encodeTracAddress} from '../rules/src/trac-address.js';import {reviewPublicFile} from './squash-release.mjs';import {provisionOperator,operatorAttestation,verifyOperatorAttestation} from '../committee/provision.mjs';
 const recorded=JSON.parse(await readFile(new URL('./fixtures/production-reads.json',import.meta.url)));
 async function fixture(t){
  const {config:c,file,root,deployment}=await configFixture(t),target=structuredClone(sharedTarget);target.mode='mainnet';target.network=c.network;target.bitcoin.chain='main';target.ethereum.chainId='1';target.ethereum.signing='files';
  target.policy.baseFeeAtoms='100';target.committee.publicKey=deployment.committee;target.trac.adminPublicKey=deployment.admin;target.bitcoin.checkpointHeight=deployment.beacon.checkpoint.height;
  Object.assign(target.runtime,{data:c.data,contexts:c.prod.contexts,readerData:c.prod.readerData,deploymentFile:c.prod.deployment,listenHost:c.listen.host,listenPort:c.listen.port,startTip:c.prod.startTip});
+ target.paths.output=root;
  Object.assign(target.gateway,{keyFile:c.gatewayKey,registryFile:c.prod.registry,configFile:join(root,'rendered.json')});
  target.bitcoin.rpc=c.prod.bitcoin;delete target.bitcoin.rpc.kind;target.bitcoin.rpc={authFile:'',tokenFile:'',...target.bitcoin.rpc};
  target.indexer.endpoint={authFile:'',tokenFile:'',...c.prod.tap.endpoints[0]};target.indexer.independentEndpoint={urlFile:'',authFile:'',tokenFile:''};
@@ -53,6 +54,9 @@ test('operator attestation rejects target epoch, roster and identity substitutio
 });
 test('client retries one pre-response read reset, never repeats a submission',async()=>{
  let calls=0;const client=new ServiceClient({origin:'http://127.0.0.1:12345',fetchImpl:async()=>{if(++calls===1)throw Object.assign(Error('reset'),{cause:{code:'ECONNRESET'}});return Response.json({ok:true});}});assert.ok((await client.health()).ok);assert.equal(calls,2);calls=0;await assert.rejects(client.request('/moves',{value:{}}));assert.equal(calls,1);
+});
+test('release refuses machine paths, credentials, provider hosts and hidden runtime files',()=>{
+ assert.throws(()=>reviewPublicFile('deploy/targets/filled.local.json',Buffer.from('{}')));assert.throws(()=>reviewPublicFile('service/example.mjs',Buffer.from(['','Users','example','private'].join('/'))));assert.throws(()=>reviewPublicFile('service/example.mjs',Buffer.from('https://private.'+['quiknode','pro'].join('.'))));assert.throws(()=>reviewPublicFile('world/file.js',Buffer.from('')));assert.ok(reviewPublicFile('deploy/targets/regtest.json',Buffer.from('{}')).sha256);
 });
 
 test('historical boundary read agrees independently and rejects a substituted witness',async()=>{
@@ -137,8 +141,13 @@ test('operator sidecar configuration is independent of post-deployment outputs a
 
 test('launch registry accepts an empty table and still checks the active authority', async t => {
  const {target}=await fixture(t); let active=true;
- const reads=await targetReads(target,{resolveEndpoint:async()=>({url:'https://fixture.invalid',headers:{}}),tlsProbe:async()=>({valid:true}),sourceFactory:()=>({request:async path=>{
-  assert.equal(path,'/r/tap/getPrivilegeAuthList');return {result:active?[{ins:target.bitcoin.authorityInscription}]:[]};
+ const reads=await targetReads(target,{resolveEndpoint:async()=>({url:'https://fixture.invalid',headers:{}}),tlsProbe:async()=>({valid:true}),sourceFactory:()=>({request:async (path,options)=>{
+  if (options?.body?.method === 'getblockhash') return {id:options.body.id,result:'ab'.repeat(32)};
+  if (path.startsWith('/r/blockhash/')) return 'ab'.repeat(32);
+  if (path === '/r/tap/getCurrentBlock') return {result:7};
+  if (path === '/r/tap/getPrivilegeAuthListLength') return {result:1};
+  if (path.startsWith('/r/tap/getPrivilegeAuthCancelled/')) return {result:!active};
+  assert.match(path,/^\/r\/tap\/getPrivilegeAuthList\?offset=0&max=1$/);return {result:[{ins:target.bitcoin.authorityInscription}]};
  }})});
  await reads.registry({assets:{}});active=false;await assert.rejects(reads.registry({assets:{}}),/authority_inactive/);
 });

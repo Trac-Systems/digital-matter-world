@@ -1,7 +1,9 @@
 import { setImmediate as yieldNow } from 'node:timers/promises';
-import { validatePayload, validateMove, puzzleHash, leadingZeroBits, moveDigest, requestDigest, validateRequest, validateRequestExpiry, digest, pendingId, paymentDigest } from '../../rules/src/index.js';
+import { validatePayload, validateMove, puzzleHash, leadingZeroBits, moveDigest, requestDigest, validateRequest, validateRequestExpiry, digest, paymentDigest } from '../../rules/src/index.js';
 import { check, integer } from './check.mjs';
 import { publicKey } from './keyring.mjs';
+import { financialMintId } from '../../rules/src/financial-mint.js';
+import { validateMoveV2, puzzleHashV2, moveDigestV2, hashObject, decimalV2, RESOURCE_PROFILE, validateResources } from '../../rules/src/index.js';
 
 export function signBytes(wallet, bytes) {
   const signature = wallet.sign(Buffer.from(bytes));
@@ -18,6 +20,18 @@ export async function signMove(wallet, { network, type, payload, tip }, { puzzle
     if (leadingZeroBits(puzzleHash(move)) >= puzzleBits) { move.sig = signBytes(wallet, moveDigest(move)); return move; }
   }
   throw new Error('Puzzle attempt limit reached');
+}
+export async function signNamedMove(wallet, { type, payload, tip, settings }, { resources = RESOURCE_PROFILE, signal } = {}) {
+  validateResources(resources);
+  const move = { v: 2, ruleset: 'dmw-v2', settingsRevision: settings.revision, settingsHash: hashObject(settings), network: settings.network,
+    a: publicKey(wallet), t: type, b: decimalV2(tip.height), h: tip.hash, p: structuredClone(payload), w: '0', sig: '0'.repeat(128) };
+  validateMoveV2(move, settings); const deadline = Date.now() + resources.puzzleWorkMs;
+  for (let n = 0; n < resources.puzzleAttempts; n++) {
+    if (n % resources.puzzleYieldEvery === 0) { await yieldNow(); signal?.throwIfAborted(); check(Date.now() < deadline, 'Puzzle time limit reached'); }
+    move.w = n.toString(16);
+    if (leadingZeroBits(puzzleHashV2(move)) >= settings.values.puzzleBits) { move.sig = signBytes(wallet, moveDigestV2(move)); return move; }
+  }
+  throw Error('Puzzle attempt limit reached');
 }
 export function signOwnerRequest(wallet, type, network, request, counted) {
   validateRequest(type, request);
@@ -50,5 +64,5 @@ export function escrowPaymentId({ chainId, contract, payer, requestId }) {
 export function signPaymentIntent(wallet, network, { request, receiver, payer, kind, feeQuote }) {
   check(request.owner === publicKey(wallet) && ['tap', 'ethereum'].includes(kind) && typeof payer === 'string' && payer.length > 0 && payer.length <= 128, 'Invalid payment intent');
   payer = paymentPayer(kind, payer);
-  return signBytes(wallet, digest('dmw-payment-intent-v1', network, { requestId: pendingId(network, request), receiver, payer, kind, feeQuote: feeQuote ?? null }));
+  return signBytes(wallet, digest(request.v === 2 ? 'dmw-payment-intent-v2' : 'dmw-payment-intent-v1', network, { requestId: financialMintId(network, request), receiver, payer, kind, feeQuote: feeQuote ?? null }));
 }

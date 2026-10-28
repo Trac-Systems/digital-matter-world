@@ -30,7 +30,7 @@ and writes the gateway configuration. For a local share replacement, include
 `sharePlan: {oldGroup, newGroup, signerConfigs}` in the replacement JSON. Group
 paths are directories containing `group.json`; `signerConfigs` maps each of the
 five resulting service IDs to its private signer configuration. Start the five
-fresh sidecars with the existing `createGroup`/`startSidecar` utilities and quiesce
+fresh sidecars with the existing `createGroup`/`startSidecar` helpers and quiesce
 gateway signing first. The command invokes the existing disjoint five-to-five
 resharing protocol, proves continuity with a real threshold signature, updates
 all signer configurations and preserves their historical rosters and journals.

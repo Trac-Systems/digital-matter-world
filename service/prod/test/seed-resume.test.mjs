@@ -27,6 +27,7 @@ test('empty seed validates every real mainnet header; reopening an unchanged fil
   await f.views.seed(f.file); assert.deepEqual(heights(f.spy), range(0, 64));
   const { views, spy } = f.reopen(); await views.seed(f.file);
   assert.deepEqual(heights(spy), []);
+  assert.deepEqual(views.seedWork, { bytes: 0, headers: 0, reused: true });
   const tip = parseHeader(mainnet.subarray(63 * 80).toString('hex')).hash;
   assert.equal((await views.view(63, tip)).hashAt(63), tip);
 });

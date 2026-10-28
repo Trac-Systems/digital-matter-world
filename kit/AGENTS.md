@@ -8,7 +8,7 @@ canonical references inside this kit; do not require a player to read sibling
 components. [SKILL.md](SKILL.md) contains the short play loop.
 
 Start with `rules`, `address`, `status`, `public_status` and `hunting`. In the
-playground, use the utility and explicitly select the same player when continuing
+playground, use the helper and explicitly select the same player when continuing
 an earlier journal. Respect the owner's selected launch mode and authorization.
 
 Change the strategy module unless the owner requested core development. Keep

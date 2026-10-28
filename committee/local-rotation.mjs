@@ -4,6 +4,7 @@ import { ceremony, descriptor, rpc, loadGroup } from './tss.mjs';
 import { rotationBody, rosterId, verifyRotation } from './rosters.mjs';
 import { post } from '../service/src/committee.mjs';
 import { atomicWrite, check, hash } from '../service/src/util.mjs';
+import { compareOrdinal, ordinalCodec } from '../rules/src/integers-v2.js';
 
 // Receipt/custody membership changes by one. TSS uses its existing disjoint
 // five-to-five resharing protocol to refresh all shares under the same key.
@@ -15,7 +16,8 @@ export async function rotateLocalSigner(filename, { replace, replacement, dryRun
   const client = Object.fromEntries(Object.entries(replacement).filter(([key]) => key !== 'sharePlan'));
   const clients = config.committee.map(s => String(s.id) === String(replace) ? client : s), before = config.committee.map(s => s.peer), after = clients.map(s => s.peer);
   const states = await Promise.all(old.map(s => rpc(s.url, s.token, '/status'))), publicKey = states[0].public;
-  check(publicKey && states.every(s => s.public === publicKey && !s.retired && s.epoch === states[0].epoch), 'rotation_old_shares');
+  check(publicKey && states.every(s => s.public === publicKey && !s.retired && compareOrdinal(s.epoch, states[0].epoch) === 0), 'rotation_old_shares');
+  const shareEpoch = ordinalCodec(!!config.v2 || typeof states[0].epoch === 'string').add(states[0].epoch);
   check(next.length === 5 && next.every(n => !old.some(o => o.id === n.id)), 'rotation_new_shares');
   const body = rotationBody(config.network, before, after, publicKey), targets = [];
   for (let i = 0; i < clients.length; i++) {
@@ -23,10 +25,11 @@ export async function rotateLocalSigner(filename, { replace, replacement, dryRun
     const signer = JSON.parse(await readFile(path, 'utf8')); check(signer.id === clients[i].id && signer.network === config.network, 'rotation_signer_identity');
     targets.push({ path, signer, secret: JSON.parse(await readFile(signer.secrets, 'utf8')), sidecar: next[i] });
   }
-  if (dryRun) return { dryRun, body, healthy: states.length, refreshedShares: 5, contractEpoch: config.epoch, shareEpoch: states[0].epoch + 1 };
-  const responses = await Promise.allSettled(config.committee.map(s => post(s, '/attest-roster', body)));
+  if (dryRun) return { dryRun, body, healthy: states.length, refreshedShares: 5, contractEpoch: config.epoch, shareEpoch };
+  const resources = config.v2?.resources?.values ?? config.resources?.values;
+  const responses = await Promise.allSettled(config.committee.map(s => post(s, '/attest-roster', body, resources?.committeeRequestMs, resources?.committeeResponseBytes)));
   const votes = responses.filter(r => r.status === 'fulfilled').map(r => r.value); verifyRotation(body, votes, before);
-  const record = { body, votes, at: Date.now(), shareEpoch: states[0].epoch + 1, state: 'resharing' };
+  const record = { body, votes, at: Date.now(), shareEpoch, state: 'resharing' };
   await atomicWrite(filename + '.rotation.json', JSON.stringify(record));
   const reshared = await ceremony(old, 'reshare', { network: config.network, epoch: record.shareEpoch, newGroup: next });
   check(reshared.publicKey === publicKey, 'rotation_key_changed');

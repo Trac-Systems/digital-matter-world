@@ -23,7 +23,7 @@ export class PublicIndex {
       for (const { id, value: publication } of this.store.list('publishedObservations', { after: this.store.get('meta', 'publicObservation') ?? '', limit })) {
         const bytes = await readFile(this.files.path(publication.audit.path.slice(1)));
         check(hash(bytes) === publication.audit.hash, 'public_audit_hash', 503);
-        const file = rules.decodeBinary(bytes), operations = [];
+        const file = rules.decodeBinary(bytes), operations = [], receiptsByMove = new Map(file.receipts.map(r => [r.move, r]));
         let sequence = this.store.get('meta', 'publicSequence') ?? 0;
         const provenance = { ...this.store.get('publicProvenance', id), audit: publication.audit, observation: file.observation, height: file.height };
         const branch = file.tipHash && this.history.view ? this.history.view(file.tip, file.tipHash) : this.history;
@@ -41,7 +41,7 @@ export class PublicIndex {
           const move = entry.move, moveId = rules.moveId(move);
           if (move.t === 'claim') for (const plot of move.p.plots) {
             const claim = { id: moveId + '/' + plot.block, agent: move.a, window: move.p.window, ...plot,
-              header: move.p.header?.height === plot.block, receipt: file.receipts.find(r => r.move === moveId) ?? null, reason: entry.reason, provenance };
+              header: move.p.header?.height === plot.block, receipt: receiptsByMove.get(moveId) ?? null, reason: entry.reason, provenance };
             operations.push({ space: 'publicClaims', id: claim.id, value: claim }); event('claim', claim, claim.id);
           }
           if (move.t === 'discovery-reveal') {
@@ -51,12 +51,13 @@ export class PublicIndex {
           }
         }
         for (const settlement of file.settlements ?? []) {
-          const blocks = new Set([...settlement.winners.map(w => w.block), ...(settlement.claims ?? []).map(c => c.block)]);
-          for (const block of blocks) operations.push({ space: 'publicDraws', id: `${heightKey(block)}/${id}/${settlement.window}`, value: {
-            ...settlement, block, settledAt: file.height, claims: (settlement.claims ?? []).filter(c => c.block === block),
-            winners: settlement.winners.filter(w => w.block === block), provenance } });
+          const blocks = new Map(), add = (kind, row) => { const group = blocks.get(row.block) ?? { claims: [], winners: [] }; group[kind].push(row); blocks.set(row.block, group); };
+          for (const row of settlement.claims ?? []) add('claims', row);
+          for (const row of settlement.winners) add('winners', row);
+          for (const [block, group] of blocks) operations.push({ space: 'publicDraws', id: `${heightKey(block)}/${id}/${settlement.window}`, value: {
+            ...settlement, block, settledAt: file.height, ...group, provenance } });
           for (const winner of settlement.winners) event(winner.source === 'header' ? 'header_find' : 'find',
-            { ...winner, finder: winner.winner, findHeight: file.height, window: settlement.window }, winner.id);
+            { ...winner, finder: winner.winner, findHeight: winner.findHeight ?? file.height, window: settlement.window }, winner.id);
         }
         for (const { record } of file.discoveries ?? []) event('discovery', { ...record, asset: rules.patternAsset(record), agent: record.discoverer, state: 'accepted' }, rules.patternAsset(record));
         for (const rejected of file.discovery?.rejected ?? []) {
@@ -64,7 +65,7 @@ export class PublicIndex {
           event('discovery', { ...rejected, agent: agent ?? null, state: 'rejected' }, 'rejected/' + rejected.commitment);
         }
         const crafters = (file.ops ?? []).filter(o => o.op === 'xc');
-        for (let i = 0; i < (file.crafts ?? []).length; i++) event('craft', { ...file.crafts[i], owner: crafters[i]?.request.owner ?? file.crafts[i].firstMaker }, i);
+        for (let i = 0; i < (file.crafts ?? []).length; i++) event('craft', { ...file.crafts[i], owner: file.crafts[i].action?.owner ?? crafters[i]?.request.owner ?? file.crafts[i].firstMaker }, i);
         for (let i = 0; i < (file.mintOperations ?? []).length; i++) {
           const input = file.mintOperations[i];
           if (file.mintOutcomes[i]?.reason !== 'accepted' || !['rq', 'mc'].includes(input.op)) continue;

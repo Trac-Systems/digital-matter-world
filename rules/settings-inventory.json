@@ -1,0 +1,397 @@
+{
+  "baseline": "113b269",
+  "scope": "Policy and format inventory. R1b adds authenticated named execution, exact compound expressions and local resource history. Coordinated activation and global consumer plumbing remain blocked on the R3/R4 interfaces documented in rules/docs/R1B-INTEGRATION.md.",
+  "groups": [
+    {
+      "group": "discovery",
+      "paths": [
+        "rules/src/discovery.js"
+      ],
+      "legacyBoundaries": [
+        "work=4096",
+        "queue=64",
+        "registry=256",
+        "lifetime=144",
+        "revealDelay=2"
+      ],
+      "sr1": "S01",
+      "status": "R1b: signed v2 named admission/replay and cold root-delta storage; no resident queue/registry lifetime caps. Actual R3 pipeline dispatch and accepted public publication remain integration blockers."
+    },
+    {
+      "group": "absolute history",
+      "paths": [
+        "service/src/intake.mjs",
+        "service/run.mjs",
+        "service/src/replay.mjs",
+        "service/src/header-files.mjs",
+        "kit/lib/header-download.mjs",
+        "service/prod/config.mjs"
+      ],
+      "legacyBoundaries": [
+        "19999",
+        "20000",
+        "2000000",
+        "4000000"
+      ],
+      "sr1": "S02",
+      "status": "R1/R1b: removed calendar cutoffs, including remaining kit archive/source-height regex gates. Safe adapter offset limits fail explicitly; v1 formats remain frozen."
+    },
+    {
+      "group": "compound growth",
+      "paths": [
+        "rules/src/compounds.js",
+        "rules/src/operations.js",
+        "contract/state.js"
+      ],
+      "legacyBoundaries": [
+        "generation=63",
+        "ratio=64",
+        "inputs=8",
+        "amountDigits=78",
+        "rationalDigits=256"
+      ],
+      "sr1": "S03",
+      "status": "R1b: exact expression DAGs, full compound IDs, decimal generations, bounded tier certificates. Tested 350 generations. General unresolved tier comparisons and actual R4 debit/mint/quote execution remain required."
+    },
+    {
+      "group": "integer encodings",
+      "paths": [
+        "rules/src/core.js",
+        "rules/src/headers.js",
+        "rules/src/moves.js",
+        "rules/src/receipts.js",
+        "rules/src/spiral.js",
+        "contract/state.js"
+      ],
+      "legacyBoundaries": [
+        "u32 heights/patterns",
+        "safe-number monotone counters",
+        "packed u64 find keys",
+        "coordinates=32768"
+      ],
+      "sr1": "S23",
+      "status": "R1b: decimal named packets/receipts, pattern/find/full-compound IDs, arbitrary signed coordinates, header metadata/offsets and evidence counters. Contract/R3/journal/external consumers remain versioned integration work."
+    },
+    {
+      "group": "pattern grammar and tiers",
+      "paths": [
+        "rules/src/patterns.js"
+      ],
+      "legacyBoundaries": [
+        "length=64",
+        "digits=6",
+        "alternatives=4",
+        "atoms=12",
+        "quantifiers=4",
+        "repeat=10",
+        "minimum=3",
+        "tiers=100/1000/10000/100000"
+      ],
+      "sr1": null,
+      "status": "Versioned profile used by named engine; repeat grammar is a published parser capability."
+    },
+    {
+      "group": "claims and receipts",
+      "paths": [
+        "rules/src/claims.js",
+        "rules/src/receipts.js"
+      ],
+      "legacyBoundaries": [
+        "claims=100",
+        "hardMaximum=1000",
+        "windowTips=2",
+        "witnesses=3 of 5"
+      ],
+      "sr1": null,
+      "status": "Profile covers game values; step 4/5 must pin per-window settings and segments."
+    },
+    {
+      "group": "move transport and puzzles",
+      "paths": [
+        "rules/src/moves.js",
+        "kit/lib/tools.mjs",
+        "kit/lib/signing.mjs"
+      ],
+      "legacyBoundaries": [
+        "moveBytes=16384",
+        "plots=1000",
+        "patternsPerPlot=64",
+        "freshness=2",
+        "puzzleBits=12",
+        "attempts=10000000",
+        "workMs=90000"
+      ],
+      "sr1": null,
+      "status": "R1b: settings-pinned signed named packet schemas and client puzzle-resource consumption. Legacy claim/header/craft/mint schemas still need coordinated R3/R4 migration."
+    },
+    {
+      "group": "batch transport",
+      "paths": [
+        "rules/src/batch.js",
+        "rules/src/binary.js",
+        "contract/settings.js",
+        "contract/protocol.js"
+      ],
+      "legacyBoundaries": [
+        "ops=512",
+        "assets=4096",
+        "kv=16",
+        "bytes=98304",
+        "outerWire=131072",
+        "parserBatchBytes=120000",
+        "observations=512",
+        "audit=1500000",
+        "auditMaximum=1800000",
+        "summary=1000000",
+        "binaryDepth=16",
+        "headers=20",
+        "assetsPerOp=16",
+        "kvBytes=256"
+      ],
+      "sr1": "S06",
+      "status": "Profile records v2 budgets; v2 envelope/chunks and all decoder consumers are step 4/6."
+    },
+    {
+      "group": "rights and governance",
+      "paths": [
+        "rules/src/mint-rights.js",
+        "rules/src/operations.js",
+        "contract/settings.js",
+        "contract/state.js"
+      ],
+      "legacyBoundaries": [
+        "finderWindow=1008",
+        "pending=432",
+        "expiry=6..2016",
+        "lock=6..2016",
+        "adminDelay=432",
+        "pause=144",
+        "cooldown=144",
+        "batchHorizon=36"
+      ],
+      "sr1": null,
+      "status": "Profile records defaults; creation-time snapshots and contract consumers still required."
+    },
+    {
+      "group": "fees and economic policy",
+      "paths": [
+        "rules/src/fees.js",
+        "service/src/fees.mjs",
+        "service/src/web-checkout.mjs"
+      ],
+      "legacyBoundaries": [
+        "tierMultipliers=1/3/10/30/100",
+        "compoundMinimum=10",
+        "launchLink=3",
+        "legacyLink=20",
+        "finderPercent=30",
+        "landownerPercent=15",
+        "discovererPercent=5",
+        "findBurnPercent=20",
+        "unlinkedBurnPercent=15",
+        "firstMakerPercent=30",
+        "compoundBurnPercent=35",
+        "linkBurnPercent=50",
+        "quoteTips=2016",
+        "quoteMs=300000"
+      ],
+      "sr1": null,
+      "status": "Preserve old fee revisions; migration must import actual policy hash. No fee changes activated."
+    },
+    {
+      "group": "mint and payment budgets",
+      "paths": [
+        "rules/src/mint-batch.js",
+        "rules/src/mint-payments.js",
+        "rules/src/tap.js",
+        "service/src/mints.mjs",
+        "service/src/mint-payments.mjs"
+      ],
+      "legacyBoundaries": [
+        "mintOps=8",
+        "hardMintOps=32",
+        "allocations=64",
+        "credits=32",
+        "active=256",
+        "queued=256",
+        "refundPadding=144"
+      ],
+      "sr1": null,
+      "status": "Named engine does not change paid work. S12-S24 exits and scheduler remain separate."
+    },
+    {
+      "group": "links",
+      "paths": [
+        "service/src/links.mjs",
+        "rules/src/batch.js"
+      ],
+      "legacyBoundaries": [
+        "active=256",
+        "perAgent=8",
+        "perBatch=4",
+        "duration=2016"
+      ],
+      "sr1": null,
+      "status": "Versioned profile targets16/batch; no scheduling or economic change activated."
+    },
+    {
+      "group": "intake resources",
+      "paths": [
+        "service/src/intake.mjs",
+        "service/src/limiter.mjs"
+      ],
+      "legacyBoundaries": [
+        "pending=16000",
+        "entries=1000",
+        "reservedAudit=1500000",
+        "strings=16000",
+        "reserveBytes=24000",
+        "reveals=1",
+        "crafts=8",
+        "limiterCapacity=8192",
+        "burst=8",
+        "perSecond=2",
+        "ttlMs=120000"
+      ],
+      "sr1": null,
+      "status": "R1b: recorded RESOURCE_PROFILE documents; values drive legacy intake, named reservation budgets, rates and cold cache. Segmented pipeline/fair due scheduling remains R3/R4 integration."
+    },
+    {
+      "group": "signing and outbox",
+      "paths": [
+        "service/src/committee.mjs",
+        "service/src/transport.mjs",
+        "committee/signer/service.mjs",
+        "committee/signer/journal.mjs"
+      ],
+      "legacyBoundaries": [
+        "sessionMs=180000",
+        "prepareMs=60000",
+        "outbox=128",
+        "fallbackMs=5000",
+        "retryMs=1000",
+        "backoffMs=30000",
+        "signerConnections=32",
+        "signerBody=4194304"
+      ],
+      "sr1": null,
+      "status": "Local resource history/plumbing and phase instrumentation remain; retain one signing lane."
+    },
+    {
+      "group": "HTTP and sources",
+      "paths": [
+        "service/src/http.mjs",
+        "service/prod/http.mjs",
+        "service/prod/config.mjs",
+        "service/prod/bitcoin.mjs"
+      ],
+      "legacyBoundaries": [
+        "inFlight=1024",
+        "connections=1200",
+        "sourceRps=2",
+        "queue=64",
+        "timeoutMs=15000",
+        "retries=2",
+        "maxRps=100",
+        "maxQueue=1024",
+        "maxBytes=16000000",
+        "headersPerView=4096",
+        "headersPerViewMaximum=50000"
+      ],
+      "sr1": null,
+      "status": "R2 owns evidence/lookups; resource profile/continuation must be integrated without lifetime caps."
+    },
+    {
+      "group": "storage and recovery",
+      "paths": [
+        "service/src/store.mjs",
+        "service/src/history.mjs",
+        "service/src/replay-worker.mjs",
+        "service/src/retention.mjs"
+      ],
+      "legacyBoundaries": [
+        "journalFrame=4194304",
+        "queue=4096",
+        "group=128",
+        "groupDelayMs=3",
+        "checkpointBytes=2097152",
+        "sqliteCacheKiB=4096",
+        "headerCachePages=8",
+        "headerPage=1024",
+        "branchCache=4"
+      ],
+      "sr1": null,
+      "status": "Replay adapter pages configurable; remaining local settings, checkpointing and chunk transactions are step 8/11."
+    },
+    {
+      "group": "headers and client resources",
+      "paths": [
+        "service/src/header-files.mjs",
+        "kit/lib/header-download.mjs",
+        "kit/lib/headers.mjs",
+        "kit/lib/journal.mjs"
+      ],
+      "legacyBoundaries": [
+        "archiveWritePage=4096",
+        "archiveSnapshots=3",
+        "manifestCacheSec=5",
+        "tipCacheSec=1",
+        "downloadTimeoutMs=120000",
+        "gzipOverheadBytes=100000",
+        "localSendsPerTip=12",
+        "localIntervalMs=1000",
+        "diskMarginPercent=10",
+        "diskReserveMiB=512"
+      ],
+      "sr1": null,
+      "status": "R1b: named client signing accepts operator resources, verified snapshot witness selection and durable v1 attachments. Immutable archive chunk distribution and remaining local consumers are not implemented here."
+    },
+    {
+      "group": "public readers",
+      "paths": [
+        "service/src/paging.mjs",
+        "service/src/public-index.mjs",
+        "service/src/feeds.mjs",
+        "service/src/public-cache.mjs",
+        "kit/lib/read-tools.mjs"
+      ],
+      "legacyBoundaries": [
+        "defaultPage=50",
+        "maxPage=200",
+        "patternHeightPage=256",
+        "backfillPagesPerTick=4",
+        "previewBytes=60000",
+        "feedBytes=60000"
+      ],
+      "sr1": "S07",
+      "status": "Step 9 must replace full-history match indexes with submitted-only rows."
+    },
+    {
+      "group": "external format facts",
+      "paths": [
+        "rules/src/headers.js",
+        "rules/src/tap.js",
+        "eth/src/DmwEscrow.sol"
+      ],
+      "legacyBoundaries": [
+        "BitcoinHeaderBytes=80",
+        "hashBytes=32",
+        "signatureSchemeWidths",
+        "TAP u64 whole tokens",
+        "Solidity uint256"
+      ],
+      "sr1": null,
+      "status": "Format facts, not operator tuning values; extend only through versioned/external-supported protocols."
+    }
+  ],
+  "r1b": {
+    "integration": "docs/R1B-INTEGRATION.md",
+    "newConsensusSettings": {
+      "moveFreshnessTips": 2,
+      "compoundPrecisionBits": 256
+    },
+    "localResourceSchema": "src/resource-settings.js",
+    "globalSettingsPlumbingComplete": false,
+    "activated": false
+  }
+}

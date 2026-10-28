@@ -1,3 +1,4 @@
+import { indexedAuthority } from '../service/prod/tap-index.mjs';
 import { join } from 'node:path';
 import { validateTarget, privateDirectory, privateJSON, secret, need } from './target.mjs';
 import { validateRuntimePolicy, renderTargetRuntime, targetTapConfig } from './runtime.mjs';
@@ -135,8 +136,8 @@ export async function productionAdapters({target:t,store}) {
     return id;
   };
   const transfer=async(_label,id,receiver)=>{
-    const active=await indexer.all('getPrivilegeAuthList');
-    need(active.some(a=>a.ins===id && (a.addr===undefined || a.addr===receiver)),'owner_authority_activation_required');
+    const active=await indexedAuthority(indexer,join(t.paths.output,'launch-tap-lookups.sqlite'),id);
+    need(active?.ins===id && (active.addr===undefined || active.addr===receiver),'owner_authority_activation_required');
   };
   const send=async(label,from,to,data)=>{
     let p=store.get('launchEthereum',label);

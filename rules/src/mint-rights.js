@@ -2,6 +2,7 @@ import { recordGet } from './record-index.js';
 import { assert, integer, hex, findId } from './core.js';
 import { patternCount } from './patterns.js';
 import { pendingId, makeRealOp, completeRealOp, cancelRealOp } from './operations.js';
+import { decimalV2, uintV2, compareUint } from './integers-v2.js';
 export const MINT_DEFAULTS = Object.freeze({ finderWindow: 1008, pendingBlocks: 432 });
 export function mintCandidate({ pattern, block, history, state }) {
   const count = patternCount(pattern, history.get(block)); assert(count > 0, 'mint_no_match');
@@ -10,6 +11,18 @@ export function mintCandidate({ pattern, block, history, state }) {
   return { ...find, count };
 }
 export function mintRight({ find, owner, counted, link = null, currentHolder = null, finderWindow = 1008 }) {
+  if (find?.settingsHash !== undefined) {
+    assert(hex(owner, 32) && hex(find.settingsHash, 32) && hex(find.finder, 32), 'mint_find');
+    const now = decimalV2(counted), height = decimalV2(find.findHeight), until = uintV2(find.finderUntil);
+    const block = decimalV2(find.block);
+    assert(BigInt(decimalV2(find.count)) > 0n && compareUint(now, height) >= 0 && compareUint(until, height) > 0, 'mint_find');
+    if (link) assert(decimalV2(link.block) === block && compareUint(decimalV2(link.linkHeight), now) <= 0, 'mint_link');
+    // The accepted find carries its creation policy. An amendment cannot
+    // shorten or renew that authenticated deadline, including lazy awards.
+    if (compareUint(now, until) < 0) return { allowed: owner === find.finder, role: 'finder', until };
+    if (link && compareUint(decimalV2(link.linkHeight), height) < 0) return { allowed: hex(currentHolder, 32) && owner === currentHolder, role: 'bitmap', until: null };
+    return { allowed: true, role: 'public', until: null };
+  }
   assert(hex(owner, 32) && integer(counted) && integer(finderWindow) && finderWindow > 0, 'mint_right_input');
   assert(find && integer(find.block, 0xffffffff) && integer(find.count) && find.count > 0 && integer(find.findHeight) && counted >= find.findHeight && hex(find.finder, 32), 'mint_find');
   if (link) assert(link.block === find.block && integer(link.linkHeight), 'mint_link');

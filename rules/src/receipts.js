@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { assert, integer, hex, bytesToHex, hexToBytes, digest, stableJSON, exactKeys } from './core.js';
 import { moveId } from './moves.js';
 import { merkleRoot, merkleProof, verifyMerkle } from './merkle.js';
+import { verifyReceiptSegment, attestReceiptSegment, verifySegmentAttestations } from './receipt-segments.js';
 export const claimWindow = (window, tip) => integer(window) && integer(tip) && tip >= window && tip < window + 2;
 const unsigned = signed => { const { sig, ...body } = signed; return body; };
 export function signReceipt(move, { tip, hash, sequence, highestTip = tip }, secret) {
@@ -29,6 +30,7 @@ export function sealReceipts(receipts, { network, tip, hash }, secret) {
   return { ...body, sig: bytesToHex(ed25519.sign(digest('dmw-receipt-root-v1', network, body), secret)) };
 }
 export function verifyReceiptRoot(seal, receipts, { network, gateway, tip, hash }) {
+  if (seal?.v === 2) return verifyReceiptSegment(seal, receipts, { network, gateway, tip, hash });
   try {
     assert(exactKeys(seal, ['v', 'network', 'gateway', 'tip', 'hash', 'count', 'root', 'sig']), 'receipt_root_shape');
     assert(seal.v === 1 && seal.network === network && seal.gateway === gateway && seal.tip === tip && seal.hash === hash && seal.count === receipts.length && hex(seal.sig, 64), 'receipt_root_context');
@@ -43,11 +45,13 @@ export function receiptProof(receipts, sequence) {
 export const verifyReceiptProof = (receipt, proof, root) => verifyMerkle(stableJSON(receipt), proof, root);
 
 export function attestReceiptRoot(seal, observedTip, signer, secret) {
+  if (seal?.v === 2) return attestReceiptSegment(seal, observedTip, signer, secret);
   assert(integer(observedTip) && observedTip >= seal.tip && observedTip < seal.tip + 2, 'receipt_attestation_late');
   const body = { v: 1, network: seal.network, signer, tip: seal.tip, hash: seal.hash, root: seal.root, count: seal.count, observedTip };
   return { ...body, sig: bytesToHex(ed25519.sign(digest('dmw-receipt-witness-v1', seal.network, body), secret)) };
 }
 export function verifyRootAttestations(seal, attestations, members) {
+  if (seal?.v === 2) return verifySegmentAttestations(seal, attestations, members);
   try {
     assert(Array.isArray(members) && members.length === 5 && new Set(members.map(m => m.id)).size === 5 && new Set(members.map(m => m.identity)).size === 5, 'receipt_members');
     assert(Array.isArray(attestations) && attestations.length >= 3 && attestations.length <= 5 && new Set(attestations.map(a => a.signer)).size === attestations.length, 'receipt_quorum');

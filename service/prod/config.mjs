@@ -1,3 +1,7 @@
+import { escrowEventSettings } from '../../committee/signer/escrow-events.mjs';
+import { lookupSettings } from './lookup-settings.mjs';
+import { readerSettings } from './reader-settings.mjs';
+import { readRegistry } from '../src/registry.mjs';
 import { readTapSourceURL } from '../src/source-url.mjs';
 import { validateFeePolicy } from '../src/fees.mjs';
 import { open, lstat, realpath, access } from 'node:fs/promises';
@@ -9,8 +13,6 @@ import { requireValue, AdapterError } from './http.mjs';
 import { validateDeployment } from '../../contract/state.js';
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { rules } from '../src/rules.mjs';
-import { sourcePolicy } from './source-cache.mjs';
-import { bitmapCachePolicy } from './bitmap-cache.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const within = (root, path) => path === root || path.startsWith(root + sep);
@@ -88,26 +90,27 @@ export function evidenceSnapshotPolicy(value = {}) {
   return { retries, backoffMs };
 }
 export async function validateConfig(config, { committee = false } = {}) {
+  requireValue(config?.pipelineDepth === undefined || [1, 2].includes(config.pipelineDepth), 'pipeline_depth');
   requireValue(config?.version === 1 && config.mode === 'prod' && /^[a-zA-Z0-9._:-]{1,96}$/.test(config.network) && !/regtest|localhost/i.test(config.network), 'config_network');
   requireValue(config.listen?.host === '127.0.0.1' && integer(config.listen.port, 1024, 65535), 'config_listen');
   requireValue(config.adapter === resolve(repo, 'service/prod/adapter.mjs'), 'config_adapter');
   requireValue(config.claimsPerWindow === undefined || integer(config.claimsPerWindow, 1, rules.MAX_CLAIMS_PER_WINDOW), 'claim_budget_config');
   const p = config.prod; requireValue(p && !config.endpoints && !config.local, 'config_production');
+  readerSettings(p.readerSettings); lookupSettings(p.lookupSettings);
+  const { evidenceSettings } = await import('./evidence.mjs');
+  evidenceSettings(p.evidenceSettings); if (p.evidence) evidenceSettings(p.evidence.settings);
   evidenceSnapshotPolicy(p.evidenceSnapshot);
-  bitmapCachePolicy(p.bitmapCache);
-  sourcePolicy(p.sourceReads);
   await privatePath(config.data, { directory: true });
   for (const name of ['contexts', 'readerData']) await privatePath(p[name], { directory: true });
-  const registry = await readPrivateJSON(p.registry, { maxBytes: 2000000 }), deployment = await readPrivateJSON(p.deployment);
+  await privatePath(p.registry);
+  const registry = await readRegistry(p.registry, p.registrySettings), deployment = await readPrivateJSON(p.deployment);
   requireValue(registry && registry.assets && typeof registry.assets === 'object' && !Array.isArray(registry.assets), 'config_registry');
   validateFeePolicy(registry);
   validateDeployment(deployment);
-  requireValue(deployment.network === config.network && rules.stableJSON(deployment.beacon?.params) === rules.stableJSON(MAINNET_PARAMS) && deployment.beacon.checkpoint.height % 2016 === 0, 'config_deployment');
+  requireValue(deployment.network === config.network && rules.stableJSON(deployment.beacon?.params) === rules.stableJSON(MAINNET_PARAMS) && BigInt(deployment.beacon.checkpoint.height) % 2016n === 0n, 'config_deployment');
   if (p.http) {
     const h = p.http;
-    requireValue((h.clockMaxQueue === undefined || integer(h.clockMaxQueue, 1, 1024)) && (h.backgroundMaxQueue === undefined || integer(h.backgroundMaxQueue, 1, 1024)) && (h.backgroundRequestsPerSecond === undefined || Number.isFinite(h.backgroundRequestsPerSecond) && h.backgroundRequestsPerSecond > 0 && h.backgroundRequestsPerSecond <= 100), 'http_background_policy');
-    requireValue((h.requestsPerSecond === undefined || Number.isFinite(h.requestsPerSecond) && h.requestsPerSecond > 0 && h.requestsPerSecond <= 100) && (h.timeoutMs === undefined || integer(h.timeoutMs, 1, 60000)) && (h.retries === undefined || integer(h.retries, 0, 5)) && (h.backoffMs === undefined || integer(h.backoffMs, 0, 10000)) && (h.maxQueue === undefined || integer(h.maxQueue, 1, 1024)), 'http_policy');
-    requireValue((h.publicRequestsPerSecond === undefined || Number.isFinite(h.publicRequestsPerSecond) && h.publicRequestsPerSecond > 0 && h.publicRequestsPerSecond <= 100) && (h.publicMaxQueue === undefined || integer(h.publicMaxQueue, 1, 1024)), 'http_public_policy');
+    requireValue((h.requestsPerSecond === undefined || Number.isFinite(h.requestsPerSecond) && h.requestsPerSecond > 0) && (h.timeoutMs === undefined || integer(h.timeoutMs, 1, 0x7fffffff)) && (h.retries === undefined || integer(h.retries, 0, Number.MAX_SAFE_INTEGER)) && (h.backoffMs === undefined || integer(h.backoffMs, 0, Number.MAX_SAFE_INTEGER)) && (h.maxQueue === undefined || integer(h.maxQueue, 1, Number.MAX_SAFE_INTEGER)) && (h.maxBytes === undefined || integer(h.maxBytes, 1, Number.MAX_SAFE_INTEGER)) && (h.maxBackoffMs === undefined || integer(h.maxBackoffMs, 0, 0x7fffffff)), 'http_policy');
   }
   requireValue(p.bitcoin?.kind === 'ord' && !p.bitcoin.authFile && !p.bitcoin.tokenFile, 'bitcoin_source');
   const bitcoinSource = await tapEndpoint(p.bitcoin);
@@ -117,13 +120,20 @@ export async function validateConfig(config, { committee = false } = {}) {
   requireValue(p.tap.agreement === 1, 'tap_agreement');
   requireValue(p.ethereum && /^[1-9][0-9]*$/.test(p.ethereum.chainId) && !['1337', '31337'].includes(p.ethereum.chainId), 'ethereum_chain');
   for (const name of ['address', 'token']) requireValue(/^0x[0-9a-f]{40}$/.test(p.ethereum[name]) && !/^0x0{40}$/.test(p.ethereum[name]), 'ethereum_address');
-  requireValue(/^0x(?:0|[1-9a-f][0-9a-f]*)$/.test(p.ethereum.fromBlock) && p.ethereum.confirmations === 1 && integer(p.ethereum.maxLogRange, 1, 10000) && integer(p.ethereum.maxLogPages, 1, 10000), 'ethereum_policy');
+  requireValue(/^0x(?:0|[1-9a-f][0-9a-f]*)$/.test(p.ethereum.fromBlock) && p.ethereum.confirmations === 1 && integer(p.ethereum.maxLogRange, 1, Number.MAX_SAFE_INTEGER) && integer(p.ethereum.maxLogPages, 1, Number.MAX_SAFE_INTEGER), 'ethereum_policy');
+  escrowEventSettings({ blockRange: p.ethereum.maxLogRange, ...p.ethereum.eventSettings });
   await endpoint(p.ethereum);
   requireValue(p.trac && /^[0-9a-f]{64}$/.test(p.trac.bootstrap) && /^[0-9a-f]{64}$/.test(p.trac.msbBootstrap) && p.trac.networkId !== undefined, 'trac_network');
   await readSecret(p.trac.runtimeConfig); if (p.trac.runtimeModule) await privatePath(p.trac.runtimeModule);
   if (p.headersFile) await privatePath(p.headersFile);
+  if (p.headerSeed) {
+    await privatePath(p.headerSeed.manifestFile); await privatePath(p.headerSeed.directory, { directory: true });
+    const { validateManifestTrust } = await import('../../kit/lib/header-manifest.mjs');
+    const { chunkDownloadLimits } = await import('../../kit/lib/header-chunks.mjs');
+    validateManifestTrust(p.headerSeed.trust); chunkDownloadLimits(p.headerSeed.limits);
+  }
   requireValue(Array.isArray(config.committee) && config.committee.length === 5 && config.committee.every(s => typeof s.id === 'string' && /^[a-zA-Z0-9._:-]{1,96}$/.test(s.id) && s.peer?.id === s.id && /^[0-9a-f]{64}$/.test(s.peer.identity)) && new Set(config.committee.map(s => s.id)).size === 5 && new Set(config.committee.map(s => s.peer.identity)).size === 5, 'committee_config');
-  requireValue(integer(p.startTip, 1, 4000000) && integer(p.maxHeadersPerView, 1, 50000), 'bitcoin_policy');
+  requireValue((config.v2 ? typeof p.startTip === 'string' && /^[1-9][0-9]*$/.test(p.startTip) : integer(p.startTip, 1, Number.MAX_SAFE_INTEGER)) && integer(p.maxHeadersPerView, 1, Number.MAX_SAFE_INTEGER), 'bitcoin_policy');
   requireValue(committee ? !!p.evidence : !p.evidence, 'evidence_required_for_operator');
   if (p.evidence) {
     requireValue(committee && p.evidence.network === config.network && p.evidence.epoch === config.epoch && p.evidence.directory === config.data && config.committee.some(m => m.id === p.evidence.member), 'evidence_config');

@@ -1,19 +1,18 @@
-# Deployment and development tools
+# Deploy Digital Matter World
 
-This directory contains deployment APIs, configuration examples and tests for
-Digital Matter World. The examples describe supported layouts for a new
-installation. Replace their paths, domains and budgets for your environment.
-Keep completed inputs and credentials outside the checkout.
+Start with the [one-host launch guide](GO-LIVE-TODAY.md) and its
+[input worksheet](inputs/mainnet-inputs.template.json). Fill private connection,
+funding and custody inputs outside the checkout. Generated deployment pins must
+be reviewed before distributing a player profile.
 
-- [Production launch](PRODUCTION.md): inputs, phase ordering and recovery.
-- [Input template](inputs/mainnet-inputs.template.json) and [target schema](targets/schema.json).
-- [Payment protocol](PAYMENTS.md): player payments, mint permits and indexing.
-- [Server examples](servers/README.md): service units, proxy routes and backups.
-- [Validation](VALIDATION.md) and [local verification](REHEARSAL.md).
-- [Launch inscriptions](LAUNCH-INSCRIPTIONS.md) and [launch inputs](LAUNCH.md).
-- [Contract operation](../contract/docs/OPERATION.md): clock, custody and settlement.
+- [Production launch](PRODUCTION.md): preparation, execution, recovery and evidence.
+- [Server files](servers/README.md): services, proxy routes, account permissions and backups.
+- [Validation](VALIDATION.md): local checks and public admission.
+- [Local launch](LAUNCH.md) and [rehearsal](REHEARSAL.md): isolated development chains.
+- [Source export](REPOSITORY.md): prepare and inspect a public source tree.
+- [Contract operation](../contract/docs/OPERATION.md): clock, custody, settlement and fixed formats.
 
-Launch commands can submit transactions when executed with completed inputs.
-Keep the original journal and transaction identities when resuming an interrupted
-launch. Preparation does not grant admission; validate the configured services
-before accepting new requests.
+Launch commands can submit transactions when explicitly executed with completed
+inputs. Keep the original journal and transaction identities when resuming an
+interrupted launch. Leave admission closed until the configured services pass
+their checks.

@@ -5,27 +5,36 @@ import { Worker } from 'node:worker_threads';
 import { HeaderHistory, parseHeader, verifyHistory, targetFromBits, MAX_CLAIMS_PER_WINDOW } from '../../rules/src/index.js';
 import { check, hex32, integer, atomicWrite, diskSpace } from './check.mjs';
 import { serviceError, safeCode } from './errors.mjs';
+import { FileHistory } from './file-history.mjs';
 
 export const DEFAULT_HEADER_SOURCES = Object.freeze(['https://mempool.space', 'https://blockstream.info']);
-export function headerSource(origin = DEFAULT_HEADER_SOURCES[0], { fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+export const HEADER_HTTP_DEFAULTS = Object.freeze({ timeoutMs: 10000, archiveTimeoutMs: 120000, responseBytes: 60000, retries: 2, backoffMs: 250 });
+export function headerHTTPSettings(input = {}) {
+  const settings = { ...HEADER_HTTP_DEFAULTS, ...input };
+  check(Object.entries(settings).every(([k, v]) => Object.hasOwn(HEADER_HTTP_DEFAULTS, k) && integer(v) && v >= (k === 'retries' ? 0 : 1)), 'Invalid header HTTP settings');
+  check(settings.timeoutMs <= 0x7fffffff && settings.archiveTimeoutMs <= 0x7fffffff && settings.backoffMs <= 0x7fffffff, 'Invalid header HTTP timer');
+  return settings;
+}
+export function headerSource(origin = DEFAULT_HEADER_SOURCES[0], { fetchImpl = fetch, ...settings } = {}) {
+  const { timeoutMs, archiveTimeoutMs, responseBytes, retries, backoffMs } = headerHTTPSettings(settings);
   const base = new URL(origin);
   check((base.protocol === 'https:' || base.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(base.hostname)) && !base.username && !base.password && !base.search && !base.hash && base.pathname === '/', 'Header source must be a credential-free HTTPS origin or local HTTP');
   async function get(path, json = false, signal) {
     const failure = (code, reason, status) => serviceError({ service: 'Bitcoin header source', origin: base.origin, route: path, status, code, reason });
     let r, error;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         signal?.throwIfAborted();
         r = await fetchImpl(base.origin + path, { redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
         if (r.ok) break;
         await r.body?.cancel();
       } catch (cause) { r = undefined; error = cause; }
-      if (attempt === 2) throw failure(r ? 'http_error' : safeCode(error?.cause?.code ?? error?.code ?? error?.name), 'Bitcoin header source unavailable', r?.status);
-      await sleep(250 * 2 ** attempt, undefined, { signal });
+      if (attempt === retries) throw failure(r ? 'http_error' : safeCode(error?.cause?.code ?? error?.code ?? error?.name), 'Bitcoin header source unavailable', r?.status);
+      await sleep(Math.min(0x7fffffff, backoffMs * 2 ** attempt), undefined, { signal });
     }
     let size = 0; const chunks = [];
     try {
-      for await (const c of r.body ?? []) { size += c.length; if (size > 60000) throw Object.assign(Error(), { code: 'response_limit' }); chunks.push(c); }
+      for await (const c of r.body ?? []) { size += c.length; if (size > responseBytes) throw Object.assign(Error(), { code: 'response_limit' }); chunks.push(c); }
     } catch (error) { throw failure(safeCode(error.code), error.code === 'response_limit' ? 'response too large' : 'response body interrupted', r.status); }
     const text = Buffer.concat(chunks).toString('utf8').trim();
     if (!json) return text;
@@ -36,11 +45,11 @@ export function headerSource(origin = DEFAULT_HEADER_SOURCES[0], { fetchImpl = f
     manifest: ({ signal } = {}) => get('/headers/manifest.json', true, signal),
     chainView: height => { check(integer(height), 'Invalid height'); return get(`/headers/height/${height}.json`, true); },
     archive: (path, { start = 0, signal } = {}) => {
-      check(/^\/headers\/(mainnet|regtest)-(0|[1-9][0-9]{0,6})-[0-9a-f]{64}\.bin(?:\.[0-9a-f]{64}\.gz)?$/.test(path) && integer(start), 'Invalid header archive path');
+      check((/^\/headers\/(mainnet|regtest)-(0|[1-9][0-9]*)-[0-9a-f]{64}\.bin(?:\.[0-9a-f]{64}\.gz)?$/.test(path) || /^\/headers\/(?:tree\/[0-9a-f]{64}\.json|chunks\/[0-9a-f]{64}\.(?:bin|gz))$/.test(path)) && integer(start), 'Invalid header archive path');
       return fetchImpl(base.origin + path, { redirect: 'error', headers: { 'accept-encoding': 'identity', ...(start ? { range: `bytes=${start}-` } : {}) },
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000) });
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(archiveTimeoutMs)]) : AbortSignal.timeout(archiveTimeoutMs) });
     },
-    async height() { const h = await get('/api/blocks/tip/height'); check(/^(0|[1-9][0-9]{0,9})$/.test(h), 'Invalid source height'); return Number(h); },
+    async height() { const h = await get('/api/blocks/tip/height'); check(/^(0|[1-9][0-9]*)$/.test(h) && integer(Number(h)), 'Invalid source height'); return Number(h); },
     async hash(height, { signal } = {}) { check(integer(height), 'Invalid height'); const h = await get(`/api/block-height/${height}`, false, signal); check(hex32(h), 'Invalid source hash'); return h; },
     async header(hash) { check(hex32(hash), 'Invalid hash'); const raw = await get(`/api/block/${hash}/header`); check(/^[0-9a-f]{160}$/.test(raw) && parseHeader(raw).hash === hash, 'Header hash mismatch'); return raw; },
     async blocks(height) { check(integer(height), 'Invalid height'); return get(`/api/blocks/${height}`, true); }
@@ -53,11 +62,15 @@ export function checkedHeader(raw, height, hash, { powLimitBits = 0x1d00ffff, pr
   return h;
 }
 const verified = new WeakMap();
-export async function loadHistory(path, { onProgress } = {}) {
-  const history = new HeaderHistory(await readFile(path));
+export async function loadHistory(path, { onProgress, fileBacked = false, pageHeaders = 4096, count } = {}) {
+  check(count === undefined || fileBacked, 'A bounded header prefix requires the file-backed reader');
+  const history = fileBacked ? new FileHistory(path, { pageHeaders, count }) : new HeaderHistory(await readFile(path));
+  try {
   if (onProgress) { const get = history.get.bind(history); history.get = height => { if (height % 4096 === 0) onProgress({ count: height, target: history.length }); return get(height); }; }
   const proof = verifyHistory(history);
+  if (fileBacked) proof.sha256 = history.digest();
   verified.set(history, proof); return history;
+  } catch (error) { history.close?.(); throw error; }
 }
 // Explicit regtest verification keeps the mainnet archive loader unchanged.
 export async function loadRegtestHistory(path, { onProgress } = {}) {

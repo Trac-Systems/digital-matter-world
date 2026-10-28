@@ -2,6 +2,10 @@ import { publicIdentities, encodeTracAddress } from '../../rules/src/trac-addres
 import { collectFiles, recoverFeedVersions } from './retention.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
+import { claimedEvents, claimedPatternPage } from './claimed-feeds.mjs';
+import { R3_RESOURCES } from './r3-settings.mjs';
+import { v2Dirty } from './claimed-v2.mjs';
+import { expireRankings } from './public-rankings.mjs';
 // Refresh only the affected height page after a link, find or mint.
 export async function patternPage({ store, files, history, pattern, page, size = 256 }) {
   check(Number.isSafeInteger(page) && page >= 0 && size <= 256, 'pattern_page');
@@ -37,17 +41,42 @@ function top(previous, incoming, compare = rank) {
   return [...rows.values()].sort(compare).slice(0, 20);
 }
 export class Feeds {
-  constructor({ store, files, history, reads, pagesPerTick = 4 }) { Object.assign(this, { store, files, history, reads, pagesPerTick }); }
+  constructor({ store, files, history, reads, pagesPerTick = R3_RESOURCES.feedPagesPerTick, settings = {} }) { Object.assign(this, { store, files, history, reads, pagesPerTick, settings }); }
+  get claimed() { return this.settings.projectionVersion === 3 || this.store.get('meta', 'ruleState')?.batchVersion === 2; }
   async markBlock(block, asset = null) {
+    if (this.store.get('meta', 'ruleState')?.batchVersion === 2) {
+      const height = rules.decimalV2(block), k = rules.uintKeyV2(height), size = this.settings.patternPageHeights ?? R3_RESOURCES.patternPageHeights;
+      if (!asset) return this.store.put('feedLinkedBlocks2', k, { block: height, after: '' });
+      check(asset.startsWith('p2:'), 'projection_asset_version');
+      const old = this.store.get('claimed2/' + asset, k);
+      return this.store.transact([v2Dirty(asset, height, size), ...(old ? [
+        { space: 'claimed2/' + asset, id: k, value: { ...old, minted: !!this.store.get('minted', `${asset}/${height}`) } },
+        { space: 'claimedRevision', id: asset, value: rules.nextUint(rules.decimalV2(this.store.get('claimedRevision', asset) ?? '0')) }
+      ] : [])]);
+    }
+    if (this.claimed) {
+      if (!asset) return this.store.put('feedLinkedBlocks', heightKey(block), { block, after: '' });
+      const key = heightKey(block), old = this.store.get('claimed/' + asset, key), size = this.settings.patternPageHeights ?? R3_RESOURCES.patternPageHeights;
+      return this.store.transact([{ space: 'feedPages', id: `${asset}/${heightKey(Math.floor(block / size))}`, value: { pattern: { number: parseInt(asset.slice(1), 36) }, page: Math.floor(block / size) } },
+        ...(old ? [{ space: 'claimed/' + asset, id: key, value: { ...old, minted: !!this.store.get('minted', `${asset}/${block}`) } }, { space: 'claimedRevision', id: asset, value: (this.store.get('claimedRevision', asset) ?? 0) + 1 }] : [])]);
+    }
     const patterns = this.store.get('meta', 'patterns') ?? [];
     const operations = patterns.filter(p => !asset || rules.patternAsset(p) === asset).map(p => ({ space: 'feedPages', id: `${rules.patternAsset(p)}/${heightKey(Math.floor(block / 256))}`, value: { pattern: p, page: Math.floor(block / 256) } }));
     if (operations.length) await this.store.transact(operations);
   }
   async markAgent(owner, assets) {
-    check(/^[0-9a-f]{64}$/.test(owner) && Array.isArray(assets) && assets.length <= 100 && assets.every(rules.assetId), 'feed_agent');
-    if (assets.length) await this.store.transact(assets.map(id => ({ space: 'agentAssets/' + owner, id, value: true })));
+    check(/^[0-9a-f]{64}$/.test(owner) && Array.isArray(assets) && assets.every(a => rules.assetId(a) || rules.assetIdV2(a)), 'feed_agent');
+    const size = this.settings.feedEventRows ?? R3_RESOURCES.feedEventRows;
+    for (let i = 0; i < assets.length; i += size) await this.store.transact(assets.slice(i, i + size).map(id => ({ space: 'agentAssets/' + owner, id, value: true })));
   }
   async events() {
+    // Financial status and its publication intent commit together. Resume
+    // these bounded named updates after restart, including partial publishes.
+    for (const { id, value } of this.store.list('feedBlockChanges', { limit: this.settings.feedEventRows ?? R3_RESOURCES.feedEventRows })) {
+      await this.markBlock(value.block, value.asset ?? null);
+      await this.store.put('feedBlockChanges', id);
+    }
+    if (this.claimed) return claimedEvents(this);
     const patterns = this.store.get('meta', 'patterns') ?? [];
     for (const { id, value: e } of this.store.list('feedEvents', { limit: 4 })) {
       const timestamp = this.history.get(e.height).time * 1000, day = Math.floor(timestamp / 86400000), week = Math.floor((day + 3) / 7);
@@ -78,6 +107,15 @@ export class Feeds {
   async tick() {
     if (this.running) return; this.running = true;
     try {
+      if (this.claimed) {
+        if (this.store.get('meta', 'ruleState')?.batchVersion === 2) await expireRankings(this.store, { rows: this.settings.feedEventRows ?? R3_RESOURCES.feedEventRows });
+        await collectFiles(this.store, this.files);
+        await this.events();
+        for (const { id, value } of this.store.list('feedPages', { limit: this.pagesPerTick })) {
+          await claimedPatternPage({ ...this, ...value }); await this.store.put('feedPages', id);
+        }
+        await this.refreshOwners(); return;
+      }
       if (!this.retentionReady) { await recoverFeedVersions(this.store, this.files); this.retentionReady = true; }
       await collectFiles(this.store, this.files);
       await this.events();
@@ -104,14 +142,17 @@ export class Feeds {
   }
   async refreshOwners() {
     const latest = this.store.get('meta', 'latest'); if (!latest) return;
-    const rows = this.store.list('real', { limit: 40 }).map(r => r.value);
-    for (const row of rows) {
+    const after = this.store.get('meta', 'feedOwnerCursor') ?? '', limit = this.settings.ownerRefreshRows ?? R3_RESOURCES.ownerRefreshRows;
+    const rows = this.store.list('real', { after, limit });
+    if (!rows.length && after) { await this.store.put('meta', 'feedOwnerCursor', ''); return; }
+    for (const { id, value: row } of rows) {
       let owner = this.store.get('indexedOwners', row.inscription);
-      if (this.reads.inscriptionOwner && (!owner || Date.now() - owner.observedAt >= 30000)) {
+      if (this.reads.inscriptionOwner && (!owner || Date.now() - owner.observedAt >= (this.settings.ownerRefreshMs ?? R3_RESOURCES.ownerRefreshMs))) {
         const observed = await this.reads.inscriptionOwner(row.inscription);
         check(typeof observed?.address === 'string' && observed.address.length <= 128 && Number.isSafeInteger(observed.height), 'indexed_owner');
         owner = { ...observed, observedAt: Date.now() }; await this.store.put('indexedOwners', row.inscription, owner);
       }
+      await this.store.put('meta', 'feedOwnerCursor', id);
     }
   }
 }

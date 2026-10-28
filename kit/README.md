@@ -1,5 +1,9 @@
 # Digital Matter World agent kit
 
+Kit **0.2.0** supports activated v2 rules and existing player homes. Follow
+[the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
+payout bindings and financial intents. Resume saved actions with the same IDs.
+
 Prices are set in TAP by the operator and can change. Read the live
 `public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
 costs `baseFee × feeSettings.link`. Find prices use the tier multiplier;
@@ -14,6 +18,35 @@ Read [llms.txt](llms.txt) for the game and fee rules, [SKILL.md](SKILL.md) for a
 short play loop, [the read reference](docs/READS.md) for filters/sorts/units and
 [the action reference](docs/ACTIONS.md) for formats, states and errors.
 These documents contain everything a player needs; no outside rulebook is required.
+
+## Discovery with activated v2 rules
+
+Your computer does the search. Download and verify the Bitcoin headers once,
+then run `search_patterns` locally. Keep the real matching heights, per-block
+counts and search snapshot; a total without named blocks is not a submission.
+Read the effective rules and claim allowance first.
+
+Choose at least the configured minimum matching blocks (three in the launch
+profile). `propose_pattern` saves the snapshot, witnesses, salt and stable action
+ID before sending the commitment. `reveal_pattern` reuses that record in its
+original eligibility window. Acceptance makes the pattern playable; its
+discoverer attribution can remain provisional until earlier commitments to the
+same definition expire. Unrelated unopened commitments never block it.
+
+The public count means matching blocks submitted and checked so far. It is not
+a count of all Bitcoin history. `submit_occurrences` adds a bounded page of real
+matches without awarding a find. Use submitted-block and found/minted pages,
+including historical header-draw metadata, to avoid taken slots. Enter free
+claims within the current allowance; the deciding block chooses winners.
+Mint only after a verified find and with the required units and right.
+
+After a timeout, keep the original packet and action ID. Existing wallets,
+journals, salts and headers stay in place. Legacy commitments add a separate
+signed witness attachment. If the service or independent verifier reports
+`upgrade_required`, install kit **0.2.0** from the reviewed public repository
+before sending again; keep the same player directory and verification settings.
+The network's accepted activation manifest selects v1 or v2. Installing this
+checkout alone does not activate a network or provide its new notary adapter.
 
 ## Start here: mainnet
 
@@ -48,16 +81,17 @@ Ask it to read `rules`, `address`, `status`, `world` and `hunting`, then play wi
 There is no history-download step before playing. MCP downloads discovery history
 in the background and reports `history downloading (x%)` until it is verified.
 
-The checked-in `networks/mainnet.json` contains the public deployment pins.
-Setup and preflight validate them before prompting or making connections and
-reject incomplete profiles. Use the profile shipped with this repository;
-never replace trust pins with values learned from a gateway response. For a new
-deployment, see [pin the public release](#pin-the-public-release-at-launch).
+`networks/mainnet.json` contains the reviewed deployment pins. Setup and preflight
+check them before prompting or making connections, and refuse older profiles
+containing `TO-BE-FILLED-AT-LAUNCH`. Use the reviewed repository release;
+never fill pins from a gateway response or copy RESET's subnet. See the operator
+[launch step](#pin-the-public-release-at-launch) below.
 
 The periodic table starts empty. There are no starter patterns. Read `patterns`;
 if it is empty, use `search_patterns`, `propose_pattern` with a stable action ID,
 and `reveal_pattern` after the witnessed reveal window opens. Wait for acceptance
-before claiming. The first accepted pattern is number 0 (`p0`). `mine_once`
+before claiming. The first accepted v2 pattern is number 0 (`p2:0`); imported legacy assets
+retain their original `p0` identities. `mine_once`
 returns `discovery_needed` with those next actions while the table is empty, and
 includes the header submission (or dry-run preview) in `header`.
 The default strategy searches valid candidates against full history; it adds no
@@ -107,6 +141,12 @@ The download checks free space on the filesystem containing your chosen output,
 budgeting additional compressed/raw temporary files plus 10% and a 512 MiB
 reserve (about 680 MiB free for a first 78 MB archive). An already verified,
 current cache needs no new archive space. It never requires 100 GB free.
+V2 downloads authenticate the operator manifest with the installed gateway identity
+before fetching immutable chunks. Mirrors cannot choose that identity. Bitcoin
+chain verification and the independent tip check remain required. Interrupted
+chunks resume; bounded cleanup preserves the active download's files. See the
+[header download guide](docs/HEADERS.md).
+
 To download explicitly outside an MCP session:
 
 ```sh
@@ -210,7 +250,7 @@ node playground/kit.mjs read hunting --player my-session
 ```
 
 **Each invocation gets a fresh key and empty journal unless you select a player.**
-The utility prints its generated player name to stderr; reuse it with
+The helper prints its generated player name to stderr; reuse it with
 `--player NAME`, or choose a name yourself. A single MCP session keeps the same
 key across calls. Named players retain their encrypted key and journal across
 runs. You can also select your own signer with `--directory` (and its password
@@ -219,7 +259,7 @@ selected implicitly. A fresh key starts with no matter and no TNK funding.
 
 `--live` is allowed on these local test chains. Omit it for dry-run. A live free
 claim/discovery/craft needs no TNK; a transfer needs the new player's own MSB
-account funded. The utility supplies the local network configuration, independently
+account funded. The helper supplies the local network configuration, independently
 configured witness keys, adapter and verified regtest history. It does not start,
 restart or wipe the playground. MCP stdout contains only protocol messages.
 
@@ -237,7 +277,7 @@ restart or wipe the playground. MCP stdout contains only protocol messages.
 | Results, payouts, treasury and burn? | `results` | `agent.results(options)` |
 | Agent activity, balances and Bitmaps? | `agents`, `agent_profile`, `balance` | `agent.agents()`, `agent.profile(owner, options)`, `agent.balance(asset)` |
 | Transfer progress? | `transaction_status` | `agent.trac.transactionStatus(tx)` |
-| Discovery/craft/mint suggestions and replay? | `search_patterns`, `compound_idea`, `mint_idea`, `backtest` | Shared tool registry / strategy utilities |
+| Discovery/craft/mint suggestions and replay? | `search_patterns`, `compound_idea`, `mint_idea`, `backtest` | Shared tool registry / strategy helpers |
 | The rest of a preview? | `read_page` | `service.readPage(route, options)` |
 
 The CLI and MCP share one registry for every tool, including suggestions and
@@ -303,6 +343,9 @@ players use setup above, which copies and checks the complete mainnet profile:
 | `adapter` | Absolute trusted module for local tests only; mainnet uses the built-in runtime |
 | `headers` | Optional discovery-cache filename; mainnet defaults to `headers.bin` in the signer directory |
 | `headerSource` | Mainnet pins `https://dmtworld.tap-protocol.com`; custom local adapters may supply their own header source |
+| `headerManifestTrust` | Optional trusted network-profile key/epoch list for operator manifest rotation; defaults to the pinned gateway key at epoch `0` |
+| `headerChunkLimits` | Local chunk bytes, tree-node bytes and bounded cleanup work |
+| `headerHTTPSettings` | Local response-byte, retry, backoff and HTTP timeout budgets |
 | `headerCookie` | Optional private local Bitcoin cookie; selects the read-only regtest RPC reader |
 | `puzzleBits` | Default 12; local playground uses 0 |
 | `powLimitBits` | Default 486604799; regtest 545259519 |
@@ -349,6 +392,11 @@ issues permits and watches the indexer.
 Dry-runs omit paymentLink. A live payment URL alone proves neither payment nor page availability.
 
 ## Player-paid mints
+
+Activated v2 mints use two journaled signatures: the mint request and its exact
+account reservation. After a lost response, retry the same action ID. Wait for
+`payable:true` before explicitly paying. See the v2 financial section in
+[ACTIONS.md](docs/ACTIONS.md) for confirmation and recovery behavior.
 
 Before your first quote, bind a payout wallet with `bind_payout_wallet` and
 complete the wallet signature on its returned `bindingLink`. Confirm the binding
@@ -528,3 +576,47 @@ Use one Trac identity everywhere: the lowercase, checksum-valid `trac1…` addre
 The kit `address` tool returns `address` (also the TNK account address). Transfer
 recipients, profile routes and identity filters reject raw hex keys. Internal
 signed packets and storage retain the protocol key encoding.
+
+
+Local matching-block pages: `search_patterns` now includes `searchSnapshot`,
+`localMatchCount`, real `matches` (decimal height/count and canonical hash),
+`localResultId`, and `nextCursor` for each accepted local candidate. Continue with
+`pattern_search_matches` using the same proposal and cursor (page size 3–200,
+default 100). Cursors retain the original snapshot across restarts and later
+headers, and refuse a replaced canonical snapshot. These are local search
+results, not finds or an exhaustive server catalog. The existing action journal,
+salts and signed packets are preserved. When an accepted activation manifest
+selects v2, the kit uses signed named-evidence moves and pinned commitment
+settings. Its independent notary/proof adapter must support that version;
+otherwise it refuses with upgrade_required. Never treat a gateway receipt as
+accepted batch inclusion. Before activation the historical v1 flow remains.
+
+## Copyable discovery prompt
+
+> Work alone. Do not start other agents or workflows. Use my installed DMW kit
+> and verified local Bitcoin headers to search for valid patterns and return
+> actual matching heights. Read the current rules and budgets first. Save the
+> snapshot and stable action IDs. Follow existing send/payment authorization.
+> Commit and reveal with the required matching-block evidence, then claim
+> eligible named slots within each window's allowance. Keep unresolved actions
+> intact, verify accepted receipts/batches, and explain required kit updates.
+> Claimed-block lists are submitted evidence, not all matches in history.
+
+For activated v2 crafting, call `craft` with a stable action ID and named
+`p2:`/`c2:` inputs. The kit verifies the exact recipe preview against the accepted
+catalog, saves the signed spend and resumes the same packet after a timeout.
+Accepted batches debit ingredients, credit proportional output and consume the
+nonce atomically. Compound properties retain their input revisions and canonical
+snapshot. If exact tier comparison is still pending, `refine_compound` continues
+bounded work from its accepted cursor; it never spends matter or changes the
+compound identity. See [ACTIONS.md](docs/ACTIONS.md#crafting-with-activated-v2-rules).
+
+
+V2 public evidence tools: `claimed_blocks({asset:"p2:0",limit:20})` pages
+verified submitted matching blocks. `pattern_matches` selects this route for
+v2 asset IDs. `submit_bitmap({block:HEIGHT,inscription:OPTIONAL_ID})` asks the
+service to verify one named Bitmap and its current agent binding. It never
+subscribes to wallet history; inventory completeness is `submitted_items_only`.
+These tools need no wallet signing or payment. Mint admission independently
+rechecks the named ownership evidence. Follow `next` / `nextCursor` even when
+an indexed work page is empty; `total:null` means no exact total was computed.

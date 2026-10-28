@@ -1,6 +1,7 @@
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { blake3 } from '@noble/hashes/blake3.js';
-import { assetPairs, stableJSON } from '../../rules/src/index.js';
+import { assetPairs, stableJSON, decimalV2, safeNumberV2 } from '../../rules/src/index.js';
+import { financialAsset } from '../../rules/src/financial-mint.js';
 import { check, exact, hex32, integer, nonce } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signBytes } from './signing.mjs';
@@ -24,15 +25,40 @@ export function transactionHash(c, ch, n) {
   const u32 = v => { const b = Buffer.alloc(4); b.writeUInt32BE(v); return b; };
   return Buffer.from(blake3(Buffer.concat([u32(c.networkId), ...[c.txv, c.incomingWritingKey, ch, c.subnetBootstrap, c.msbBootstrap, n].map(h => Buffer.from(h, 'hex')), u32(12)]))).toString('hex');
 }
+const batchOrdinal = n => typeof n === 'string' ? /^[1-9][0-9]*$/.test(n) : integer(n) && n > 0;
 export class TracClient {
-  constructor({ network, api, context, submit, status, close = async () => {} }) { Object.assign(this, { network, api, context, submitPacket: submit, transactionStatus: status, close }); }
-  async head() { const authority = await this.api.dmwAuthority(); check(authority.network === this.network, 'Foreign Trac network'); return this.api.dmwHead(); }
-  hashAt(height) { check(integer(height), 'Invalid height'); return this.api.dmwHashAt(height); }
-  balance(owner, asset) { check(hex32(owner) && /^[0-9a-z]{1,24}$/.test(asset), 'Invalid balance read'); return this.api.dmwBalance(owner, asset); }
+  constructor({ network, api, context, submit, status, integerVersion = 1, close = async () => {} }) { Object.assign(this, { network, api, context, integerVersion, submitPacket: submit, transactionStatus: status, close }); }
+  async head() {
+    const authority = await this.api.dmwAuthority(); check(authority.network === this.network, 'Foreign Trac network');
+    const head = await this.api.dmwHead();
+    if (this.integerVersion !== 2) return head;
+    // Local archive offsets use safe Numbers. Never round a consensus height.
+    return { ...head, tip: { ...head.tip, height: safeNumberV2(decimalV2(head.tip.height)) }, counted: safeNumberV2(decimalV2(head.counted)),
+      ...(head.confirmed === undefined ? {} : { confirmed: safeNumberV2(decimalV2(head.confirmed)) }) };
+  }
+  hashAt(height) { check(integer(height), 'Invalid height'); return this.api.dmwHashAt(this.integerVersion === 2 ? String(height) : height); }
+  async balance(owner, asset) {
+    check(hex32(owner) && financialAsset(asset), 'Invalid balance read');
+    if (this.integerVersion !== 2) return this.api.dmwBalance(owner, asset);
+    const account = await this.accountRoot(owner);
+    if (!account) return '0';
+    check(typeof this.balanceProof === 'function', 'upgrade_required: account proof reader unavailable');
+    const context = await this.rulesContext(), evidence = await this.balanceProof(owner, asset, context.settings.values.proofBytes);
+    check(evidence.owner === owner && evidence.asset === asset && evidence.root === account.root && evidence.revision === account.revision, 'Account proof differs from accepted notary');
+    return this.api.dmwBalance(owner, asset, evidence.proof);
+  }
   settings() { return this.api.dmwSettings(); }
+  accountRoot(owner) { check(hex32(owner) && typeof this.api.dmwAccountRoot === 'function', 'upgrade_required: account root unavailable'); return this.api.dmwAccountRoot(owner); }
+  financialRecord(key) { check(/^(fc|fp|bc|dc)\/[0-9a-f]{64}$/.test(key) && typeof this.api.dmwFinancialRecord === 'function', 'upgrade_required: financial record unavailable'); return this.api.dmwFinancialRecord(key); }
+  // These APIs must be implemented by the independently verified notary
+  // adapter. A public gateway response is never substituted for this authority.
+  rulesContext() { check(typeof this.api.dmwRulesContext === 'function', 'upgrade_required: notary rules context unavailable'); return this.api.dmwRulesContext(); }
+  renewalSlice(n) { check(batchOrdinal(n) && typeof this.api.dmwReceiptRenewalSlice === 'function', 'upgrade_required: renewal slice unavailable'); return this.api.dmwReceiptRenewalSlice(String(n)); }
+  settingsByHash(hash) { check(hex32(hash) && typeof this.api.dmwSettingsByHash === 'function', 'upgrade_required: settings history unavailable'); return this.api.dmwSettingsByHash(hash); }
+  discoveryCommitment(agent, commitment) { check(hex32(agent) && hex32(commitment) && typeof this.api.dmwDiscoveryCommitment === 'function', 'upgrade_required: commitment proof unavailable'); return this.api.dmwDiscoveryCommitment(agent, commitment); }
   mint(id) { check(hex32(id), 'Invalid mint'); return this.api.dmwMint(id); }
   batchLast() { return this.api.dmwBatchLast(); }
-  batchRoot(n) { check(integer(n) && n > 0, 'Invalid batch'); return this.api.dmwBatchRoot(n); }
+  batchRoot(n) { check(batchOrdinal(n), 'Invalid batch'); return this.api.dmwBatchRoot(this.integerVersion === 2 ? decimalV2(n) : n); }
   record(key) { check(/^[a-z0-9/._-]{1,64}$/.test(key), 'Invalid record'); return this.api.dmwRecord(key); }
   async preflight(owner, op, value) {
     transactionCommand(op, value); const head = await this.head();
@@ -73,7 +99,7 @@ export function productionTrac(peer,{network,msb,pins}={}) {
 function peerTrac(peer,network,msb) {
   fanOutValidatorSends(msb.network, 3);
   const protocol = peer.protocol.instance;
-  return new TracClient({ network, api: protocol.api,
+  return new TracClient({ network, api: protocol.api, integerVersion: peer.config.dmw.v2 ? 2 : 1,
     context: async () => ({ networkId: peer.msbClient.networkId, txv: await peer.msbClient.getTxvHex(), incomingWritingKey: peer.writerLocalKey,
       subnetBootstrap: peer.base.key.toString('hex'), msbBootstrap: peer.msbClient.bootstrapHex }),
     submit: async p => {

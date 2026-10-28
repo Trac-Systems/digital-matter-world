@@ -1,5 +1,6 @@
 import { fanOutValidatorSends } from '../../contract/runtime/fanout.js';
 import { check } from './util.mjs';
+import { assetResources } from './asset-resources.mjs';
 // Called with the already configured local peer. The runtime fanout patches only
 // this client's transport, never the installed MSB package.
 export function runtimeTransport(peer, bus, { installFanout = true } = {}) {
@@ -44,19 +45,21 @@ export function runtimeTransport(peer, bus, { installFanout = true } = {}) {
   };
 }
 export class Outbox {
-  constructor({ store, transport, fallbackMs = 5000, retryMs = 1000, maxJobs = 128 }) { Object.assign(this, { store, transport, fallbackMs, retryMs, maxJobs }); }
+  constructor({ store, transport, fallbackMs = 5000, retryMs = 1000, backoffMs = 30000, maxJobs = 128, resources = {} }) { Object.assign(this, { store, transport, fallbackMs, retryMs, backoffMs, maxJobs }); this.resources = assetResources(resources); }
   async enqueue(id, op, value, extra = {}) {
     if (this.store.get('outbox', id) || this.store.get('sent', id)) return;
-    check(this.store.count('outbox') < this.maxJobs, 'outbox_capacity', 503);
+    check(this.store.countUint('outbox') < this.maxJobs, 'outbox_capacity', 503);
     const message = await this.transport.prepareMessage(op, value);
     await this.store.put('outbox', id, { id, op, value, message, created: Date.now(), next: 0, attempts: 0, ...extra });
   }
   async tick(now = Date.now()) {
     if (this.running) return; this.running = true;
     try {
-      for (const { id, value: job } of this.store.list('outbox', { limit: this.maxJobs })) {
+      const page = this.store.list('outbox', { after: this.cursor ?? '', limit: this.resources.outboxPage });
+      this.cursor = page.length === this.resources.outboxPage ? page.at(-1).id : '';
+      for (const { id, value: job } of page) {
         const header = job.op === 'hd';
-        if (job.blocked || !header && job.next > now) continue;
+        if (job.blocked) continue;
         if (header && job.after && !this.store.get('sent', job.after)) continue;
         try {
           const status = await this.transport.status(job);
@@ -72,7 +75,7 @@ export class Outbox {
           }
           // Save the attempt before the side effect. Every retry uses the exact
           // persisted nonce, content hash and signature, including after a crash.
-          job.attempts++; job.next = now + Math.min(30000, this.retryMs * 2 ** Math.min(job.attempts - 1, 5));
+          job.attempts++; job.next = now + Math.min(this.backoffMs, this.retryMs * 2 ** Math.min(job.attempts - 1, 5));
           await this.store.put('outbox', id, job);
           if (!header && job.transaction) await this.transport.sendTransaction(job.transaction);
           else await this.transport.sendMessage(job.message);

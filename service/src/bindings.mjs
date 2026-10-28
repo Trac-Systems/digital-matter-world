@@ -1,13 +1,13 @@
 import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
-import { bindingId, bindingKey, verifyAgentBinding, verifyWalletBinding, verifyBinding, payoutAddress } from '../../rules/src/payout-bindings.mjs';
+import { bindingId, bindingKey, bindingNonceKey, bindingBarrier, BINDING_V2_DEFAULTS, verifyAgentBinding, verifyWalletBinding, verifyBinding, payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { check, serial } from './util.mjs';
 import { pageRows } from './paging.mjs';
 
-const nonceKey = nonce => nonce.padStart(20, '0');
 const WALLET_PLAYERS = 16;
 export class Bindings {
-  constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now }) {
-    Object.assign(this, { store, network, bitcoinNetwork, members, committee, rosterHistory, now }); this.gate = serial();
+  constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now, freshnessMs = BINDING_V2_DEFAULTS.freshnessMs }) {
+    check(Number.isSafeInteger(freshnessMs) && freshnessMs > 0, 'binding_settings');
+    Object.assign(this, { store, network, bitcoinNetwork, members, committee, rosterHistory, now, freshnessMs }); this.gate = serial();
   }
   options() { return { network: this.network, bitcoinNetwork: this.bitcoinNetwork, members: this.members, rosterHistory: this.rosterHistory, now: this.now() }; }
   current(agent, rail) {
@@ -33,8 +33,8 @@ export class Bindings {
     check(record.request.agent === agent && record.request.rail === rail, 'binding_role');
     if (snapshot) {
       check(record.acceptedAt <= snapshot.issuedAt, 'binding_quote_time');
-      const next = this.store.list('payoutHistory/' + bindingKey(agent, rail), { after: nonceKey(record.request.nonce), limit: 1 })[0];
-      check(!next || this.proof(next.value).acceptedAt > snapshot.issuedAt, 'binding_superseded');
+      const next = this.store.list('payoutHistory/' + bindingKey(agent, rail), { after: bindingNonceKey(record.request), limit: 1 })[0];
+      check(!next || bindingBarrier(this.proof(next.value)) > snapshot.issuedAt, 'binding_superseded');
     }
     return record;
   }
@@ -71,15 +71,20 @@ export class Bindings {
     if (saved) return this.pending(id);
     verifyAgentBinding(envelope, this.options());
     const current = this.current(envelope.request.agent, envelope.request.rail);
+    check(current?.request.v !== 2 || envelope.request.v === 2, 'binding_version');
     check(!current || BigInt(envelope.request.nonce) > BigInt(current.request.nonce), 'binding_nonce', 409);
     await this.store.put('payoutRequests', id, envelope);
     return this.pending(id);
   }); }
   pending(id) {
     const envelope = this.store.get('payoutRequests', id); check(envelope, 'binding_request_missing', 404);
+    const accepted = this.store.get('payoutBindings', id), expired = !accepted && envelope.request.expiry <= this.now();
     return { id, ...envelope, network: this.network, bitcoinNetwork: this.bitcoinNetwork,
       message: verifyAgentBinding(envelope, { ...this.options(), historical: true }),
-      state: this.store.get('payoutBindings', id) ? 'accepted' : 'awaiting_wallet', bindPath: '/bind-payout/' + id };
+      state: accepted ? 'accepted' : expired ? 'expired' : 'awaiting_wallet', bindPath: '/bind-payout/' + id,
+      ...(expired && !this.store.get('payoutAttempts', id) ? { disposition: {
+        reason: 'binding_expired', fundsMoved: false, nextAction: 'request_new_binding', ownerActionRequired: false
+      } } : {}) };
   }
   complete({ id, walletSignature }) { return this.gate(async () => {
     const accepted = this.store.get('payoutBindings', id);
@@ -88,20 +93,40 @@ export class Bindings {
     const envelope = { ...pending, walletSignature };
     check(verifyWalletBinding(envelope, this.options()) === id, 'binding_id');
     const key = bindingKey(pending.request.agent, pending.request.rail), current = this.current(pending.request.agent, pending.request.rail);
+    check(current?.request.v !== 2 || pending.request.v === 2, 'binding_version');
     check(!current || BigInt(pending.request.nonce) > BigInt(current.request.nonce), 'binding_nonce', 409);
     let record = this.store.get('payoutAttempts', id);
-    if (record) check(record.walletSignature === walletSignature, 'binding_conflict', 409);
+    if (record) {
+      check(record.walletSignature === walletSignature, 'binding_conflict', 409);
+      if (pending.request.v === 2 && this.now() - record.acceptedAt > this.freshnessMs) {
+        record = { ...record, acceptedAt: this.now(), attempt: (BigInt(record.attempt) + 1n).toString() };
+        await this.store.put('payoutAttempts', id, record);
+      }
+    }
     else {
       record = { id, ...envelope, acceptedAt: this.now() };
+      if (pending.request.v === 2) Object.assign(record, { attempt: '0', blockedAt: record.acceptedAt });
       check(!current || record.acceptedAt > current.acceptedAt, 'binding_clock');
       await this.store.transact([{ space: 'payoutAttempts', id, value: record }, { space: 'payoutTransitions', id: key, value: { id, acceptedAt: record.acceptedAt } }]);
     }
     record = { ...record, attestations: await this.committee.bindPayout(record, this.options()) };
     verifyBinding(record, this.options());
     await this.store.transact([{ space: 'payoutBindings', id, value: record }, { space: 'payoutCurrent', id: key, value: id },
-      { space: 'payoutHistory/' + key, id: nonceKey(record.request.nonce), value: id }, { space: 'payoutAttempts', id }, { space: 'payoutTransitions', id: key }]);
+      { space: 'payoutHistory/' + key, id: bindingNonceKey(record.request), value: id }, { space: 'payoutAttempts', id }, { space: 'payoutTransitions', id: key }]);
     return record;
   }); }
+  async tick({ limit = 128 } = {}) {
+    const page = this.store.list('payoutAttempts', { after: this.attemptCursor ?? '', limit });
+    this.attemptCursor = page.length === limit ? page.at(-1).id : '';
+    for (const { id, value } of page) {
+      if (value.request.v !== 2) continue;
+      if (value.request.expiry <= this.now()) {
+        await this.store.put('payoutAttemptStatus', id, { state: 'expired', reason: 'binding_expired' }); continue;
+      }
+      try { await this.complete({ id, walletSignature: value.walletSignature }); await this.store.put('payoutAttemptStatus', id); }
+      catch { await this.store.put('payoutAttemptStatus', id, { state: 'retrying', reason: 'binding_quorum_unavailable' }); }
+    }
+  }
   read(input) { return publicIdentities(this.readWire(tracReadRoute(input))); }
   readWire(input) {
     const url = new URL(input, 'http://127.0.0.1');
@@ -115,7 +140,7 @@ export class Bindings {
       const page = this.store.list('payoutHistory/' + bindingKey(match[1], match[2]), { after, limit: 256 });
       for (const row of page) {
         const proof = this.validProof(row.value); if (!proof) continue;
-        check(proof.request.agent === match[1] && proof.request.rail === match[2] && row.id === nonceKey(proof.request.nonce), 'binding_index');
+        check(proof.request.agent === match[1] && proof.request.rail === match[2] && row.id === bindingNonceKey(proof.request), 'binding_index');
         rows.push(proof);
       }
       if (page.length < 256) break; after = page.at(-1).id;

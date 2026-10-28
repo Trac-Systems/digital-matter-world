@@ -18,15 +18,28 @@ function reserve(value, strings, added) {
   return 1 + varint(entries.length) + entries.reduce((n, [k, v]) => n + reserve(k, strings, added) + reserve(v, strings, added), 0);
 }
 export class Intake {
-  constructor({ store, network, secret, hashAt, puzzleBits = 12, maxPending = 16000, maxEntries = 1000, auditLimit = 1500000, discoveryMaxHeight = 19999, limiter = new Limiter() }) {
-    Object.assign(this, { store, network, secret, hashAt, puzzleBits, maxPending, maxEntries, auditLimit, discoveryMaxHeight, limiter });
+  constructor({ store, network, secret, hashAt, puzzleBits = 12, maxPending = 16000, maxEntries = 1000, auditLimit = 1500000, limiter, namedAdmission, rulesContext, resources }) {
+    Object.assign(this, { store, network, secret, hashAt, puzzleBits, maxPending, maxEntries, auditLimit, limiter });
+    Object.assign(this, { namedAdmission, rulesContext });
+    if (resources) rules.validateResourceDocument(resources);
+    this.resources = resources?.values ?? rules.RESOURCE_PROFILE;
+    this.limiter = limiter ?? new Limiter({ capacity: this.resources.senderCapacity, burst: this.resources.senderBurst,
+      perSecond: this.resources.senderPerSecond, ttl: this.resources.senderTtlMs });
+    if (resources) { this.maxPending = this.resources.intakePending; this.maxEntries = this.resources.intakeEntries; }
     this.gateway = edPublic(secret); this.head = store.get('meta', 'head'); this.sequence = store.get('meta', 'receiptSequence') ?? 0;
-    this.pending = new Map(); this.strings = new Set(); this.reserved = 24000; this.count = 0; this.reveals = 0; this.crafts = 0;
+    this.pending = new Map(); this.strings = new Set(); this.reserved = this.resources.intakeReserveBytes; this.count = 0; this.reveals = 0; this.crafts = 0;
     if (this.head) for (const { value } of this.entries()) this.account(value);
   }
   entries() { return this.head ? this.store.list('intake/' + this.head.id, { limit: this.maxEntries }) : []; }
   account(entry) { this.reserved += reserve({ move: entry.move, receipt: entry.receipt, reason: 'accepted' }, this.strings, []); this.count++; if (entry.move.t === 'discovery-reveal') this.reveals++; if (entry.move.t === 'craft') this.crafts++; }
   async accept(text) {
+    if (this.rulesContext?.()?.ruleset === 'dmw-v2') {
+      check(typeof text === 'string' && Buffer.byteLength(text) <= rules.SETTINGS_CAPABILITIES.moveBytes, 'body_limit', 413);
+      let version; try { version = JSON.parse(text).v; } catch { throw Error('json_canonical'); }
+      check(version === 2, 'upgrade_required', 409);
+      check(this.namedAdmission, 'ruleset_not_ready', 503);
+      return this.namedAdmission.accept(text);
+    }
     check(this.head && !this.rotating, 'tip_transition', 503);
     const move = rules.parseMove(text, rules.MOVE_DEFAULTS.maxBytes);
     check(['header', 'claim', 'discovery-commit', 'discovery-reveal', 'craft'].includes(move.t), 'move_type');
@@ -36,14 +49,13 @@ export class Intake {
     check(!this.store.get('receiptObservations', `${this.head.tip}/${this.head.hash}`), 'receipt_window_sealed', 503);
     check(!rules.checkMove(move, { network: this.network, tip: this.head.tip, hashAt: this.hashAt, puzzleBits: this.puzzleBits }), 'invalid_move');
     check(this.limiter.take(move.a), 'sender_rate', 429);
-    check(move.t !== 'discovery-reveal' || this.head.counted <= this.discoveryMaxHeight, 'discovery_history_adapter_required', 503);
-    check(move.t !== 'discovery-reveal' || this.reveals < 1, 'reveal_capacity', 429);
-    check(move.t !== 'craft' || this.crafts < 8, 'craft_capacity', 429);
+    check(move.t !== 'discovery-reveal' || this.reveals < this.resources.legacyRevealsPerObservation, 'reveal_capacity', 429);
+    check(move.t !== 'craft' || this.crafts < this.resources.craftsPerObservation, 'craft_capacity', 429);
     check(this.count < this.maxEntries && this.store.count('dedupe') + this.pending.size < this.maxPending, 'pending_capacity', 503);
     const sequence = this.sequence + 1;
     const receipt = rules.signReceipt(move, { tip: this.head.tip, hash: this.head.hash, sequence, highestTip: this.head.highestTip }, this.secret);
     const entry = { move, receipt }, added = [], bytes = reserve({ ...entry, reason: 'accepted' }, this.strings, added);
-    if (this.reserved + bytes > this.auditLimit || this.strings.size > 16000) { for (const s of added) this.strings.delete(s); throw Object.assign(Error('audit_capacity'), { status: 429 }); }
+    if (this.reserved + bytes > this.auditLimit || this.strings.size > this.resources.intakeStrings) { for (const s of added) this.strings.delete(s); throw Object.assign(Error('audit_capacity'), { status: 429 }); }
     this.sequence = sequence; this.reserved += bytes; this.count++; if (move.t === 'discovery-reveal') this.reveals++; if (move.t === 'craft') this.crafts++;
     const promise = this.store.transact([
       { space: 'intake/' + this.head.id, id: heightKey(sequence), value: entry },
@@ -68,7 +80,7 @@ export class Intake {
         operations.push({ space: 'observations', id: this.head.id, value: sealed });
         if (entries.length) operations.push({ space: 'receiptObservations', id: `${this.head.tip}/${this.head.hash}`, value: { seal: receiptRoot, receipts: entries.map(e => e.receipt) } });
       }
-      await this.store.transact(operations); this.head = next; this.count = 0; this.reveals = 0; this.crafts = 0; this.strings.clear(); this.reserved = 24000;
+      await this.store.transact(operations); this.head = next; this.count = 0; this.reveals = 0; this.crafts = 0; this.strings.clear(); this.reserved = this.resources.intakeReserveBytes;
       return sealed;
     } finally { if (!this.store.failed) this.rotating = false; }
   }

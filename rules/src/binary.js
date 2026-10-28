@@ -53,6 +53,13 @@ export function decodeBinary(bytes, maxBytes = 1500000) {
   const canonical = encodeBinary(value); assert(canonical.length === bytes.length && canonical.every((b, i) => b === bytes[i]), 'binary_canonical'); return value;
 }
 export function viewerSummary(file) {
+  if (file.v === 5) return publicIdentities({ v: 5, height: file.height, hash: file.hash, tip: file.tip, tipHash: file.tipHash,
+    ruleset: file.ruleset, settingsRevision: file.settingsRevision, receipts: { count: file.receipts.length, root: file.receiptRoot.root },
+    moves: file.moves.length, rejected: file.moves.filter(m => m.reason !== 'accepted').length,
+    settlements: file.settlements.map(s => ({ window: s.window, root: s.root, inputRoot: s.inputRoot, page: s.page, from: s.from, to: s.to,
+      claims: s.claims.length, winners: s.winners.length, headers: s.headers?.length ?? 0, complete: s.complete, total: s.total })),
+    closures: file.closures.map(c => ({ window: c.window, root: c.root, inputRoot: c.inputRoot, pages: c.pages, claims: c.claims, winners: c.winners,
+      ...(c.void ? { void: true, reason: c.reason } : {}) })), root: file.auditHash ?? null });
   return publicIdentities({ v: file.v, height: file.height, hash: file.hash, tip: file.tip, tipHash: file.tipHash,
     receipts: { count: file.receipts.length, root: file.receiptRoot.root },
     moves: file.moves.length, rejected: file.moves.filter(m => m.reason !== 'accepted').length,

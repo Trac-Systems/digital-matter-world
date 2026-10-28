@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.mjs';
 import { changeFeePolicy, currentFee } from '../src/fees.mjs';
 import { check } from '../src/util.mjs';
 import { rules } from '../src/rules.mjs';
-import { updateRegistry } from '../src/registry.mjs';
+import { updateRegistryFees } from '../src/registry.mjs';
 
 export async function reloadBaseFee(filename, decimalTap) {
   return reloadFees(filename, { baseFee: rules.parseTapAmount(decimalTap) });
@@ -13,7 +13,7 @@ export async function reloadFees(filename, changes, { registryFile = false, at =
   const config = registryFile ? null : await loadConfig(filename), path = registryFile ? filename : config.prod?.registry ?? config.local?.registry;
   check(typeof path === 'string' && path.startsWith('/'), 'fee_registry_path');
   // Serialize operator changes; readers see one complete document via rename.
-  const updated = await updateRegistry(path, registry => changeFeePolicy(registry, changes, at)), fee = currentFee(updated);
+  const updated = await updateRegistryFees(path, changes, at), fee = currentFee(updated);
   return { baseFee: fee.baseFee, feeSettings: fee.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, revision: fee.id };
 }
 export function feeArguments(args) {

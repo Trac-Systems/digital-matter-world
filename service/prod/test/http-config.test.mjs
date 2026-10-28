@@ -38,7 +38,7 @@ test('HTTP deadlines include a stalled response body', async t => {
 test('HTTP denies redirects, malformed JSON and unbounded queueing', async t => {
   const url = await mockServer(t, (req, res) => { if (req.url === '/bad') res.end('secret=fixture'); else { res.writeHead(302, { location: '/bad' }); res.end(); } });
   const source = new HttpSource({ url, retries: 0, maxQueue: 1 });
-  const first = source.request(); assert.throws(() => source.request('/different'), /http_capacity/); await assert.rejects(first, /http_unavailable/);
+  const first = source.request(); assert.throws(() => source.request(), /http_capacity/); await assert.rejects(first, /http_unavailable/);
   await assert.rejects(new HttpSource({ url, retries: 0 }).request('/bad'), e => e.message === 'http_unavailable' && !JSON.stringify(e).includes('fixture'));
 });
 test('JSON-RPC checks response identity and strips remote error text', async t => {
@@ -87,19 +87,4 @@ test('production startup requires the global feePolicy before contacting provide
   const { config, file } = await configFixture(t);
   config.prod.registry = await file('missing-fee-policy', { assets: {} });
   await assert.rejects(validateConfig(config), /feePolicy is required in the operator registry/);
-});
-
-test('production public source and bitmap cache limits are configurable and validated', async t => {
-  const { config } = await configFixture(t);
-  config.prod.http = { requestsPerSecond: 2, publicRequestsPerSecond: 0.5, publicMaxQueue: 4 };
-  config.prod.bitmapCache = { maxEntries: 8, maxRows: 500, maxInscriptions: 1000, maxConcurrentLoads: 1, ttlMs: 30000, tipMaxAgeMs: 1000 };
-  await validateConfig(config);
-  for (const [key, value] of [['publicRequestsPerSecond', 0], ['publicMaxQueue', 0], ['publicMaxQueue', 1.5]]) {
-    const copy = structuredClone(config); copy.prod.http[key] = value;
-    await assert.rejects(validateConfig(copy), /http_public_policy/);
-  }
-  for (const [key, value] of [['maxEntries', 0], ['maxRows', 1000001], ['maxInscriptions', -1], ['maxConcurrentLoads', 17], ['ttlMs', 0], ['tipMaxAgeMs', 60001], ['unknown', 1]]) {
-    const copy = structuredClone(config); copy.prod.bitmapCache[key] = value;
-    await assert.rejects(validateConfig(copy), /bitmap_cache_policy/);
-  }
 });

@@ -56,6 +56,7 @@ export function validateDefinition(p, limits) {
 export function fieldValue(header, field, dt = 'n') {
   validateField(field, dt);
   const n = field === 4 ? header.height : field === 10 ? header.nonce : header.bits;
+  if (field === 4 && typeof n === 'string') { assert(/^(0|[1-9][0-9]*)$/.test(n), 'field_value'); return n; }
   assert(integer(n, 0xffffffff), 'field_value'); return n.toString(dt === 'h' ? 16 : 10);
 }
 function validateField(field, dt) { assert([4, 10, 11].includes(field) && (dt === 'n' || (field === 11 && dt === 'h')), 'field'); }

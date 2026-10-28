@@ -14,6 +14,28 @@ import { Committee } from '../src/committee.mjs';
 import { signTapWalletMessage } from '../../rules/test/tap-wallet-signing.mjs';
 const { ed25519 } = createRequire(new URL('../../rules/package.json', import.meta.url))('@noble/curves/ed25519');
 
+test('expired unsigned binding is terminal without moving funds and permits a fresh request after restart', async t => {
+  const directory = await temp('binding-expiry-'); let store = await Store.open(directory), now = Date.now();
+  t.after(() => store.close());
+  const who = agent(83); let f = bindingFixture(store, { now: () => now });
+  const packet = f.packet(who, 'tap', who.secret.toString('hex'), '1', now + 1000);
+  const { walletSignature, ...body } = packet, pending = await f.bindings.request(body);
+  const rowsBefore = store.db.prepare('SELECT space,id,value FROM records ORDER BY space,id').all();
+  now = packet.request.expiry;
+  assert.equal(f.bindings.pending(pending.id).state, 'expired');
+  assert.deepEqual(f.bindings.pending(pending.id).disposition, { reason: 'binding_expired', fundsMoved: false, nextAction: 'request_new_binding', ownerActionRequired: false });
+  assert.equal((await f.bindings.request(body)).state, 'expired');
+  await assert.rejects(f.bindings.complete({ id: pending.id, walletSignature }), /binding_expired/);
+  assert.deepEqual(store.db.prepare('SELECT space,id,value FROM records ORDER BY space,id').all(), rowsBefore);
+  await store.close(); store = await Store.open(directory); f = bindingFixture(store, { now: () => now });
+  assert.equal(f.bindings.pending(pending.id).state, 'expired');
+  const replacement = await f.bind(who, 'tap', who.secret.toString('hex'), '2');
+  assert.equal(f.bindings.current(who.address, 'tap').id, replacement.id);
+  assert.equal(f.bindings.pending(pending.id).state, 'expired');
+  now += 86400000;
+  assert.equal(f.bindings.pending(replacement.id).state, 'accepted');
+});
+
 for (const bitcoinNetwork of ['mainnet', 'regtest']) test(`TAP Wallet legacy binding survives committee acceptance, history, quote use and restart (${bitcoinNetwork})`, async t => {
   const directory = await temp('tap-wallet-binding-'); let store = await Store.open(directory), now = Date.now();
   t.after(() => store.close());

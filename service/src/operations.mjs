@@ -1,9 +1,12 @@
 import { paidMintPlan } from '../../committee/signer/pay-first.mjs';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
+import { releaseCreditClaims } from './mint-credits.mjs';
+import { assetResources } from './asset-resources.mjs';
+import { releaseAdmission } from './mint-admission.mjs';
 
 export class MintOperations {
-  constructor({ store, network, reads }) { Object.assign(this, { store, network, reads }); this.supportsMintBatches = true; }
+  constructor({ store, network, reads, resources = {} }) { Object.assign(this, { store, network, reads }); this.resources = assetResources(resources); this.supportsMintBatches = true; }
   async ensure(key, op) {
     const id = op.op === 'rq' ? rules.pendingId(this.network, op.request) : op.id, request = this.store.get('mints', id);
     check(request && ['rq', 'mp', 'mc'].includes(op.op), 'mint_request_missing');
@@ -15,30 +18,27 @@ export class MintOperations {
     if (accepted) { await this.store.put('mintInputs', key); return accepted; }
     if (this.store.get('mintRejected', key) || this.store.get('mintDeferred', key)) return null;
     if (!this.store.get('mintInputs', key)) {
-      check(this.store.count('mintInputs') < 256, 'mint_operation_capacity', 503);
+      check(this.store.countUint('mintInputs') < this.resources.mintInputCapacity, 'mint_operation_capacity', 503);
       await this.store.put('mintInputs', key, { id, op: op.op });
     }
     return null;
   }
   acceptedOperations(draft) {
-    return draft.proposal.batch.ops.filter(op => ['rq', 'mp', 'mc'].includes(op.op)).flatMap(op => {
-      const id = op.op === 'rq' ? rules.pendingId(this.network, op.request) : op.id, row = this.store.get('mints', id);
-      return [{ space: 'mintInputs', id: op.op + '/' + id }, ...(op.op === 'rq' && row ? [{ space: 'mints', id, value: { ...row, admissionBatch: draft.proposal.batch.n } }] : [])];
-    });
+    return draft.proposal.batch.ops.filter(op => ['rq', 'mp', 'mc'].includes(op.op)).map(op => ({ space: 'mintInputs', id: op.op + '/' + (op.op === 'rq' ? rules.pendingId(this.network, op.request) : op.id) }));
   }
   async retire(key, row, reason, counted, retryable = false) {
     await this.store.transact([{ space: 'mintInputs', id: key }, { space: retryable ? 'mintDeferred' : 'mintRejected', id: key, value: { id: row.id, reason, counted } },
       ...(retryable ? [{ space: 'mints', id: row.id, value: { ...row, reason, checkedAt: counted } }] : []),
-      ...(!retryable && key.startsWith('rq/') ? [{ space: 'mints', id: row.id, value: { ...row, state: 'expired', reason } }, { space: 'activeMints', id: row.id }, ...(row.key ? [{ space: 'holds', id: row.key, value: { id: row.id, expiry: counted - 1, safeToReplace: true } }] : [])] : [])]);
+      ...(!retryable && key.startsWith('rq/') ? [{ space: 'mints', id: row.id, value: { ...row, state: 'expired', reason } }, { space: 'activeMints', id: row.id },
+        { space: 'expiredMints', id: row.id, value: true }, ...releaseCreditClaims(this.store, row), ...releaseAdmission(row),
+        ...(row.key && this.store.get('holds', row.key)?.id === row.id ? [{ space: 'holds', id: row.key, value: { id: row.id, expiry: counted - 1, safeToReplace: true } }] : [])] : [])]);
   }
-  inputs(options) {
-    if (!this.store.count('mintInputs') && !this.store.count('mintDeferred')) return Promise.resolve([]);
-    return this.reads.withSnapshot ? this.reads.withSnapshot(options.view, () => this.readInputs(options)) : this.readInputs(options);
-  }
-  async readInputs({ counted, last, files, view, limit }) {
+  async inputs({ counted, last, files, view, limit }) {
     // Deferred evidence is retried once per new counted snapshot. The original
     // request and rejection reason remain durable and publicly inspectable.
-    for (const { id: key, value } of this.store.list('mintDeferred', { limit: 256 })) if (value.counted < counted && this.store.count('mintInputs') < 256) {
+    const deferred = this.store.list('mintDeferred', { after: this.deferredCursor ?? '', limit: this.resources.workPage });
+    this.deferredCursor = deferred.length === this.resources.workPage ? deferred.at(-1).id : '';
+    for (const { id: key, value } of deferred) if (value.counted < counted && this.store.countUint('mintInputs') < this.resources.mintInputCapacity) {
       await this.store.transact([{ space: 'mintInputs', id: key, value: { id: value.id, op: key.split('/')[0] } }, { space: 'mintDeferred', id: key }]);
     }
     const at = { counted, last }, balances = new Map(), nonces = new Set(), holds = new Map();
@@ -54,8 +54,10 @@ export class MintOperations {
       if (op.op === 'xc') { nonces.add(op.request.owner + ':' + op.request.nonce); for (const [asset, n] of op.request.in) await change(op.request.owner, asset, -BigInt(n)); for (const [asset, n] of op.request.out) await change(op.request.owner, asset, BigInt(n)); }
     }
     const inputs = [], ids = new Set(), projected = { balances: {}, usedNonces: {}, mints: {} };
-    for (const { id: queueKey, value: queued } of this.store.list('mintInputs', { limit: 256 })) {
+    const page = this.store.list('mintInputs', { after: this.inputCursor ?? '', limit: this.resources.workPage });
+    for (const { id: queueKey, value: queued } of page) {
       if (inputs.length === limit) break; if (ids.has(queued.id)) continue;
+      this.inputCursor = queueKey;
       const row = this.store.get('mints', queued.id); check(row, 'mint_request_missing');
       const { request, signature: sig, receiver, id } = row, op = queued.op;
       let evidence;
@@ -95,6 +97,7 @@ export class MintOperations {
         await this.retire(queueKey, row, /^[a-z][a-z0-9_]{0,80}$/.test(e.message) ? e.message : 'evidence_unavailable', counted, op !== 'rq' || !permanent.has(e.message));
       }
     }
+    if (page.length < this.resources.workPage && this.inputCursor === page.at(-1)?.id || !page.length) this.inputCursor = '';
     return inputs;
   }
   async accepted(draft) {

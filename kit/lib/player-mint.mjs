@@ -19,7 +19,7 @@ export class PlayerMint {
     for (;;) {
       signal?.throwIfAborted();
       const status = await this.status(id);
-      if (['permit_issued', 'minted', 'expired'].includes(status.state) || Date.now() >= end) return status;
+      if (['permit_issued', 'minted', 'expired', 'accepted', 'credited', 'refunded'].includes(status.state) || Date.now() >= end) return status;
       await sleep(Math.min(intervalMs, end - Date.now()), undefined, { signal });
     }
   }
@@ -43,6 +43,10 @@ export class PlayerMint {
       if (row.body.payment && this.service.reportMintPayment) {
         try { await this.service.reportMintPayment({ id: row.body.requestId, paymentId: plan.inscriptionId }); }
         catch { result.notice = 'Payment broadcast; gateway notification is pending. Retry this request to report the same payment ID.'; }
+      }
+      if (row.id.startsWith('bitcoin-mint/') && this.service.reportMintPayment) {
+        try { await this.service.reportMintPayment({ id: row.body.requestId, inscription: plan.inscriptionId }); }
+        catch { result.notice = 'Mint broadcast; retry this request to report the same inscription ID.'; }
       }
       return result;
     } catch (error) { this.journal.mark(row.id, 'unknown'); throw error; }

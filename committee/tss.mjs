@@ -26,12 +26,16 @@ export async function rpc(url, token, path, body = {}, timeout = 30000) {
   if (!response.ok) throw Error(result.error ?? `http_${response.status}`);
   return result;
 }
-export async function createGroup(directory, { prefix = 'signer', port = 57500, network = 'dmw-regtest', epoch = 1 } = {}) {
+export async function createGroup(directory, { prefix = 'signer', port = 57500, network = 'dmw-regtest', epoch = 1,
+  idSeparator = '-', stateSubdirectory = '' } = {}) {
   const peers = [];
-  for (let i = 0; i < 5; i++) peers.push(await provisionOperator({directory:resolve(directory,`${prefix}-${i+1}`),id:`${prefix}-${i+1}`,url:`http://127.0.0.1:${port+i}`,network}));
+  for (let i = 0; i < 5; i++) {
+    const id = `${prefix}${idSeparator}${i+1}`;
+    peers.push(await provisionOperator({directory:resolve(directory,id,stateSubdirectory),id,url:`http://127.0.0.1:${port+i}`,network}));
+  }
   const group = [];
   for (const member of peers) {
-    const dir = resolve(directory, member.id), secrets = resolve(dir, 'credentials.json'), config = resolve(dir, 'sidecar.json');
+    const dir = resolve(directory, member.id, stateSubdirectory), secrets = resolve(dir, 'credentials.json'), config = resolve(dir, 'sidecar.json');
     await privateJSON(config, { id: member.id, network, epoch, listen: new URL(member.url).host, directory: dir, secrets, peers });
     group.push({ ...member, config, directory: dir });
   }

@@ -57,6 +57,7 @@ test('signed HTTP links refuse wrong owners, prior links, unfinalized releases a
     assert.deepEqual(JSON.parse(contract.db.get('n/link/1')), { block: 1, linkHeight: 1 });
     assert.equal(store.get('linkStatus', id).state, 'accepted'); assert.equal(store.count('activeLinks'), 0);
     assert.deepEqual(store.get('links', heightKey(1)), { block: 1, linkHeight: 1 });
+    assert.deepEqual(store.get('feedBlockChanges', 'link/1'), { block: 1 });
     assert.equal((await post('/link/payment', funding)).value.state, 'accepted');
     const batches = store.list('batches', { limit: 100 });
     assert.equal(batches.flatMap(r => r.value.batch.ops).filter(o => o.op === 'kv' && o.key === 'link/1').length, 1);

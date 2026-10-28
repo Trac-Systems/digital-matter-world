@@ -3,10 +3,7 @@ import { rules, requestID, permit } from './adapter.mjs';
 
 // Used both by the batch approvers (before consumption) and by the detached
 // permit approvers (after consumption). Every monetary field is read locally.
-export async function paidMintPlan(options) {
-  return options.reads.withSnapshot ? options.reads.withSnapshot(undefined, () => readPaidMintPlan(options)) : readPaidMintPlan(options);
-}
-async function readPaidMintPlan({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, request, signature, receiver, consumed = false, final = true, confirmations = 1 }) {
+export async function paidMintPlan({ reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', network, publicKey, request, signature, receiver, consumed = false, final = true, confirmations = 1 }) {
   check(rules.verifyRequest('rq', network, request, signature, request?.until), 'owner_signature');
   check(typeof receiver === 'string' && rules.hash(receiver) === request.receive, 'receiver_binding');
   const id = requestID(network, request), raw = await reads.pending(id), pending = await reads.pendingAcceptance(id);

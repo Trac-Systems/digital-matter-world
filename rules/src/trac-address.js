@@ -74,8 +74,8 @@ export function tracReadRoute(input, direction = 'wire', depth = 0) {
     throw Object.assign(new Error('invalid_list_source'), { status: 400 });
   const url = new URL(input, 'http://127.0.0.1');
   const change = value => direction === 'wire' ? decodeTracAddress(value) : hexKey(value) ? encodeTracAddress(value) : value;
-  url.pathname = url.pathname.replace(/\/(agents|payout-bindings)\/([^/]+)/, (all, collection, address) =>
-    collection === 'payout-bindings' && address === 'requests' ? all : '/' + collection + '/' + change(address));
+  url.pathname = url.pathname.replace(/\/(agents|accounts|payout-bindings)\/([^/]+)/, (all, collection, address) =>
+    collection === 'payout-bindings' && address === 'requests' || collection === 'accounts' && hexKey(address) ? all : '/' + collection + '/' + change(address));
   for (const [key, value] of [...url.searchParams]) {
     if (queryIdentities.has(key)) {
       if (url.searchParams.getAll(key).length !== 1) throw Object.assign(new Error('duplicate_parameter'), { status: 400 });

@@ -6,12 +6,12 @@ import { rules } from '../signer/adapter.mjs';
 import { fixture, batchFixture } from './fixture.mjs';
 import { attest, receiptSigners } from '../../rules/test/witness-fixture.mjs';
 import { gatewaySecret, secret, owner, hashAt } from '../../rules/test/observation-fixture.mjs';
-const recorded = JSON.parse(await readFile(new URL('./fixtures/receipt-certificate-43.json', import.meta.url)));
+const incident = JSON.parse(await readFile(new URL('./fixtures/receipt-certificate-43.json', import.meta.url)));
 
-// Isolate the post-replay certificate boundary with the recorded public files
+// Isolate the post-replay certificate boundary with the actual incident files
 // and signatures. The synthetic cases below run the full deterministic replay.
-function recordedPolicy(files = structuredClone(recorded.files), certificates = structuredClone(recorded.certificates)) {
-  const { network, batch, receiptSigners } = recorded, publicKey = 'test-authority';
+function incidentPolicy(files = structuredClone(incident.files), certificates = structuredClone(incident.certificates)) {
+  const { network, batch, receiptSigners } = incident, publicKey = 'test-authority';
   const digest = Buffer.from(rules.batchDigest(network, batch)).toString('hex');
   const context = { counted: 973449, last: { n: 42, to: 973439 }, inputs: [], settings: { receiptSigners } };
   const reads = { authority: async () => ({ network, committee: publicKey, epoch: batch.epoch }), counted: async () => context.counted,
@@ -22,11 +22,11 @@ function recordedPolicy(files = structuredClone(recorded.files), certificates = 
 }
 
 test('batch 43: six empty precursors resolve to the exact later certified seals', async () => {
-  const f = recordedPolicy();
+  const f = incidentPolicy();
   assert.equal(f.files.length, 16);
   assert.equal(Object.keys(f.certificates).length, 10);
-  for (const c of Object.values(f.certificates)) assert.ok(rules.verifyRootAttestations(c.seal, c.attestations, recorded.receiptSigners));
-  for (const file of f.files) assert.ok(rules.verifyReceiptRoot(file.receiptRoot, file.receipts, { network: recorded.network, gateway: file.receiptRoot.gateway, tip: file.tip, hash: file.tipHash }));
+  for (const c of Object.values(f.certificates)) assert.ok(rules.verifyRootAttestations(c.seal, c.attestations, incident.receiptSigners));
+  for (const file of f.files) assert.ok(rules.verifyReceiptRoot(file.receiptRoot, file.receipts, { network: incident.network, gateway: file.receiptRoot.gateway, tip: file.tip, hash: file.tipHash }));
   const conflicts = f.files.filter(file => {
     const c = f.certificates[`${file.tip}/${file.tipHash}`];
     return c && file.receiptReference !== c.seal.root && rules.stableJSON(file.receiptRoot) !== rules.stableJSON(c.seal);
@@ -36,7 +36,7 @@ test('batch 43: six empty precursors resolve to the exact later certified seals'
 });
 
 for (const tip of [973440, 973442, 973443, 973444, 973445, 973446]) test(`batch 43 refuses omission of certified receipts at ${tip}`, async () => {
-  const f = recordedPolicy();
+  const f = incidentPolicy();
   f.files.splice(f.files.findIndex(file => file.tip === tip && file.receipts.length), 1);
   await assert.rejects(f.policy.approve(f.proposal), /receipt_certificate_read/);
 });
@@ -50,7 +50,7 @@ for (const [name, mutate] of [
   ['bad independent certificate signature', f => Object.values(f.certificates).forEach(c => c.attestations[0].sig = '0'.repeat(128))],
   ['missing independent certificate', f => delete f.certificates[`${f.files[2].tip}/${f.files[2].tipHash}`]],
 ]) test(`batch 43 refuses ${name}`, async () => {
-  const f = recordedPolicy(); mutate(f);
+  const f = incidentPolicy(); mutate(f);
   await assert.rejects(f.policy.approve(f.proposal), /receipt_certificate_read/);
 });
 
