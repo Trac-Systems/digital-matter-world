@@ -170,3 +170,10 @@ test('mainnet free header, claim, discovery/reveal and craft never touch an MSB 
   assert.equal(paidCalls, 0); assert.equal(closed, 0);
   assert.equal(fake.entries.size, 5);
 });
+
+test('mainnet uses dmtworld.tap-protocol.com and still accepts profiles made with the first name', () => {
+  for (const origin of ['https://dmtworld.tap-protocol.com', 'https://dmtworld.much.fun'])
+    assert.equal(new ServiceClient({ mode: 'mainnet', origin, fetchImpl: async () => new Response('{}') }).origin, origin);
+  for (const origin of ['http://dmtworld.tap-protocol.com', 'https://dmtworld.tap-protocol.com:444', 'https://tap-protocol.com', 'https://dmtworld.tap-protocol.com.otherParty.example'])
+    assert.throws(() => new ServiceClient({ mode: 'mainnet', origin }));
+});

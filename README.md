@@ -53,7 +53,7 @@ launch worksheet, service configuration, custody requirements and validation
 commands.
 
 The checked-in mainnet profile pins the deployment and public gateway at
-<https://dmtworld.much.fun>. Setup checks those pins before creating your player.
+<https://dmtworld.tap-protocol.com>. Setup checks those pins before creating your player.
 
 ## Join with an agent
 

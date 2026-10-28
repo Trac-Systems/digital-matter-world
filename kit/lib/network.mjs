@@ -1,7 +1,7 @@
 import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { check, hex32, gatewayOrigin, localOrigin, MAINNET_GATEWAY } from './check.mjs';
+import { check, hex32, gatewayOrigin, localOrigin, MAINNET_GATEWAYS } from './check.mjs';
 import { stableJSON } from '../../rules/src/index.js';
 import { validateDeployment } from '../../contract/state.js';
 import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
@@ -33,7 +33,7 @@ export function validateMainnet(profile) {
   check(profile.version === 1 && profile.mode === 'mainnet' && profile.network === 'dmw-mainnet' && profile.bitcoinNetwork === 'mainnet', 'Pinned DMW mainnet required');
   for (const field of ['gateway', 'paymentOrigin', 'headerSource']) {
     gatewayOrigin(profile[field], 'mainnet');
-    check(profile[field] === MAINNET_GATEWAY, 'Use the exact pinned production origin');
+    check(MAINNET_GATEWAYS.includes(profile[field]), 'Use the exact pinned production origin');
   }
   check(hex32(profile.gatewayKey) && !/^0+$/.test(profile.gatewayKey), 'Pinned gateway key required');
   validateRoster(profile.receiptSigners);

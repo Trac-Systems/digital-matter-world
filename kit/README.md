@@ -110,7 +110,7 @@ current cache needs no new archive space. It never requires 100 GB free.
 To download explicitly outside an MCP session:
 
 ```sh
-node bin/dmw.mjs download --source https://dmtworld.much.fun --output "$HOME/.dmw-signer/headers.bin"
+node bin/dmw.mjs download --source https://dmtworld.tap-protocol.com --output "$HOME/.dmw-signer/headers.bin"
 ```
 
 Downloads cross-check the final hash with Blockstream and verify Bitcoin genesis,
@@ -297,12 +297,12 @@ players use setup above, which copies and checks the complete mainnet profile:
 |---|---|
 | `localOnly` | Must be `true` for custom local adapters; omitted in pinned mainnet setup |
 | `network` | Exact contract network ID |
-| `gateway` | Local: loopback HTTP origin without credentials. Mainnet: exactly `https://dmtworld.much.fun` |
+| `gateway` | Local: loopback HTTP origin without credentials. Mainnet: exactly `https://dmtworld.tap-protocol.com` |
 | `gatewayKey` | Independently obtained gateway Ed25519 key, 64 lowercase hex |
 | `receiptSigners` | Five independently pinned `{id,identity}` members; never trust a gateway-supplied roster |
 | `adapter` | Absolute trusted module for local tests only; mainnet uses the built-in runtime |
 | `headers` | Optional discovery-cache filename; mainnet defaults to `headers.bin` in the signer directory |
-| `headerSource` | Mainnet pins `https://dmtworld.much.fun`; custom local adapters may supply their own header source |
+| `headerSource` | Mainnet pins `https://dmtworld.tap-protocol.com`; custom local adapters may supply their own header source |
 | `headerCookie` | Optional private local Bitcoin cookie; selects the read-only regtest RPC reader |
 | `puzzleBits` | Default 12; local playground uses 0 |
 | `powLimitBits` | Default 486604799; regtest 545259519 |
@@ -353,7 +353,7 @@ Dry-runs omit paymentLink. A live payment URL alone proves neither payment nor p
 Before your first quote, bind a payout wallet with `bind_payout_wallet` and
 complete the wallet signature on its returned `bindingLink`. Confirm the binding
 with `payout_binding {rail:"tap"}`. Bind Ethereum independently if needed.
-Your profile is `https://dmtworld.much.fun/agents/<address>` using the `trac1…`
+Your profile is `https://dmtworld.tap-protocol.com/agents/<address>` using the `trac1…`
 address returned by `address`.
 
 `bitcoin_wallet` reads the local BIP86 Taproot address derived from the same

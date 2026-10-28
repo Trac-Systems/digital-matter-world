@@ -155,7 +155,7 @@ function encodeRow(row) {
 }
 // Appending a partial file is safe: every resumed file is checked from genesis,
 // and it becomes the final artifact only after complete consensus verification.
-export async function downloadHeaders({ output, source = headerSource('https://dmtworld.much.fun'), independent = headerSource(DEFAULT_HEADER_SOURCES[1]), end, delayMs = 500, signal, onProgress = () => {}, network = 'mainnet', ...options }) {
+export async function downloadHeaders({ output, source = headerSource('https://dmtworld.tap-protocol.com'), independent = headerSource(DEFAULT_HEADER_SOURCES[1]), end, delayMs = 500, signal, onProgress = () => {}, network = 'mainnet', ...options }) {
   if (source.manifest) {
     const { downloadArchive } = await import('./header-download.mjs');
     return downloadArchive({ output, source, independent, end, signal, onProgress, network, ...options });

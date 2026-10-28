@@ -57,9 +57,11 @@ export function publicOrigin(value, mode) {
   check(u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash && u.pathname === '/' && /^[a-zA-Z0-9.-]+\.[a-zA-Z]+$/.test(u.hostname) && !/localhost|\.local$|\.internal$/.test(u.hostname), 'Public production endpoint must be a credential-free HTTPS origin');
   return u.origin;
 }
-export const MAINNET_GATEWAY = 'https://dmtworld.much.fun';
+export const MAINNET_GATEWAY = 'https://dmtworld.tap-protocol.com';
+// The first public name serves the same gateway; profiles created with it stay valid.
+export const MAINNET_GATEWAYS = Object.freeze([MAINNET_GATEWAY, 'https://dmtworld.much.fun']);
 export function gatewayOrigin(value, mode) {
   const origin = publicOrigin(value, mode);
-  check(mode !== 'mainnet' || origin === MAINNET_GATEWAY, 'Production gateway must be https://dmtworld.much.fun');
+  check(mode !== 'mainnet' || MAINNET_GATEWAYS.includes(origin), 'Production gateway must be https://dmtworld.tap-protocol.com');
   return origin;
 }

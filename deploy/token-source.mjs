@@ -45,7 +45,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
   try {
     need(process.argv.length===4&&process.argv[2]==='--output','arguments');
     const record=await new HttpSource({url:TAP_SOURCE_URL,maxBytes:8000000,retries:0,
-      headers:{'user-agent':'DMW-launch-preparation/1.0 (+https://dmtworld.much.fun)'}}).request();
+      headers:{'user-agent':'DMW-launch-preparation/1.0 (+https://dmtworld.tap-protocol.com)'}}).request();
     const hashes=await writeTokenSource(resolve(process.argv[3]),record);
     console.log(JSON.stringify({implementation:TAP_IMPLEMENTATION,...hashes}));
   } catch {console.error('STOP: public verified token source must match; use a new private output directory. No admission was granted.');process.exitCode=1;}

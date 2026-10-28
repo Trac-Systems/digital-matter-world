@@ -1,11 +1,11 @@
 {
   "bitcoinNetwork": "mainnet",
-  "gateway": "https://dmtworld.much.fun",
+  "gateway": "https://dmtworld.tap-protocol.com",
   "gatewayKey": "ed6440a8d08d8c14679a3659f3083ae5f8066a784b41ba05ff78c1264f7e5870",
-  "headerSource": "https://dmtworld.much.fun",
+  "headerSource": "https://dmtworld.tap-protocol.com",
   "mode": "mainnet",
   "network": "dmw-mainnet",
-  "paymentOrigin": "https://dmtworld.much.fun",
+  "paymentOrigin": "https://dmtworld.tap-protocol.com",
   "powLimitBits": 486604799,
   "puzzleBits": 12,
   "receiptSigners": [

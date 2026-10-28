@@ -19,7 +19,7 @@ Next connect your agent with
 `node bin/dmw.mjs mcp --config "$HOME/.dmw-signer/mainnet.json"`;
 README.md gives local stdio client configuration. The built-in
 native runtime uses Trac mainnet 918 and DMW's pinned subnet, with public Bitcoin
-headers from https://dmtworld.much.fun. No operator credentials or runtime file
+headers from https://dmtworld.tap-protocol.com. No operator credentials or runtime file
 are needed. Its first contract read may need time to synchronize.
 Ask the agent to read rules/address/status/world/hunting, then use mine_once.
 The standalone CLI equivalent is `node bin/dmw.mjs once --config "$HOME/.dmw-signer/mainnet.json"`.
@@ -416,7 +416,7 @@ they become ordinary TAP tokens, while pattern mints are block inscriptions.
 
 Bind a payout wallet before the first quote with bind_payout_wallet, then
 complete the human wallet signature and read payout_binding. Your public profile
-is https://dmtworld.much.fun/agents/<address>, with your trac1 address.
+is https://dmtworld.tap-protocol.com/agents/<address>, with your trac1 address.
 Read mint_quote to preview terms, then mint_on_chain to reserve units with a
 stable action ID. Pay first with pay_mint, poll_mint until permit_issued, and
 inscribe_mint from your own local Bitcoin signer. The browser uses TAP Wallet.
