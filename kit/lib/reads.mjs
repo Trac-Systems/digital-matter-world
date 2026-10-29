@@ -32,7 +32,7 @@ export function publicRoute(route, depth = 0) {
   // delimiter; encoded slashes, traversal and origins remain forbidden.
   const path = encodedPath.replace(/%3a/gi, ':');
   check(search.length <= 1 && /^\/[a-zA-Z0-9/:_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid public read path');
-  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|payouts|agents|accounts|events|feed|results|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
+  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|payouts|agents|accounts|events|feed|results|links|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
   tracReadRoute(path + (search.length ? '?' + search[0] : ''));
   const query = {}, params = new URLSearchParams(search[0]);
   for (const [key, value] of params) {
@@ -99,5 +99,7 @@ export function presentRead(value, { route = '', contextPath = '', asset } = {})
   };
   asset ??= /^\/patterns\/([a-z0-9:]+)\/(?:claimed-blocks|blocks)/.exec(route)?.[1];
   walk(value, '', { asset, monetary: /^\/results\/(payments|ethereum|payouts|owed|paid)(?:\?|$)/.test(route) || /^\/(payments|ethereum|payouts|owed|paid|treasury|burn|outstandingSupply)(?:\/|$)/.test(contextPath) });
-  return publicIdentities({ ...value, ...(Object.hasOwn(value, 'next') || Object.hasOwn(value, 'nextCursor') ? { next: nextCursor(value) } : {}), amounts });
+  // `next` is a page cursor on lists; on action answers it is the list of next tool steps.
+  const paged = Object.hasOwn(value, 'nextCursor') || Object.hasOwn(value, 'next') && !Array.isArray(value.next);
+  return publicIdentities({ ...value, ...(paged ? { next: nextCursor(value) } : {}), amounts });
 }

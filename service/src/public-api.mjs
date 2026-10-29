@@ -17,6 +17,7 @@ const policiesFor = (specs, base, suffix = '') => Object.fromEntries(Object.entr
 const normalize = input => {
   const url = new URL(input, 'http://127.0.0.1');
   if (url.pathname.endsWith('/') && url.pathname !== '/') url.pathname = url.pathname.slice(0, -1);
+  if (url.pathname === '/links') url.pathname = '/results/links';
   if (url.pathname === '/results' && url.searchParams.has('kind')) {
     const kind = url.searchParams.get('kind'); check(url.searchParams.getAll('kind').length === 1 && Object.hasOwn(resultSpecs, kind), 'invalid_result_kind');
     url.pathname += '/' + kind; url.searchParams.delete('kind');

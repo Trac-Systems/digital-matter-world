@@ -86,7 +86,7 @@ export class Mints {
   async deploymentNeeded(asset, details = {}) {
     if (!this.provisioner) return null;
     const resolved = await mintAssetDefinition(this.store, asset);
-    const deployment = await this.provisioner.request(resolved.asset, resolved.definition);
+    const deployment = await this.provisioner.request(resolved.asset, resolved.definition, { registeredAsIs: true });
     if (deployment.state === 'registered') return null;
     return { ...details, requestId: null, asset: resolved.asset, catalogAsset: resolved.catalogAsset, state: 'deployment_needed', deploymentNeeded: true,
       message: 'Deployment needed. Inscribe the supplied content from your own Bitcoin wallet before requesting the mint.',

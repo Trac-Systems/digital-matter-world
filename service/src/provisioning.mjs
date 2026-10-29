@@ -5,6 +5,10 @@ import { candidate, same, generationDigest, deploymentPayload, deploymentOptions
 import { updateRegistryAsset } from './registry.mjs';
 import { mintAssetDefinition } from './mint-assets.mjs';
 
+// Background pacing: a failed step retries after RETRY_MS; a registered deployment is re-verified
+// every RECHECK_MS. Each pass holds the provisioning gate, which player requests share.
+const RETRY_MS = 30000, RECHECK_MS = 600000;
+const TRANSIENT = new Set(['tap_snapshot_changed', 'tap_quorum_unavailable', 'tap_lookup_index_catching_up', 'http_timeout', 'http_unavailable', 'http_capacity']);
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy }) {
     Object.assign(this, { store, reads, network, registryPath, policy }); this.gate = serial();
@@ -30,11 +34,14 @@ export class Provisioner {
     return { ...(job ?? { asset: resolved.asset, definition: resolved.definition, kind: resolved.asset.startsWith('p') ? 'dmt' : 'compound',
       displayLabel: resolved.definition.name ?? resolved.asset, state: 'not_started' }), catalogAsset: resolved.catalogAsset };
   }
-  request(asset, definition) { return this.gate(async () => {
+  async request(asset, definition, { registeredAsIs = false } = {}) {
     const resolved = definition ? { asset, definition, catalogAsset: asset } : await mintAssetDefinition(this.store, asset);
-    const job = await this.advance(await this.enqueue(resolved.asset, resolved.definition));
-    return definition ? job : { ...job, catalogAsset: resolved.catalogAsset };
-  }); }
+    const shown = job => definition ? job : { ...job, catalogAsset: resolved.catalogAsset };
+    // Mint quotes take a registered deployment as is; the background tick re-verifies it.
+    const known = registeredAsIs && this.store.get('provisioning', resolved.asset);
+    if (known?.state === 'registered' && same(known.definition, resolved.definition)) return shown(known);
+    return this.gate(async () => shown(await this.advance(await this.enqueue(resolved.asset, resolved.definition))));
+  }
   async tick() {
     return this.gate(async () => {
       const settings = (await this.reads.registry()).operator?.provisioning;
@@ -48,7 +55,8 @@ export class Provisioner {
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
       for (const [asset, definition] of definitions) {
         const job = await this.enqueue(asset, definition);
-        if ((job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
+        // A job waiting for the player's inscription advances when the player submits it.
+        if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
       }
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
         ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '' } : {}) };
@@ -110,6 +118,8 @@ export class Provisioner {
           await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });
           return await this.register(job);
         } catch (error) {
+          // A moving tip or a busy indexer is not evidence against the deployment: retry, keep it live.
+          if (TRANSIENT.has(error.message)) return this.save(job, { nextRetry: Date.now() + RETRY_MS });
           await this.suspend(job, error.message);
           const winner = await this.reads.tap('getDeployment/' + encodeURIComponent(job.entry.indexTick ?? job.entry.tick));
           if (winner && winner.ins !== job.entry.id) return this.save(job, { entry: null, tickerAttempt: job.tickerAttempt + 1, state: 'retrying-collision', reason: 'deployment_race', nextRetry: 0 });
@@ -175,7 +185,7 @@ export class Provisioner {
       return this.register(job);
     } catch (error) {
       return this.save(this.store.get('provisioning', job.asset) ?? job, { state: /fund|budget|cost|fee_rate/.test(error.message) ? 'waiting-for-funds' : 'confirming',
-        reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'provisioning_dependency', nextRetry: Date.now() + 1000 });
+        reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'provisioning_dependency', nextRetry: Date.now() + RETRY_MS });
     }
   }
   async register(job) {
@@ -187,7 +197,7 @@ export class Provisioner {
       suspended: false, inclusion: { height: inclusion.height, blockHash: inclusion.blockHash }, confirmations: this.policy.confirmations };
     entry.approval = generationDigest(entry);
     if (!same(old, entry) || !job.registeredAt) await updateRegistryAsset(this.registryPath, job.asset, () => entry);
-    return this.save(job, { entry, generation, state: 'registered', reason: null, registeredAt: job.registeredAt ?? Date.now(), nextRetry: Date.now() + 10000 });
+    return this.save(job, { entry, generation, state: 'registered', reason: null, registeredAt: job.registeredAt ?? Date.now(), nextRetry: Date.now() + RECHECK_MS });
   }
 }
 

@@ -3,6 +3,7 @@ import { get, bus, store, site } from '../api.js';
 import { pagedTable } from '../paged.js';
 import { mineral, assetName, title, isMe, describe, fieldName } from '../words.js';
 import { tap } from '../money.js';
+import { groupFinds, groupText, inspectGroup } from './feed.js';
 
 // What each bot strategy goes after, in plain words.
 const HUNTS = { prospector: 'Claims finds across history and mints what it wins.', discoverer: 'Searches history for new pattern types and proposes them.', crafter: 'Combines pattern units into compounds.' };
@@ -116,15 +117,17 @@ export function mount(root, params) {
       })), { flush: true, tip: 'Spendable pattern and compound units held by this agent on Trac.' }),
       panel('Discoveries', discoveries(key, mine, track), { flush: true, tip: 'Accepted and revealed pattern types. Sealed proposals stay hidden until they are revealed.' }),
       panel('Recent actions', track(pagedTable({
-        path: `/agents/${key}/history`, key: 'history', limit: 10,
+        path: `/agents/${key}/history`, key: 'history', limit: 50,
+        // Same grouping as the feed: one row per finder, matter and settlement.
+        group: rows => groupFinds(rows).map(r => r.events?.length === 1 ? r.events[0] : r),
         sorts: [['sequence:desc', 'Newest first'], ['sequence:asc', 'Oldest first']],
         filters: [{ name: 'category', label: 'Show', value: '', options: [['', 'All'], ['chain', 'Chain'], ['money', 'Money']] }],
         empty: 'No public actions yet.',
         columns: [
-          { key: 'at', label: 'Time', render: e => h('span.mono.muted', {}, e.at ? clock(e.at) : '–') },
-          { key: 'text', label: 'What happened', render: e => describe(e).text },
-          { key: 'block', label: 'Block', num: true, render: e => { const b = describe(e).block; return b !== null && b !== undefined ? h('a.mono', { href: site.href('world', { b }) }, fmtInt(b)) : ''; } },
-          { key: 'i', label: '', render: e => inspectBtn('Event', e) },
+          { key: 'at', label: 'Time', render: r => { const e = r.events?.[0] ?? r; return h('span.mono.muted', {}, e.at ? clock(e.at) : '–'); } },
+          { key: 'text', label: 'What happened', render: r => r.events ? groupText(r) : describe(r).text },
+          { key: 'block', label: 'Block', num: true, render: r => { if (r.events) return ''; const b = describe(r).block; return b !== null && b !== undefined ? h('a.mono', { href: site.href('world', { b }) }, fmtInt(b)) : ''; } },
+          { key: 'i', label: '', render: r => r.events ? h('button.linkbtn', { onclick: () => inspectGroup(r) }, 'Inspect') : inspectBtn('Event', r) },
         ],
       })), { flush: true }),
       panel('Compounds first made', track(pagedTable({
@@ -194,7 +197,7 @@ export function mount(root, params) {
       path: `/agents/${key}/discoveries?state=accepted`, key: 'discoveries', limit: 5, sorts: [['name:asc', 'Name']],
       empty: 'No accepted discoveries yet.',
       columns: [
-        { key: 'name', label: 'Pattern', render: d => h('span', {}, h('span.swatch', { style: { background: mineral(d.asset) } }), title(d.name)) },
+        { key: 'name', label: 'Pattern', render: d => h('a', { href: site.href('table', { p: d.asset }) }, h('span.swatch', { style: { background: mineral(d.asset) } }), title(d.name)) },
         { key: 'pat', label: 'Rule', render: d => h('code', {}, d.pat) },
         { key: 'fld', label: 'Field', render: d => h('span.small', {}, fieldName(d)) },
         { key: 'tier', label: 'Tier', num: true },

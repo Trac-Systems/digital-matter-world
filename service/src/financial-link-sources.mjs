@@ -16,8 +16,9 @@ export function installLinkSources(reads, { network, bitcoinNetwork, financialFe
     block = rules.decimalV2(block);
     const counted = at?.counted ?? await reads.counted(), registry = await reads.registry(), scope = linkFeeScope(block);
     const treasury = registry.link?.treasury; check(typeof treasury === 'string' && treasury.length, 'link_unconfigured');
-    const bitmap = await reads.bitmap(block, at), link = await reads.link(block);
-    check(link === null && BigInt(block) <= BigInt(counted), 'financial_link_unavailable');
+    check(await reads.link(block) === null, 'link_exists');
+    check(BigInt(block) <= BigInt(counted), 'financial_link_unavailable');
+    const bitmap = await reads.bitmap(block, at);
     feeQuote ??= await reads.feeQuotes.issue(scope, counted, { treasury }, undefined, rules.hashObject(bitmap));
     const terms = await reads.feeQuotes.validate(feeQuote, scope);
     check(terms.payouts?.treasury === treasury && terms.mintOwnershipHash === rules.hashObject(bitmap), 'financial_link_quote_changed');

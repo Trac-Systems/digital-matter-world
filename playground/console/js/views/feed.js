@@ -12,7 +12,7 @@ const KIND = { claim: ['Claim', ''], find: ['Find', 'good'], header_find: ['Head
 
 // Finds one agent settled for one pattern in the same counted block collapse into one row.
 const groupKey = e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null;
-function groupFinds(events) {
+export function groupFinds(events) {
   const out = [];
   for (const e of events) {
     const key = groupKey(e), last = out.at(-1);
@@ -20,12 +20,12 @@ function groupFinds(events) {
   }
   return out;
 }
-function groupText(g) {
+export function groupText(g) {
   const blocks = g.events.map(e => Number(e.data?.block)).filter(Number.isFinite);
   const units = g.events.reduce((sum, e) => sum + (Number(e.data?.count ?? e.data?.amount) || 0), 0);
   return `won ${fmtInt(units)} ${assetName(g.events[0].data?.asset)} in ${fmtInt(g.events.length)} blocks (${fmtInt(Math.min(...blocks))} – ${fmtInt(Math.max(...blocks))})`;
 }
-const inspectGroup = g => inspect(`${fmtInt(g.events.length)} finds`, g.events);
+export const inspectGroup = g => inspect(`${fmtInt(g.events.length)} finds`, g.events);
 
 export function mount(root) {
   let filter = 'all', paused = false, mode = 'live', retained = null, history = null;

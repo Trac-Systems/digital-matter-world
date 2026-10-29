@@ -8,7 +8,8 @@ import { validateTracAddress } from '../../../../rules/src/trac-address.js';
 // read adapter deliberately strips those and cannot be used for wallet signing.
 async function api(path, body) {
   const response = await fetch(path, { ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}), headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) }, credentials: 'same-origin' });
-  const result = await response.json();
+  // A proxy timeout returns an empty body; report it as an unfinished request, not a JSON error.
+  const result = await response.json().catch(() => ({ error: 'request_failed' }));
   if (!response.ok) throw Error(result.error ?? 'request_failed');
   return result;
 }

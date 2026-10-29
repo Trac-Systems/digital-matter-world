@@ -72,9 +72,13 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const state = suppliedStore ?? await Store.open(config.prod.readerData, config.storeSettings);
   let trac, views, store, ethereum, lookups, maintenance, closed = false;
   try {
-  const client = await createBitcoin(config.prod.bitcoin, config.prod.http);
+  // Bitcoin and TAP reads share one paced queue to our own indexer. The HTTP default (2/s) made a
+  // first-mint deployment check wait behind routine refreshes for minutes; installs without an
+  // explicit rate use 25/s for this queue only.
+  const indexerHttp = config.prod.http ?? { requestsPerSecond: 100 };
+  const client = await createBitcoin(config.prod.bitcoin, indexerHttp);
   trac = await configuredTrac(config, state, runtime);
-  const indexer = await createTap(config.prod.tap, client, config.prod.http, config.prod.lookupSettings);
+  const indexer = await createTap(config.prod.tap, client, indexerHttp, config.prod.lookupSettings);
   lookups = new TapLookupIndex({ filename: join(config.prod.readerData, 'tap-lookups.sqlite'), indexer, settings: config.prod.lookupSettings });
   ethereum = await createEthereum(config.prod.ethereum, config.prod.http, { filename: join(config.prod.readerData, 'ethereum-events.sqlite') });
   const manifest = { bitcoin: client };

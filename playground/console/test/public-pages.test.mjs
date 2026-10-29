@@ -115,7 +115,7 @@ test('a summary refresh keeps the cursor page already being requested', async t 
 
 test('the public feed reloads its recent history after an initial read failure', async t => {
   const p = await open(t); let calls = 0;
-  await p.route('**/feed?limit=200', async route => { if (++calls === 1) await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"temporarily_unavailable"}' }); else await route.continue(); });
+  await p.route('**/feed?limit=200&order=desc', async route => { if (++calls === 1) await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"temporarily_unavailable"}' }); else await route.continue(); });
   await p.goto(server.url + '/feed');
   await p.waitForFunction(() => document.querySelectorAll('tr.blockrow').length === 3, null, { timeout: 10000 });
   assert.equal(calls, 2);

@@ -66,7 +66,7 @@ test('each public collection is paged and its scoped cursor retrieves all rows',
     [`/agents/${encodeTracAddress(f.owner)}/mintRights`, 'mintRights'], [`/agents/${encodeTracAddress(f.owner)}/bitmaps`, 'bitmaps'], [`/agents/${encodeTracAddress(f.owner)}/discoveries`, 'discoveries'], [`/agents/${encodeTracAddress(f.owner)}/history`, 'history'],
     ...['finds', 'claims', 'draws', 'matches', 'slotList', 'mintRights'].map(k => ['/blocks/1/' + k, k]),
     ...['mints', 'payments', 'ethereum', 'payouts', 'owed', 'paid', 'links'].map(k => ['/results/' + k, k]),
-    ['/compounds', 'compounds'],
+    ['/compounds', 'compounds'], ['/links', 'links'],
   ]) await t.test(path, async () => {
     const url = new URL(path, f.http.url); url.searchParams.set('limit', '2'); const rows = [];
     let total;

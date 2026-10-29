@@ -38,6 +38,12 @@ function finishPage(rows, key, p, revision, map = row => JSON.parse(row.value), 
   if (!more) result.next = result.nextCursor = null;
   return result;
 }
+function currentLink(store, link) {
+  if (!link) return null;
+  const bitmap = store.get('submittedBitmaps', rules.uintKeyV2(rules.decimalV2(link.block))), fresh = bitmapFresh(store, bitmap);
+  return { ...link, owner: fresh ? bitmap.agent : null, address: fresh ? bitmap.address : null,
+    holderUnavailable: !fresh, ownership: fresh ? 'verified_at_snapshot' : 'unverified_or_stale' };
+}
 export function itemPage(store, kind, scope, params, settings = {}, map) {
   if (kind === 'discoveries') projectionReady(store, 'discoveriesByAgent/' + scope);
   if (kind === 'finds' && scope.startsWith('owner/')) projectionReady(store, 'findsByAgent/' + scope.slice(6));
@@ -64,11 +70,7 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   const selected = []; let last, examined = 0;
   for (const row of rows.slice(0, budget)) {
     const value = map ? map(row) : JSON.parse(row.value);
-    if (kind === 'links') {
-      const bitmap = store.get('submittedBitmaps', rules.uintKeyV2(rules.decimalV2(value.block))), fresh = bitmapFresh(store, bitmap);
-      value.owner = fresh ? bitmap.agent : null; value.address = fresh ? bitmap.address : null; value.holderUnavailable = !fresh;
-      value.ownership = fresh ? 'verified_at_snapshot' : 'unverified_or_stale';
-    }
+    if (kind === 'links') Object.assign(value, currentLink(store, value));
     if (kind === 'balances') {
       const account = store.get('accountRecords', 'ar/' + scope), head = store.get('publicBalanceHeads', scope);
       value.blocked = financialBlock(store, ['ar/' + scope, 'fp/chain']);
@@ -109,7 +111,7 @@ export function publicProjectionRevision(store, input) {
   if (path.startsWith('/payouts/')) scopes = [{ beneficiaries: 'payoutTotals', owed: 'commissionOwed', paid: 'payoutPaid' }[path.slice(9)] ?? 'payoutTotals'];
   if ((match = /^\/patterns\/([^/]+)\/(claimed-blocks|claimed-pages|blocks)$/.exec(path))) scopes = ['claimed2/' + match[1], 'claimedPageManifests/' + match[1], 'catalogPatterns/' + match[1], 'mintedAsset/' + match[1], 'links'];
   if (path === '/mint-rights' || path.endsWith('/mintRights')) { scopes = ['finds', 'links', 'minted', 'holds', 'replay/mints/holds', 'submittedBitmaps', 'publicBalances', 'publicBalanceHeads', 'publicDeployments', 'meta/publicRegistryRevision', 'accountRecords', 'financialHealth']; clock = true; }
-  if (path.startsWith('/world') || /^\/blocks(?:\/|$)/.test(path) && !path.endsWith('/mintRights')) { scopes = ['world', 'finds', 'publicEvents', 'links', 'minted']; clock = true; }
+  if (path.startsWith('/world') || /^\/blocks(?:\/|$)/.test(path) && !path.endsWith('/mintRights')) { scopes = ['world', 'finds', 'publicEvents', 'links', 'minted', 'submittedBitmaps']; clock = true; }
   if ((match = /^\/agents\/([0-9a-f]{64})(?:\/(\w+))?$/.exec(path)) && match[2] !== 'mintRights') {
     const [, owner, kind] = match;
     scopes = kind ? [`items/${kind === 'history' ? 'events' : kind}/${kind === 'finds' ? 'owner/' : ''}${owner}`, { finds: 'findsByAgent/', discoveries: 'discoveriesByAgent/', assets: 'agentAssets/' }[kind] + owner] : ['catalogAgents/' + owner, 'agent/' + owner];
@@ -287,7 +289,7 @@ export function extendedPublicRead(store, url, settings = {}) {
       return { countMeaning: 'verified_submitted_blocks', ...finishPage(rows.map(r => ({ ...r, position: r.id })), block[2], p, projectionRevision(store, 'claimedAt2/' + rules.uintKeyV2(block[1])), r => ({ asset: r.id, ...store.get('claimed2/' + r.id, rules.uintKeyV2(block[1])) })) };
     }
     const clock = clocks(store), window = clock.tip;
-    return { v: 3, ...plot(store, block[1]), header: store.get('headers', heightKey(block[1]))?.fields ?? null,
+    return { v: 3, ...plot(store, block[1]), link: currentLink(store, store.get('links', heightKey(block[1]))), header: store.get('headers', heightKey(block[1]))?.fields ?? null,
       window, claimWindow: { window, closesAt: rules.addUint(window, '2'), drawAt: rules.addUint(window, '2'), settlesAt: rules.addUint(window, '2'), claimable: rules.compareUint(block[1], clock.counted) <= 0 },
       collections: Object.fromEntries(['finds', 'claims', 'draws', 'matches', 'slotList', 'mintRights'].map(k => [k, path + '/' + k])) };
   }

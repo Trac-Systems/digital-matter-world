@@ -7,6 +7,7 @@ import { rules as r } from '../src/rules.mjs';
 import { Provisioner } from '../src/provisioning.mjs';
 import { FinancialMints } from '../src/financial-mints.mjs';
 import { installFinancialSources, acceptedFinancialReservation } from '../src/financial-sources.mjs';
+import { patternCatalogId } from '../src/mint-assets.mjs';
 import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
 import { FeeQuotes, createFeePolicy } from '../src/fees.mjs';
 import { verifyDeployment } from '../src/deployments.mjs';
@@ -22,17 +23,15 @@ import { provisioningFixture } from './provisioning-fixture.mjs';
 
 // Real settled catalog/find roots, account balances, financial batches and
 // notary from v2-stack. Only the Bitcoin index and payment receipt are fixtures.
-export async function firstMintFixture(t, { store, contract, document, network, secret, committeeSecret,
-  rulesContext, stamp, financial, drain, agent, catalogAsset, block = '1', sourceReady }) {
+export async function firstMintStack(t, { store, contract, document, network, secret, committeeSecret,
+  rulesContext, stamp, financial, sourceReady, clientOptions = {}, initialize = async () => {}, configureReads = () => {}, httpOptions = () => ({}) }) {
   const f = await provisioningFixture(t, { secret: committeeSecret });
   await writeFile(f.registryPath, JSON.stringify({ assets: {}, feePolicy: createFeePolicy('100') }));
+  await initialize(f);
   const publicKey = f.policy.authorityKey, transfers = new Map();
   const bitcoinSecret = new Uint8Array(32).fill(44), bitcoinPublic = Buffer.from(secp256k1.getPublicKey(bitcoinSecret)).toString('hex');
   const receiver = fundingAddress(bitcoinPublic, 'regtest');
   f.reads.inscription = async () => ({ address: receiver });
-  const provenance = await acceptedAssetProvenance({ store, reads: { rulesContext }, asset: catalogAsset, block });
-  const asset = provenance.find.asset, amount = String(provenance.find.count);
-  assert.equal(provenance.find.finder, agent.owner);
   const audits = async n => {
     const row = store.get('batches', heightKey(n)); assert.equal(row.batch.root, contract.db.get('bt/' + n));
     const bytes = await Promise.all(row.publications.map(p => readFile(join(store.directory, 'static', p.audit.path.slice(1)))));
@@ -47,8 +46,7 @@ export async function firstMintFixture(t, { store, contract, document, network, 
       paymentTransfers: async id => transfers.get(id).map((value, index) => ({ index, value })),
       isMinted: async () => false,
       assetContext: async (requested, height) => {
-        assert.equal(requested, asset);
-        const source = await acceptedAssetProvenance({ store, reads: { rulesContext }, asset: catalogAsset, block: height });
+        const source = await acceptedAssetProvenance({ store, reads: { rulesContext }, asset: patternCatalogId(requested) ?? requested, block: height });
         const entry = (await f.reads.registry()).assets[requested];
         const verified = await verifyDeployment(reads, entry);
         assert.equal(entry.pattern.pat, source.pattern.pat);
@@ -56,8 +54,9 @@ export async function firstMintFixture(t, { store, contract, document, network, 
           find: source.find, link: null, tier: source.tier, treasury: 'regtest-treasury', finderAddress: 'regtest-finder', discoverer: 'regtest-discoverer',
           beneficiaries: { finder: source.find.finder, discoverer: source.pattern.discoverer }, payouts: { finder: null, discoverer: null }, assetRevision: source.revision };
       } };
+    configureReads(reads, f);
     return installFinancialSources(reads, { network, document, bitcoinNetwork: 'regtest', recoveryVersion: 2,
-      request: id => store.get('mints', id), reservation: id => acceptedFinancialReservation({ store, audits, id }), record: key => contract.db.get(key) });
+      request: id => store.get('mints', id) ?? store.get('financialLinks', id), reservation: id => acceptedFinancialReservation({ store, audits, id }), record: key => contract.db.get(key) });
   };
   const reads = makeReads(), independent = makeReads(); sourceReady(reads, independent);
   const policies = Array.from({ length: 5 }, () => new Policy({ network, publicKey, reads: makeReads() }));
@@ -70,8 +69,18 @@ export async function firstMintFixture(t, { store, contract, document, network, 
   const provisioner = new Provisioner({ ...f, store, reads }), mints = new FinancialMints({ store, reads, financial, committee, document, network, bitcoinNetwork: 'regtest' });
   mints.provisioner = provisioner;
   const http = await serve({ intake: { store }, files: { serve: async () => false }, mints, operator: { provisioner },
-    publicAPI: createPublicAPI({ views: { store, mints } }) }); t.after(() => http.close());
-  const service = new ServiceClient({ origin: http.url, network }), originalService = agent.service; agent.service = service;
+    publicAPI: createPublicAPI({ views: { store, mints } }), ...httpOptions({ reads, mints, f }) }); t.after(() => http.close());
+  const service = new ServiceClient({ origin: http.url, network, ...clientOptions });
+  return { f, reads, independent, policies, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic, http, makeReads };
+}
+
+export async function firstMintFixture(t, options) {
+  const { store, contract, rulesContext, drain, agent, catalogAsset, block = '1' } = options;
+  const provenance = await acceptedAssetProvenance({ store, reads: { rulesContext }, asset: catalogAsset, block });
+  const asset = provenance.find.asset, amount = String(provenance.find.count);
+  assert.equal(provenance.find.finder, agent.owner);
+  const { f, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic } = await firstMintStack(t, options);
+  const originalService = agent.service; agent.service = service;
   t.after(() => { agent.service = originalService; });
   const intent = { asset: catalogAsset, amount, block, receiver, payer: receiver, kind: 'tap', compound: false };
   const tool = gameTools({ agent, candidates: async (asset, { block }) => (await service.mintRights(agent.address, { asset, block })).mintRights }).mint_on_chain;

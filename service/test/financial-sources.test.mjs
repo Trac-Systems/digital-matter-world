@@ -441,6 +441,7 @@ test('native paid link reserves before payment and completes after deadline and 
   assert.equal((await f.links.public(p.id)).state, 'accepted');
   assert.equal(f.store.get('accountRecords', 'fl/' + p.id).state, 'complete');
   assert.deepEqual(JSON.parse(f.store.get('accountRecords', 'k/link/' + BigInt('42').toString(36))), { block: '42', linkHeight: '1000000000000000000000000000000000000' });
+  await assert.rejects(f.links.quote({ block: '42', payer: 'regtest-payer' }), /link_exists/);
   assert.equal(f.store.get('accountRecords', 'fl/slot/42'), null); assert.equal(f.store.count('financialPendingLinks'), 1, 'unaccepted competitor remains until its own expiry');
   await f.links.tick(); assert.equal(f.store.count('financialPendingLinks'), 0);
 });

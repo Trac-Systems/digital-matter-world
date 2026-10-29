@@ -106,6 +106,9 @@ test('SDK follows cursors, nested collection routes and event sequences; rejects
   const nested = claimPage.claims[0].pages.patterns;
   const allPatterns = await service.readPage(nested.route, { cursor: nested.next, limit: 2 });
   assert.deepEqual(allPatterns.items, [2, 3]);
+  const links = await service.readPage('/links', { limit: 1 });
+  assert.equal(links.links.length, 1);
+  assert.equal((await service.readPage('/results/links', { cursor: links.next, limit: 2 })).links.length, 2);
   const payouts = await agent.results({ collection: 'payouts', limit: 1 });
   assert.equal(payouts.amounts['/payouts/0/amount'].unit.currency, 'TAP');
   assert.equal((await agent.profile(encodeTracAddress(owner), { collection: 'balances', limit: 1 })).balances.length, 1);
