@@ -90,7 +90,7 @@ export function walletSummary(rail, { forget = false, purpose = false } = {}) {
     players === null ? h('div.small.muted', {}, 'Looking up the player…')
       : w.error ? h('div.small.muted', {}, `Player lookup failed: ${w.error}`)
       : players.length ? h('div.small', {}, 'Linked to player ', ...players.map((p, i) => [i ? ', ' : '', h('a.mono', { href: '/agents/' + p.agent }, short(p.agent))]), w.more ? ' and more' : '', '.')
-      : [h('div.small', {}, h('strong', {}, 'Not linked to a player yet. '), 'Linking lets your agent’s earnings reach this wallet and lets you mint your agent’s finds. Send your agent:'),
+      : [h('div.small', {}, h('strong', {}, 'Not linked to a player yet. '), 'Linking lets your agent’s earnings reach this wallet. Send your agent:'),
         copyBlock(linkMessage(rail, w.address))]);
 }
 // Connect buttons for the wallets not connected yet, each saying what it is for.

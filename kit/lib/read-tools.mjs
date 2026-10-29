@@ -59,7 +59,7 @@ export function readTools(agent) {
       { block: height, inscription: z.string().regex(/^[0-9a-f]{64}i(0|[1-9][0-9]*)$/).optional() }, args => agent.dryRun ? { state: 'dry-run', action: 'submit_bitmap', ...args, sent: false } : agent.service.submitBitmap(args), false),
     block: tool('Read block detail and bounded previews. Set collection to page matches, slotList, claims, draws, finds or mintRights.',
       { height, collection: z.enum(['matches', 'slotList', 'claims', 'draws', 'finds', 'mintRights']).optional(), ...list }, ({ height, ...args }) => agent.block(height, options(args))),
-    mint_rights: tool('Read your mintable slots and compound units, finder deadlines, Bitmap rights and balance/hold restrictions.', list, args => agent.mintRights(options(args))),
+    mint_rights: tool('Read your mintable slots and compound units, settlement-based finder deadlines, qualifying Bitmap rights and balance/hold restrictions. Wallet-only public mints use the website.', list, args => agent.mintRights(options(args))),
     mint_quote: tool('Preview a quote without wallet signing: exact units used, TAP fee splits/destinations and a separate Bitcoin fee. Uses POST /mint/quote without a reservation; unavailable under a GET-only policy.',
       { asset, block: height.optional(), amount: z.string().regex(/^[1-9][0-9]{0,77}$/).optional(), kind: z.enum(['tap', 'ethereum']).optional() }, args => agent.mintQuote(args)),
     events: tool('Read public events forward from since (exclusive sequence), or continue with cursor and the same filters. Save sequences durably.',

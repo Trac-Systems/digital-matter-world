@@ -17,7 +17,8 @@ export async function acceptedAssetProvenance({ store, reads, asset, block }) {
   const finish = async value => {
     const after = await reads.rulesContext();
     check(after.catalogRoot === context.catalogRoot && after.claimsRoot === context.claimsRoot, 'asset_provenance_changed');
-    return { ...value, revision: rules.hashObject(['dmw-asset-provenance-v2', asset, value]) };
+    const { publicClaims, ...revisionValue } = value;
+    return { ...value, revision: rules.hashObject(['dmw-asset-provenance-v2', asset, revisionValue]) };
   };
   const get = async (space, pointer, commitment, key) => {
     if (!pointer) { check(commitment === rules.EMPTY_NAMED_ROOT, 'asset_provenance_empty'); return null; }
@@ -51,14 +52,21 @@ export async function acceptedAssetProvenance({ store, reads, asset, block }) {
     const number = asset.slice(3), key = await namedRead('number/' + number);
     const pattern = key && await namedRead('pattern/' + key);
     check(pattern?.number === number && pattern.key === key, 'asset_provenance_pattern');
-    let find = null;
+    let find = null, publicClaims;
     if (block !== undefined) {
       const height = rules.decimalV2(block), map = claims.maps.finds;
       find = await get('claimNodes', map.storage, map.root, rules.findIdV2(height, number));
       check(!find || find.asset === (pattern.legacy?.asset ?? asset) && rules.decimalV2(find.block) === height, 'asset_provenance_find');
+      if (rules.publicMintActive(context.settings, claims.hot.counted)) {
+        const claimRead = (name, key) => get('claimNodes', claims.maps[name].storage, claims.maps[name].root, key);
+        const reservation = await claimRead('claimReservations', rules.findIdV2(height, number));
+        const draw = await claimRead('headerAwards', height), deadline = rules.claimDeadline(pattern, height, context.settings);
+        publicClaims = { reservation, headerAward: !!(draw && BigInt(draw.senderCount) > 0n && BigInt(number) < BigInt(draw.catalog.nextNumber)),
+          unsettled: claims.hot.rounds.some(round => !round.closed && BigInt(round.window) < BigInt(deadline)) };
+      }
     }
     check(Number.isSafeInteger(pattern.tier) && pattern.tier >= 1 && pattern.tier <= 5, 'asset_provenance_tier');
-    return finish({ pattern, find, maker: find?.finder ?? null, tier: pattern.tier });
+    return finish({ pattern, find, maker: find?.finder ?? null, tier: pattern.tier, ...(publicClaims ? { publicClaims } : {}) });
   }
   const compound = await namedRead('compound/assets/' + asset), maker = await namedRead('compound/maker/' + asset);
   check(compound?.id === asset && rules.hex(maker?.owner, 32), 'asset_provenance_compound');

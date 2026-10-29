@@ -5,6 +5,7 @@ import { uintV2, compareUint, nextUint, addUint, decimalV2 } from './integers-v2
 import { namedGet, namedSet, namedRoot, EMPTY_NAMED_ROOT } from './named-index.js';
 import { validateSettingsDocument } from './settings-v2.js';
 import { recordGet, recordSet } from './record-index.js';
+import { publicMintActive } from './public-mint.js';
 
 function policy(document) { validateSettingsDocument(document); return document.values; }
 export function canonicalDefinition(proposal, document) {
@@ -138,7 +139,8 @@ export function revealNamedDiscovery(state, { agent, commitmentId, proposal, sal
     key: identity, number: state.nextPattern, ...proposal, discoverer: agent, attribution: c,
     attributionCloses: c.expires, firstRevealPosition: receiptPosition, attributionProvisional: true,
     anchor, knownMatchCount: '0', knownOccurrenceTotal: '0', provenance,
-    definitionSettingsHash: hashObject(settings)
+    definitionSettingsHash: hashObject(settings),
+    ...(publicMintActive(currentSettings, tip) ? { releaseHeight: tip, releaseFinderWindow: currentSettings.values.finderWindow } : {})
   };
   if (!existing) { next.nextPattern = nextUint(next.nextPattern); write(next, `number/${record.number}`, identity); }
   else if (compareUint(tip, record.attributionCloses) <= 0 && compareUint(c.receiptPosition, record.firstRevealPosition) < 0 && order(c, record.attribution) < 0) {

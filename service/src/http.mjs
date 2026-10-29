@@ -41,6 +41,14 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       if (await web.handle(req, res, body)) return;
       if (headers && await headers.serve(req, res)) return;
       const operatorURL = new URL(req.url, 'http://127.0.0.1');
+      if (mints?.publicMints && ['GET', 'HEAD'].includes(req.method) &&
+          (operatorURL.pathname.startsWith('/public-mints') || operatorURL.pathname === '/mint-rights' && rules.publicMintActive(mints.document, intake.store.get('meta', 'ruleState')?.counted ?? '0'))) {
+        const path = decodeURIComponent(operatorURL.pathname), detail = /^\/public-mints\/([^/]+)\/(0|[1-9][0-9]*)$/.exec(path);
+        const result = path === '/public-mints/refunds' ? mints.publicMints.refunds(operatorURL.searchParams) : detail ? mints.publicMints.state(detail[1], detail[2]) :
+          ['/public-mints', '/mint-rights'].includes(path) ? mints.publicMints.list(operatorURL.searchParams) : null;
+        check(result, 'not_found', 404); res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify(result)); return;
+      }
       if (req.method === 'GET' && operatorURL.pathname.startsWith('/receipt-renewals/')) {
         const match = /^\/receipt-renewals\/([0-9a-f]{64})\/(0|[1-9][0-9]*)$/.exec(operatorURL.pathname);
         check(match && !operatorURL.search, 'renewal_proof_key');
@@ -134,6 +142,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input.asset), 'deployment_asset');
         result = input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input);
       }
+      else if (mints?.publicMints && req.method === 'POST' && ['/public-mints/quote', '/public-mints/start'].includes(req.url)) result = await mints.publicMints.quote(JSON.parse(await body(req, mints.document.values.moveBytes)), req.url.endsWith('/start'));
       else if (mints && req.method === 'POST' && req.url === '/mint/quote') result = await mints.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (mints && req.method === 'POST' && req.url === '/mint/request') result = await mints.request(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 8192)));
       else if (mints && req.method === 'POST' && req.url === '/mint/payment') result = await mints.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
@@ -154,7 +163,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         // Arbitrary upstream error strings may contain private endpoint details.
         const code = error.code === 'trac_address_required' ? TRAC_ADDRESS_ERROR : /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'request_failed';
         if (code === 'request_failed') console.error('http_request_failed', JSON.stringify(redactedError(error)));
-        res.end(JSON.stringify({ error: code, ...([429, 503].includes(res.statusCode) ? { retryable: true } : {}), ...(code === 'upgrade_required' ? {
+        res.end(JSON.stringify({ error: code, ...(code === 'someone_paid_first' ? error.publicRefund : {}), ...([429, 503].includes(res.statusCode) ? { retryable: true } : {}), ...(code === 'upgrade_required' ? {
           code: KIT_UPGRADE_CODE, message: KIT_UPGRADE_MESSAGE, upgrade: { version: KIT_VERSION, url: KIT_DOWNLOAD_URL }
         } : error.code === 'trac_address_required' ? { code: error.code } : {}) }));
       } else res.destroy();

@@ -55,7 +55,7 @@ export async function claimedEventsV2(feeds) {
   const { store, history } = feeds, s = { ...R3_RESOURCES, ...feeds.settings };
   for (const { id, value: event } of store.list('feedEvents', { limit: s.feedEventsPerTick })) {
     if (store.get('feedEventComplete', id)) { await store.put('feedEvents', id); continue; }
-    const phases = ['occurrences', 'finds', 'discoveries', 'types', 'agents', 'links', 'refinements', 'crafts', 'financial'];
+    const phases = ['occurrences', 'finds', 'discoveries', 'types', 'agents', 'links', 'refinements', 'crafts', 'financial', 'transfers'];
     const cursor = store.get('feedEventCursor', id) ?? { phase: 0, offset: 0 }, phase = phases[cursor.phase];
     const source = event[phase] ?? [], rows = Array.isArray(source) ? source : Object.values(source);
     const operations = new Map(), key = (space, id) => `${space}\0${id}`;
@@ -127,6 +127,11 @@ export async function claimedEventsV2(feeds) {
         const owner = row.action?.owner ?? row.agent;
         if (emit('craft', { agent: owner, owner, asset: row.id, amount: row.amount, firstMaker: row.firstMaker },
           'craft/' + (row.move ?? rules.hashObject([id, row.action])))) score(owner, 'craftCount', 1);
+      }
+      if (phase === 'transfers') {
+        const a = row.action;
+        emit('transfer', { owner: a.owner, from: a.owner, to: a.to, asset: a.asset, amount: a.amount, assets: [[a.asset, a.amount]] },
+          'transfer/' + row.move + '/' + a.nonce);
       }
       if (phase === 'financial' && emit(row.type, row.data, row.id, row.provenance)) {
         if (row.type === 'mint_complete' && row.data.owner) score(row.data.owner, 'mintCount', 1);

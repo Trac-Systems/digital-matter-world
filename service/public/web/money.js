@@ -1,14 +1,14 @@
 import { api } from './data.js';
-import { walletError } from './console/js/wallet-errors.js';
+import { walletError, publicMintMessages } from './console/js/wallet-errors.js';
 import { mount as mintPage } from './console/js/inscribe/public.js';
-import { presentation, get, store } from './console/js/api.js';
+import { presentation, get, store, site } from './console/js/api.js';
 import { pagedTable } from './console/js/paged.js';
-import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, copy, inspectBtn as rawInspectBtn } from './console/js/dom.js';
+import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
-import { assetName, mineral, mintRule } from './console/js/words.js';
+import { assetName, mineral } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
 import { tapAccount, ethAccount, receipt, orderResult, authority, requireTapActions, WalletJournal, wait, hex, sha256, unhex, fail } from './wallets.js';
-import { wallet, walletSummary, connectButtons, copyBlock } from './connect.js';
+import { wallet, walletSummary, connectButtons } from './connect.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted', 'credited', 'refunded']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -23,7 +23,7 @@ export function moneyPage(root, { type, id }) {
   if (!id) return walletsHome(root, type);
   const back = h('div.row', { style: { marginBottom: '16px' } }, h('a.btn.sm.ghost', { href: '/mint' }, '← Mint & wallets'));
   if (type === 'mint') {
-    const cleanup = mintPage(root, { id });
+    const cleanup = mintPage(root, { id, onPublicMint: mintPublic });
     root.querySelector('.page-head').after(back);
     return cleanup;
   }
@@ -265,94 +265,159 @@ async function binding(app, id, target) {
     }
   }; draw();
 }
-// Mint & wallets: the header's wallets with their payout link, the player's finds to mint, and Bitmap links.
-// /link and /bind-payout without a request link open the same page at their section.
+// Mint & wallets: public blocks anyone mints with TAP Wallet, refunds owed to the connected TAP Wallet,
+// the header's wallets and Bitmap links. /link and /bind-payout without a request link open the same page at their section.
+const PUBLIC_STATES = { public: ['Public', 'good'], claim_window_open: ['Claim week open', 'warn'], claimed: ['Claimed', ''], paid: ['Payment confirmed', 'info'], permit_issued: ['Being minted', 'info'], minted: ['Minted', ''] };
+const REFUND_REASONS = { someone_paid_first: 'Another payment confirmed first', public_payment_incomplete: 'Payment did not cover every fee', already_minted: 'Block was already minted' };
+const publicError = walletError;
+// A missing route or a switched-off feature is not an error for visitors: public minting just has not opened.
+const notOpen = e => e?.status === 404 || ['not_found', 'public_mint_inactive', 'public_index_warming'].includes(e?.message);
+const PATTERN = /^(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))$/;
+const KIT_DOCS = 'https://github.com/Trac-Systems/digital-matter-world/tree/main/kit';
+const matter = asset => h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: site.href('table', { p: asset }) }, assetName(asset)));
+const tapTotal = fees => (fees ?? []).reduce((sum, f) => sum + BigInt(/^[0-9]+$/.test(f?.amount ?? '') ? f.amount : 0), 0n).toString();
+async function feeRate() {
+  try {
+    const r = await fetch('https://mempool.space/api/v1/fees/recommended', { redirect: 'error', signal: AbortSignal.timeout(5000) });
+    const fee = (await r.json()).halfHourFee;
+    return Number.isFinite(fee) && fee >= 1 && fee <= 1000 ? `${fee} sat/vB (mempool.space half-hour estimate)` : null;
+  } catch { return null; }
+}
+// Mint one public block: TAP Wallet → quote (a preview, nothing reserved) → start → the request's payment page.
+async function mintPublic(row, notify) {
+  if (!wallet.tap) await wallet.connect('tap');
+  const tapAddress = wallet.tap?.address;
+  if (!tapAddress) fail('Connect TAP Wallet to mint.');
+  const body = { asset: row.asset, block: String(row.block), tapAddress };
+  notify('Getting the price…');
+  const [quote, rate] = await Promise.all([api('/public-mints/quote', body), feeRate()]);
+  const matches = value => (value.asset === row.asset || value.catalogAsset === row.asset || (store.patterns?.patterns ?? []).some(p => p.asset === row.asset && p.legacy?.asset === value.asset))
+    && String(value.block) === body.block && value.kind === 'tap' && value.receiver === tapAddress;
+  const preparation = value => {
+    if (!['deployment_needed', 'deployment_pending'].includes(value.state)) return false;
+    if (!matches(value) || value.publicMint !== true || value.payable !== false || value.requestId != null) fail('The deployment does not match this public mint.');
+    if (value.state === 'deployment_needed') location.assign('/mint/' + row.asset + '?' + new URLSearchParams({ public: '1', block: body.block, tapAddress }));
+    else notify('The token is deployed. Its registration is being confirmed. Continue again in a few seconds; nothing has been paid or reserved.');
+    return true;
+  };
+  if (!matches(quote)) fail('The quote does not match this block. Refresh the list and try again.');
+  if (preparation(quote)) return;
+  const decimals = quote.feeQuote?.unit?.decimals ?? 18;
+  notify('');
+  if (!await confirmModal({ title: `Mint ${assetName(row.asset)} from block ${fmtInt(row.block)}?`,
+    lead: 'First confirmed payment wins. If someone else’s payment confirms first, yours is refunded. Nothing is reserved: the next page asks TAP Wallet to pay, then to inscribe the mint.',
+    rows: [['Pattern', assetName(row.asset)], ['Block', fmtInt(row.block)], ['Units', fmtInt(quote.amount ?? row.amount)],
+      ['Price', h('strong.mono', {}, formatTap(quote.price, decimals))],
+      ...(quote.fees ?? []).map(f => [`· ${String(f.role ?? 'fee').replace(/_/g, ' ')}`, h('span.mono', {}, formatTap(f.amount, decimals))]),
+      ['Bitcoin fee rate', rate ?? 'TAP Wallet shows the network fee before you approve'],
+      ['Receiver', hashEl(quote.receiver ?? tapAddress)]],
+    confirm: 'Continue to payment' })) return;
+  notify('Creating the payment request…');
+  const started = await api('/public-mints/start', body);
+  if (preparation(started)) return;
+  if (!matches(started) || !/^[0-9a-f]{64}$/.test(started.id ?? '') || started.paymentPage && started.paymentPage !== '/mint/' + started.id) fail('The payment request is not valid. Refresh and try again.');
+  location.assign('/mint/' + started.id);
+}
 function walletsHome(root, type) {
-  const params = new URLSearchParams(location.search), asset = params.get('asset'), block = /^\d+$/.test(params.get('block') ?? '') ? Number(params.get('block')) : null;
-  const chosen = type === 'mint' && /^[a-z0-9]{1,24}$/.test(asset ?? '') && block !== null ? { asset, block } : null;
+  const params = new URLSearchParams(location.search), asset = PATTERN.test(params.get('asset') ?? '') ? params.get('asset') : null;
+  const block = /^(0|[1-9][0-9]*)$/.test(params.get('block') ?? '') ? params.get('block') : null;
+  const chosen = type === 'mint' && asset && block !== null ? { asset, block } : null;
   const bitmap = type === 'link' ? block : null;
   const app = h('div.stack'), side = h('div.stack');
   root.append(h('div.page', {},
-    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Mint & wallets'), h('p', {}, 'Turn your agent’s finds into TAP tokens on Bitcoin, link a Bitmap and see your payout wallets, all with the wallets connected in the header. Mining, claims and crafting are free.'))),
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Mint & wallets'), h('p', {}, 'Mint public blocks with TAP Wallet: blocks with a pattern that nobody claimed in their claim week. No agent and no units needed. Mining, claims and crafting are free.'))),
     h('div.grid.cols-main', {}, app, side)));
   const policy = store.status?.feePolicy;
-  side.append(...[panel('How minting works', h('ol.steps-list', {},
-    h('li', {}, 'Your agent finds a pattern in a block and the find settles.'),
-    h('li', {}, 'You link your wallet to your agent’s player: your agent starts it, you sign.'),
-    h('li', {}, h('strong', {}, 'Token not deployed yet? Inscribe the pattern and deploy its token first, then mint. '), 'Your find shows an “Inscribe & deploy” button: inscribe the pattern, wait for a Bitcoin block, deploy the token, wait for a block. ',
-      h('strong', {}, 'Already deployed? Just mint.'), ' Your find shows a “Mint On-Chain” button.'),
-    h('li', {}, 'Ask your agent to mint: it reserves the units and gives you a payment link.'),
-    h('li', {}, 'On that link, pay the fee in TAP, then inscribe the mint with your wallet. The tokens arrive in your wallet.'))),
+  side.append(...[panel('How public minting works', h('ol.steps-list', {},
+    h('li', {}, 'A block with a pattern becomes public when nobody claims it during its claim week and it is not minted yet.'),
+    h('li', {}, 'Press Mint on a block and connect TAP Wallet. You see the price before anything is paid.'),
+    h('li', {}, 'On the payment page, pay the fee in TAP from TAP Wallet, then inscribe the mint. The tokens arrive in your wallet.'),
+    h('li', {}, h('strong', {}, 'Token not deployed yet? '), 'The payment page first asks you to inscribe the pattern and deploy its token, once, each in its own Bitcoin block.'),
+    h('li', {}, h('strong', {}, 'First confirmed payment wins. '), 'If someone else’s payment confirms first, yours is refunded.'))),
     policy?.baseFee ? panel('Prices', [kv([['Base price', h('span.mono', {}, tap(policy.baseFee, policy.unit))], policy.feeSettings ? ['Bitmap link', h('span.mono', {}, feePrice(policy, 'link'))] : null]),
-      h('p.small.muted', { style: { margin: '0 14px 12px' } }, policy.feeSettings ? `A find costs the base price times its tier: ${Array.from({ length: 5 }, (_, i) => `tier ${i + 1}: ${feePrice(policy, 'find', i + 1)}`).join(', ')}. ` : '', 'The request shows the exact price before you pay.')], { flush: true }) : null,
-    h('p.small.muted', { style: { margin: 0 } }, 'Already have a payment link from your agent? Open it; it shows the request and lets you pay.')].filter(Boolean));
-  const status = note();
-  const ask = (r, w) => `Mint ${r.asset} (${assetName(r.asset)}) from block ${r.block} on-chain and give me the payment link.\n${w === wallet.ethereum ? 'MetaMask' : 'TAP wallet'}: ${w.address}`;
-  const mintButton = (r, primary) => h(`button.btn.sm${primary ? '.primary' : ''}`, { type: 'button', onclick: async () => {
-    const w = wallet.tap ?? wallet.ethereum, text = ask(r, w);
-    if (await confirmModal({ title: `Mint ${assetName(r.asset)} from block ${fmtInt(r.block)}`, lead: 'Your agent reserves the units and creates the payment request. Send it this message, then open the link it gives you to pay and inscribe.', extra: copyBlock(text), confirm: 'Copy message' })) copy(text);
-  } }, 'Mint On-Chain');
-  const rights = player => pagedTable({ path: `/mint-rights?owner=${player.agent}`, key: 'mintRights', limit: 10, sorts: [['block:desc', 'Newest block'], ['block:asc', 'Oldest block']],
-    filters: [{ name: 'allowed', label: 'Show', value: 'true', options: [['true', 'Ready for you'], ['', 'All settled finds']] }],
-    empty: 'Nothing here. Switch to All settled finds to see why.',
+      h('p.small.muted', { style: { margin: '0 14px 12px' } }, policy.feeSettings ? `A block costs the base price times its pattern’s tier: ${Array.from({ length: 5 }, (_, i) => `tier ${i + 1}: ${feePrice(policy, 'find', i + 1)}`).join(', ')}. ` : '', 'Mint shows the exact price before you pay.')], { flush: true }) : null,
+    h('p.small.muted', { style: { margin: 0 } }, 'Agents mint their own finds from their local dashboard (', h('code', {}, 'dmw dashboard'), '). ', h('a', { href: KIT_DOCS, rel: 'noopener' }, 'Kit docs'), '.')].filter(Boolean));
+  // The public list stays mounted across wallet changes; Mint reads the connected wallet when pressed.
+  const status = note(), listNote = note({ 'aria-live': 'polite' }), soon = h('div', { hidden: true });
+  let list;
+  const mintButton = row => h('button.btn.sm.primary', { type: 'button', onclick: async e => {
+    const b = e.currentTarget; b.disabled = true;
+    try { await mintPublic(row, text => { listNote.textContent = text; }); }
+    catch (error) {
+      listNote.textContent = error.code === 4001 ? 'Wallet request cancelled. You can retry.' : publicError(error);
+      if (['someone_paid_first', 'already_minted', 'claimed', 'claim_window_open'].includes(error.message)) list?.reload();
+    } finally { b.disabled = false; }
+  } }, 'Mint');
+  const stateCell = r => { const [label, kind] = PUBLIC_STATES[r.state] ?? [String(r.state ?? '–').replace(/_/g, ' '), 'warn'];
+    return h('span.row', { style: { gap: '6px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info', `Only the TAP Wallet holding ${r.block}.bitmap can mint this block.`) : null); };
+  const opensSoon = e => { clear(soon, h('div.note', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. Blocks that nobody claimed in their claim week will be listed here.')); soon.hidden = false; list.el.hidden = true; return true; };
+  const patterns = (store.patterns?.patterns ?? []).filter(p => /^p2:(0|[1-9][0-9]*)$/.test(p.asset));
+  const selectedAsset = chosen?.asset ?? (asset && patterns.some(p => p.asset === asset) ? asset : patterns[0]?.asset ?? 'p2:0');
+  list = pagedTable({ path: patterns.length ? '/public-mints' : '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25,
+    filters: patterns.length ? [{ name: 'asset', label: 'Pattern', value: selectedAsset, options: patterns.map(p => [p.asset, assetName(p.asset)]) }] : [],
+    empty: f => f.asset ? 'No public blocks of this pattern right now.' : 'No public blocks right now. A block becomes public when nobody claims it in its claim week.',
+    onError: e => notOpen(e) && opensSoon(e),
+    onPage: () => { soon.hidden = true; list.el.hidden = false; },
     columns: [
-      { key: 'asset', label: 'Matter', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
-      { key: 'block', label: 'Block', num: true, render: r => r.block === null ? h('span.faint', {}, 'compound') : blockLink(r.block) },
-      { key: 'amount', label: 'Units', num: true },
-      { key: 'rule', label: 'May mint', render: r => { const rule = mintRule(r, store.status?.counted); return h('span', {}, pill(r.allowed ? 'You may mint' : rule.label, r.allowed ? 'good' : rule.kind, rule.text)); } },
-      { key: 'act', label: '', render: r => r.allowed && r.block !== null ? mintButton(r, true) : undeployed(r) ? h('a.btn.sm', { href: deployHref(r.asset, player) }, 'Inscribe & deploy') : null },
-    ] }).el;
-  // A pattern's first mint deploys its TAP token; until then its finds are not ready to mint.
-  const undeployed = r => r.reason === 'asset_unregistered' && r.rightAllowed && r.block !== null;
-  const deployHref = (asset, player) => `/mint/${asset}?owner=${encodeURIComponent(player.agent)}`;
-  // Why nothing is ready, from the player's first page of settled finds.
-  async function reason(player, out) {
-    let rows;
-    try { rows = (await get(`/mint-rights?owner=${player.agent}&allowed=true&limit=1`)).total ? null : (await get(`/mint-rights?owner=${player.agent}&limit=50`)).mintRights ?? []; }
-    catch { return; }
-    if (!rows) return;
-    const own = rows.filter(r => r.finder === player.agent);
-    // One row per held pattern: imported patterns are listed under their ledger asset (p0).
-    let held = [];
-    try { held = ((await get(`/agents/${player.agent}/assets?limit=50`)).assets ?? []).map(a => a.asset).filter(a => a.startsWith('p')); } catch {}
-    const firsts = await Promise.all(held.map(a => get(`/mint-rights?owner=${player.agent}&asset=${encodeURIComponent(store.pattern(a)?.legacy?.asset ?? a)}&limit=1`).then(r => r.mintRights?.[0], () => null)));
-    const deploy = [...new Set([...rows, ...firsts.filter(Boolean)].filter(undeployed).map(r => r.asset))];
-    if (deploy.length) return clear(out, h('div.note', {}, `${deploy.map(assetName).join(', ')} ${deploy.length > 1 ? 'have' : 'has'} no token on Bitcoin yet. Before the first mint, inscribe the pattern and deploy its token, once, from your wallet, each in its own block. `,
-      ...deploy.map(a => h('a.btn.sm', { href: deployHref(a, player), style: { marginLeft: '6px' } }, `Inscribe & deploy ${assetName(a)}`))));
-    clear(out, h('div.note', {}, !rows.length ? 'No settled find yet. When your agent wins a find and it settles, it shows up here.'
-      : rows.some(r => r.whoMayMint === 'finder' && r.finder !== player.agent) && !own.length ? 'The finds so far are still in another agent’s finder window: only the finder may mint for 1,008 blocks (about a week) after the find.'
-      : own.some(r => r.reason === 'insufficient_balance') ? 'Your player does not hold enough units for its finds right now.'
-      : own.some(r => r.minted || r.pending) ? 'Your agent’s finds are already minted or have a mint in progress.'
-      : 'Nothing is ready for your player right now. Switch to All settled finds to see each find’s rule.'));
+      { key: 'asset', label: 'Pattern', render: r => matter(r.asset) },
+      { key: 'block', label: 'Block', num: true, render: r => blockLink(r.block) },
+      { key: 'amount', label: 'Units', num: true, render: r => h('span.mono', {}, fmtInt(r.amount)) },
+      { key: 'state', label: 'State', render: stateCell },
+      // Only a row the API lists as public gets a Mint button.
+      { key: 'act', label: '', render: r => r.state === 'public' ? mintButton(r) : null },
+    ] });
+  list.el.classList.add('public-mints');
+  const publicPanel = panel('Public blocks', [h('div.stack', { style: { gap: '8px', padding: '10px 14px' } },
+    h('p', { style: { margin: 0 } }, h('strong', {}, 'First confirmed payment wins. If someone else’s payment confirms first, yours is refunded.')), listNote, soon), list.el], { flush: true, id: 'mint' });
+  // A block opened from elsewhere (/mint?asset=…&block=…): its current state from the point read.
+  let chosenBox = null;
+  if (chosen) {
+    chosenBox = h('div.stack', { style: { gap: '8px' } }, h('div.empty', {}, 'Loading…'));
+    get(`/public-mints/${chosen.asset}/${chosen.block}`).then(r => {
+      const [label, kind] = PUBLIC_STATES[r.state] ?? [String(r.state).replace(/_/g, ' '), 'warn'];
+      clear(chosenBox, h('div.row', {}, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info') : null, h('span.mono.small', {}, `${fmtInt(r.amount)} units`)),
+        r.state === 'public' ? h('div.row', {}, mintButton({ ...chosen, ...r, asset: chosen.asset, block: chosen.block })) : h('p.small.muted', { style: { margin: 0 } }, r.state === 'claim_window_open' ? 'Its claim week is not over yet. If nobody claims it, it becomes public.' : 'This block is not public, so it cannot be minted here.'));
+    }, e => clear(chosenBox, h('p.small.muted', { style: { margin: 0 } }, notOpen(e) ? 'Public minting opens soon.' : `This block is not listed as public (${publicError(e)}).`)));
   }
-  async function picked(player, out) {
-    const w = wallet.tap ?? wallet.ethereum;
-    if (!player) { clear(out, h('p.small.muted', { style: { margin: 0 } }, 'Link your wallet first (see above); then ask your agent to mint it.')); return; }
-    let row;
-    try { row = ((await get(`/blocks/${chosen.block}/mintRights?owner=${player.agent}&asset=${chosen.asset}&limit=1`)).mintRights ?? [])[0]; } catch {}
-    const rule = row ? mintRule(row, store.status?.counted) : null;
-    clear(out, row ? h('div.row', {}, pill(row.allowed ? 'You may mint' : rule.label, row.allowed ? 'good' : rule.kind), h('span.small.muted', {}, rule.text)) : h('p.small.muted', { style: { margin: 0 } }, 'This block has no settled find of this pattern.'),
-      row?.allowed ? [h('p.small', { style: { margin: 0 } }, 'Your agent creates the payment request. Send it this message, then open the link it gives you:'), copyBlock(ask(chosen, w))] : null);
-  }
+  // Refunds owed to the connected TAP Wallet; shown only when there are any.
+  let refunds = null, refundsFor = null;
+  const refundPanel = () => {
+    const address = wallet.tap?.address ?? null;
+    if (address === refundsFor) return refunds;
+    refundsFor = address; refunds = null;
+    if (!address) return null;
+    const box = pagedTable({ path: `/public-mints/refunds?tapAddress=${encodeURIComponent(address)}`, key: 'rows', limit: 10, empty: 'No refunds owed.',
+      onError: () => true, onPage: rows => { if (rows.length) refunds.hidden = false; },
+      columns: [
+        { key: 'asset', label: 'Pattern', render: r => matter(r.asset) },
+        { key: 'block', label: 'Block', num: true, render: r => blockLink(r.block) },
+        { key: 'fees', label: 'Paid', num: true, render: r => h('span.mono', {}, formatTap(tapTotal(r.fees), 18)) },
+        { key: 'reason', label: 'Why', render: r => REFUND_REASONS[r.reason] ?? String(r.reason ?? '–').replace(/_/g, ' ') },
+        { key: 'id', label: '', render: r => /^[0-9a-f]{64}$/.test(r.requestId ?? r.id ?? '') ? h('a.btn.sm.ghost', { href: '/mint/' + (r.requestId ?? r.id) }, 'Request') : null },
+      ] });
+    box.el.classList.add('public-mints');
+    refunds = panel('Your refunds', [h('p.small', { style: { margin: '10px 14px 0' } }, 'These payments from your TAP Wallet confirmed after another payment for the same block. They are owed back to you. Refunds are not sent automatically; each stays listed here until it is paid back.'), box.el], { flush: true, id: 'refunds' });
+    refunds.hidden = true;
+    return refunds;
+  };
   const draw = () => {
-    const player = wallet.player(), any = wallet.connected();
+    const any = wallet.connected();
     const out = [];
+    if (chosen) out.push(panel(`${assetName(chosen.asset)} from block ${fmtInt(chosen.block)}`, chosenBox));
+    out.push(publicPanel, refundPanel());
     out.push(panel('Your wallets', h('div.stack', { style: { gap: '10px' } },
-      h('p', { style: { margin: 0 } }, any ? 'The wallets connected in the header. A wallet linked to your agent’s player is its payout wallet: your agent’s earnings reach it and you can mint its finds. Your agent starts the link; you sign it on the link it gives you.'
-        : 'Connect here or in the header; it is one connection for the whole site.'),
+      h('p', { style: { margin: 0 } }, any ? 'The wallets connected in the header. TAP Wallet pays and inscribes public mints. A wallet linked to an agent’s player is its payout wallet: that agent’s earnings reach it. Your agent starts the link; you sign it on the link it gives you.'
+        : 'Connect here or in the header; it is one connection for the whole site. Minting public blocks needs only TAP Wallet.'),
       walletSummary('tap', { purpose: true }), walletSummary('ethereum', { purpose: true }),
-      wallet.ethereum && !wallet.tap ? h('p.small.muted', { style: { margin: 0 } }, 'Also connect TAP Wallet: mints are inscribed and Bitmaps linked on Bitcoin.') : null,
+      wallet.ethereum && !wallet.tap ? h('p.small.muted', { style: { margin: 0 } }, 'Also connect TAP Wallet: mints are paid and inscribed on Bitcoin.') : null,
       connectButtons(undefined, status), status), { id: 'wallets' }));
-    if (chosen) { const box = h('div.stack', { style: { gap: '8px' } }, any ? h('div.empty', {}, 'Loading…') : h('p.small.muted', { style: { margin: 0 } }, 'Connect your wallet above to see whether you may mint it.')); out.push(panel(`${assetName(chosen.asset)} from block ${fmtInt(chosen.block)}`, box)); if (any) void picked(player, box); }
-    if (player) { const why = h('div'); out.push(panel('What you can mint', [h('div', { style: { padding: '10px 14px 0' } }, why), rights(player)], { flush: true, id: 'mint' })); void reason(player, why); }
-    else out.push(panel('What you can mint', h('p', { style: { margin: 0 } }, !any ? 'Connect a wallet to see the finds your agent’s player may mint.'
-      : [wallet.tap, wallet.ethereum].some(w => w && w.players === null) ? 'Looking up your player…' : 'Your wallet is not linked to a player yet, so there is nothing to mint. Ask your agent to link it (message above), sign the link it gives you, then come back.'), { id: 'mint' }));
     out.push(panel('Link a Bitmap', h('div.stack', { style: { gap: '8px' } },
       h('p', { style: { margin: 0 } }, 'Linking a Bitmap earns you the Bitmap holder share whenever a pattern in that block is minted, and, if linked before a find, the mint right after the finder window. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
       bitmap !== null ? h('div.small', {}, 'Block ', blockLink(bitmap), `: hold ${bitmap}.bitmap in TAP Wallet, then ask your agent to link it.`) : null,
       wallet.tap ? null : h('p.small.muted', { style: { margin: 0 } }, wallet.ethereum ? 'MetaMask cannot do this: Bitmaps live on Bitcoin. Connect TAP Wallet above.' : 'Needs TAP Wallet: connect it above.'),
       h('p.small.muted', { style: { margin: 0 } }, 'Your agent starts the link. Open the link request it gives you to review the price and pay.')), { id: 'bitmap' }));
-    clear(app, ...out);
+    // Keep mounted panels (and their loaded pages) when only the wallet changed.
+    clear(app, ...out.filter(Boolean));
   };
   draw();
   return wallet.on(draw);

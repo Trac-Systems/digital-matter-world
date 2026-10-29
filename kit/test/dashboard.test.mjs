@@ -58,7 +58,7 @@ test('non-finder units holder sees a public-role block after the week and signs 
   const page = await (await call('/api/claims')).json(), row = page.claims.find(row => row.block === '12');
   assert.equal(row.eligibility, 'units'); assert.equal(row.role, 'public');
   assert.equal(row.balance, '100'); assert.equal(row.canMint, true); assert.equal(row.reason, null);
-  assert.ok(f.calls.some(({ path, query }) => path === '/mint-rights' && query.owner === f.agent.address && query.allowed === 'true'));
+  assert.ok(f.calls.some(({ path, query }) => path === `/agents/${f.agent.address}/mintRights` && query.allowed === 'true'));
   assert.ok(f.calls.some(({ path, query }) => path === `/agents/${f.agent.address}/balances` && query.asset === 'p2:1'));
   assert.equal(f.packets.length, 0, 'listing cannot sign');
   const response = await call('/api/mint', { asset: row.asset, block: row.block });

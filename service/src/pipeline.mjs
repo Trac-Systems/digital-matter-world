@@ -202,11 +202,11 @@ export class Pipeline {
         for (;;) {
           try {
             const accounts = this.financial && !renewal && !anchored && clock.compare(execution, observation.counted) === 0
-              ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, height: observation.counted, at: { counted: execution, last }, accountStore,
+              ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, height: observation.counted, at: { counted: execution, last }, accountStore,
                 priorLinkInputs: items.reduce((n, i) => n + (i.output.file.financialOperations ?? []).filter(f => f.transition.action?.type?.startsWith('link-')).length, 0),
                 excluded: financialIncluded, remaining: settings.document.values.mintOperationBudget - financialIncluded.size, priorOperations: input.priorOperations,
                 priorAssetTouches: items.reduce((n, i) => n + (i.output.accountAssetTouches ?? 0), 0) })
-              : await buildCreditAccounts({ store: accountStore, credits: output.file.ops, crafts: output.file.crafts, document: settings.document, height: observation.counted });
+              : await buildCreditAccounts({ store: accountStore, credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, document: settings.document, height: observation.counted });
             input.accountOperations = accounts.creditOperations ?? accounts.operations;
             if (accounts.inputs?.length) input.financialOperations = accounts.inputs;
             if (!entries.length && !accounts.operations.length && !output.file.settlements.length && !output.file.closures.length && !output.file.closureProgress?.length &&
@@ -221,7 +221,7 @@ export class Pipeline {
           } catch (error) {
             const rows = input.deliveryRows ?? settings.settlementPageRows * settings.settlementPagesPerObservation;
             if (items.length && error.message === 'financial_batch_assets' && rows <= 1) break observationsLoop;
-            if (!['account_operation', 'account_operation_bytes', 'account_proof_budget', 'account_leaf_budget', 'financial_batch_assets', 'audit_budget'].includes(error.message) || rows === 0 || rows === 1 && !output.file.crafts.length) throw error;
+            if (!['account_operation', 'account_operation_bytes', 'account_proof_budget', 'account_leaf_budget', 'financial_batch_assets', 'audit_budget'].includes(error.message) || rows === 0 || rows === 1 && !output.file.crafts.length && !output.file.transfers?.length) throw error;
             input.deliveryRows = rows === 1 ? 0 : Math.max(1, Math.floor(rows / 2)); delete input.accountOperations; delete input.financialOperations;
             output = await replay();
           }
@@ -419,11 +419,12 @@ export class Pipeline {
           ...(move.v === 2 ? [{ space: 'namedAccepted', id: rules.moveIdV2(move), value: { receipt: rules.hashObject(receipt), batch: draft.proposal.batch.n } }]
             : [{ space: 'dedupe', id: rules.moveId(move) }]));
         operations.push({ space: 'blocks', id: heightKey(file.height), value: item.publication }, { space: 'publishedObservations', id: heightKey(file.observation), value: item.publication },
-          { space: 'feedEvents', id: heightKey(file.observation), value: { height: file.height, tip: file.tip, finds: Object.fromEntries(file.settlements.flatMap(s => s.winners).map(w => [w.id, finds[w.id]])), types: Object.fromEntries(file.crafts.map(c => [c.id, file.v === 5 ? { ...c.record, firstMaker: c.firstMaker } : rules.recordGet(state.types, c.id)])), crafts: file.crafts, discoveries: file.discoveries,
+          { space: 'feedEvents', id: heightKey(file.observation), value: { height: file.height, tip: file.tip, finds: Object.fromEntries(file.settlements.flatMap(s => s.winners).map(w => [w.id, finds[w.id]])), types: Object.fromEntries(file.crafts.map(c => [c.id, file.v === 5 ? { ...c.record, firstMaker: c.firstMaker } : rules.recordGet(state.types, c.id)])), crafts: file.crafts, discoveries: file.discoveries, ...(file.transfers ? { transfers: file.transfers } : {}),
             ...(file.v === 5 ? { occurrences: file.occurrences, observation: rules.decimalV2(file.observation), batch: rules.decimalV2(draft.proposal.batch.n), ...(file.refinements ? { refinements: file.refinements } : {}) } : {}),
             links: file.linkOperations.filter((_, i) => file.linkOutcomes[i].reason === 'accepted').map(i => i.request.height),
             agents: [...file.ops.filter(o => o.op === 'xc').map(o => ({ owner: o.request.owner, assets: [...o.request.in, ...o.request.out].map(p => p[0]) })),
-              ...file.crafts.filter(c => c.action).map(c => ({ owner: c.action.owner, assets: [...c.action.in, ...c.action.out].map(p => p[0]) }))] } },
+              ...file.crafts.filter(c => c.action).map(c => ({ owner: c.action.owner, assets: [...c.action.in, ...c.action.out].map(p => p[0]) })),
+              ...(file.transfers ?? []).flatMap(({ action: a }) => [a.owner, a.to].map(owner => ({ owner, assets: [a.asset] })))] } },
           { space: 'observations', id: item.observation.id });
         for (const closure of file.closures ?? []) operations.push({ space: 'windowEligibility', id: heightKey(closure.window), value: closure.draw });
         if (file.v === 5) for (const settlement of file.settlements) for (const kind of ['claims', 'winners', 'headers']) {

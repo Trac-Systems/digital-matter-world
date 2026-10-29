@@ -15,13 +15,17 @@ async function api(path, body) {
 }
 // A catalog/ledger asset link handles first deployment before a signed mint
 // request exists. Request links retain the payment and permanent-permit flow.
-export function mount(root, { id }) {
+export function mount(root, { id, onPublicMint }) {
   const assetPage = /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(id);
+  const params = new URLSearchParams(location.search);
+  const publicMode = assetPage && params.get('public') === '1';
+  const publicBlock = publicMode ? params.get('block') : null;
+  const publicAddress = publicBlock !== null ? params.get('tapAddress') : null;
   const body = h('div.stack'), actions = h('div.row'), note = h('div', { role: 'status', 'aria-live': 'polite' });
+  const intro = h('p', {}, assetPage ? 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet. After that, every mint of it works the normal way.' : 'Pay the fee items first. Once payment is final, your permanent permit is ready. You pay the Bitcoin inscription fees, including when paying with Ethereum.');
   clear(root, h('div.page', {}, h('div.page-head', {}, h('h1', {}, 'Mint from your wallet')),
-    h('p', {}, assetPage ? 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet. After that, every mint of it works the normal way.'
-      : 'Pay the fee items first. Once payment is final, your units are consumed and your permanent permit is ready. You pay the Bitcoin inscription fees, including when paying with Ethereum.'), body, actions, note));
-  let stopped = false, busy = false, timer, status, target, wallet, ethereum, paymentDraft = '';
+    intro, body, actions, note));
+  let stopped = false, busy = false, timer, status, target, wallet, ethereum, publicRequest, paymentDraft = '';
   // The gateway cannot read an inscription until it is in a block (and indexed).
   const notYet = error => ['deployment_confirmations', 'tap_quorum_unavailable', 'request_failed'].includes(error?.message);
   let registering = false, lastRegister = 0;
@@ -31,7 +35,7 @@ export function mount(root, { id }) {
     if (busy || stopped) return; busy = true;
     for (const button of actions.querySelectorAll('button')) button.disabled = true;
     clear(note, 'Working…');
-    try { await fn(); if (!stopped) clear(note, 'Saved wallet steps can be resumed using this same request link.'); }
+    try { await fn(); if (!stopped && note.textContent === 'Working…') clear(note, 'Saved wallet steps can be resumed using this same request link.'); }
     catch (error) { if (!stopped) clear(note, walletError(error)); }
     finally { busy = false; for (const button of actions.querySelectorAll('button')) button.disabled = false; }
   };
@@ -44,7 +48,7 @@ export function mount(root, { id }) {
     const receiptKey = current && `${target.network}/deployment-receipt/${job.asset}/${current.id}`;
     const receipt = receiptKey ? await journal.get(receiptKey) : null;
     if (stopped) return;
-    const registered = job.state === 'registered';
+    const registered = job.state === 'registered', isPublic = publicMode || status?.publicMint === true;
     // A sent inscription is registered by this page once it is in a block; until then the gateway cannot read it.
     const waiting = !registered && receipt;
     if (waiting && !registering && Date.now() - lastRegister > 30000) {
@@ -58,18 +62,22 @@ export function mount(root, { id }) {
       job.receiver ? ['Your wallet', hashEl(job.receiver)] : null, receipt ? ['Your inscription', hashEl(receipt.inscriptionId)] : null]),
       h('h3', {}, 'Steps'),
       h('ol', {},
-        h('li', {}, 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent. Enter your agent’s address (trac1…) below.'),
+        h('li', {}, isPublic ? 'Connect the TAP Wallet receiving your public mint. No agent or payout binding is needed.' : 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent. Enter your agent’s address (trac1…) below.'),
         h('li', {}, h('strong', {}, 'Inscribe the pattern. '), job.elementId ? h('span', {}, h('strong', {}, 'Done: '), 'the pattern is inscribed and in a block.')
           : waiting && phase === 'element' ? waitText : 'Press “Inscribe pattern” and approve it in TAP Wallet.'),
         h('li', {}, h('strong', {}, 'Deploy the token. '), registered ? h('span', {}, h('strong', {}, 'Done: '), 'the token is deployed.')
           : waiting && phase === 'deployment' ? waitText : job.elementId ? 'Press “Deploy token” and approve it in TAP Wallet.' : 'Once the pattern is in a block, press “Deploy token” and approve it.'),
-        h('li', {}, 'Mint as usual: ask your agent to mint a block of this pattern. It reserves your units and gives you a payment link. Open it, pay the fee in TAP, then inscribe the mint. The tokens arrive in your TAP Wallet.')),
+        h('li', {}, isPublic ? 'Continue to payment after the token is deployed. Review the public mint quote, pay every fee in one TAP payment, then inscribe your permit. Nothing is reserved.' : 'Mint as usual: ask your agent to mint a block of this pattern. It reserves your units and gives you a payment link. Open it, pay the fee in TAP, then inscribe the mint. The tokens arrive in your TAP Wallet.')),
       h('p.small.muted', {}, 'Each inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'),
-      registered ? h('p', {}, h('strong', {}, 'The token is deployed. '), 'Ask your agent to mint now, then open the payment link it gives you.') : null,
+      registered ? h('p', {}, h('strong', {}, 'The token is deployed. '), isPublic ? 'Continue to review the public mint price and pay from your TAP Wallet.' : 'Ask your agent to mint now, then open the payment link it gives you.') : null,
       job.reason ? h('p.small.muted', {}, 'Status: ' + job.reason.replace(/_/g, ' ')) : null);
     const next = [button('Refresh', refresh)];
-    if (!registered && assetPage) next.push(field('Your agent’s address', input({ value: owner, placeholder: 'trac1…',
+    if (!registered && assetPage && !isPublic) next.push(field('Your agent’s address', input({ value: owner, placeholder: 'trac1…',
       'aria-label': 'Agent address', oninput: event => { owner = event.target.value.trim(); } })));
+    if (registered && publicMode) next.push(button('Continue to payment', async () => {
+      if (onPublicMint) await onPublicMint({ asset: id, block: publicBlock }, text => clear(note, text));
+      else location.assign('/mint?' + new URLSearchParams({ asset: id, block: publicBlock }));
+    }));
     if (waiting) next.push(button('Check now', async () => {
       try { await api('/mint/deployment', { asset: job.asset, phase, inscription: receipt.inscriptionId }); }
       catch (error) { if (notYet(error)) throw Error('Not in a Bitcoin block yet. This page keeps checking; nothing else to do.'); throw error; }
@@ -80,16 +88,21 @@ export function mount(root, { id }) {
       await api('/mint/deployment', { asset: job.asset }); await refresh();
     }));
     if (job.state === 'awaiting_player_deploy' && !receipt) next.push(button(phase === 'element' ? 'Inscribe pattern' : 'Deploy token', async () => {
-      // Public request links have no console player session. Read the actual
-      // request owner's existing binding; asset links carry that owner instead.
-      if (!assetPage) owner = (await api('/web-api/mint/' + id)).owner;
-      validateTracAddress(owner);
-      const binding = await api(`/payout-bindings/${encodeURIComponent(owner)}/tap`);
+      let binding;
+      if (!isPublic) {
+        if (!assetPage) owner = (await api('/web-api/mint/' + id)).owner;
+        validateTracAddress(owner);
+        binding = (await api(`/payout-bindings/${encodeURIComponent(owner)}/tap`)).binding;
+      }
+      if (publicMode) {
+        publicRequest = await api('/public-mints/quote', { asset: id, block: publicBlock, tapAddress: publicAddress });
+        if (publicRequest.state !== 'deployment_needed') { await refresh(); return; }
+      }
       await wallet.connect();
       const fresh = await api('/mint/deployment-state/' + job.asset);
       const freshAttempt = fresh.attempts?.find(a => a.phase === fresh.phase && a.attempt === (fresh.phase === 'element' ? fresh.elementAttempt : fresh.tickerAttempt));
       if (freshAttempt?.id !== current.id || fresh.phase !== phase) { await refresh(); throw Error('Deployment changed. Review the current phase before inscribing.'); }
-      const result = await wallet.inscribeDeployment(fresh, { owner, binding: binding.binding, maxFeeSats: '1000000', confirm: confirmFees });
+      const result = await wallet.inscribeDeployment(fresh, { owner, binding, ...(isPublic ? { publicRequest: publicRequest ?? status } : {}), maxFeeSats: '1000000', confirm: confirmFees });
       if (result.state !== 'broadcast') return;
       await journal.put(receiptKey, { inscriptionId: result.inscriptionId });
       try { await api('/mint/deployment', { asset: job.asset, phase: result.phase, inscription: result.inscriptionId }); }
@@ -103,19 +116,27 @@ export function mount(root, { id }) {
     clear(actions, ...next);
   };
   const refresh = async () => {
-    if (assetPage) return renderDeployment(await api('/mint/deployment-state/' + id));
+    if (assetPage) {
+      if (publicMode) {
+        if (!/^(0|[1-9][0-9]*)$/.test(publicBlock) || !publicAddress) throw Error('Invalid public mint link');
+        publicRequest = await api('/public-mints/quote', { asset: id, block: publicBlock, tapAddress: publicAddress });
+        if (publicRequest.receiver !== publicAddress || String(publicRequest.block) !== publicBlock) throw Error('Public mint receiver or block changed');
+      }
+      return renderDeployment(await api('/mint/deployment-state/' + id));
+    }
     status = await wallet.status(id);
     if (stopped) return;
+    if (status.publicMint) intro.textContent = 'Pay every quoted fee in one TAP payment. The first confirmed complete payment wins. No units are consumed. After your permanent permit is issued, inscribe the mint from your TAP Wallet.';
     if (/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(status.asset)) {
       const deployment = await api('/mint/deployment-state/' + status.asset);
       if (deployment.state !== 'registered') return renderDeployment(deployment);
     }
-    clear(body, kv([['Request', hashEl(id)], ['State', pill(status.state.replace(/_/g, ' '))], ['Receiver', hashEl(status.receiver)], ['Units', fmtInt(status.amount)], status.inscription ? ['Inscription', hashEl(status.inscription)] : null]),
+    clear(body, kv([['Request', hashEl(id)], ['State', pill(status.state.replace(/_/g, ' '))], ['Receiver', hashEl(status.receiver)], ['Units', fmtInt(status.amount)], status.publicMint && status.refunds?.length ? ['Refund', 'Owed; not sent automatically'] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]),
       h('h3', {}, 'Remaining fees'), ...status.missing.map(item => h('p', {}, `${item.role}: ${tap(item.amount)} · `, hashEl(item.to))),
-      status.state === 'permit_issued' ? h('p', {}, 'Your units have been consumed once. This permit has no expiry; you can inscribe when ready.') : null);
+      status.state === 'permit_issued' ? h('p', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your units have been consumed once. This permit has no expiry; you can inscribe when ready.') : null);
     const next = [button('Refresh', refresh)];
     if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payable) next.push(button('Pay missing items', async () => {
-      if (!await confirmModal({ title: 'Pay the remaining fees?', lead: 'Your wallet pays the quoted recipients. We do not refund these payments.', rows: status.missing.map(item => [item.role, tap(item.amount)]), confirm: 'Pay from my wallet' })) return;
+      if (!await confirmModal({ title: 'Pay the remaining fees?', lead: status.publicMint ? 'Pay every fee in one TAP payment. First confirmed complete payment wins; later payments are recorded for refund. Refunds are not sent automatically.' : 'Your wallet pays the quoted recipients. We do not refund these payments.', rows: status.missing.map(item => [item.role, tap(item.amount)]), confirm: 'Pay from my wallet' })) return;
       if (status.payBy.rail === 'tap') { await wallet.connect(); const result = await wallet.pay(id); if (result.localState === 'payment_pending') throw Error(result.message); }
       else { const plan = await api('/web-api/mint/' + id); await ethereum.connect(plan.payer); await ethereum.pay(id); }
       await refresh();

@@ -14,8 +14,8 @@ export function creditActions(operations) {
     assets: [...assets].sort(([a], [b]) => a < b ? -1 : 1).map(([asset, n]) => [asset, String(n)]) }));
 }
 export const accountOperationsRoot = operations => merkleRoot(operations.filter(o => ['ar', 'fp'].includes(o.op)).map(encodeBinary));
-export function verifyCreditOperations(credits, operations, crafts = []) {
+export function verifyCreditOperations(credits, operations, crafts = [], transfers = []) {
   assert(Array.isArray(operations) && operations.every(o => o.op === 'ar' && o.v === 2 && Array.isArray(o.actions)), 'account_operations');
-  assert(stableJSON([...creditActions(credits), ...crafts.map(c => c.action)]) === stableJSON(operations.flatMap(o => o.actions)), 'account_credit_derivation');
+  assert(stableJSON([...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]) === stableJSON(operations.flatMap(o => o.actions)), 'account_credit_derivation');
   return operations;
 }

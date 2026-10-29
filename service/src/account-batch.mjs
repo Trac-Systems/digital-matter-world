@@ -22,9 +22,9 @@ export class AccountBatchOverlay {
   }
 }
 
-export async function buildCreditAccounts({ store, credits, crafts = [], document, height }) {
+export async function buildCreditAccounts({ store, credits, crafts = [], transfers = [], document, height }) {
   const execution = new AccountExecution({ store, document, height });
-  const actions = [...creditActions(credits), ...crafts.map(c => c.action)]; if (actions.length) await execution.accounts(actions);
+  const actions = [...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
   return execution.result();
 }
 

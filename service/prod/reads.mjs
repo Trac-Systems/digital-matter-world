@@ -273,7 +273,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
         const accepted = (await audits(provenance)).flatMap(f => f.crafts).find(c => c.id === asset);
         check(accepted?.firstMaker === type.firstMaker, 'first_maker_binding'); maker = type.firstMaker;
       }
-      const address = await payout(maker, registered.kind === 'dmt' ? 'finder' : 'firstMaker');
+      const address = maker ? await payout(maker, registered.kind === 'dmt' ? 'finder' : 'firstMaker') : null;
       const admission = admittedId ? await admittedMint({ store, reads, audits, network: config.network, id: admittedId }) : null;
       if (admission) check(admission.context.deployment.id === registered.id, 'mint_admission_deployment');
       const link = admission ? admission.context.link : block === undefined ? null : await reads.link(block);
@@ -282,6 +282,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const landownerAddress = holder ? kind === 'ethereum' ? await payout(holder.agent, 'landowner') : holder.address : null;
       return { ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
         remaining: await tap('getMintTokensLeft/' + indexTick), limit: deployment.lim ?? '0' }, find: found, link, bitmapHolder: holder,
+        ...(provenance?.publicClaims ? { pattern: provenance.pattern, publicClaims: provenance.publicClaims } : {}),
         landownerAddress, displayLabel: registered.displayLabel ?? registered.pattern?.name ?? asset, discoverer, payouts, ...(provenance ? { assetRevision: provenance.revision } : {}), tier: provenance?.tier ?? registered.pattern?.tier ?? 1, treasury: destinations.treasury,
         beneficiaries: { finder: found?.finder ?? null, firstMaker: registered.kind === 'compound' ? maker : null, discoverer: pattern?.discoverer ?? null, landowner: holder?.agent ?? null },
         finderAddress: found?.finder ? address : null, firstMakerAddress: registered.kind === 'compound' ? address : null };
@@ -377,6 +378,13 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   installMintPayments(reads, { settings: config.prod.lookupSettings, request, network: config.network, escrow: config.prod.ethereum, confirmations: config.prod.ethereum.confirmations });
   reads.paymentUsed = key => trac('paymentUsed', [key]);
   reads.bitcoinTransaction = id => client.transaction(id);
+  reads.publicMintHeader = async (height, at) => (await views.view(at?.tip ?? (await sharedStamp()).tip, at?.tipHash ?? (await sharedStamp()).tipHash)).get(height);
+  reads.publicBitcoinHash = async (height, at) => {
+    check(BigInt(height) <= BigInt(at.counted), 'public_scan_pending');
+    const expected = (await views.view(at.tip, at.tipHash)).hashAt(height);
+    check(expected && await client.blockHash(rules.safeNumberV2(height)) === expected, 'public_payment_reorg'); return expected;
+  };
+  reads.publicBitcoinBlock = async (height, at) => client.block(await reads.publicBitcoinHash(height, at), { withTransactions: true });
   const mintEth = ethereumPayments({ rpc: ethRPC, escrow: config.prod.ethereum });
   reads.escrowSettled = (payer, id, hint) => mintEth.settled('ethereum', id, payer, hint);
   if (config.v2) installFinancialSources(reads, { network: config.network, document: config.v2.document, recoveryVersion: config.assetRecoveryVersion,

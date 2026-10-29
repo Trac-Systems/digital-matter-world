@@ -51,9 +51,8 @@ The receiver and TAP payer are your agent's verified, bound TAP payout address,
 shown at the top. Complete `bind_payout_wallet` first if no binding is present.
 During the finder's week only the finder mints; afterwards the Bitmap holder
 (if the Bitmap was linked before the find) or any agent holding enough units
-of that asset may mint. Minting spends the required units. Units can be sent
-with `transfer`; see [the action reference](docs/ACTIONS.md) for the current
-transfer adapter's v2 limitation. Unclaimed blocks use a separate website flow.
+of that asset may mint. Minting spends the required units. `transfer` submits unit authorizations after the public-mint settings activation; see
+[unit transfers](docs/ACTIONS.md#unit-transfers-on-v2). Unclaimed blocks use a separate website flow.
 All mint requests still pass shared validation and accepted reservation.
 
 After a request is ready, approve its quoted TAP fees in the TAP Wallet browser
@@ -236,11 +235,17 @@ follow [the recovery instructions](docs/ACTIONS.md#recover-an-old-refused-reveal
 moves are signed locally and submitted to the gateway, whose operator submits
 the settlement batches. The player does not need an MSB account: the contract
 creates its matter account when it credits a win. Crafting requires owned matter.
-The old direct TNK `transfer` path is unavailable on activated v2 accounts and
-returns `account_v2_required` before preparing a transaction. It needs a verified
-v2 account-transfer adapter; do not apply legacy writer/funding instructions to
-mainnet. Existing legacy transaction status remains inspectable. TAP payment
-fees and Bitcoin miner fees are separate from free game moves.
+`transfer {actionId,to,assets}` checks the recipient's `trac1…` address and exact
+ledger balances. Use `p2:N`, `c2:COMMITMENT`, or the imported `p0`-style key shown
+in your balances. Before the public-mint activation height, live mode saves the
+signed intent locally and returns `transfer_v2_unavailable`. After activation,
+it submits those exact authorizations as a named move. Dry-run never signs or
+sends and reports whether submission is supported. Keep the same action ID and
+journal; stale or expired unsent authorizations remain saved and are refused.
+V2 transfer moves need no sender TNK. A receipt is not batch acceptance. See
+[the transfer arguments and recovery behavior](docs/ACTIONS.md#unit-transfers-on-v2).
+Legacy transaction status remains inspectable. TAP payment fees and Bitcoin
+miner fees are separate from free game moves.
 
 ## Connect your agent
 
@@ -319,8 +324,8 @@ through `DMW_SIGNER_PASSWORD` when required). The console owner's key is never
 selected implicitly. A fresh key starts with no matter and no TNK funding.
 
 `--live` is allowed on these local test chains. Omit it for dry-run. A live free
-claim/discovery/craft needs no TNK; a transfer needs the new player's own MSB
-account funded. The helper supplies the local network configuration, independently
+claim/discovery/craft needs no TNK; a direct transfer on a legacy network needs
+the new player's own MSB account funded. V2 transfers need no sender TNK and submit only after their settings activation. The helper supplies the local network configuration, independently
 configured witness keys, adapter and verified regtest history. It does not start,
 restart or wipe the playground. MCP stdout contains only protocol messages.
 
@@ -437,6 +442,24 @@ deadline, and refuses redirects. The wallet stays local.
 `find` includes `{asset,block,count,finder,findHeight}` and is required for minting.
 General selection traverses all rights pages. Explicit blocks use direct lookup
 and verify live context. `compounds()` returns registered type records.
+
+Found blocks keep the existing mint ladder: the finder during the week starting
+at settlement, then the current Bitmap holder if linked before the find,
+otherwise any agent holding enough units. Mint from the kit or local dashboard
+by spending the exact find count in units. When accepted settings enable
+`publicMintActivationHeight`, new claims close at
+`max(block height, pattern releaseHeight) + releaseFinderWindow`; the release
+window is pinned from `finderWindow` (1008 blocks in the launch profile).
+Existing patterns without a recorded release use the policy activation height
+and its pinned `publicMintLegacyFinderWindow`. Later settings do not reopen an
+expired claim week.
+
+After the week, an unclaimed block is available only through the website with a
+TAP Wallet, without an agent, Trac key or units. Quotes reserve nothing. The first
+complete confirmed TAP payment wins by Bitcoin block and transaction position;
+other payments are recorded for refund. A linked Bitmap requires payment from
+its current holder’s TAP address. Found and already minted blocks are excluded
+from public offers. Historical settings retain their original rules.
 
 ## Actions and MCP
 

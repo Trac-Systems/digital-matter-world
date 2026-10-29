@@ -65,11 +65,7 @@ const lists = [
   { at: 'records.js receipts', path: '/receipts', limit: 10 },
   // /records/highlights is the site's own read (web.mjs), not the public API.
   { at: 'records.js batch', path: '/records/batches/1' },
-  // money.js (Mint & wallets)
-  { at: 'money.js rights', path: `/mint-rights?owner=${me}`, limit: 10, sorts: ['block:desc', 'block:asc'], filters: { allowed: ['true', ''] } },
-  { at: 'money.js reason', path: `/mint-rights?owner=${me}&allowed=true&limit=1` },
-  { at: 'money.js reason', path: `/mint-rights?owner=${me}&limit=50` },
-  { at: 'money.js picked', path: `/blocks/${H}/mintRights?owner=${me}&asset=p2:0&limit=1` },
+  // money.js (Mint & wallets) reads only /public-mints, covered by the public mint API's own tests.
 ];
 // What pagedTable sends (paged.js): limit, then sort/order, then each non-empty filter.
 function requests({ path, limit, sorts = [], filters = {} }) {
@@ -88,7 +84,7 @@ function requests({ path, limit, sorts = [], filters = {} }) {
 
 // pagedTable calls per served file; agents.js has two more in "Hunting now", which only the console shows.
 const pagedTables = { 'playground/console/js/views/world.js': 4, 'playground/console/js/views/table.js': 4, 'playground/console/js/views/agents.js': 8,
-  'playground/console/js/views/feed.js': 1, 'playground/console/js/views/results.js': 1, 'service/public/web/records.js': 6, 'service/public/web/money.js': 1 };
+  'playground/console/js/views/feed.js': 1, 'playground/console/js/views/results.js': 1, 'service/public/web/records.js': 6, 'service/public/web/money.js': 2 };
 test('the table covers every paged list on the public pages', () => {
   for (const [file, n] of Object.entries(pagedTables)) assert.equal(readFileSync(new URL('../../' + file, import.meta.url), 'utf8').split('pagedTable({').length - 1, n, file);
 });

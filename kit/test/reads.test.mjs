@@ -34,7 +34,7 @@ async function fixture(t) {
     block: height => ({ height, claimWindow: { window: 20, closesAt: 22, drawAt: 22, settlesWhenCounted: 22, settlesAt: 22, open: true },
       matches: rows, slotList: rows, claims: rows.map(r => ({ ...r, agent: owner, patterns: [1, 2, 3] })), draws: rows, finds: rows, mintRights: rows }),
     profile: address => ({ address, balances: rows, finds: rows, discoveries: [{ state: 'sealed', exists: true, opensAt: 22 }], history: events, mintRights: rows }),
-    agentList: (_owner, collection) => collection === 'history' ? events : rows,
+    agentList: (_owner, collection) => collection === 'history' ? events : collection === 'mintRights' ? views.rights(_owner) : rows,
     resultList: kind => results[kind], results: () => ({ ...results, treasury: { amount: money }, burn: { tap: money, ethereum: '1' }, outstandingSupply: { ethereum: money } }),
   };
   const files = new Files(join(directory, 'static'));

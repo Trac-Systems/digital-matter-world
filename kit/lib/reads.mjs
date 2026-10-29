@@ -4,7 +4,7 @@ import { patternId, nextCursor, isAsset } from './api-values.mjs';
 
 const numeric = new Set(['limit', 'height', 'from', 'to', 'block', 'since', 'window']);
 const boolean = new Set(['found', 'linked', 'minted', 'allowed', 'pending', 'nonzero', 'positive', 'header']);
-const strings = new Set(['cursor', 'sort', 'order', 'asset', 'owner', 'address', 'agent', 'actor', 'discoverer', 'firstMaker', 'tier', 'recipe', 'reason', 'whoMayMint', 'q', 'type', 'category', 'state', 'kind', 'action', 'status', 'payer', 'beneficiary', 'role', 'source', 'path']);
+const strings = new Set(['cursor', 'sort', 'order', 'asset', 'owner', 'address', 'tapAddress', 'agent', 'actor', 'discoverer', 'firstMaker', 'tier', 'recipe', 'reason', 'whoMayMint', 'q', 'type', 'category', 'state', 'kind', 'action', 'status', 'payer', 'beneficiary', 'role', 'source', 'path']);
 
 // Only scalars reach URLSearchParams; a cursor remains an opaque value.
 export function readQuery(options = {}) {
@@ -32,7 +32,7 @@ export function publicRoute(route, depth = 0) {
   // delimiter; encoded slashes, traversal and origins remain forbidden.
   const path = encodedPath.replace(/%3a/gi, ':');
   check(search.length <= 1 && /^\/[a-zA-Z0-9/:_.-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid public read path');
-  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|payout-bindings|payouts|agents|accounts|events|feed|results|links|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
+  check(/^\/(?:status|world|blocks|patterns|table|compounds|finds|receipts|mint-rights|public-mints|payout-bindings|payouts|agents|accounts|events|feed|results|links|list|records|latest|window-eligibility|windows)(?:$|\/|\.json$)/.test(path) || /^\/mint\/[0-9a-f]{64}$/.test(path), 'Not a public collection route');
   tracReadRoute(path + (search.length ? '?' + search[0] : ''));
   const query = {}, params = new URLSearchParams(search[0]);
   for (const [key, value] of params) {

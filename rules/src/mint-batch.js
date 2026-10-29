@@ -3,6 +3,7 @@ import { recordGet, recordSet } from './record-index.js';
 import { assert, integer, hex, hash, stableJSON, exactKeys } from './core.js';
 import { pendingId, verifyRequest, completeRealOp, cancelRealOp, holdPaidOp, consumePaidOp } from './operations.js';
 import { acceptMintRequest } from './mint-rights.js';
+import { publicMintActive } from './public-mint.js';
 
 export const MINT_BATCH_DEFAULTS = Object.freeze({ maxMintOps: 8 });
 export const mintContext = context => ({ deployment: context.deployment,
@@ -52,6 +53,10 @@ export function applyMintInput({ input, network, counted, tip, hashAt, state, se
     assert(e.payment?.requestId === id && ['tap', 'ethereum'].includes(e.payment.kind) && same(e.payment.fees, a.fees), 'payment_binding');
     const progress = paymentProgress(a.fees, e.payment.receipts, { confirmations: e.payment.requiredConfirmations ?? 1 });
     if (op === 'mp') {
+      if (key && publicMintActive(settings, counted)) {
+        assert(!next.minted[key], 'already_minted');
+        assert(!next.holds[key] || next.holds[key].id === id, 'block_pending');
+      }
       assert(progress.seen, 'payment_unseen');
       assert(!raw.h, 'payment_already_held');
       if (counted > p.expiry) {
@@ -62,6 +67,10 @@ export function applyMintInput({ input, network, counted, tip, hashAt, state, se
       if (key) next.holds[key] = { id, expiry: Number.MAX_SAFE_INTEGER };
       operation = holdPaidOp(id);
     } else if (op === 'mc') {
+      if (key && publicMintActive(settings, counted)) {
+        assert(!next.minted[key], 'already_minted');
+        assert(next.holds[key]?.id === id, 'block_pending');
+      }
       assert(raw.h === true && progress.final && hex(a.permit?.hash, 32) && a.paymentHash === paymentCommitment(progress.allocations), 'payment_incomplete');
       operation = consumePaidOp(id, a.permit.hash, progress.allocations);
       delete next.pending[id];

@@ -19,6 +19,7 @@ import { beneficiaryFeePlan } from '../../rules/src/beneficiary-credits.js';
 import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { legacyMintBinding, legacyLinkBinding } from './pending-financial.mjs';
 import { installLegacyLinkSources } from './legacy-link-sources.mjs';
+import { installPublicMintSources } from './public-mint-sources.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const feeKey = financialFeeKey;
@@ -112,6 +113,11 @@ export function installFinancialSources(reads, options) {
       custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
   };
   const accepted = async (id, at) => {
+    const publicSource = await reads.financialRecord('fi/source/' + id, at);
+    if (publicSource?.publicMint) {
+      const { source, funding } = await reads.publicMintPermit(id, at);
+      return { source, funding, row: { ...await request(id), id, request: source.request, payer: source.payer, receiver: source.receiver, kind: 'tap', quote: { fees: source.feeItems } } };
+    }
     const row = await signedRequest(id), funding = await reads.financialRecord('fp/' + id, at);
     const source = await reads.financialRecord('fi/source/' + id, at) ?? await reservation(id, at);
     check(funding && source?.requestId === id && rules.hashObject(source) === funding.terms && same(source.request, row.request) &&
@@ -179,6 +185,7 @@ export function installFinancialSources(reads, options) {
   };
   reads.financialEvidence = async (transition, at) => {
     const t = transition;
+    if (t.type === 'public-scan') return reads.publicMintScan(t, at);
     if (t.type === 'beacon-recovery') return reads.financialBeaconEvidence(t.operation, at);
     if (t.type === 'lifecycle') {
       if (t.action.type.startsWith('legacy-link-')) return reads.financialLegacyLinkEvidence(t.action, at);
@@ -229,13 +236,15 @@ export function installFinancialSources(reads, options) {
   };
   // Normalize the execution anchor once and fence every independent read with
   // the same accepted notary revision and Bitcoin/TAP source snapshot.
-  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote']) {
+  installPublicMintSources(reads, { network, bitcoinNetwork, lookupSettings });
+  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPermit']) {
     const original = reads[name], index = ['financialReceipts', 'financialEscrow'].includes(name) ? 2 : 1;
     reads[name] = async (...args) => {
       const before = await reads.batchStamp(), at = args[index];
       check(!at || rules.compareOrdinal(at.counted, before.counted) === 0 && same(at.last, before.last) && (at.revision === undefined || at.revision === before.revision), 'financial_snapshot_changed');
       args[index] = before;
-      const result = await original(...args);
+      const result = name === 'publicMintScan' && reads.withTapSnapshot ?
+        await reads.withTapSnapshot(before, () => original(...args)) : await original(...args);
       check(same(before, await reads.batchStamp()), 'financial_snapshot_changed');
       return result;
     };

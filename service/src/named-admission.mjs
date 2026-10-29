@@ -99,16 +99,17 @@ export class NamedAdmission {
       provenance: { batch, receipt: rules.hashObject(receipt), agent: move.a, ruleset: move.ruleset, settingsHash: move.settingsHash }
     });
     const publicResult = { record: result.record ?? null, results: result.results ?? null, challenge: result.challenge ?? null,
-      ...(result.craft ? { craft: result.craft } : {}), ...(result.progress ? { progress: result.progress } : {}) };
+      ...(result.craft ? { craft: result.craft } : {}), ...(result.transfers ? { transfers: result.transfers } : {}), ...(result.progress ? { progress: result.progress } : {}) };
     work.bytes += Buffer.byteLength(rules.stableJSON(publicResult));
     check(work.bytes <= s.auditTotalBytes, 'next_batch_byte_capacity', 429);
-    if (result.craft) {
-      const crafts = [...(draft?.crafts ?? []), result.craft];
+    if (result.craft || result.transfers) {
+      const crafts = [...(draft?.crafts ?? []), ...(result.craft ? [result.craft] : [])];
+      const transfers = [...(draft?.transfers ?? []), ...(result.transfers ?? [])];
       // Reserve the whole owner's debits/nonces and account proof capacity
       // before issuing a receipt. These writes remain speculative until the
       // corresponding accepted batch commits them atomically.
       let accounts;
-      try { accounts = await buildCreditAccounts({ store: this.store, credits: [], crafts, document: settings, height: counted }); }
+      try { accounts = await buildCreditAccounts({ store: this.store, credits: [], crafts, transfers, document: settings, height: counted }); }
       catch (error) { if (['account_operation', 'account_operation_bytes', 'account_proof_budget', 'account_leaf_budget'].includes(error.message)) error.status = 429; throw error; }
       check(Buffer.byteLength(rules.stableJSON(accounts.operations)) + s.batchEnvelopeReserveBytes <= s.batchBytes, 'next_batch_account_capacity', 429);
     }
@@ -145,7 +146,8 @@ export class NamedAdmission {
       ...(ctx.observation ? [{ space: 'intake/' + ctx.observation, id: rules.uintKeyV2(sequence), value: { move, receipt } }] : []),
       { space: 'namedDedupe', id, value: { receipt, ...(this.committee ? { witnessPending: true } : {}) } },
       { space: 'namedDrafts', id: batch, value: { acceptedRoot, settingsHash: rules.hashObject(settings), resourceHash: rules.hashObject(this.resources), snapshot: saved.snapshot, work,
-        crafts: [...(draft?.crafts ?? []), ...(result.craft ? [result.craft] : [])] } },
+        crafts: [...(draft?.crafts ?? []), ...(result.craft ? [result.craft] : [])],
+        ...(result.transfers || draft?.transfers ? { transfers: [...(draft?.transfers ?? []), ...(result.transfers ?? [])] } : {}) } },
       { space: 'resourceHistory', id: rules.hashObject(this.resources), value: this.resources },
       { space: 'meta', id: 'namedReservedBatch', value: batch }, { space: 'meta', id: 'namedReceiptSequence', value: sequence }
     ]);

@@ -6,11 +6,12 @@ import { check, serial } from './util.mjs';
 import { assetResources } from './asset-resources.mjs';
 import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { financialTerminalOperations, FinancialLinkReconciler } from './financial-lifecycle.mjs';
+import { publicMintAcceptedWrites } from './public-mints.mjs';
 
 // Explicit source adapter: it must reconstruct fees, rights, chain settlement,
 // permit recovery and exits from independent point reads. There is no fallback
 // that treats a gateway-supplied evidence object as a source verification.
-export async function buildFinancialExecution({ store, credits = [], crafts = [], transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0 }) {
+export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0 }) {
   check(typeof reads.financialEvidence === 'function', 'financial_source_adapter_required');
   check(Array.isArray(transitions) && transitions.length <= document.values.mintOperationBudget, 'financial_batch_budget');
   if (reads.financialScope) {
@@ -22,7 +23,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
   const execution = new AccountExecution({ store, document, height, read: typeof reads.financialRecord === 'function' ? key => reads.financialRecord(key, at) : undefined });
   const reservations = new Map(store.financialReservations ?? []);
   const sources = reads.financialScope?.({ record: key => execution.getAsync(key), reservations }) ?? reads;
-  const actions = [...creditActions(credits), ...crafts.map(c => c.action)]; if (actions.length) await execution.accounts(actions);
+  const actions = [...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
   check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
   const creditOperations = [...execution.operations], inputs = [], deferred = [];
   let linkInputs = priorLinkInputs;
@@ -68,7 +69,7 @@ export class FinancialExecution {
   existing(id) { return this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null); }
   async submit(transition) {
     check(transition && rules.hex(transition.id, 32), 'financial_identity');
-    check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery'].includes(transition.type) &&
+    check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery', 'public-scan'].includes(transition.type) &&
       Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
     const key = rules.hashObject(['dmw-financial-transition-v2', transition]);
     const old = this.existing(key); if (old) return old;
@@ -191,7 +192,7 @@ export class FinancialExecution {
     const projected = new Map(), view = { get: (space, id) => projected.has(space + '/' + id) ? projected.get(space + '/' + id) : this.store.get(space, id) };
     return draft.items.flatMap(item => (item.output.file.financialOperations ?? []).flatMap(input => {
       const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
-      const local = [...this.releaseAdmission(id, capacities), ...financialTerminalOperations(view, input, draft.proposal.batch.n)];
+      const local = [...this.releaseAdmission(id, capacities), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input)];
       for (const write of local) projected.set(write.space + '/' + write.id, write.value);
       return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
         request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },

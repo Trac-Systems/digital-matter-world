@@ -1,6 +1,7 @@
 import { ordinalCodec } from './integers-v2.js';
 import { assert, hex, hashObject, stableJSON, exactKeys } from './core.js';
 import { financialLifecyclePlan, reserveCapacity, terminalCapacity } from './financial-lifecycle.js';
+import { publicMintActive, publicPlotId } from './public-mint.js';
 
 // Financial evidence is independently reconstructed by every signer. These
 // plans bind it to exact notary effects; a gateway cannot smuggle arbitrary
@@ -18,6 +19,14 @@ async function financialEffects(input, { read, height, document }) {
   const clock = ordinalCodec(typeof height === 'string');
   const t = input.transition, evidence = hashObject(input.evidence);
   assert(t && hex(t.id, 32), 'financial_identity');
+  if (t.type === 'public-scan') {
+    const e = input.evidence;
+    assert(publicMintActive(document, height) && exactKeys(t, ['type', 'id', 'asset', 'block', 'previous']) &&
+      t.id === publicPlotId(t.asset, t.block) && e.requestId === t.id && e.asset === t.asset && e.block === t.block &&
+      t.previous === e.previous && e.previous === hashObject(await read('fp/public/' + t.id) ?? null), 'public_scan_binding');
+    const { requestId, ...fields } = e;
+    return [{ op: 'fp', v: 2, type: 'public-scan', id: t.id, ...fields }];
+  }
   if (t.type === 'beacon-recovery') {
     assert(exactKeys(t, ['type', 'id', 'operation']) && t.operation?.op === 'br' && t.operation.v === 2 && t.operation.id === t.id &&
       input.evidence.requestId === t.id && input.evidence.state === 'beacon_verified' && input.evidence.operation === hashObject(t.operation), 'financial_beacon_operation');

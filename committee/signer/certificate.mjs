@@ -11,11 +11,14 @@ export function attestMintResult(network, details, signature, signer, secret) {
 export function verifyMintResult(details, signature, { network, publicKey, id }) {
   check(details?.id === id, 'mint_certificate');
   const r = details.request;
-  check((details.version === 2 ? financialMintId(network, r) === id && verifyFinancialMintRequest(network, r, details.signature, r.until) :
+  if (details.version === 'public-v1') check(details.intent?.network === network && rules.publicRequestId(network, details.intent) === id &&
+    details.receiver === details.intent.tapAddress && r.asset === details.intent.asset && r.block === details.intent.block && r.amount === details.intent.amount, 'certificate_request');
+  else check((details.version === 2 ? financialMintId(network, r) === id && verifyFinancialMintRequest(network, r, details.signature, r.until) :
     requestID(network, r) === id && rules.verifyRequest('rq', network, r, details.signature, r.until)) && sha256(details.receiver) === r.receive, 'certificate_request');
   check(details.deployment.privilegePublicKey === publicKey, 'certificate_authority');
-  const expected = permit(network, r, details.deployment, details.receiver, id, details.version === 2 ? details.payment.commitment : rules.paymentCommitment(details.payment.allocations));
-  if (details.version === 2) check(isHex(details.payment.commitment), 'certificate_payment');
+  const financial = details.version === 2 || details.version === 'public-v1';
+  const expected = permit(network, r, details.deployment, details.receiver, id, financial ? details.payment.commitment : rules.paymentCommitment(details.payment.allocations));
+  if (financial) check(isHex(details.payment.commitment), 'certificate_payment');
   check(equal(expected, details.permit), 'certificate_permit');
   check(isHex(signature?.compact, 64) && /^[0-9]+$/.test(signature.r) && /^[0-9]+$/.test(signature.s) && [0, 1].includes(signature.v), 'certificate_signature');
   const parsed = secp256k1.Signature.fromCompact(signature.compact);

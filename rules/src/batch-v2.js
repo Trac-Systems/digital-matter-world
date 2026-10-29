@@ -29,11 +29,11 @@ import { advanceClaimWindow, ClosureBudget } from './claim-closure.js';
 export function processBlockV2(input, readers = {}) {
   const settings = batchSettings(input.settings);
   let deliveryRows = input.deliveryRows ?? settings.settlementPageRows * settings.settlementPagesPerObservation;
-  assert(Number.isSafeInteger(deliveryRows) && (deliveryRows > 0 || deliveryRows === 0 && input.entries.some(e => e.move.t === 'craft-v2')) && deliveryRows <= settings.settlementPageRows * settings.settlementPagesPerObservation, 'settlement_delivery_budget');
+  assert(Number.isSafeInteger(deliveryRows) && (deliveryRows > 0 || deliveryRows === 0 && input.entries.some(e => ['craft-v2', 'transfer-v2'].includes(e.move.t))) && deliveryRows <= settings.settlementPageRows * settings.settlementPagesPerObservation, 'settlement_delivery_budget');
   for (;;) {
     try { return processBlockV2Attempt(input, deliveryRows, readers); }
     catch (error) {
-      if (error.message !== 'audit_budget' || deliveryRows === 0 || deliveryRows === 1 && !input.entries.some(e => e.move.t === 'craft-v2')) throw error;
+      if (error.message !== 'audit_budget' || deliveryRows === 0 || deliveryRows === 1 && !input.entries.some(e => ['craft-v2', 'transfer-v2'].includes(e.move.t))) throw error;
       deliveryRows = deliveryRows === 1 ? 0 : Math.max(1, Math.floor(deliveryRows / 2));
     }
   }
@@ -64,7 +64,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     rounds: (state.rounds ?? []).map(r => ({ ...r })) };
   assert(clock.compare(clock.add(tip, s.claimWindowBlocks), state.highestTip ?? tip) > 0, 'receipt_window_closed');
   next.receiptSegments = recordSet(next.receiptSegments, key, { segment: receiptRoot.segment, hash: receiptSegmentHash(receiptRoot), last: receiptRoot.last ?? prior?.last ?? null });
-  const outcomes = [], occurrences = [], settlements = [], closures = [], closureProgress = [], discoveries = [], crafts = [], refinements = [], budget = new CreditBudget(s, input.priorOperations);
+  const outcomes = [], occurrences = [], settlements = [], closures = [], closureProgress = [], discoveries = [], crafts = [], transfers = [], refinements = [], budget = new CreditBudget(s, input.priorOperations);
   const closureSettings = s.closureWorkBudget && { ...s, ...Object.fromEntries(['closureWorkBudget', 'closureReadBudget', 'closureByteBudget']
     .map(k => [k, Math.floor(s[k] / s.observationsPerBatch)])) };
   const closureBudget = closureSettings && new ClosureBudget(closureSettings, claims?.storage);
@@ -139,9 +139,10 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     if (move.v === 2) {
       assert(s.document, 'batch_settings');
       const replayed = replayNamedEntries(named, { entries: [{ move, receipt }], settings: receiptDocument, settingsHistory,
-        batch: decimalV2(input.batchSequence), gateway, history, hashAt, counted: decimalV2(height), lastSequence: namedSequence, craftCatalog, renewal: input.renewal });
+        batch: decimalV2(input.batchSequence), gateway, history, hashAt, counted: decimalV2(height), executionHeight: decimalV2(input.executionHeight ?? height), lastSequence: namedSequence, craftCatalog, renewal: input.renewal });
       named = replayed.state; namedSequence = replayed.lastSequence; next.namedSequence = namedSequence;
       const result = replayed.outcomes[0];
+      if (result.transfers) transfers.push(...result.transfers.map(t => ({ ...t, move: receipt.move })));
       if (result.craft) crafts.push({ ...result.craft, move: receipt.move, agent: move.a });
       if (result.progress) refinements.push({ asset: move.p.asset, progress: result.progress, move: receipt.move });
       if (!['header-v2', 'claim-v2'].includes(move.t) || result.reason !== 'accepted') outcomes.push({ move, reason: result.reason });
@@ -163,7 +164,8 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
         assert(event && !event.closed && inWindow(event.window, tip), 'claim_window');
         const working = { ...next }, copy = { ...event };
         if (move.p.header) header(copy, move.p.header, move.a, working);
-        const accepted = enterClaims({ state: working, event: copy, agent: move.a, plots: move.p.plots, patterns, history, settings: s });
+        const accepted = enterClaims({ state: working, event: copy, agent: move.a, plots: move.p.plots, patterns, history,
+          settings: receiptDocument ? { ...s, document: receiptDocument } : s, height: tip });
         for (const slot of accepted.slots) {
           const oldDraw = recordGet(working.headerAwards, slot.block);
           assert(!oldDraw || oldDraw.windowHash === history.get(slot.block).hash, 'header_draw_reorg');
@@ -204,7 +206,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
   const file = { v: 5, ruleset, settingsRevision, observation: next.observation, previousHeight: clock.value(state.counted ?? clock.add(height, -1)), height, hash: blockHash, tip, previousTip: clock.value(state.lastTip ?? clock.add(tip, -1)), tipHash, confirmed: clock.min(height, tip),
     receipts: entries.map(e => e.receipt), receiptRoot, rootAttestations, receiptReference: null, moves: outcomes, settlements, closures, occurrences,
     ...(closureProgress.length ? { closureProgress } : {}),
-    discovery: { work: [], queued: 0, rejected: [] }, discoveries, crafts, ...(refinements.length ? { refinements } : {}), commissions: [], mintOperations: [], mintOutcomes: [], linkOperations: [], linkOutcomes: [], ops: budget.operations(),
+    discovery: { work: [], queued: 0, rejected: [] }, discoveries, crafts, ...(transfers.length ? { transfers } : {}), ...(refinements.length ? { refinements } : {}), commissions: [], mintOperations: [], mintOutcomes: [], linkOperations: [], linkOutcomes: [], ops: budget.operations(),
     ...(s.document ? { settingsHash: s.settingsHash, batchSequence: decimalV2(input.batchSequence), catalogRoot: next.catalogRoot } : {}),
     ...(input.renewal ? { renewal: input.renewal.id, renewalCursor: input.renewal.cursor } : {}) };
   const savedClaims = claims?.save(next);
@@ -221,7 +223,7 @@ export function finalizeBlockV2Accounts(output, input) {
   const next = { ...output.state }, file = { ...output.file }, { crafts } = file;
   const { height, tip, entries, state } = input;
   if (s.document && input.accountOperations) {
-    file.ops = verifyCreditOperations(file.ops, input.accountOperations, crafts);
+    file.ops = verifyCreditOperations(file.ops, input.accountOperations, crafts, file.transfers);
     if (input.financialOperations?.length) {
       assert(clock.compare(height, input.executionHeight) === 0, 'financial_execution_height');
       file.financialOperations = input.financialOperations;

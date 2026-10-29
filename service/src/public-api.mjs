@@ -68,10 +68,11 @@ export function createPublicAPI({ views, files, settings = {} }) {
     check(depth < 3, 'invalid_list_source');
     const url = normalize(input), path = url.pathname, params = new URLSearchParams(url.searchParams), source = path + url.search;
     const pageSettings = { ...settings, publicPageBytes: (settings.publicPageBytes ?? R3_RESOURCES.publicPageBytes) - Buffer.byteLength(JSON.stringify({ route: path })) - 128 };
+    if (path === '/mint-rights' && views.mints?.publicMints && rules.publicMintActive(views.mints.document, views.store.get('meta', 'ruleState')?.counted ?? '0')) return views.mints.publicMints.list(params);
     const claimed = /^\/patterns\/(p[0-9a-z]+|p2:(?:0|[1-9][0-9]*))\/claimed-blocks$/.exec(decodeURIComponent(path));
     if (claimed) return claimedPage(views.store, claimed[1], params, pageSettings);
     if (views.store?.get('meta', 'ruleState')?.batchVersion === 2) {
-      const extended = extendedPublicRead(views.store, url, pageSettings); if (extended !== undefined) return extended;
+      const extended = extendedPublicRead(views.store, url, { ...pageSettings, document: views.mints?.document }); if (extended !== undefined) return extended;
       const projected = claimedPublicRead(views.store, url, pageSettings); if (projected !== undefined) return projected;
       if (!(path === '/status' || path === '/list' || /^\/mint\/[0-9a-f]{64}$/.test(path) || staticPath(path))) return notFound();
     }

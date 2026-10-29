@@ -1,4 +1,18 @@
+export const publicMintMessages = {
+  someone_paid_first: 'Someone else’s payment for this block confirmed first, so it can no longer be minted here.',
+  already_minted: 'This block is already minted.',
+  claimed: 'This block was claimed in its claim week, so it is not public.',
+  claim_window_open: 'The claim week of this block is not over yet.',
+  bitmap_holder_only: 'Only the TAP Wallet holding this block’s Bitmap can mint it. Select that account in TAP Wallet and try again.',
+  public_mint_inactive: 'Public minting opens soon.',
+  public_index_warming: 'The list of public blocks is still being built. Try again in a few minutes.',
+  public_scan_pending: 'Recent Bitcoin payments for this block are still being checked. Try again in a few minutes.',
+  payment_unconfirmed: 'The payment is waiting for a Bitcoin confirmation. Keep this request and check again; do not pay again.',
+  public_payment_incomplete: 'The payment did not cover every quoted fee. Check this request and its refund record before sending another payment.',
+  quote_expired: 'The price changed. Press Mint again for a new quote.',
+};
 const messages = {
+  ...publicMintMessages,
   binding_wallet_signature: "Your wallet's signature was not accepted. Make sure the wallet shown above is the active account and try again.",
   binding_expired: 'Request expired. Ask your agent for a new binding link.',
   binding_nonce: 'A newer payout binding already exists. Ask your agent for a new binding link.',

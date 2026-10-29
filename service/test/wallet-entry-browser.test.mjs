@@ -13,6 +13,7 @@ const linked = 'bcrt1p' + 'q'.repeat(58), unlinked = 'bcrt1p' + 'z'.repeat(58);
 const target = { network: 'wallet-entry-test', bitcoinNetwork: 'regtest', ethereum: { chainId: '0x7a69' } };
 const policy = { baseFee: '1000000000000000000', feeSettings: { link: 3, tierMultipliers: [1, 3, 10, 30, 100], compoundMinimum: 10 }, unit: { decimals: 18 } };
 const right = mine => ({ asset: 'p0', block: 7, amount: '1', deploymentRegistered: true, allowed: mine, rightAllowed: true, whoMayMint: 'finder', reason: 'finder', finderUntil: 1015, finder: owner, minted: null, pending: null, balance: '1' });
+const publicBlock = { asset: 'p0', block: '7', amount: '1', claimDeadline: '1015', state: 'public', bitmapHolderOnly: false };
 function pageRows(key, rows, u) {
   const limit = Number(u.searchParams.get('limit') ?? 50);
   return { [key]: rows.slice(0, limit), total: rows.length, next: null };
@@ -25,6 +26,8 @@ function read(path) {
   if (p === '/blocks/7') return { height: 7, x: 1, y: 0, halving: 0, region: 0, found: true, header: { hash: 'ab'.repeat(32), time: 1 }, mintRights: [right(false)] };
   if (p === '/blocks/7/mintRights') return pageRows('mintRights', [right(mine)], u);
   if (p === '/mint-rights') return pageRows('mintRights', mine && u.searchParams.get('allowed') !== 'false' ? [right(true)] : [], u);
+  if (p === '/public-mints') return pageRows('rows', [publicBlock], u);
+  if (p === '/public-mints/p0/7') return publicBlock;
   if (p === '/patterns') return pageRows('patterns', [{ asset: 'p0', number: 0, name: 'dmwdigit', pat: '[0-9]', fld: 4, tier: 1, rarity: 1, supply: '10' }], u);
   return pageRows(p.split('/').at(-1), [], u);
 }
@@ -107,33 +110,31 @@ test('a visitor finds Connect wallet in the header and in the block panel, and t
   assert.equal(await page.evaluate(() => window.walletPrompts), 0);
 });
 
-test('Mint & wallets without a request link connects, lists the player’s finds and gives the agent message', async t => {
-  const page = await open(t);
+test('Mint & wallets without a request link lists public blocks, connects the wallet and has no agent mint flow', async t => {
+  const page = await open(t), reads = [];
+  page.on('request', r => reads.push(new URL(r.url()).pathname));
   await page.goto(server.url + '/mint');
   await page.getByRole('heading', { name: 'Mint & wallets', exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'How minting works', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'How public minting works', exact: true }).waitFor();
   const nav = page.getByRole('navigation', { name: 'Sections' });
   assert.equal(await nav.getByRole('link', { name: 'Mint', exact: true }).getAttribute('href'), '/mint');
   for (const old of ['Mint On-Chain', 'Link Bitmap', 'Payout wallets']) assert.equal(await nav.getByText(old, { exact: true }).count(), 0, old + ' is no longer a tab');
   assert.equal(await page.getByRole('tab').count(), 0, 'no sub-tabs');
-  for (const name of ['Your wallets', 'What you can mint', 'Link a Bitmap']) await panel(page, name).waitFor();
-  await page.getByText('Connect a wallet to see the finds', { exact: false }).waitFor();
+  for (const name of ['Public blocks', 'Your wallets', 'Link a Bitmap']) await panel(page, name).waitFor();
+  const blocks = panel(page, 'Public blocks');
+  await blocks.getByRole('button', { name: 'Mint', exact: true }).waitFor();
   await page.getByText('tier 5: 100 TAP', { exact: false }).waitFor();
+  await page.getByText('Agents mint their own finds from their local dashboard', { exact: false }).waitFor();
   const wallet = panel(page, 'Your wallets');
   await shot(page, 'desktop-mint-logged-out');
   await wallet.getByRole('button', { name: 'Connect TAP wallet', exact: true }).click();
-  const rights = panel(page, 'What you can mint');
-  await rights.getByText('You may mint', { exact: true }).waitFor();
+  await wallet.getByText('Linked to player', { exact: false }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Connect TAP wallet', exact: true }).count(), 0, 'no page asks for a wallet the header already has');
   assert.equal(await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).count(), 1, 'the missing wallet is offered once');
-  await wallet.getByText('Linked to player', { exact: false }).waitFor();
   await shot(page, 'desktop-mint-connected');
-  await rights.getByRole('button', { name: 'Mint On-Chain' }).click();
-  const dialog = page.getByRole('dialog');
-  assert.match(await dialog.locator('pre').innerText(), new RegExp(`^Mint p0 \\(.+\\) from block 7 on-chain and give me the payment link\\.\\nTAP wallet: ${linked}$`));
-  await shot(page, 'desktop-mint-agent-message');
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
-  await page.getByText('Already have a payment link from your agent?', { exact: false }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'What you can mint', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Mint On-Chain' }).count(), 0);
+  assert.ok(!reads.some(path => path === '/mint-rights' || /mintRights$/.test(path)), 'no agent mint rights are read');
 });
 
 test('an unlinked wallet explains linking with the README message; /link and /bind-payout open the same page', async t => {
@@ -142,8 +143,7 @@ test('an unlinked wallet explains linking with the README message; /link and /bi
   await panel(page, 'Your wallets').getByRole('button', { name: 'Connect TAP wallet', exact: true }).click();
   await page.getByText('Not linked to a player yet.', { exact: false }).first().waitFor();
   assert.equal(await page.locator('pre').first().innerText(), `Link my payout wallet and give me the link to sign:\nTAP wallet: ${unlinked}`);
-  await page.getByText('Your wallet is not linked to a player yet, so there is nothing to mint.', { exact: false }).waitFor();
-  await page.getByText('Link your wallet first', { exact: false }).waitFor();
+  await panel(page, 'Digit from block 7').getByRole('button', { name: 'Mint', exact: true }).waitFor();
   await shot(page, 'desktop-mint-not-linked');
 
   for (const path of ['/bind-payout', '/link?block=7']) {
@@ -178,7 +178,7 @@ test('phone width: the header wallet control fits and no page scrolls sideways',
   await shot(page, 'phone-header-menu-linked');
   await page.keyboard.press('Escape');
   await page.goto(server.url + '/mint');
-  await panel(page, 'What you can mint').getByText('You may mint', { exact: true }).waitFor();
+  await panel(page, 'Public blocks').getByRole('button', { name: 'Mint', exact: true }).waitFor();
   assert.ok(await noSideScroll(page), '/mint connected has no horizontal scroll');
   await shot(page, 'phone-mint-connected');
   assert.ok(lookups.includes(linked));

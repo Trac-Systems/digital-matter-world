@@ -51,6 +51,7 @@ const zeroAllowed = new Set(['batchKv', 'puzzleBits', 'patternMaxLiteralDigits',
   'finderShareBps', 'discovererShareBps', 'landownerShareBps', 'findBurnBps', 'unlinkedBurnBps',
   'firstMakerShareBps', 'compoundBurnBps', 'linkBurnBps']);
 const closureKeys = ['closureWorkBudget', 'closureReadBudget', 'closureByteBudget', 'closureBacklogPairs', 'closureBacklogBytes', 'closureBacklogWindows'];
+export const PUBLIC_MINT_SETTINGS = Object.freeze({ publicMintActivationHeight: '0', publicMintLegacyFinderWindow: 1008, publicMintScanBlocks: 2, publicMintPageSize: 50 });
 export function freezeDocument(value) {
   if (value && typeof value === 'object') { for (const v of Object.values(value)) freezeDocument(v); Object.freeze(value); }
   return value;
@@ -59,14 +60,16 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
   // Retained documents keep their original execution. New profiles opt into
   // bounded closure as a complete group, authenticated by the settings hash.
   const bounded = Object.hasOwn(values, 'closureWorkBudget');
-  assert(exactKeys(values, Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k))), 'settings_keys');
+  const publicMint = Object.hasOwn(values, 'publicMintActivationHeight');
+  assert(exactKeys(values, [...Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k)),
+    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : [])]), 'settings_keys');
   for (const [key, value] of Object.entries(values)) {
     if (key === 'tierThresholds') {
       assert(Array.isArray(value) && value.length === 4 && value.every((n, i) => {
         uintV2(n); return compareUint(n, '0') > 0 && (!i || compareUint(n, value[i - 1]) > 0);
       }), 'settings_tiers');
     } else if (key === 'feePolicyRevision') assert(value === '0' || typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), 'settings_fee_revision');
-    else if (typeof SETTINGS_PROFILE[key] === 'string') uintV2(value);
+    else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight') uintV2(value);
     else assert(Number.isSafeInteger(value) && value >= (zeroAllowed.has(key) ? 0 : 1), 'settings_value');
     if (Object.hasOwn(capabilities, key)) assert(value <= capabilities[key], 'settings_capability');
   }
@@ -112,6 +115,10 @@ export function settingsSuccessor(previous, document) {
     document.previousRevisionHash === hashObject(previous), 'settings_history');
   assert(compareUint(document.effectiveBatch, previous.effectiveBatch) > 0 &&
     compareUint(document.effectiveBitcoinWindow, previous.effectiveBitcoinWindow) >= 0, 'settings_order');
+  const old = previous.values.publicMintActivationHeight, next = document.values.publicMintActivationHeight;
+  assert(old === undefined ? next === undefined || compareUint(next, document.effectiveBitcoinWindow) >= 0 : next === old, 'settings_public_mint_boundary');
+  if (next !== undefined) assert(old === undefined ? document.values.publicMintLegacyFinderWindow === document.values.finderWindow :
+    document.values.publicMintLegacyFinderWindow === previous.values.publicMintLegacyFinderWindow, 'settings_public_claim_window');
   return document;
 }
 export function settingsEffective(document, batch, window) {

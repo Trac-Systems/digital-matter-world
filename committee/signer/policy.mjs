@@ -131,6 +131,15 @@ export class Policy {
       details: { root: b.root, epoch: b.epoch, n: b.n, deadline: b.deadline, batch: b }, batch: b };
   }
   async mint(proposal) {
+    if (proposal.version === 'public-v1') {
+      const at = await this.reads.batchStamp();
+      const { source, funding, permit: p } = await this.reads.publicMintPermit(proposal.id, at);
+      check(source.receiver === proposal.receiver && source.deployment.privilegePublicKey === this.publicKey &&
+        equal(at, await this.reads.batchStamp()), 'public_permit_binding');
+      return { digest: p.digest, slots: [`mint/request/${proposal.id}`, `mint/block/${source.asset}/${source.request.block}`],
+        details: { version: 'public-v1', id: proposal.id, receiver: source.receiver, request: source.request, intent: source.intent,
+          payment: { kind: 'tap', commitment: funding.consumedRoot }, deployment: source.deployment, permit: p }, permit: p };
+    }
     if (proposal.version === 2) {
       check(typeof this.reads.financialPermit === 'function', 'financial_source_adapter_required');
       const id = financialMintId(this.network, proposal.request), at = await this.reads.batchStamp();

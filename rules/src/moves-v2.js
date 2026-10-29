@@ -4,12 +4,15 @@ import { uintV2, compareUint } from './integers-v2.js';
 import { validateSettingsDocument } from './settings-v2.js';
 import { leadingZeroBits } from './moves.js';
 import { validateCraftPayload } from './craft-v2.js';
+import { validateTransferPayload } from './transfer-v2.js';
 
 export const namedMoveTypes = Object.freeze(['discovery-commit-v2', 'discovery-reveal-v2', 'submit-occurrences-v2', 'challenge-count-v2']);
 export function validateNamedPayload(type, p, settings) {
   validateSettingsDocument(settings);
   const s = settings.values;
-  if (type === 'craft-v2') validateCraftPayload(p, settings);
+  // Preserve the original move_type outcome when replaying older documents.
+  if (type === 'transfer-v2' && s.publicMintActivationHeight !== undefined) validateTransferPayload(p, settings);
+  else if (type === 'craft-v2') validateCraftPayload(p, settings);
   else if (type === 'compound-refine-v2') {
     assert(exactKeys(p, ['asset', 'cursor', 'steps']) && /^c2:[0-9a-f]{64}$/.test(p.asset), 'compound_refine_payload'); uintV2(p.cursor);
     assert(Number.isSafeInteger(p.steps) && p.steps > 0 && p.steps <= s.compoundWorkBudget, 'compound_work_budget');

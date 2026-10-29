@@ -226,7 +226,7 @@ export class Committee {
       if (complete.length) {
         const result = complete[0].value;
         check(complete.every(s => rules.stableJSON(s.value.signature) === rules.stableJSON(result.signature)) &&
-          result.result?.permit?.digest === session.digest && result.result.details?.id === financialMintId(this.network, proposal.request), 'signature_disagreement', 503);
+          result.result?.permit?.digest === session.digest && result.result.details?.id === (proposal.version === 'public-v1' ? proposal.id : financialMintId(this.network, proposal.request)), 'signature_disagreement', 503);
         // Every recipient independently verifies the exact permit signature
         // against its durable reservation before adding its result attestation.
         states = await Promise.allSettled(selected.map((s, i) => states[i].status === 'fulfilled' && states[i].value.status === 'complete' ? states[i].value :

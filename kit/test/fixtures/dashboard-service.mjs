@@ -53,7 +53,7 @@ export async function dashboardFixture(t, { http = false } = {}) {
     }
     if (path.includes('/agents/') && path.endsWith('/balances')) return page('balances', [...balances].filter(([asset]) => !u.searchParams.has('asset') || asset === u.searchParams.get('asset')).map(([asset, balance]) => ({ asset, ...balance })));
     if (path === '/patterns') return response({ patterns: [{ number: '1', asset: 'p2:1', name: 'dmwtest' }], nextCursor: null });
-    if (path === '/mint-rights') return page('mintRights', claims.map(candidate).filter(row =>
+    if (path === `/agents/${publicIdentities({ owner }).owner}/mintRights`) return page('mintRights', claims.map(candidate).filter(row =>
       ['asset', 'block'].every(key => !u.searchParams.has(key) || row[key] === u.searchParams.get(key)) &&
       ['allowed', 'minted'].every(key => !u.searchParams.has(key) || row[key] === (u.searchParams.get(key) === 'true'))));
     if (path === '/mint/quote' && body) {

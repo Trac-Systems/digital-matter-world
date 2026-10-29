@@ -7,8 +7,9 @@ export const ASSET_V2_DEFAULTS = Object.freeze({
 });
 export function assetSettings(value = {}) {
   const result = { ...ASSET_V2_DEFAULTS, ...value };
-  if (result.version !== 2 || Object.keys(result).some(k => !Object.hasOwn(ASSET_V2_DEFAULTS, k))) throw Error('asset_settings');
-  for (const [k, n] of Object.entries(result)) if (!Number.isSafeInteger(n) || n < 1) throw Error('asset_settings');
+  if (result.version !== 2 || Object.keys(result).some(k => !Object.hasOwn(ASSET_V2_DEFAULTS, k) && !['publicMintActivationHeight', 'publicMintPageSize'].includes(k))) throw Error('asset_settings');
+  if (Object.hasOwn(result, 'publicMintActivationHeight') !== Object.hasOwn(result, 'publicMintPageSize')) throw Error('asset_settings');
+  for (const [k, n] of Object.entries(result)) if (k === 'publicMintActivationHeight' ? typeof n !== 'string' || !/^(0|[1-9][0-9]*)$/.test(n) : !Number.isSafeInteger(n) || n < 1) throw Error('asset_settings');
   if (result.lockMin > result.lockMax) throw Error('asset_settings');
   return result;
 }

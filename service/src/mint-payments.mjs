@@ -10,27 +10,36 @@ const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const inscription = value => typeof value === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(value);
 const notFound = e => e.status === 404 || e.rpcCode === -5 || ['escrow_payer', 'payment_unconfirmed'].includes(e.message);
 
-export function inscriptionContents(raw, settings) {
+export function inscriptionContents(raw, settings, { scan = false } = {}) {
   const limits = lookupSettings(settings);
   const tx = Transaction.fromRaw(Buffer.from(raw, 'hex'), { allowUnknownInputs: true, allowUnknownOutputs: true, disableScriptCheck: true });
   const contents = [];
   for (let n = 0; n < tx.inputsLength; n++) {
-    const witness = tx.getInput(n).finalScriptWitness;
+    let witness = tx.getInput(n).finalScriptWitness;
     if (!witness || witness.length < 2) continue;
-    const script = Script.decode(witness[witness.length - 2]);
+    if (scan) {
+      if (witness.at(-1)[0] === 0x50) witness = witness.slice(0, -1);
+      const control = witness.at(-1);
+      if (witness.length < 2 || !control || control.length < 33 || (control.length - 33) % 32 !== 0 || (control[0] & 0xfe) !== 0xc0) continue;
+    }
+    let script; try { script = Script.decode(witness[witness.length - 2]); } catch (error) { if (scan) continue; throw error; }
     for (let i = 0; i < script.length - 3; i++) {
       if (script[i] !== 0 || script[i + 1] !== 'IF' || !(script[i + 2] instanceof Uint8Array) || Buffer.from(script[i + 2]).toString() !== 'ord') continue;
       let j = i + 3;
       // Header fields are tag/value pairs. An empty value (ord's zero pointer)
       // is not the body delimiter; that delimiter occurs in a tag position.
       while (j < script.length && script[j] !== 0 && script[j] !== 'ENDIF') {
+        if (scan && (j + 1 >= script.length || script[j + 1] === 'ENDIF')) break;
         check(j + 1 < script.length && script[j + 1] !== 'ENDIF', 'payment_inscription'); j += 2;
       }
       if (script[j++] !== 0) continue;
       const body = [];
       while (j < script.length && script[j] instanceof Uint8Array) body.push(script[j++]);
+      if (scan && script[j] !== 'ENDIF') continue;
       check(script[j] === 'ENDIF', 'payment_inscription');
-      const bytes = Buffer.concat(body); check(bytes.length <= limits.inscriptionBytes, 'payment_inscription_size');
+      const bytes = Buffer.concat(body);
+      if (scan && bytes.length > limits.inscriptionBytes) { contents.push(null); i = j; continue; }
+      check(bytes.length <= limits.inscriptionBytes, 'payment_inscription_size');
       try { contents.push(JSON.parse(bytes.toString('utf8'))); } catch { contents.push(null); }
       i = j;
     }

@@ -63,28 +63,28 @@ for (const mode of ['asset', 'request']) test(`public ${mode} link resumes both 
   });
   const path = mode === 'asset' ? `/mint/${catalog}?owner=${owner}` : `/mint/${id}?owner=${encodeTracAddress('22'.repeat(32))}`;
   await page.goto(server.url + path);
-  await page.getByRole('button', { name: 'Prepare deployment', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Start', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
   assert.ok(requests.some(([path]) => path.startsWith('/mint/deployment-state/')));
   assert.ok(!requests.some(([path]) => path.startsWith('/mint/deployment/')), 'load does not call the mutating GET');
-  await page.getByRole('button', { name: 'Prepare deployment', exact: true }).click();
-  for (const [index, label] of ['Inscribe pattern element', 'Inscribe token deployment'].entries()) {
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  for (const [index, label] of ['Inscribe pattern', 'Deploy token'].entries()) {
     await page.getByRole('button', { name: label, exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Inscribe', exact: true }).click();
-    await page.getByRole('button', { name: 'Check confirmation and register', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Check now', exact: true }).waitFor();
     assert.equal(signs, index + 1);
     assert.equal(await page.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
     await page.reload();
-    await page.getByRole('button', { name: 'Check confirmation and register', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Check now', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: label, exact: true }).count(), 0, 'saved receipt prevents a second inscription');
-    await page.getByRole('button', { name: 'Check confirmation and register', exact: true }).click();
+    await page.getByRole('button', { name: 'Check now', exact: true }).click();
     await page.getByRole('status').filter({ hasText: /confirm|included|block/i }).first().waitFor();
     assert.equal(f.store.get('provisioning', asset).state, 'awaiting_player_deploy');
     f.mine(); f.index(pending[index].text, pending[index].id);
-    await page.getByRole('button', { name: 'Check confirmation and register', exact: true }).click();
-    if (index === 0) await page.getByRole('button', { name: 'Inscribe token deployment', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Check now', exact: true }).click();
+    if (index === 0) await page.getByRole('button', { name: 'Deploy token', exact: true }).waitFor();
     else if (mode === 'request') await page.getByRole('button', { name: 'Inscribe mint', exact: true }).waitFor();
-    else await page.getByText('Deployment is ready. Return to your agent to request the mint, then open its payment link.', { exact: true }).waitFor();
+    else await page.getByText('The token is deployed. Ask your agent to mint now, then open the payment link it gives you.', { exact: true }).waitFor();
   }
   assert.equal(f.store.get('provisioning', asset).state, 'registered');
   assert.deepEqual(bindings, [`/payout-bindings/${owner}/tap`, `/payout-bindings/${owner}/tap`]);
@@ -93,7 +93,35 @@ for (const mode of ['asset', 'request']) test(`public ${mode} link resumes both 
     await page.getByRole('dialog').getByRole('button', { name: 'Inscribe', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('main').textContent.includes('minted'));
     assert.equal(signs, 3); assert.match(minted, /^[0-9a-f]{64}i0$/);
-  } else await page.getByText('Deployment is ready. Return to your agent to request the mint, then open its payment link.', { exact: true }).waitFor();
+  } else await page.getByText('The token is deployed. Ask your agent to mint now, then open the payment link it gives you.', { exact: true }).waitFor();
   assert.ok(!requests.some(([path]) => path.startsWith('/mint/deployment/')));
   assert.deepEqual(errors, []);
+});
+
+test('public deployment rechecks eligibility before opening the wallet and reports a lost race', async t => {
+  const f = await provisioningFixture(t), asset = 'p2:1', address = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(33))).toString('hex'), 'regtest');
+  await f.store.put('patternsByAsset', asset, { ...f.pattern, number: '1' });
+  await f.operator.request(asset); await f.operator.work.drain();
+  let lost = false, quotes = 0, connects = 0;
+  const server = await serve({ intake: { store: f.store }, files: { serve: async () => false }, operator: { provisioner: f.operator },
+    mints: { document: { values: { moveBytes: 8192 } }, publicMints: { quote: async input => {
+      quotes++; assert.deepEqual(input, { asset, block: '201', tapAddress: address });
+      if (lost) throw Object.assign(Error('someone_paid_first'), { status: 409 });
+      return { ...input, receiver: address, publicMint: true, kind: 'tap', state: 'deployment_needed', requestId: null, payable: false };
+    } } },
+    web: createWeb({ target: { network: 'dmw-regtest', bitcoinNetwork: 'regtest' } }),
+    publicAPI: { handles: path => /^\/(status|patterns|feed)(?:\?|$)/.test(path), read: async () => ({ patterns: [], events: [], next: null }) } });
+  t.after(() => server.close());
+  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage(); page.setDefaultTimeout(10000);
+  await page.exposeFunction('testConnect', () => { connects++; return [address]; });
+  await page.addInitScript(() => { globalThis.tapprotocol = { requestAccounts: () => globalThis.testConnect() }; });
+  await page.goto(server.url + '/mint/' + asset + '?' + new URLSearchParams({ public: '1', block: '201', tapAddress: address }));
+  await page.getByRole('button', { name: 'Inscribe pattern', exact: true }).waitFor();
+  const before = quotes; lost = true;
+  await page.getByRole('button', { name: 'Inscribe pattern', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Someone else’s payment for this block confirmed first' }).waitFor();
+  assert.ok(quotes > before); assert.equal(connects, 0);
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  assert.equal(await page.getByRole('textbox', { name: 'Agent address' }).count(), 0);
 });

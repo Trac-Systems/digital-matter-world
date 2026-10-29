@@ -12,6 +12,7 @@ import { financialBlock } from './financial-status.mjs';
 import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { surplusCreditId } from '../../contract/payment-pages.js';
 import { deploymentAssetId, mintAssetDefinition } from './mint-assets.mjs';
+import { PublicMints } from './public-mints.mjs';
 import { KeyedWork, parallelPage } from './keyed-work.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
@@ -23,7 +24,7 @@ const ownerSpace = owner => 'financialMintOwner/' + owner;
 const QUOTE_REUSE_MS = 30000, QUOTE_REUSE_LIMIT = 256, QUOTE_SLOW_MS = 1500;
 export class FinancialMints extends Mints {
   constructor(options) { super(options); this.financial = options.financial; this.document = options.document; this.pendingBlocks = this.document.values.pendingBlocks;
-    this.mintWork = new KeyedWork(); this.deploymentWork = new KeyedWork(); }
+    this.publicMints = new PublicMints(this); this.mintWork = new KeyedWork(); this.deploymentWork = new KeyedWork(); }
   async deploymentTick() {
     if (this.deploymentRunning || !this.reads.financialDeployment) return;
     this.deploymentRunning = true;
@@ -95,6 +96,7 @@ export class FinancialMints extends Mints {
   async deploymentNeeded() { return null; }
   public(id) {
     const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
+    if (row.publicMint) return this.publicMints.public(id);
     const funding = this.store.get('accountRecords', 'fp/' + id), obligation = this.store.get('accountRecords', 'ao/' + id);
     const capacity = this.store.get('accountRecords', 'dc/' + id), external = funding?.capacity;
     const blocked = financialBlock(this.store, ['fp/' + id, 'ao/' + id, 'dc/' + id, 'fp/usage',
@@ -191,6 +193,7 @@ export class FinancialMints extends Mints {
   }
   payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.mintWork.run(id ?? requestId, async () => {
     id ??= requestId; const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
+    if (row.publicMint) return this.publicMints.payment({ id, paymentId, paymentIds, inscription });
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(inscription), 'mint_inscription');
       await this.store.put('mints', id, { ...row, mintInscription: inscription }); return this.public(id);
@@ -225,6 +228,7 @@ export class FinancialMints extends Mints {
   async tick() {
     if (this.running) return; this.running = true;
     try {
+      await this.publicMints.tick();
       for (const space of ['financialActiveMints', 'financialIssuedMints']) {
         this.financialCursors ??= {}; const page = this.store.list(space, { after: this.financialCursors[space] ?? '', limit: this.resources.workPage });
         this.financialCursors[space] = page.length === this.resources.workPage ? page.at(-1).id : '';

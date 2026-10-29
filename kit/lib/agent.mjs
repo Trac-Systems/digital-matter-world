@@ -1,4 +1,5 @@
 import { makeFinancialLink } from './financial-link.mjs';
+import { assertClaimOpen } from '../../rules/src/public-mint.js';
 import { submitFinancialCredit } from './financial-credit.mjs';
 import { claimFinancialCustody } from './financial-custody.mjs';
 import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
@@ -6,6 +7,7 @@ import { stableJSON, validatePayload, patternCount, compound, patternProperties,
 import { financialMintId as pendingId } from '../../rules/src/financial-mint.js';
 import { makeFinancialMint } from './financial-mint.mjs';
 import { craftNamed, refineCompoundNamed } from './craft-v2.mjs';
+import { transferNamed } from './transfer-v2.mjs';
 import { check, sha256, nonce, integer, hex32, gatewayOrigin } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signMove, signOwnerRequest, signPaymentIntent, signPlotRequest, mintExpiry, paymentPayer } from './signing.mjs';
@@ -351,7 +353,11 @@ export class Agent {
           check(q.block <= (event.claimableHeight ?? head.counted) || q.block === event.window, 'Claim block is not counted');
           const h = checkedHeader(history.raw(q.block), q.block, history.get(q.block).hash, { powLimitBits: this.powLimitBits });
           await assertHeaderChain({ history, height: q.block, hash: h.hash, trac: this.trac, head });
-          for (const n of q.patterns) { const p = patterns.find(p => p.number === n); check(p && patternCount(p, h) > 0, 'Claimed pattern does not match'); }
+          for (const n of q.patterns) {
+            const p = patterns.find(p => String(p.number) === String(n)); check(p && patternCount(p, h) > 0, 'Claimed pattern does not match');
+            try { assertClaimOpen({ pattern: p, block: q.block, height: head.tip.height, settings }); }
+            catch (error) { if (error.message === 'claim_deadline') throw Error('The claim week for this block has closed. Unclaimed blocks can only be minted with a TAP Wallet on the website.'); throw error; }
+          }
         }
       } });
     });
@@ -477,9 +483,10 @@ export class Agent {
   transaction({ actionId, op, value }) {
     return this.exclusive(async () => {
       this.actionId(actionId); check(op === 'tf', 'Only transfers are permitted');
-      check(!await this.namedContext(), 'account_v2_required');
+      const context = await this.namedContext(); if (context) return transferNamed(this, { actionId, value }, context);
       value = { ...value, to: decodeTracAddress(value.to) }; transactionCommand(op, value);
       const id = `tx/${actionId}`, intent = { op, value }, old = this.journal.get(id);
+      check(!this.journal.get(`${id}/v2-intent`), 'transfer_v2_unavailable');
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting transaction action ID');
       if (!this.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, tx: old.body.tx, state: old.state, replayed: true };
       if (this.dryRun) { await this.trac.preflight(this.owner, op, value); return { state: 'dry-run', op, value, feeSource: this.owner, signed: false }; }

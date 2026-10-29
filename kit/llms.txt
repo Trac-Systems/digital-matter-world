@@ -18,6 +18,21 @@ transport policy. mint_quote, craft and link_bitmap can request POST previews
 without signing or reserving. Under a GET-only policy do not call those previews.
 submit_bitmap is an action, not a read; its dry-run sends nothing.
 
+Found blocks keep their mint ladder: the finder during the week starting at
+settlement, then the current Bitmap holder if linked before the find, otherwise
+any agent holding enough units. Minting spends the exact find count in units.
+After the accepted publicMintActivationHeight, new claims close at max(block height, pattern releaseHeight) plus the
+releaseFinderWindow pinned from settings.finderWindow (launch 1008 blocks).
+Patterns without a recorded release use the policy activation height and its
+pinned publicMintLegacyFinderWindow. New settings do not reopen closed claims.
+Unclaimed blocks after the week are minted only on the website with a TAP Wallet,
+without agents, Trac keys or units. Quotes reserve nothing. The first complete
+confirmed payment wins by Bitcoin block, transaction position and inscription
+index; other payments are recorded for refund. Linked public blocks require
+payment from the current Bitmap holder’s TAP address. Public lists exclude
+found and already minted blocks. Agent mint_rights reads /agents/ADDRESS/mintRights;
+/mint-rights and /public-mints are the wallet-only public offers after activation.
+
 ## V2 read contract
 
 Consensus ordinals such as tip, height, window, pattern number, batch, revision
@@ -29,7 +44,9 @@ floating point. Do not recursively rewrite API responses or signed/proof bytes.
 
 Pattern assets are p2:NUMBER. Catalog records have number:"0", a 64-hex key,
 and asset:"p2:0"; catalog normalizes number to a safe local integer. Imported
-p0-style identities live under legacy provenance and are not current asset IDs.
+p0-style identities live under legacy provenance in catalog records, while
+imported balances/finds retain those original ledger keys. Use the exact ledger
+asset when spending; never infer a conversion between p2:N and p0-style IDs.
 Compound assets are c2: followed by the full 64-hex commitment. Read current
 catalog pages; the live table already has patterns. Only a successfully drained
 empty catalog means discovery_needed. A 503 public_projection_pending does not.
@@ -135,10 +152,26 @@ a timeout remains unknown even if a later attempt is refused. Only documented
 recover_refused_reveal may recover an old refusal with the owner's exact original
 evidence. No saved legacy signature or commitment is rewritten during upgrade.
 
+transfer accepts {actionId,to,assets:[[asset,amount],…]} with a checksum-valid
+trac1 recipient, 1–16 distinct exact ledger assets and positive decimal integers.
+V2 unit transfers activate at the accepted publicMintActivationHeight, at both
+receipt tip and execution height. Dry-run validates balances, reports activation
+support, and always returns signed:false, sent:false without journal writes.
+Before activation live mode saves the exact signed account intent and returns
+transfer_v2_unavailable. Afterwards it submits that intent as a named move.
+Keep the same action ID, intent and journal. Retries preserve signatures,
+nonces, account revision and expiry after restart. Stale/expired unsent intents
+are refused and retained; uncertain sends never silently refresh authorization.
+A received receipt has unverified inclusion; only an accepted batch changes
+balances and sender/recipient history. V2 transfer moves need no sender TNK.
+Use p2:N, c2:COMMITMENT or an imported p0-style ledger key from agent_profile
+balances. Unknown asset, insufficient available units and bad address are
+pre-signing errors. Held units cannot be sent. On legacy networks only, direct
+transfers charge TNK to the sender's own funded Trac account.
+
 Known limits: the public v2 deployment-plan route currently returns 404;
 inscribe_deployment/register_deployment stop there rather than substituting p0.
-Direct legacy TNK transfer is unavailable on v2 (account_v2_required). backtest
-is a legacy fixture simulator and refuses v2 catalogs: accepted catalog and
+backtest is a legacy fixture simulator and refuses v2 catalogs: accepted catalog and
 claim-state snapshots are needed to model deferred awards. General v2 saved-move
 status reconciliation still requires a batch inclusion verifier; retain the
 packet when it reports unavailable. Receipt inclusion alone is not consensus
@@ -155,8 +188,7 @@ shows why (own find / Bitmap holder / units), required units and this agent's
 balance. Short balances are not mintable; minted blocks are excluded. During the
 finder's week only the finder mints; afterwards the Bitmap holder (if linked
 before the find) or any agent holding enough units of that asset may mint, by
-spending units. Units can be sent with `transfer`; the legacy transfer adapter's
-v2 limitation is documented above. Both receiver and TAP payer come from the
+spending units. Unit transfers activate with the public-mint settings height. Both receiver and TAP payer come from the
 verified payout binding. This command
 explicitly enables live mint signing on clicks without requiring --live. It
 never pays automatically: the owner approves the quoted TAP fees and Bitcoin
@@ -228,7 +260,7 @@ Unclaimed blocks use a separate website flow.
 | `transfer_credit` | Transfer accepted fee credit under its signed revision. |
 | `claim_custody` | Sign a beneficiary claim; never send the custodian payment. |
 | `report_custody_payment` | Report a payment already made; dry-run sends nothing. |
-| `transfer` | Legacy TNK matter transfer; refused on dmw-v2. |
+| `transfer` | Send exact v2 unit authorizations after public-mint activation; retain the same ID on retry. Legacy sends charge sender TNK. |
 
 Use README.md for setup, docs/READS.md for response shapes and docs/ACTIONS.md
 for action arguments and recovery. Strategies remain deterministic and offline;

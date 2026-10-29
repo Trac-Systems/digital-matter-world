@@ -1,7 +1,7 @@
 import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ed25519 } from '../../rules/node_modules/@noble/curves/ed25519.js';
 import { secp256k1 } from '../../contract/node_modules/@noble/curves/secp256k1.js';
@@ -34,7 +34,7 @@ import { serve } from '../src/http.mjs';
 import { manifestTrust } from '../../kit/lib/header-manifest.mjs';
 import { HeaderChunks } from '../src/header-chunks.mjs';
 import { downloadArchive } from '../../kit/lib/header-download.mjs';
-import { hash, edPublic } from '../src/util.mjs';
+import { hash, edPublic, heightKey } from '../src/util.mjs';
 import { Agent } from '../../kit/lib/agent.mjs';
 import { Journal } from '../../kit/lib/journal.mjs';
 import { ServiceClient } from '../../kit/lib/service-client.mjs';
@@ -47,7 +47,7 @@ import { createFeePolicy } from '../src/fees.mjs';
 // Five independent policy/evidence instances and loopback HTTP endpoints. The
 // fixture uses one disposable committee key after all five policies agree;
 // production threshold ceremony coverage remains in committee/test/services.
-export async function v2StackFixture(t, { scenario, historyLength = 1030, observationsPerBatch = 1 } = {}) {
+export async function v2StackFixture(t, { scenario, historyLength = 1030, observationsPerBatch = 1, finderWindow = r.SETTINGS_PROFILE.finderWindow } = {}) {
   const path = await temp('v2-stack-'), closes = [], journals = [], timings = [];
   t.after(async () => { for (const j of journals) j.close(); for (const close of closes.reverse()) await close(); });
   const genesis = '01000000' + '00'.repeat(32) + '3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a' + 'dae5494dffff7f2002000000';
@@ -59,7 +59,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   const old = harness(options); await old.advance(1009); assert.equal(await old.batch([]), null); await old.advance(1);
   const imported = prepareTerminalImport({ records: old.db, height: 1010, pageBytes: 10000 });
   const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: '1010', values: { ...r.SETTINGS_PROFILE, puzzleBits: 0, proofBytes: 262144,
-    settlementPageRows: 100, settlementPagesPerObservation: 2, compoundPrecisionBits: 1, compoundWorkBudget: 8, adminDelayTips: 1,
+    settlementPageRows: 100, settlementPagesPerObservation: 2, compoundPrecisionBits: 1, compoundWorkBudget: 8, adminDelayTips: 1, finderWindow,
     feePolicyRevision: createFeePolicy('100').current, linkMultiplier: r.FEE_DEFAULTS.link, observationsPerBatch,
     closureReadBudget: r.SETTINGS_PROFILE.closureReadBudget * observationsPerBatch,
     closureByteBudget: r.SETTINGS_PROFILE.closureByteBudget * observationsPerBatch } });
@@ -239,6 +239,29 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   }
   if (scenario) return scenario({ store, files, contract, document, network, secret, committeeSecret, rulesContext, stamp,
     financial, drain, history, players, legacyRecord, runtime, reads, committee,
+    async replayAccepted(n) {
+      const row = store.get('batches', heightKey(n));
+      const saved = store.get('evidenceContexts', String(n));
+      const context = JSON.parse(await readFile(join(contexts, saved.path), 'utf8'));
+      const bytes = await Promise.all(row.publications.map(p => readFile(join(store.directory, 'static', p.audit.path.slice(1)))));
+      const proposal = { batch: row.batch, files: bytes.map(b => b.toString('hex')) };
+      const result = rebuildBatch(network, proposal, { ...context, history: replayHistory, hashAt: history.hashAt,
+        authority: { epoch: 0 }, namedNode: id => store.get('namedNodes', id), claimNode: id => store.get('claimNodes', id) });
+      assert.deepEqual(result.batch, row.batch);
+      for (let i = 0; i < bytes.length; i++) assert.deepEqual(Buffer.from(r.encodeBinary(result.files[i])), bytes[i]);
+      return result;
+    },
+    async rejectAccountOperations(proposal, operations) {
+      assert.equal(tamperContext, null);
+      tamperContext = context => { context.inputs.at(-1).accountOperations.push(...structuredClone(operations)); return context; };
+      try {
+        return await Promise.all(servers.map(async url => {
+          const response = await fetch(url + '/approve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(proposal) });
+          assert.equal(response.status, 400); const result = await response.json();
+          assert.match(result.error, /account_credit_derivation/); return result.error;
+        }));
+      } finally { tamperContext = null; }
+    },
     sourceReady: source => { firstMintReads = source; },
     get tip() { return tip; },
     async advance(height, { batchTips = 1 } = {}) {
@@ -461,6 +484,44 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   assert.equal(store.get('meta', 'ruleState').claimRoot, contract.db.get('v2/claims'));
   assert.equal(financial.document.revision, '1');
   assert.equal(contract.db.get('ao/' + requestId).terms, r.hashObject(terms));
+  await t.test('public policy activates through a settings amendment, closes claims and mints without an agent', async t => {
+    const publicDocument = r.settingsRevision({ network, previous: amendment,
+      effectiveBatch: r.addUint((await contract.state().batchLast()).n, '2'), effectiveBitcoinWindow: '1024',
+      values: { ...amendment.values, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '1024', finderWindow: 2, publicMintLegacyFinderWindow: 2 } });
+    assert.equal(await contract.run('ad_settings', { document: publicDocument }), null);
+    tip = 1023; await contract.advance(1); await observe(); await drain();
+    assert.equal(await contract.run('ad_apply', { id: 'settings' }), null);
+    tip = 1024; await contract.advance(1); await observe(); await drain();
+    const player = players[6], p = patterns.find(p => p.name === player.proposal.name);
+    await player.agent.submitOccurrences({ actionId: 'public-block', patternKey: p.key,
+      anchor: { height: String(tip), hash: history.hashAt(tip) }, matches: [{ height: '201', hash: history.hashAt(201), count: '3' }] });
+    await drain();
+    await player.agent.claim({ event: { window: tip, hash: history.hashAt(tip) }, plots: [{ block: 202, patterns: [p.number] }], history, patterns });
+    await drain();
+    for (tip = 1025; tip <= 1028; tip++) { await contract.advance(1); await observe(); await drain(); } tip = 1028;
+    assert.equal(contract.db.get('v2/settings').revision, '2');
+    await assert.rejects(player.agent.claim({ event: { window: tip, hash: history.hashAt(tip) }, plots: [{ block: 201, patterns: [p.number] }], history, patterns }), /claim week.*closed|claim_deadline/);
+    const late = { v: 2, ruleset: 'dmw-v2', settingsRevision: publicDocument.revision, settingsHash: r.hashObject(publicDocument), network,
+      a: player.agent.owner, t: 'claim-v2', b: String(tip), h: history.hashAt(tip), w: '0',
+      p: { window: String(tip), plots: [{ block: '201', patterns: [String(p.number)] }] } };
+    late.sig = r.bytesToHex(await player.agent.wallet.sign(r.moveDigestV2(late)));
+    await assert.rejects(player.agent.service.submit(late, { hashAt: history.hashAt }), error => error.code === 'claim_deadline' && error.status === 400);
+    const timely = player.agent.journal.get('claim/1024');
+    assert.deepEqual(await player.agent.service.submit(timely.body, { hashAt: history.hashAt }), timely.result, 'accepted retries survive the deadline unchanged');
+    const find = store.get('finds', r.findIdV2('202', String(p.number)));
+    assert.equal(find.findHeight, '1026'); assert.equal(find.finderUntil, r.addUint('1026', String(amendment.values.finderWindow)));
+    assert.equal(find.settingsHash, r.hashObject(amendment), 'the already-open round keeps its original finder policy');
+    assert.ok(BigInt(tip) < BigInt(find.finderUntil), 'finder mints during settlement-based finder week');
+    const project = async () => { while (store.count('feedEvents')) await feeds.events(); };
+    await firstMintFixture(t, { store, contract, document: publicDocument, network, secret, committeeSecret, rulesContext, stamp, financial, drain,
+      agent: player.agent, catalogAsset: 'p2:' + p.number, block: '202', publicChecks: true, history, project,
+      sourceReady: reads => { firstMintReads = reads; } });
+  });
+  await t.test('an agent holding units mints another finder’s block after the finder week', async t => {
+    await firstMintFixture(t, { store, contract, document: contract.db.get('v2/settings'), network, secret, committeeSecret, rulesContext, stamp, financial, drain,
+      agent: maker, catalogAsset: 'p2:' + ingredient.number, block: '3', finderExpected: false,
+      sourceReady: reads => { firstMintReads = reads; } });
+  });
   attackChecks.finish();
   // Recover the accepted/publication indexes, then serve the same verified
   // records to real kit HTTP clients while retaining independent root checks.
@@ -486,7 +547,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     archive: (route, { start = 0 }) => fetch(recoveredHTTP.url + route, { headers: start ? { range: `bytes=${start}-` } : {} }) };
   const downloaded = await downloadArchive({ output: join(path, 'downloaded.bin'), source, independent: { hash: source.hash }, network: 'regtest', manifestTrust: manifestTrust(edPublic(secret)) });
   assert.equal(downloaded.count, tip + 1); assert.equal(downloaded.tip, history.hashAt(tip));
-  t.diagnostic(JSON.stringify({ players: 8, signers: 5, claimsPerPlayer: 100, explicitFinds: 803, implicitFinds: 2, mixedCraftFinancialBatches: mixedBatches, financialTransitions: 11, acceptedV2Batches: String(BigInt((await contract.state().batchLast()).n) - 1n),
+  t.diagnostic(JSON.stringify({ players: 8, signers: 5, claimsPerPlayer: 100, explicitFinds: store.count('finds'), implicitFinds: 2, mixedCraftFinancialBatches: mixedBatches, financialTransitions: 11, acceptedV2Batches: String(BigInt((await contract.state().batchLast()).n) - 1n),
     readyRevealMs: timings[0], publicReadClientsAfterRestart: 500, publicReadElapsedMs: readElapsedMs, headerDownloadBytes: downloaded.downloadedBytes, publicReadSourceRequests: 0, approvals, targetedEvidenceRequests: proofRequests, importedRecords: imported.importRows, maximumProofBytes, proofBudget: document.values.proofBytes,
     signing: 'five independent HTTP policies; disposable common key, no TSS in this fixture' }));
 }

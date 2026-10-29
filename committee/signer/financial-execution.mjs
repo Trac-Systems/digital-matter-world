@@ -35,11 +35,11 @@ export async function verifyFinancialExecution({ files, reads, document, network
     const inputs = file.financialOperations ?? [], financialCount = inputs.reduce((n, i) => n + i.operations.length, 0);
     check(financialCount <= file.ops.length && equal(file.ops.slice(file.ops.length - financialCount), inputs.flatMap(i => i.operations)), 'financial_operation_binding');
     const prefix = file.ops.slice(0, file.ops.length - financialCount);
-    // These files have already passed deterministic claim/craft replay. Bind
+    // These files have already passed deterministic claim/craft/transfer replay. Bind
     // the complete prefix to those results before applying any account effect.
     const credits = (file.settlements ?? []).flatMap(s => s.winners ?? []).map(w =>
       ({ op: 'ac', to: w.winner, assets: [[w.asset, String(w.count)]] }));
-    verifyCreditOperations(credits, prefix, file.crafts ?? []);
+    verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? []);
     for (const op of prefix) await apply(op);
     for (const input of inputs) {
       const evidence = await sources.financialEvidence(input.transition, at);

@@ -28,7 +28,7 @@ function read(path) {
 let browser, server;
 before(async () => {
   server = await serve({ intake: { store: {} }, files: { serve: async () => false }, web: createWeb({ records: async () => ({}) }),
-    publicAPI: { handles: () => true, read }, bindings: { read: () => ({ binding: { request: { address: 'bcrt1ptestwallet' }, acceptedAt: 1 } }) } });
+    publicAPI: { handles: () => true, read }, bindings: { wallets: () => ({ players: [], more: false }), read: () => ({ binding: { request: { address: 'bcrt1ptestwallet' }, acceptedAt: 1 } }) } });
   browser = await chromium.launch({ headless: true });
 });
 after(async () => { await browser?.close(); await server?.close(); });
@@ -204,3 +204,215 @@ test('About prices and the existing status cell follow the live policy and unava
   assert.equal(await p.evaluate(async () => (await import('/web/console/js/api.js')).bus.map.get('status').size), 1,
     'leaving About removes its status listener');
 });
+
+// Public mints: the Mint page lists only what /public-mints returns and mints with TAP Wallet alone.
+const tapAddress = 'bcrt1pzyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsqysakq';
+const atomic = n => (BigInt(n) * 10n ** 18n).toString();
+const publicRows = [
+  { asset: 'p2:0', block: '151', amount: '3', claimDeadline: '1159', state: 'public', bitmapHolderOnly: false },
+  { asset: 'p2:0', block: '66', amount: '2', claimDeadline: '1074', state: 'public', bitmapHolderOnly: true },
+  { asset: 'p2:0', block: '12', amount: '1', claimDeadline: '1020', state: 'paid', bitmapHolderOnly: false },
+];
+const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+async function publicMintPage(t, { list = route => json(route, { v: 3, rows: publicRows, next: null, nextCursor: null, total: null }), refunds, connected = false } = {}) {
+  const p = await open(t), calls = [];
+  p.on('request', r => { const u = new URL(r.url()); if (u.pathname.startsWith('/public-mints') || u.pathname.startsWith('/mint-rights')) calls.push([r.method(), u.pathname + u.search, r.postDataJSON?.() ?? null]); });
+  await p.addInitScript(([address, connected]) => {
+    if (connected) localStorage.setItem('dmw-web-v1/wallets', JSON.stringify({ tap: address }));
+    globalThis.tapprotocol = { getNetwork: async () => 'regtest', switchNetwork: async () => {}, requestAccounts: async () => [address], getAccounts: async () => [address], on() {} };
+  }, [tapAddress, connected]);
+  await p.route('**/patterns?*', route => json(route, { patterns: [{ ...pattern, asset: 'p2:0', number: '0', legacy: { asset: 'p0' } }], next: null }));
+  await p.route('**/web-api/target', route => json(route, { network: 'dmw-regtest', bitcoinNetwork: 'regtest', ethereum: { chainId: '0x7a69' } }));
+  await p.route('https://mempool.space/**', route => json(route, { halfHourFee: 3 }));
+  await p.route(/\/public-mints\?/, list);
+  await p.route(/\/public-mints\/refunds\?/, refunds ?? (route => json(route, { v: 3, rows: [], next: null, nextCursor: null, total: null })));
+  return { p, calls };
+}
+
+test('the Mint page lists only the public blocks the API returns, with one Mint button per public row', async t => {
+  const { p, calls } = await publicMintPage(t), list = panel(p, 'Public blocks');
+  await p.goto(server.url + '/mint');
+  await list.locator('tbody tr').nth(2).waitFor();
+  assert.equal(await list.locator('tbody tr').count(), 3);
+  assert.deepEqual(await list.locator('tbody tr td:nth-child(2)').allInnerTexts(), ['151', '66', '12']);
+  assert.equal(await list.getByRole('button', { name: 'Mint', exact: true }).count(), 2, 'a paid row is not offered');
+  assert.match(await list.locator('tbody tr').nth(1).innerText(), /Bitmap holder only/);
+  assert.match(await list.locator('tbody tr').nth(2).innerText(), /Payment confirmed/);
+  assert.equal(await list.locator('tbody tr').first().locator('td').first().getByRole('link').getAttribute('href'), '/pattern/p2:0');
+  assert.equal(await list.locator('tbody tr').first().getByRole('link', { name: '151' }).getAttribute('href'), '/block/151');
+  await list.getByText('First confirmed payment wins. If someone else’s payment confirms first, yours is refunded.', { exact: true }).waitFor();
+  assert.ok(!calls.some(([, path]) => path.startsWith('/mint-rights')), 'no agent mint rights are read');
+  assert.equal(await p.getByRole('heading', { name: 'What you can mint', exact: true }).count(), 0);
+  assert.doesNotMatch(await p.locator('main').innerText(), /ask your agent to mint|Mint On-Chain/i);
+  await list.locator('.pager-bar button').filter({ hasText: /^Digit$/ }).click();
+  await p.waitForFunction(() => document.querySelectorAll('#mint tbody tr').length === 3 && !document.querySelector('#mint .paged[aria-busy="true"]'));
+  assert.equal(new URL(calls.filter(([, path]) => path.startsWith('/public-mints?')).at(-1)[1], 'http://x').searchParams.get('asset'), 'p2:0');
+});
+
+test('a block opened from elsewhere shows its point-read state and mints only when public', async t => {
+  const { p, calls } = await publicMintPage(t);
+  for (const [block, state] of [['151', 'public'], ['152', 'claim_window_open']]) {
+    await p.route(`**/public-mints/p2:0/${block}`, route => json(route, { asset: 'p2:0', block, amount: '3', claimDeadline: '1159', state, bitmapHolderOnly: false, refunds: '/public-mints/refunds' }));
+    await p.goto(server.url + `/mint?asset=p2:0&block=${block}`);
+    const box = panel(p, `Digit from block ${block}`);
+    await box.locator('.pill').first().waitFor();
+    assert.equal(await box.getByRole('button', { name: 'Mint', exact: true }).count(), state === 'public' ? 1 : 0);
+    if (state !== 'public') await box.getByText(/claim week is not over yet/).waitFor();
+  }
+  assert.ok(calls.some(([, path]) => path === '/public-mints/p2:0/151'));
+});
+
+test('Mint connects TAP Wallet, shows the quote and opens the payment page of the started request', async t => {
+  const id = 'cd'.repeat(32);
+  const { p, calls } = await publicMintPage(t), list = panel(p, 'Public blocks');
+  await p.route('**/public-mints/quote', route => json(route, { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), payable: false, reservation: 'none', claimDeadline: '1159',
+    fees: [{ role: 'treasury', to: tapAddress, ticker: 'tap', amount: atomic(150), tt: 'a', dta: 'x' }, { role: 'burn', to: tapAddress, ticker: 'tap', amount: atomic(76), tt: 'a', dta: 'x' }], feeQuote: { unit: { decimals: 18 } } }));
+  await p.route('**/public-mints/start', route => json(route, { id, requestId: id, asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', state: 'awaiting_payment', payable: true, reservation: 'none', fees: [], missing: [], paymentPage: '/mint/' + id }));
+  await p.goto(server.url + '/mint');
+  await list.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  const dialog = p.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Continue to payment', exact: true }).waitFor();
+  const text = await dialog.innerText();
+  assert.match(text, /First confirmed payment wins\. If someone else’s payment confirms first, yours is refunded\./);
+  assert.match(text, /226 TAP/); assert.match(text, /150 TAP/); assert.match(text, /3 sat\/vB/);
+  assert.ok(!calls.some(([method, path]) => method === 'POST' && path === '/public-mints/start'), 'nothing starts before confirming');
+  await dialog.getByRole('button', { name: 'Continue to payment', exact: true }).click();
+  await p.waitForURL(u => new URL(u).pathname === '/mint/' + id);
+  const posts = calls.filter(([method]) => method === 'POST');
+  assert.deepEqual(posts.map(([, path, body]) => [path, body]), [['/public-mints/quote', { asset: 'p2:0', block: '151', tapAddress }], ['/public-mints/start', { asset: 'p2:0', block: '151', tapAddress }]]);
+});
+
+test('a lost race or a cancelled quote leaves the list without starting a request', async t => {
+  const { p, calls } = await publicMintPage(t), list = panel(p, 'Public blocks');
+  await p.route('**/public-mints/quote', route => json(route, { error: 'someone_paid_first' }, 409));
+  await p.goto(server.url + '/mint');
+  await list.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await list.getByText(/Someone else’s payment for this block confirmed first/).waitFor();
+  await p.waitForFunction(() => document.querySelectorAll('#mint tbody tr').length === 3);
+  assert.ok(calls.filter(([method, path]) => method === 'GET' && path.startsWith('/public-mints?')).length >= 2, 'the list is read again');
+  assert.ok(!calls.some(([, path]) => path === '/public-mints/start'));
+});
+
+for (const [name, status, error] of [['missing', 404, 'not_found'], ['inactive', 503, 'public_mint_inactive']]) test(`a ${name} public mint API shows a calm opens-soon note`, async t => {
+  const { p } = await publicMintPage(t, { list: route => json(route, { error }, status) }), list = panel(p, 'Public blocks');
+  await p.goto(server.url + '/mint');
+  await list.getByText('Public minting opens soon. Blocks that nobody claimed in their claim week will be listed here.', { exact: true }).waitFor();
+  assert.equal(await list.getByRole('alert').count(), 0, 'no error wall');
+  assert.equal(await list.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
+  assert.equal(await list.locator('table').count(), 0);
+});
+
+test('a connected TAP Wallet with owed refunds sees a Your refunds box', async t => {
+  const id = 'ef'.repeat(32), seen = [];
+  const { p } = await publicMintPage(t, { connected: true, refunds: route => { seen.push(new URL(route.request().url()).searchParams.get('tapAddress'));
+    return json(route, { v: 3, rows: [{ id, requestId: id, asset: 'p2:0', block: '151', tapAddress, paymentId: 'ab'.repeat(32) + 'i0', reason: 'someone_paid_first', winner: 'cd'.repeat(32) + 'i0',
+      fees: [{ role: 'treasury', amount: atomic(150) }, { role: 'burn', amount: atomic(76) }], state: 'owed' }], next: null, nextCursor: null, total: null }); } });
+  await p.goto(server.url + '/mint');
+  const refunds = panel(p, 'Your refunds');
+  await refunds.locator('tbody tr').first().waitFor();
+  assert.deepEqual(seen, [tapAddress]);
+  const row = await refunds.locator('tbody tr').first().innerText();
+  assert.match(row, /151/); assert.match(row, /226 TAP/); assert.match(row, /Another payment confirmed first/);
+  assert.equal(await refunds.getByRole('link', { name: 'Request', exact: true }).getAttribute('href'), '/mint/' + id);
+});
+
+test('no refunds box without owed refunds or without a TAP Wallet', async t => {
+  for (const connected of [true, false]) {
+    const { p } = await publicMintPage(t, { connected });
+    await p.goto(server.url + '/mint');
+    await panel(p, 'Public blocks').locator('tbody tr').first().waitFor();
+    await p.waitForTimeout(200);
+    assert.equal(await p.getByRole('heading', { name: 'Your refunds', exact: true }).isVisible(), false);
+  }
+});
+
+for (const endpoint of ['quote', 'start']) for (const state of ['deployment_needed', 'deployment_pending']) {
+  test(`public ${endpoint} ${state} keeps the block and receiver without opening a null request`, async t => {
+    const { p, calls } = await publicMintPage(t);
+    const quote = { asset: 'p0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), fees: [], payable: false, reservation: 'none' };
+    const preparation = { ...quote, catalogAsset: 'p2:0', publicMint: true, state, id: null, requestId: null, price: undefined };
+    let quotes = 0;
+    await p.route('**/public-mints/quote', route => json(route, ++quotes === 1 && endpoint === 'start' ? quote : preparation));
+    await p.route('**/public-mints/start', route => json(route, preparation));
+    await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', kind: 'dmt', state: 'queued', attempts: [] }));
+    await p.goto(server.url + '/mint');
+    await panel(p, 'Public blocks').getByRole('button', { name: 'Mint', exact: true }).first().click();
+    if (endpoint === 'start') await p.getByRole('dialog').getByRole('button', { name: 'Continue to payment', exact: true }).click();
+    if (state === 'deployment_needed') {
+      await p.waitForURL(url => url.pathname === '/mint/p2:0');
+      const url = new URL(p.url());
+      assert.equal(url.searchParams.get('public'), '1'); assert.equal(url.searchParams.get('block'), '151');
+      assert.equal(url.searchParams.get('tapAddress'), tapAddress);
+      await p.getByRole('heading', { name: 'Mint from your wallet' }).waitFor();
+      assert.equal(await p.getByRole('textbox', { name: 'Agent address' }).count(), 0);
+    } else {
+      await p.getByRole('status').filter({ hasText: 'registration is being confirmed' }).waitFor();
+      assert.equal(new URL(p.url()).pathname, '/mint');
+    }
+    assert.equal(calls.filter(([method, path]) => method === 'POST' && path === '/public-mints/start').length, endpoint === 'start' ? 1 : 0);
+  });
+}
+
+test('public mint pagination follows an empty page with a continuation and always sends the selected pattern', async t => {
+  const cursors = [];
+  const { p, calls } = await publicMintPage(t, { list: route => {
+    const params = new URL(route.request().url()).searchParams; cursors.push(params.get('cursor'));
+    assert.equal(params.get('asset'), 'p2:0'); assert.equal(params.get('limit'), '25');
+    return json(route, { v: 3, rows: params.has('cursor') ? publicRows : [], next: params.has('cursor') ? null : 'opaque:next', total: null });
+  } });
+  await p.goto(server.url + '/mint');
+  const list = panel(p, 'Public blocks');
+  await list.getByRole('button', { name: 'Next page' }).click();
+  await list.locator('tbody tr').nth(2).waitFor();
+  assert.deepEqual(cursors, [null, 'opaque:next']);
+  assert.ok(calls.every(([, path]) => !path.startsWith('/public-mints?') || new URL(path, 'http://local').searchParams.has('asset')));
+});
+
+test('cancelling a public quote creates no checkout', async t => {
+  const { p, calls } = await publicMintPage(t);
+  await p.route('**/public-mints/quote', route => json(route, { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), fees: [] }));
+  await p.goto(server.url + '/mint');
+  await panel(p, 'Public blocks').getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await p.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.ok(!calls.some(([, path]) => path === '/public-mints/start'));
+  assert.equal(new URL(p.url()).pathname, '/mint');
+});
+
+for (const change of [{ asset: 'p2:9' }, { receiver: 'different' }, { block: '152' }, { paymentPage: 'https://invalid.example/mint' }]) {
+  test(`a changed public start ${Object.keys(change)[0]} cannot open a payment page`, async t => {
+    const { p } = await publicMintPage(t);
+    const quote = { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), fees: [] };
+    await p.route('**/public-mints/quote', route => json(route, quote));
+    await p.route('**/public-mints/start', route => json(route, { ...quote, id: 'ab'.repeat(32), ...change }));
+    await p.goto(server.url + '/mint');
+    await panel(p, 'Public blocks').getByRole('button', { name: 'Mint', exact: true }).first().click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Continue to payment', exact: true }).click();
+    await p.getByRole('status').filter({ hasText: 'payment request is not valid' }).waitFor();
+    assert.equal(new URL(p.url()).pathname, '/mint');
+  });
+}
+
+test('a public refundable request displays the owed refund without offering another payment', async t => {
+  const { p } = await publicMintPage(t), id = 'ab'.repeat(32);
+  await p.route('**/mint/' + id, route => route.request().resourceType() === 'document' ? route.continue() : json(route, {
+    requestId: id, publicMint: true, asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, payer: tapAddress,
+    state: 'refundable', payable: false, payBy: { rail: 'tap' }, fees: [], missing: [], refunds: [{ state: 'owed', reason: 'someone_paid_first' }],
+  }));
+  await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', state: 'registered' }));
+  await p.goto(server.url + '/mint/' + id);
+  await p.getByText('Owed; not sent automatically', { exact: true }).waitFor();
+  assert.equal(await p.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
+  assert.equal(await p.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
+  assert.doesNotMatch(await p.locator('main').innerText(), /units have been consumed/);
+});
+
+for (const [code, message] of [['payment_unconfirmed', 'waiting for a Bitcoin confirmation'], ['public_payment_incomplete', 'did not cover every quoted fee']]) {
+  test(`public checkout explains ${code} without starting another payment`, async t => {
+    const { p, calls } = await publicMintPage(t);
+    await p.route('**/public-mints/quote', route => json(route, { error: code }, 409));
+    await p.goto(server.url + '/mint');
+    await panel(p, 'Public blocks').getByRole('button', { name: 'Mint', exact: true }).first().click();
+    await p.getByRole('status').filter({ hasText: message }).waitFor();
+    assert.ok(!calls.some(([, path]) => path === '/public-mints/start'));
+  });
+}

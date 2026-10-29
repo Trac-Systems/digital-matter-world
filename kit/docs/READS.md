@@ -59,7 +59,10 @@ in returned `p2%3A0`/`c2%3A…` account links are supported, not encoded travers
 | `compounds`, `/compounds` | Named compound records; exact tier may still be pending. |
 | `finds`, `/finds` | Materialized finds; retain original integer forms inside older evidence. |
 | `receipts`, `/receipts` | Signed seals and immutable archive descriptors. V2 supports limit/cursor/order/sort=id; the old height filter is not supported. |
-| `mint_rights`, `/mint-rights` | Owner-scoped eligibility, balances, holds, finder/Bitmap rights; may include `implicitAwards` link. |
+| `mint_rights`, `/agents/ADDRESS/mintRights` | Owner-scoped mint eligibility, balances and holds. The finder week starts at settlement, followed by qualifying Bitmap-holder priority, otherwise any agent with enough units. |
+| `/public-mints?asset=p2:N`, `/mint-rights?asset=p2:N` | After activation, public wallet-only offers: known unclaimed blocks past their claim deadline, without minted blocks. No owner or units. `rows`, `next`, `nextCursor`, `total:null`; empty continued pages are valid. |
+| `/public-mints/ASSET/BLOCK` | Block state, claimDeadline, Bitmap restriction and confirmed winner if present. A quote independently rechecks eligibility. |
+| `/public-mints/refunds?tapAddress=ADDRESS` | Confirmed payments recorded as refunds owed. This read never sends a refund. |
 | `agents`, `/agents` | Public activity scores, not unique people. |
 | `agent_profile`, `/agents/ADDRESS` | Scores and collection links, not guaranteed preview arrays. |
 | Agent subcollections | balances, bitmaps, finds, mintRights, discoveries, history, assets. `assets` can link to `/accounts/ADDRESS/balances/ASSET`. |

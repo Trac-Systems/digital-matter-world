@@ -148,7 +148,7 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   register('poll_link', 'Read a paid link reservation and terminal settlement without signing or broadcasting.', { id: hex, timeoutMs: z.number().int().min(0).max(120000).default(30000) },
     (args, extra) => agent.playerLink.poll(args.id, { timeoutMs: args.timeoutMs, signal: extra?.signal }));
   register('link_bitmap', 'Sign a permanent Bitmap-link request and return its payment page. Acceptance requires current holder evidence and a completed payment.', { actionId, height: z.union([height, decimal]), payer: z.string().min(1).max(128).optional() }, args => agent.linkBitmap(args), false);
-  register('transfer', 'Send integer asset units; TNK is charged to your own trac1… address.', { actionId, to: z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR), assets: pairs }, ({ actionId, ...value }) => agent.transaction({ actionId, op: 'tf', value }), false);
+  register('transfer', 'Transfer integer units to a trac1… address using exact ledger assets after public-mint activation. Before activation, retain the authorization locally. V2 moves need no sender TNK; legacy transfers charge your own address. Reuse the action ID.', { actionId, to: z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR), assets: pairs }, ({ actionId, ...value }) => agent.transaction({ actionId, op: 'tf', value }), false);
   return tools;
 }
 export async function runTool(context, name, args = {}, { readOnly = false, signal } = {}) {

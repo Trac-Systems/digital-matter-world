@@ -149,7 +149,8 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
       for (const [key, value] of writes) store.put(key, value);
       return;
     }
-    check(row && d && row.terms === obligation?.terms, 'capacity_request');
+    const publicFunding = row?.publicMint && a.type === 'capacity-finish' ? await get('fp/' + a.id) : null;
+    check(row && d && row.terms === (publicFunding?.publicMint && publicFunding.state === 'consumed' ? publicFunding.terms : obligation?.terms), 'capacity_request');
     await financialUnfrozen(store, ['fd/' + row.deployment, 'ao/' + a.id]);
     if (a.type === 'capacity-issue') {
       check(row.state === 'reserved' && obligation.state === 'consumed' && hex(a.permitHash) && obligation.permitHash === a.permitHash, 'capacity_permit');

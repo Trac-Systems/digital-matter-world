@@ -335,6 +335,8 @@ body.in-lab table.t th { background: #F5F6F3; }
 .pager-foot .grow { flex: 1; }
 .feed-window { max-height: calc(100vh - 260px); overflow: auto; }
 @media (max-width: 640px) { .pager-bar { padding: 8px 10px; } .pager-total { width: 100%; } .feed-window { max-height: none; } }
+/* Public blocks and refunds on the site's Mint page fit a phone without side scrolling. */
+@media (max-width: 640px) { .public-mints table.t th, .public-mints table.t td { padding: 7px 5px; } }
 
 /* Wallet: one connection in the header, reused by every page */
 .wallet { position: relative; flex: none; }

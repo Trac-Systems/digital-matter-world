@@ -182,3 +182,31 @@ test('a financial attempt deferred after execution leaves no public balance or s
   assert.deepEqual(result.writes, []); assert.deepEqual(result.operations, []);
   assert.deepEqual(f.balance(), { available: '100', held: '0' });
 });
+
+test('financial verification derives transfers together with claim credits and crafts before a reservation', async t => {
+  const f = await fixture(t), compound = 'c2:' + r.hash('transfer-financial-compound');
+  const document = r.settingsRevision({ network, previous: f.document, effectiveBatch: '2', effectiveBitcoinWindow: '10',
+    values: { ...f.document.values, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '10' } });
+  const sign = action => ({ ...action, sig: Buffer.from(ed25519.sign(accountActionDigest(network, action), alice.secret)).toString('hex') });
+  const craft = { action: sign({ type: 'craft', owner: alice.address, revision: '1', nonce: nonce(4100), until: '20',
+    in: [['p2:0', '1'], ['p2:1', '1']], out: [[compound, '1']], compound: compound.slice(3) }) };
+  const transfer = { action: sign({ type: 'transfer', owner: alice.address, to: bob.address, asset: 'p2:0', amount: '1',
+    revision: '1', nonce: nonce(4101), until: '20' }) };
+  const reservation = f.reserve(4102), evidence = await f.reads.financialEvidence(reservation);
+  reservation.action = sign({ ...reservation.action, revision: '2', until: '20' }); f.source(reservation, evidence);
+  const credits = [{ op: 'ac', to: alice.address, assets: [['p2:1', '3']] }];
+  const result = await buildFinancialExecution({ store: f.store, credits, crafts: [craft], transfers: [transfer], transitions: [reservation],
+    reads: f.reads, document, height: '10' });
+  const file = { ops: result.operations, financialOperations: result.inputs, crafts: structuredClone([craft]), transfers: structuredClone([transfer]),
+    settlements: [{ winners: [{ winner: alice.address, asset: 'p2:1', count: '3' }] }] };
+  const verify = value => verifyFinancialExecution({ files: [value], reads: f.reads, document, network, height: '10' });
+  await verify(file);
+  for (const alter of [value => { delete value.transfers; }, value => { value.transfers[0].action.to = alice.address; },
+    value => { value.ops[0].actions.reverse(); }, value => { value.ops[0].actions.push(transfer.action); }]) {
+    const changed = structuredClone(file); alter(changed); await assert.rejects(verify(changed), /account_credit_derivation/);
+  }
+  await f.store.transact(result.writes);
+  assert.deepEqual(f.balance(), { available: '91', held: '7' });
+  assert.equal(f.store.get('publicBalances', bob.address + '/p2:0').amount, '1');
+  assert.equal(f.store.get('accountRecords', 'ao/' + reservation.id).state, 'reserved');
+});

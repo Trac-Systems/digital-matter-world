@@ -128,9 +128,14 @@ export class TapWalletMint {
     if (status.state === 'minted') return status;
     return this.inscribeContent(id, mintContent(status, this.address), 'mint', options);
   }
-  async inscribeDeployment(job, { owner, binding, ...options } = {}) {
+  async inscribeDeployment(job, { owner, binding, publicRequest, ...options } = {}) {
     await this.checkAccount();
-    ensure((job.kind !== 'compound' || job.definition?.firstMaker === owner) && binding?.request?.agent === owner && binding.request.address === this.address && (!job.receiver || job.receiver === this.address),
+    if (publicRequest) {
+      ensure(publicRequest.publicMint === true && publicRequest.kind === 'tap' && job.kind === 'dmt'
+        && publicRequest.asset === job.asset && publicRequest.receiver === this.address && (!job.receiver || job.receiver === this.address),
+        'Connect the TAP Wallet receiving this public mint');
+    } else ensure(typeof owner === 'string' && (job.kind !== 'compound' || job.definition?.firstMaker === owner)
+      && binding?.request?.agent === owner && binding.request.address === this.address && (!job.receiver || job.receiver === this.address),
       'Connect the deploying player’s bound TAP Wallet');
     const { text, attemptId, phase } = deploymentContent(job);
     return { ...await this.inscribeContent(attemptId, text, 'deploy', options), asset: job.asset, phase };

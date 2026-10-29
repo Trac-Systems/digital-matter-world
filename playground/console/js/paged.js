@@ -10,7 +10,7 @@ export function pageRows(r, key) {
 // One server page at a time: total count, sort, filters and a cursor pager. Only the current page is rendered.
 // opts: path (string or () => string), key, columns, sorts [['key:asc|desc', label]], sort, filters
 // [{ name, label, options: [[value, label]], value }], limit, empty (text, or filters => text), onRow, selected, onPage(rows, body), group(rows) to merge rows before rendering,
-// render(rows) for a custom body instead of a table.
+// render(rows) for a custom body instead of a table, onError(error) returning true when the caller shows the failure itself.
 export function pagedTable(opts) {
   const state = { sort: opts.sort ?? opts.sorts?.[0]?.[0] ?? null, filters: Object.fromEntries((opts.filters ?? []).map(f => [f.name, f.value ?? ''])), cursors: [null], at: 0, seq: 0, loading: false, count: 0 };
   const limit = opts.limit ?? 50;
@@ -41,6 +41,7 @@ export function pagedTable(opts) {
       if (seq === state.seq) {
         state.loading = false;
         el.setAttribute('aria-busy', 'false');
+        if (opts.onError?.(e)) return;
         if (!state.count) clear(body);
         clear(error, `Could not load this list (${e.message}). `,
           h('button.btn.sm', { onclick: () => { if (!state.loading) load(at); } }, 'Retry'));

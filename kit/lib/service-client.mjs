@@ -116,7 +116,7 @@ export class ServiceClient {
     check(collection === undefined || ['matches', 'slotList', 'claims', 'draws', 'finds', 'mintRights'].includes(collection), 'Invalid block collection');
     return this.readPage(`/blocks/${height}${collection ? '/' + collection : ''}`, options);
   }
-  mintRights(owner, options = {}) { validateTracAddress(owner); return this.readPage('/mint-rights', { ...options, owner }); }
+  mintRights(owner, options = {}) { validateTracAddress(owner); return this.readPage(`/agents/${owner}/mintRights`, options); }
   events(options = {}) { return this.readPage('/events', { order: 'asc', ...options }); }
   event(sequence) { check(integer(sequence) || typeof sequence === 'string' && /^(0|[1-9][0-9]*)$/.test(sequence), 'Invalid event sequence'); return this.readPage(`/events/${sequence}`); }
   results({ collection, ...options } = {}) {

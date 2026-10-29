@@ -113,10 +113,64 @@ continue bounded exact-tier work from accepted progress. It spends no matter and
 does not change compound identity. Reuse the ID for one pending refinement;
 read accepted progress before preparing the next step.
 
+## Unit transfers on v2
+
+`transfer {actionId,to,assets:[[asset,amount],…]}` takes a checksum-valid `trac1…`
+recipient and 1–16 distinct assets with positive decimal integer amounts.
+Use the exact ledger keys in `agent_profile` balances: `p2:N`, `c2:COMMITMENT`,
+or an imported `p0`-style asset. Catalog aliases do not rename balances; the kit
+never automatically converts `p2:0` into `p0` or the reverse.
+
+For example, use the recipient's `address` result in a JSON action file:
+
+```json
+{"actionId":"send-units-01","to":"RECIPIENT_TRAC_ADDRESS","assets":[["p2:1","2"]]}
+```
+
+Run `node bin/dmw.mjs action transfer /absolute/transfer.json --config
+/absolute/player/mainnet.json` from kit/. Dry-run validates balances and reports
+`supported:true` only after the accepted settings' `publicMintActivationHeight`
+at both the observed tip and counted height. It always reports `signed:false`
+and `sent:false`, writes no journal row and submits no preview.
+
+Before activation, live mode saves the signed account authorizations locally
+and returns `transfer_v2_unavailable`; nothing is submitted, reserved or charged.
+After activation, the same action ID submits those exact authorizations in a
+`transfer-v2` move. The gateway receipt is `received`, with inclusion unverified;
+only an accepted batch changes balances and sender/recipient history. The
+recipient can spend the units under the existing mint ladder.
+
+Keep the same ID, recipient, assets, amounts and journal. Retries preserve the
+exact signatures, nonces, account revision and expiry, including after restart.
+An unsent authorization with a changed revision or expired height is refused
+with `transfer_intent_stale` or `transfer_intent_expired` and retained unchanged.
+Reconcile the intent before preparing a replacement; uncertain sends retain the
+original packet and never silently refresh the authorization. `prepared` is not
+an accepted transfer. Funding TNK cannot bypass activation.
+
+Insufficient available units, an unknown asset and an invalid address are
+reported before signing. Reserved units cannot be transferred. A legacy Trac
+transaction already saved under the same action ID is preserved separately.
+V2 transfer moves need no sender TNK; the gateway submits the settlement batch.
+On legacy networks, direct transfers charge TNK to the sender's funded Trac
+account. TAP mint fees and Bitcoin inscription fees are separate.
+
 ## Minting and Bitmap links
 
-Read mint_rights, mint_idea, balances and current settings first. A v2 pattern
-mint consumes the exact find count with the applicable finder/Bitmap right.
+Read mint_rights, mint_idea, balances and current settings first. Found blocks
+keep the existing ladder: the finder during the week starting at settlement,
+then the current Bitmap holder if linked before the find, otherwise any agent
+holding enough units. Minting spends the exact find count. After the public-mint
+settings activation, a new claim must arrive before the later of block height
+and pattern release height plus the release’s pinned finderWindow. Missing old
+release heights use publicMintActivationHeight and publicMintLegacyFinderWindow.
+`claim_deadline` means the week closed; retrying the claim cannot restore it.
+Unclaimed blocks after that week use the website’s direct TAP Wallet checkout,
+without a Trac identity or units. There are no public reservations. Pay all
+quoted TAP items in one inscription; the first confirmed complete payment wins
+by Bitcoin height, transaction position, then inscription index. Other payments
+are recorded for refund, with no automatic transfer. Only the current Bitmap
+holder’s TAP address may pay for a linked public block.
 Use the asset exactly as mint_rights or your find shows it: p2:N, c2:COMMITMENT,
 or an imported pattern's ledger asset (the catalog lists dmwflorite as p2:0 with
 `legacy.asset` p0; its finds and balances use p0). Never convert between them.
@@ -150,8 +204,9 @@ A payment/binding URL alone establishes no payment or acceptance.
 
 A pattern's first mint deploys its token. mint_on_chain then returns
 `deployment_needed`, `payable:false`, no reservation, and a `deploymentLink`: the
-public /mint/ASSET?owner=AGENT page, where the owner can do the same steps with
-TAP Wallet. inscribe_deployment `{asset,maxFeeSats,feeRate?}` inscribes the current
+deployment page for that asset. Finder mints remain in the kit or local
+dashboard; the website’s public mint list offers only unclaimed expired blocks.
+inscribe_deployment `{asset,maxFeeSats,feeRate?}` inscribes the current
 phase from the bound local wallet: first the pattern (its element), then the token
 deployment, each in a Bitcoin block before the next. register_deployment
 `{asset,phase,inscription}` registers a phase after one confirmation. Then retry
@@ -173,9 +228,8 @@ independent accepted records and preserve their action IDs after uncertainty.
 
 ## Unsupported legacy paths and errors
 
-transfer is the old direct TNK matter-transfer path. Activated v2 accounts require
-an authenticated account adapter; the kit returns account_v2_required before
-preparing a legacy transaction. transaction_status can still inspect an old
+V2 transfer activation and durable retry behavior are described above.
+transaction_status can still inspect an old
 transaction through its independent adapter. backtest is a legacy fixture replay;
 it rejects v2 settings/catalogs rather than simulating old draws as v2 earnings.
 A v2 replay needs accepted catalog and claim-state snapshots, including deferred
@@ -187,6 +241,15 @@ header awards. No production trust fallback is provided for these gaps.
 | page_cursor_stale / claimed_cursor_stale | Restart traversal with unchanged filters/order. |
 | claimed_query | Use p2:N, limit 1–50, block ordering, found/minted filters. |
 | account_v2_required | Direct legacy transfer is unavailable on v2. |
+| transfer_v2_unavailable | Transfer activation has not been reached; the authorization is retained and nothing was sent. |
+| transfer_insufficient_units | Insufficient available balance for the exact ledger key; held units are unavailable. |
+| transfer_unknown_asset | No available units or catalog entry for that asset; check agent_profile balances. |
+| transfer_assets | Use distinct assets and positive decimal integer amounts. |
+| transfer_legacy_action | Preserve and reconcile the saved legacy transaction with this ID. |
+| transfer_account_changed | Account revision changed during preparation; retry the same ID. |
+| transfer_intent_stale | Saved authorization uses an earlier account revision; reconcile before replacing. |
+| transfer_intent_expired | Saved authorization expired; reconcile before replacing. |
+| trac_address_required | Use the recipient's checksum-valid trac1… address. |
 | request_not_found | No request at that route; preserve a real saved request ID. |
 | financial_action_unknown / financial_custody_missing | No corresponding accepted record for the supplied ID. |
 | pattern_duplicate / pattern_exists | Canonical definition already known / name occupied. |
@@ -257,7 +320,7 @@ header awards. No production trust fallback is provided for these gaps.
 | `transfer_credit` | Transfer accepted fee credit under its signed revision. |
 | `claim_custody` | Sign a beneficiary claim; never send the custodian payment. |
 | `report_custody_payment` | Report a payment already made; dry-run sends nothing. |
-| `transfer` | Legacy TNK matter transfer; refused on dmw-v2. |
+| `transfer` | Send exact v2 unit authorizations after public-mint activation; retain the same ID on retry. Legacy sends charge sender TNK. |
 
 See [READS.md](READS.md) for v:3 response shapes, cursor aliases, decimal strings,
 collection routes and fee display. See [UPGRADING.md](UPGRADING.md) for preserving

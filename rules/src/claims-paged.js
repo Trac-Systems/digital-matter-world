@@ -6,6 +6,7 @@ import { merkleRoot } from './merkle.js';
 import { batchSettings } from './batch-settings.js';
 import { findIdV2, patternAssetV2, ordinalCodec, compareOrdinal } from './integers-v2.js';
 import { patternCount } from './patterns.js';
+import { assertClaimOpen, publicMintActive } from './public-mint.js';
 
 export const claimSlotId = (settings, block, number) => settings.document ? findIdV2(String(block), String(number)) : findId(block, number);
 
@@ -20,7 +21,7 @@ export function claimRound(window, hash, claimableHeight, catalog) {
 }
 // Each acknowledged segment becomes an immutable input page. Counters contain
 // only this agent's distinct selections; no catalog or other-agent scan.
-export function enterClaims({ state, event, agent, plots, patterns, history, settings = {} }) {
+export function enterClaims({ state, event, agent, plots, patterns, history, settings = {}, height = event.window }) {
   const s = batchSettings(settings), key = `${event.window}/${agent}`;
   const findId = (block, number) => claimSlotId(s, block, number);
   const prior = recordGet(state.claimAgents, key) ?? { pairs: [], exceeded: false };
@@ -30,6 +31,8 @@ export function enterClaims({ state, event, agent, plots, patterns, history, set
   // After overflow only the invalidation flag is needed, never an unbounded set.
   const slots = [];
   for (const plot of plots) {
+    if (publicMintActive(settings, height)) for (const number of plot.patterns)
+      assertClaimOpen({ pattern: namedPattern(patterns, number), block: plot.block, height, settings });
     assert(compareOrdinal(plot.block, event.claimableHeight) <= 0 || plot.block === event.window, 'not_counted');
     assert(plot.patterns.every(number => !recordGet(state.finds, findId(plot.block, number)) && !recordGet(state.claimReservations, findId(plot.block, number))), 'already_found');
   }

@@ -164,3 +164,27 @@ test('an older saved scoped authority is never activated as global or replaced b
   await assert.rejects(ensureTapAuthority(f.provider, f.state.address, journal), /older payment flow/);
   assert.equal(actions, 1); assert.deepEqual(f.state.calls, []);
 });
+
+
+test('public deployment uses only its receiving TAP wallet while agent and compound deployments retain bindings', async () => {
+  const f = fixture(true); await f.wallet.connect();
+  const text = 'dmwpublic.123.4.element', attemptId = 'ab'.repeat(32);
+  const job = { asset: 'p2:1', kind: 'dmt', state: 'awaiting_player_deploy', phase: 'element', elementAttempt: 0,
+    definition: { pat: '123', fld: 4, dt: 'n' }, elementName: 'dmwpublic', content: text, inscriptionText: text,
+    attempts: [{ phase: 'element', attempt: 0, id: attemptId, text }] };
+  const request = { publicMint: true, asset: job.asset, receiver: f.wallet.address, kind: 'tap' };
+  const sent = [];
+  f.wallet.inscribeContent = async (...args) => { sent.push(args); return { state: 'broadcast' }; };
+  await assert.rejects(f.wallet.inscribeDeployment(job), /bound TAP Wallet/);
+  await assert.rejects(f.wallet.inscribeDeployment(job, { publicRequest: { ...request, publicMint: false } }), /receiving this public mint/);
+  await assert.rejects(f.wallet.inscribeDeployment(job, { publicRequest: { ...request, asset: 'p2:2' } }), /receiving this public mint/);
+  await assert.rejects(f.wallet.inscribeDeployment(job, { publicRequest: { ...request, receiver: 'different' } }), /receiving this public mint/);
+  await assert.rejects(f.wallet.inscribeDeployment({ ...job, receiver: 'different' }, { publicRequest: request }), /receiving this public mint/);
+  await assert.rejects(f.wallet.inscribeDeployment({ ...job, kind: 'compound' }, { publicRequest: request }), /receiving this public mint/);
+  assert.equal(sent.length, 0);
+  assert.equal((await f.wallet.inscribeDeployment(job, { publicRequest: request })).phase, 'element');
+  assert.deepEqual(sent[0].slice(0, 3), [attemptId, text, 'deploy']);
+  const owner = 'agent';
+  await assert.rejects(f.wallet.inscribeDeployment(job, { owner, binding: { request: { agent: 'other', address: f.wallet.address } } }), /bound TAP Wallet/);
+  assert.equal((await f.wallet.inscribeDeployment(job, { owner, binding: { request: { agent: owner, address: f.wallet.address } } })).state, 'broadcast');
+});
