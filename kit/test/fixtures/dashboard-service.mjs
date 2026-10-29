@@ -14,8 +14,10 @@ import { financialMintId, verifyFinancialMintRequest } from '../../../rules/src/
 import { accountActionDigest } from '../../../contract/root-accounts.js';
 import { verifyPayer } from '../../../service/src/mints.mjs';
 import { signTestPayout, testPayoutAddress } from '../../../service/test/payout-wallets.mjs';
+import { createWeb } from '../../../service/src/web.mjs';
 
-export async function dashboardFixture(t, { http = false } = {}) {
+// site: the fixture also serves the public site shell, so the dashboard's /me page renders.
+export async function dashboardFixture(t, { http = false, site = false } = {}) {
   const directory = await temp(t), network = 'dmw-kit-test', wallet = testWallet(), owner = wallet.publicKey.toString('hex');
   const journal = await Journal.open(directory, network, { intervalMs: 0, perTip: 1 }); cleanup(t, () => journal.close());
   const settings = settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '20', values: { ...SETTINGS_PROFILE } });
@@ -29,6 +31,8 @@ export async function dashboardFixture(t, { http = false } = {}) {
   const records = new Map(), claims = ['12', '11', '10'].map(block => ({ asset: 'p2:1', block, count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash: rulesContext.settingsHash }));
   const minted = new Set(['10']); let pause, lose = false;
   const clock = { counted: '20' }, balances = new Map([['p2:1', { amount: '100', current: true }]]), links = new Map(), holders = new Map(), unregistered = new Set();
+  // Pattern overview reads: catalog rows, this agent's discoveries and read-only deployment states.
+  const patterns = [{ number: '1', asset: 'p2:1', name: 'dmwtest', tier: 3 }], discoveries = [], deployments = new Map();
   const candidate = find => {
     const link = links.get(find.block) ?? null, currentHolder = holders.get(find.block) ?? null;
     const right = mintRight({ find, owner, counted: clock.counted, link, currentHolder });
@@ -48,11 +52,15 @@ export async function dashboardFixture(t, { http = false } = {}) {
     };
     if (path.startsWith('/payout-bindings/')) return response({ binding });
     if (path.includes('/agents/') && path.endsWith('/finds')) {
-      const rows = claims.filter(f => f.finder === owner && (u.searchParams.get('minted') !== 'false' || !minted.has(f.block)));
+      const rows = claims.filter(f => f.finder === owner && (u.searchParams.get('minted') !== 'false' || !minted.has(f.block)) && (!u.searchParams.has('asset') || f.asset === u.searchParams.get('asset')));
       return page('finds', rows.map(f => ({ ...f, minted: minted.has(f.block) })));
     }
     if (path.includes('/agents/') && path.endsWith('/balances')) return page('balances', [...balances].filter(([asset]) => !u.searchParams.has('asset') || asset === u.searchParams.get('asset')).map(([asset, balance]) => ({ asset, ...balance })));
-    if (path === '/patterns') return response({ patterns: [{ number: '1', asset: 'p2:1', name: 'dmwtest' }], nextCursor: null });
+    if (path === '/patterns') return response({ patterns: patterns.filter(p => !u.searchParams.has('asset') || p.asset === u.searchParams.get('asset')).slice(0, 1), nextCursor: null });
+    if (path.includes('/agents/') && path.endsWith('/discoveries')) return page('discoveries', discoveries);
+    const deployment = /^\/mint\/deployment-state\/(.+)$/.exec(path)?.[1];
+    if (deployment) return response(deployments.get(deployment) ?? (unregistered.has(deployment)
+      ? { asset: deployment, state: 'awaiting_player_deploy', phase: 'element', catalogAsset: deployment } : { asset: deployment, state: 'registered', phase: 'deployment', catalogAsset: deployment }));
     if (path === `/agents/${publicIdentities({ owner }).owner}/mintRights`) return page('mintRights', claims.map(candidate).filter(row =>
       ['asset', 'block'].every(key => !u.searchParams.has(key) || row[key] === u.searchParams.get(key)) &&
       ['allowed', 'minted'].every(key => !u.searchParams.has(key) || row[key] === (u.searchParams.get(key) === 'true'))));
@@ -86,8 +94,9 @@ export async function dashboardFixture(t, { http = false } = {}) {
   };
   let origin = 'http://127.0.0.1:1';
   if (http) {
+    const web = site ? createWeb(null) : null;
     const server = createServer(async (req, res) => {
-      try { let body = ''; for await (const chunk of req) body += chunk;
+      try { if (web && req.method === 'GET' && await web.handle(req, res)) return; let body = ''; for await (const chunk of req) body += chunk;
         const response = await read(origin + req.url, { method: req.method, ...(body ? { body } : {}) });
         res.statusCode = response.status; res.setHeader('content-type', 'application/json'); res.end(await response.text());
       } catch { res.statusCode = 500; res.end('{"error":"fixture_failed"}'); }
@@ -96,10 +105,10 @@ export async function dashboardFixture(t, { http = false } = {}) {
     cleanup(t, () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   }
   const service = new ServiceClient({ origin, network, receiptSigners: w.members, ...(!http ? { fetchImpl: read } : {}) });
-  const agent = new Agent({ wallet, network, service, journal: dashboardJournal(journal), dryRun: false, bitcoinNetwork: 'regtest',
+  const agent = new Agent({ wallet, network, service, journal: dashboardJournal(journal), dryRun: false, bitcoinNetwork: 'regtest', ...(site ? { paymentOrigin: origin } : {}),
     trac: { network, head: async () => ({ counted: clock.counted, tip: { height: Number(clock.counted) } }), settingsByHash: async () => settings } });
   agent.namedContext = async () => rulesContext;
   const context = { agent, candidates: async (asset, { block }) => (await service.mintRights(agent.address, { asset, block, limit: 50 })).mintRights };
-  return { directory, journal, agent, service, context, binding, claims, minted, records, packets, calls, clock, balances, links, holders, unregistered,
+  return { directory, journal, agent, service, context, binding, claims, minted, records, packets, calls, clock, balances, links, holders, unregistered, patterns, discoveries, deployments,
     pause(value) { pause = value; }, lose() { lose = true; } };
 }

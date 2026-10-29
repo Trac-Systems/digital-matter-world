@@ -334,6 +334,59 @@ test('Mint connects TAP Wallet, shows the quote and opens the payment page of th
   assert.deepEqual(posts.map(([, path, body]) => [path, body]), [['/public-mints/quote', { asset: 'p2:0', block: '151', tapAddress }], ['/public-mints/start', { asset: 'p2:0', block: '151', tapAddress }]]);
 });
 
+// A pattern's token on Bitcoin: its page and the Mint page show the status and, until it is deployed, the way
+// to inscribe the pattern and deploy its token. Only the read-only deployment state is read.
+const deploymentReads = p => { const asked = []; p.on('request', r => { const u = new URL(r.url()); if (u.pathname.startsWith('/mint/deployment')) asked.push(r.method() + ' ' + u.pathname); }); return asked; };
+for (const [job, label, action] of [[{ state: 'awaiting_player_deploy', phase: 'element' }, 'Token not deployed', 'Inscribe & deploy'],
+  [{ state: 'awaiting_player_deploy', phase: 'deployment', elementId: 'ab'.repeat(32) + 'i0' }, 'Pattern inscribed — deploy token next', 'Deploy token']]) {
+  test(`a pattern page shows “${label}” and ${action} opens its deployment page for the discoverer`, async t => {
+    const { p } = await publicMintPage(t), asked = deploymentReads(p);
+    await p.route('**/patterns?*', route => json(route, { patterns: [{ ...pattern, asset: 'p2:0', number: '0', discoverer: owner }], next: null }));
+    await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', kind: 'dmt', attempts: [], ...job }));
+    await p.goto(server.url + '/pattern/p2:0');
+    const detail = panel(p, 'Digit');
+    await detail.getByText(label, { exact: true }).waitFor();
+    const link = detail.getByRole('link', { name: action, exact: true });
+    assert.equal(await link.getAttribute('href'), '/mint/p2:0?owner=' + owner);
+    await link.click();
+    await p.waitForURL(url => url.pathname === '/mint/p2:0');
+    await p.getByText('This pattern has no token on Bitcoin yet.', { exact: false }).waitFor();
+    assert.equal(await p.getByRole('textbox', { name: 'Agent address' }).inputValue(), owner);
+    assert.ok(asked.every(r => r === 'GET /mint/deployment-state/p2:0'), asked.join());
+  });
+}
+
+test('a deployed pattern shows its token and no deploy action', async t => {
+  const { p } = await publicMintPage(t), asked = deploymentReads(p);
+  await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', kind: 'dmt', state: 'registered', elementId: 'ab'.repeat(32) + 'i0' }));
+  await p.goto(server.url + '/pattern/p2:0');
+  const detail = panel(p, 'Digit');
+  await detail.getByText('Token deployed', { exact: true }).waitFor();
+  assert.equal(await detail.getByRole('link', { name: /Inscribe & deploy|Deploy token/ }).count(), 0);
+  // The Mint page's picked pattern says the same.
+  await p.goto(server.url + '/mint');
+  await panel(p, 'Public blocks').getByText('Token deployed', { exact: true }).waitFor();
+  assert.equal(await p.getByRole('link', { name: /Inscribe & deploy|Deploy token/ }).count(), 0);
+  assert.deepEqual([...new Set(asked)], ['GET /mint/deployment-state/p2:0']);
+});
+
+test('the Mint page leads from “Found a new pattern?” to the chosen pattern’s deployment page', async t => {
+  const { p } = await publicMintPage(t), asked = deploymentReads(p);
+  await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', kind: 'dmt', state: 'not_started' }));
+  await p.goto(server.url + '/mint');
+  await p.getByRole('link', { name: 'Found a new pattern? Inscribe it and deploy its token', exact: true }).click();
+  assert.equal(new URL(p.url()).pathname, '/mint');
+  const box = panel(p, 'Found a new pattern?');
+  await box.getByText('Inscribe it and deploy its token', { exact: false }).waitFor();
+  const search = box.locator('input[type="search"]');
+  await search.fill('Digit'); await search.dispatchEvent('change');
+  await box.getByText('Token not deployed', { exact: true }).waitFor();
+  await box.getByRole('link', { name: 'Inscribe & deploy', exact: true }).click();
+  await p.waitForURL(url => url.pathname === '/mint/p2:0' && !url.search);
+  await p.getByRole('heading', { name: 'Mint from your wallet' }).waitFor();
+  assert.ok(asked.every(r => r === 'GET /mint/deployment-state/p2:0'), asked.join());
+});
+
 test('a lost race or a cancelled quote leaves the list without starting a request', async t => {
   const { p, calls } = await publicMintPage(t), list = panel(p, 'Public blocks');
   await p.route('**/public-mints/quote', route => json(route, { error: 'someone_paid_first' }, 409));

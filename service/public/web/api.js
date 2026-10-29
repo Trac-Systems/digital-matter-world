@@ -57,7 +57,38 @@ export const site = {
     if (view === 'feed') return '/feed';
     return '/' + view;
   },
+  // A pattern's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inscribed' | 'none', label, kind }, or
+  // null when the gateway does not know the asset. Read-only; pages ask only for what is on screen.
+  token(asset) {
+    if (!/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(asset ?? '')) return Promise.resolve(null);
+    const hit = tokens.get(asset);
+    if (hit && Date.now() - hit.at < TOKEN_MS) return hit.value;
+    const value = slot(() => get('/mint/deployment-state/' + asset)).then(tokenStep, error => {
+      if (error.message === 'asset_unknown' || error.message === 'deployment_asset') return null;
+      tokens.delete(asset); throw error;
+    });
+    tokens.delete(asset); tokens.set(asset, { at: Date.now(), value });
+    for (const old of tokens.keys()) { if (tokens.size <= TOKEN_KEEP) break; tokens.delete(old); }
+    return value;
+  },
+  // The deployment page: inscribe the pattern, deploy its token, then mint. `owner` fills in the agent.
+  deployHref: (asset, owner) => '/mint/' + asset + (/^trac1[a-z0-9]+$/.test(owner ?? '') ? '?' + new URLSearchParams({ owner }) : ''),
 };
+// Answers are kept a minute (at most 200 patterns) and at most four reads run at once.
+const TOKEN_MS = 60000, TOKEN_KEEP = 200, TOKEN_READS = 4, tokens = new Map(), queue = [];
+let reading = 0;
+async function slot(read) {
+  while (reading >= TOKEN_READS) await new Promise(resolve => queue.push(resolve));
+  reading++;
+  try { return await read(); } finally { reading--; queue.shift()?.(); }
+}
+const TOKEN_STEPS = { deployed: ['Token deployed', 'minted'], confirming: ['Token being confirmed', 'info'], inscribed: ['Pattern inscribed — deploy token next', 'info'], none: ['Token not deployed', 'warn'] };
+const JOB_STATES = new Set(['not_started', 'queued', 'awaiting_player_deploy', 'inscribed', 'deploying', 'confirming']);
+function tokenStep(job) {
+  const step = job?.state === 'registered' ? 'deployed' : !JOB_STATES.has(job?.state) ? null
+    : job.state === 'confirming' && job.entry ? 'confirming' : job.elementId ? 'inscribed' : 'none';
+  return step && { step, label: TOKEN_STEPS[step][0], kind: TOKEN_STEPS[step][1] };
+}
 
 export const bus = {
   map: new Map(),

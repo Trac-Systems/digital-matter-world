@@ -91,9 +91,10 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       const keys = allowed => dashboardCheck([...url.searchParams.keys()].every(k => allowed.includes(k) && url.searchParams.getAll(k).length === 1), 'invalid_query');
       if (req.method === 'GET' && path === '/api/info') { keys([]); json(await state.info()); return; }
       if (req.method === 'GET' && path === '/api/claims') {
-        keys(['cursor', 'limit']);
-        json(await state.claims({ cursor: url.searchParams.get('cursor') ?? undefined, limit: Number(url.searchParams.get('limit') ?? 25) })); return;
+        keys(['cursor', 'limit', 'asset']);
+        json(await state.claims({ cursor: url.searchParams.get('cursor') ?? undefined, limit: Number(url.searchParams.get('limit') ?? 25), asset: url.searchParams.get('asset') ?? undefined })); return;
       }
+      if (req.method === 'GET' && path === '/api/patterns') { keys([]); json(await state.patterns()); return; }
       if (req.method === 'GET' && path === '/api/requests') {
         keys(['offset', 'limit']); json(await state.requests({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
       }

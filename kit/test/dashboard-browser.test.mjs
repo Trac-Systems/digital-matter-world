@@ -169,3 +169,42 @@ test('dashboard explains a public mint claim refusal without preparing a payment
   assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 0);
   assert.deepEqual(errors, []);
 });
+
+test('My agent lists the agent’s patterns with Deploy for a new one, and the pattern tabs filter the claimed blocks', async t => {
+  const f = await dashboardFixture(t, { http: true, site: true }), dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
+  const owner = f.agent.owner, settingsHash = f.claims[0].settingsHash;
+  f.patterns.push({ number: '2', asset: 'p2:2', name: 'dmwfresh', tier: 5 }, { number: '3', asset: 'p2:3', name: 'dmwother', tier: 2 });
+  f.discoveries.push({ number: '2', asset: 'p2:2', name: 'dmwfresh', tier: 5, discoverer: owner, state: 'accepted' });
+  f.unregistered.add('p2:2');
+  f.claims.push({ asset: 'p2:3', block: '9', count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  f.balances.set('p2:3', { amount: '100', current: true });
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  const page = await browser.newPage({ viewport: { width: Number(process.env.DMW_DASHBOARD_WIDTH ?? 1280), height: 900 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const patterns = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Your patterns' }) });
+  const row = name => patterns.locator('tbody tr').filter({ hasText: name });
+  await row('dmwfresh').getByRole('link', { name: 'Deploy pattern' }).waitFor();
+  assert.equal(await row('dmwfresh').getByRole('link', { name: 'Deploy pattern' }).getAttribute('href'), '/mint/p2:2?owner=' + encodeURIComponent(f.agent.address));
+  assert.equal(await row('dmwfresh').getByRole('button', { name: 'Show claims' }).count(), 0);
+  for (const name of ['dmwtest', 'dmwother']) {
+    await row(name).getByText('deployed', { exact: true }).waitFor();
+    assert.equal(await row(name).getByRole('link').filter({ hasText: /Deploy|deployment/ }).count(), 0);
+  }
+  const claims = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Claimed blocks you may mint' }) });
+  await claims.getByRole('tab', { name: 'All · 3' }).waitFor();
+  assert.equal(await claims.getByRole('button', { name: 'Mint', exact: true }).count(), 3);
+  await row('dmwother').getByRole('button', { name: 'Show claims' }).click();
+  await claims.getByRole('tab', { name: 'dmwother · 1', selected: true }).waitFor();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 1);
+  assert.equal(await claims.locator('tbody tr').filter({ hasText: 'dmwother' }).getByRole('button', { name: 'Mint', exact: true }).count(), 1);
+  await claims.getByRole('tab', { name: 'dmwtest · 2' }).click();
+  await assertEventually(async () => (await claims.locator('tbody tr').allTextContents()).join().includes('dmwtest') && await claims.locator('tbody tr').count() === 2);
+  await claims.getByRole('tab', { name: 'All · 3' }).click();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 3);
+  if (process.env.DMW_DASHBOARD_SCREENSHOT) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: process.env.DMW_DASHBOARD_SCREENSHOT, fullPage: true }); }
+  assert.equal(f.calls.some(c => c.path.startsWith('/mint/deployment/')), false);
+  assert.deepEqual(errors, []);
+});

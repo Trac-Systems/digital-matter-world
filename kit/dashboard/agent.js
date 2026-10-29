@@ -1,7 +1,7 @@
 // "My agent": the local dashboard's one extra page inside the site. It uses the
 // console's own components; payment and inscription continue on the site's
 // /mint/<request> page with the header's TAP Wallet / MetaMask connection.
-import { h, clear, panel, table, hashEl, pill, toast, figures, short } from '/web/console/js/dom.js';
+import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge } from '/web/console/js/dom.js';
 import { assetName, mineral } from '/web/console/js/words.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
@@ -19,6 +19,10 @@ const localPath = href => { try { const url = new URL(href, location.href); retu
 const STATE_KIND = { awaiting_payment: 'warn', partly_paid: 'warn', permit_issued: 'info', paid: 'info', minted: 'good', expired: 'bad', failed: 'bad' };
 const matter = (asset, name) => h('span.nowrap', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: '/pattern/' + asset }, name ?? assetName(asset)));
 const go = path => { history.pushState(null, '', path); dispatchEvent(new PopStateEvent('popstate')); };
+// A pattern's token: deployed once (inscribe the pattern, then deploy the token) before anyone can mint it.
+const TOKEN = { deployed: ['deployed', 'good'], inscribed: ['pattern inscribed', 'info'], not_deployed: ['not deployed', 'warn'], unknown: ['unknown', ''] };
+const TOKEN_NOTE = { inscribed: 'Next: deploy the token.', not_deployed: 'Inscribe the pattern, then deploy its token.', unknown: 'Could not read the token state. Open the deployment page to check.' };
+const countText = (n, more) => n === null || n === undefined ? '–' : more ? n + '+' : String(n);
 
 export function mount(el) {
   let stopped = false, cursor, next, offset = 0, busy = false;
@@ -27,6 +31,9 @@ export function mount(el) {
   const say = (text, kind = 'info') => { note.className = 'callout ' + kind; note.textContent = text; };
   const profile = h('div.stack', { style: { gap: '10px' } }), claims = h('div.public-mints'), requests = h('div.public-mints'), pager = h('div.pager-foot');
   let page = 1, mintable = null, open = null, more = { claims: false, requests: false }, info = null;
+  // claimAsset: the pattern filter above the claims table (the gateway's id for it); undefined shows all.
+  let patterns = null, claimAsset;
+  const patternList = h('div'), filter = h('div'), claimsPanel = h('div', { style: { scrollMarginTop: '72px' } });
   const act = async (label, fn) => {
     if (busy) return; busy = true; if (label) say(label, 'busy');
     try { await fn(); if (label && note.textContent === label) clear(note); } catch (error) { say(words(error.message), 'bad'); } finally { busy = false; }
@@ -60,16 +67,42 @@ export function mount(el) {
   const drawClaims = data => {
     next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile();
     clear(claims, data.claims.length ? table(data.claims, [
-      { key: 'name', label: 'Block', render: r => h('div', {}, matter(r.asset, r.name), h('div.small.muted', {}, 'block ', h('a.mono', { href: '/block/' + r.block }, String(r.block)))) },
+      { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', h('a.mono', { href: '/block/' + r.block }, String(r.block)))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${r.count} / ${r.balance}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
       { key: 'state', label: 'Who may mint', render: r => h('div', {}, pill(words(r.eligibility ?? r.state), r.canMint ? 'good' : r.reason ? 'warn' : ''), r.reason ? h('div.small.muted', {}, r.reason === 'insufficient_balance' ? `Needs ${r.count} units, you hold ${r.balance}` : words(r.reason)) : null) },
       { key: 'action', label: '', render: r => r.canMint ? h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, 'Mint')
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
-    ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : 'No claimed blocks your agent may mint right now.'));
+    ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));
     clear(pager, h('span.pager-total', {}, `Page ${page}`),
       h('button.btn.sm.ghost', { disabled: !cursor, onclick: () => { cursor = undefined; page = 1; act('Loading…', loadClaims); } }, 'First page'),
       h('button.btn.sm.ghost', { disabled: !next, onclick: () => { cursor = next; page++; act('Loading…', loadClaims); } }, 'Next page'));
+  };
+  const pick = asset => { claimAsset = asset; cursor = undefined; page = 1; drawFilter(); act('Loading…', loadClaims); };
+  // Pattern tabs above the claims table, each with its unminted claim count.
+  const drawFilter = () => {
+    const shown = (patterns ?? []).filter(p => p.claims > 0 || p.id === claimAsset);
+    if (!shown.length) { clear(filter); return; }
+    const total = shown.reduce((n, p) => n + (p.claims ?? 0), 0), plus = shown.some(p => p.moreClaims);
+    clear(filter, tabs([['all', `All · ${countText(total, plus)}`], ...shown.map(p => [p.id, `${p.name} · ${countText(p.claims, p.moreClaims)}`])],
+      id => pick(id === 'all' ? undefined : id), claimAsset ?? 'all'));
+  };
+  const showClaims = p => { pick(p.id); claimsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  // Your patterns: one row per pattern the agent discovered or holds claims in, with its next deployment step.
+  const drawPatterns = data => {
+    patterns = data.patterns; drawFilter();
+    clear(patternList, patterns.length ? table(patterns, [
+      { key: 'name', label: 'Pattern', render: p => h('div', {}, h('strong', {}, matter(p.asset, p.name)),
+        h('div.small.muted', {}, h('span.mono', {}, p.asset), ' ', p.tier ? tierBadge(p.tier) : null), p.discovered ? h('div.small.muted', {}, 'discovered by your agent') : null) },
+      // Each next step sits under its state, so a phone shows it without scrolling sideways.
+      { key: 'token', label: 'Token', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+        pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), TOKEN_NOTE[p.token] ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
+        p.deploymentLink ? h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
+          p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null) },
+      { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+        h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null) },
+    ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
+    if (data.more) patternList.append(h('div.empty.small', {}, 'Showing the first patterns only.'));
   };
   const requestPager = h('div.pager-foot');
   // Open requests: ten per page, newest first, with the page's range and Newest / Older buttons.
@@ -106,21 +139,29 @@ export function mount(el) {
   async function loadRequests() {
     const data = await api('/api/requests?' + new URLSearchParams({ offset: String(offset), limit: '10' })); if (!stopped) drawRequests(data);
   }
+  async function loadPatterns() {
+    let data;
+    try { data = await api('/api/patterns'); } catch (error) { if (!stopped && !patterns) clear(patternList, h('div.callout.bad', {}, 'Could not load your patterns: ' + words(error.message))); return; }
+    if (!stopped) drawPatterns(data);
+  }
   async function loadClaims() {
     let data;
-    try { data = await api('/api/claims?' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) })); }
+    try { data = await api('/api/claims?' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}), ...(claimAsset ? { asset: claimAsset } : {}) })); }
     catch (error) { if (cursor && /cursor_stale/.test(error.message)) { cursor = undefined; page = 1; return loadClaims(); } throw error; }
     if (!stopped) drawClaims(data);
   }
   async function load() {
     info = await api('/api/info'); if (stopped) return; drawProfile();
-    await loadClaims(); await loadRequests(); await loadLinks();
+    await loadPatterns(); await loadClaims(); await loadRequests(); await loadLinks();
   }
+  clear(claimsPanel, panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+    'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, claims, pager), { flush: true }));
   clear(el, h('div.page', {},
-    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s claimed blocks, with one click to mint. Everything else on this dashboard is the live site.'))),
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s patterns and claimed blocks, with one click to deploy or mint. Everything else on this dashboard is the live site.'))),
     h('div.stack', {}, note, profile,
-      panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
-        'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), claims, pager), { flush: true }),
+      panel('Your patterns', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+        'Patterns your agent discovered or holds claims in. A new pattern is minted only after its token is deployed: inscribe the pattern, then deploy the token, each with your TAP Wallet.'), patternList), { flush: true }),
+      claimsPanel,
       h('div.grid.cols-main', {},
         panel('Open requests', h('div', {}, requests, requestPager), { flush: true }),
         panel('Bitmap links', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } }, 'Earn the Bitmap holder share for a block you hold as a .bitmap. ',

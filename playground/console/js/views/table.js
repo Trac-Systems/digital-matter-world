@@ -1,7 +1,7 @@
 import { h, clear, table, kv, pill, hashEl, fmtInt, seg, inspectBtn, tierBadge, cell, panel } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
 import { mineral, title, symbol, fieldName, FIELDS, who, assetName } from '../words.js';
-import { compoundMintFlow } from '../flows.js';
+import { compoundMintFlow, wallet } from '../flows.js';
 import { pagedTable } from '../paged.js';
 import { feePrice } from '../money.js';
 
@@ -39,6 +39,7 @@ export function mount(root, params = {}) {
         { key: 'discoverer', label: 'Discoverer', render: p => p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : h('span.faint', {}, 'seed') },
         { key: 'supply', label: 'Units on Trac', num: true, render: p => h('span.mono', {}, fmtInt(supplyOf(p))) },
         { key: 'minted', label: 'Minted', num: true, render: p => h('span.mono', {}, fmtInt(mintedOf(p))), tip: 'Blocks of this pattern already minted on Bitcoin.' },
+        ...(site.token ? [{ key: 'token', label: 'On Bitcoin', render: p => tokenStatus(p.asset, { lazy: true, action: false }) }] : []),
       ],
     });
     compoundsPager = compounds();
@@ -101,6 +102,7 @@ export function mount(root, params = {}) {
         ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],
+        site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'Whoever mints this pattern first inscribes it and deploys its token, once, from their own TAP Wallet. Normally its discoverer.'] : null,
       ]),
       h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
     if (seq !== rowsSeq) return;
@@ -154,4 +156,21 @@ export function mount(root, params = {}) {
   if (params.p || params.c) open(params.p ?? params.c, !params.p);
   const off = bus.on('patterns', () => { pager?.reload(); compoundsPager?.reload(); });
   return () => { selectionSeq++; off(); };
+}
+// A pattern's token on Bitcoin (public pages): its status and, until it is deployed, the way to inscribe the
+// pattern and deploy its token. The agent is the connected wallet's player, else `owner`.
+export function tokenStatus(asset, { owner, lazy = false, action = true } = {}) {
+  const el = h('span.row', { style: { gap: '8px' } }, h('span.faint', {}, lazy ? '–' : 'Loading…'));
+  const load = () => site.token(asset).then(t => {
+    if (!t) { clear(el); return; }
+    const agent = wallet?.player?.()?.agent ?? owner;
+    clear(el, pill(t.label, t.kind), action && ['none', 'inscribed'].includes(t.step)
+      ? h('a.btn.sm.primary', { href: site.deployHref(asset, agent) }, t.step === 'none' ? 'Inscribe & deploy' : 'Deploy token') : null);
+  }, () => clear(el, h('span.faint', {}, 'unavailable')));
+  if (lazy && typeof IntersectionObserver === 'function') {
+    // Only rows on screen read their token.
+    const seen = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) { seen.disconnect(); load(); } });
+    seen.observe(el);
+  } else load();
+  return el;
 }

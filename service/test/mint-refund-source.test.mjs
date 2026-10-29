@@ -60,6 +60,9 @@ test('authority creation accepts only confirmed, indexed, unspent, asset-free fl
   f.output.inscriptions.push('33'.repeat(32) + 'i0'); assert.deepEqual(await f.source.cardinal([coin]), []);
   f.output.inscriptions.length = 0; f.output.runes = { token: 1 }; assert.deepEqual(await f.source.cardinal([coin]), []);
   delete f.output.runes; await assert.rejects(f.source.cardinal([coin]), /float_coin_unknown/);
+  // Our ord server has no rune index: runes:null is accepted; a listed inscription still excludes the coin.
+  f.output.runes = null; assert.deepEqual(await f.source.cardinal([coin]), [coin]);
+  f.output.inscriptions.push('44'.repeat(32) + 'i0'); assert.deepEqual(await f.source.cardinal([coin]), []);
 });
 test('funding is tied to the accepted payment parent, excluding another payment for the same request', async () => {
   const key = requestKey(new Uint8Array(32).fill(47), 'ab'.repeat(32), 'regtest'), script = btc.p2tr(unhex(key.publicKey).slice(1)).script;

@@ -109,8 +109,9 @@ export class MintRefundTap {
     for (const coin of coins) {
       if (!coin.confirmed) continue;
       const output = await this.http.request('/output/' + coin.txid + ':' + coin.vout);
-      check(output && Array.isArray(output.inscriptions) && output.runes && typeof output.runes === 'object', 'mint_refund_float_coin_unknown');
-      if (output.indexed === true && output.spent === false && String(output.value) === coin.value && !output.inscriptions.length && !Object.keys(output.runes).length) result.push(coin);
+      // An ord server without a rune index answers runes:null; a listed rune or inscription still excludes the coin.
+      check(output && Array.isArray(output.inscriptions) && (output.runes === null || output.runes && typeof output.runes === 'object'), 'mint_refund_float_coin_unknown');
+      if (output.indexed === true && output.spent === false && String(output.value) === coin.value && !output.inscriptions.length && !Object.keys(output.runes ?? {}).length) result.push(coin);
     }
     return result;
   }

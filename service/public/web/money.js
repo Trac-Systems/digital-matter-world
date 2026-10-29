@@ -2,6 +2,7 @@ import { api } from './data.js';
 import { walletError, publicMintMessages, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from './console/js/wallet-errors.js';
 import { mount as mintPage, findPayment, refundStatus } from './console/js/inscribe/public.js';
 import { presentation, get, store, site } from './console/js/api.js';
+import { tokenStatus } from './console/js/views/table.js';
 import { pagedTable } from './console/js/paged.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
@@ -385,6 +386,67 @@ function localLink(initial) {
   return h('div.stack', { style: { gap: '8px' } }, h('div.row', { style: { gap: '8px' } }, height, start), status,
     h('p.small.muted', { style: { margin: 0 } }, 'Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request here; then you review the fee and pay on the link page.'));
 }
+// A search field, not one control per pattern: there can be thousands. The server searches by name
+// (/patterns?q=) as you type and returns at most ten suggestions. Returns the label's contents.
+const SUGGESTIONS = 10, P2 = /^p2:(0|[1-9][0-9]*)$/;
+const nameOf = p => assetName(p.asset) === p.asset ? title(p.name) : assetName(p.asset);
+function patternSearch(listId, value, say, onPick) {
+  const choices = h('datalist', { id: listId });
+  let asked = 0, typing;
+  // Up to ten { name, asset } suggestions for the typed text, or null when a newer search replaced this one.
+  async function suggest(text) {
+    const seq = ++asked, q = text.trim().toLowerCase().replace(/^dmw/, ''), hits = [];
+    if (q) {
+      const params = new URLSearchParams({ q, sort: 'name', limit: String(SUGGESTIONS) });
+      // The name search is a bounded scan: follow its cursor a few pages while it has not found enough.
+      for (let page = 0; page < 8 && hits.length < SUGGESTIONS; page++) {
+        const r = await get('/patterns?' + params);
+        hits.push(...(r.patterns ?? []).filter(p => P2.test(p.asset ?? '')).map(p => ({ name: nameOf(p), asset: p.asset })));
+        if (!r.next) break; params.set('cursor', r.next);
+      }
+    }
+    if (seq !== asked) return null;
+    clear(choices, ...hits.slice(0, SUGGESTIONS).map(p => h('option', { value: p.name })));
+    return hits.slice(0, SUGGESTIONS);
+  }
+  const search = h('input', { type: 'search', value, placeholder: 'Search a pattern by name',
+    'aria-label': 'Pattern', autocomplete: 'off',
+    oninput: () => { clearTimeout(typing); typing = setTimeout(() => suggest(search.value).catch(() => {}), 250); },
+    onchange: async () => {
+      const text = search.value.trim();
+      if (!text) return;
+      clearTimeout(typing);
+      let hits;
+      try { hits = await suggest(text); } catch (error) { say(`Pattern search failed (${walletError(error)}). Try again.`); return; }
+      if (!hits) return;
+      // The exact name, a pattern id, or the one pattern whose name contains the text ("null" finds Nullspar).
+      const want = text.toLowerCase().replace(/^dmw/, '');
+      const pick = hits.find(p => p.name.toLowerCase() === want) ?? (P2.test(text) ? { asset: text, name: assetName(text) } : hits.length === 1 ? hits[0] : null);
+      if (!pick) { say(hits.length ? `${hits.length === SUGGESTIONS ? 'Many' : fmtInt(hits.length)} patterns match “${text}”. Pick one from the suggestions.` : `No pattern named “${text}”.`); return; }
+      say(''); search.value = pick.name;
+      onPick(pick);
+    } });
+  search.setAttribute('list', listId);
+  return [search, choices];
+}
+// Found a new pattern? Whoever mints it first inscribes it and deploys its token, once. The connected
+// wallet's agent sees its own discoveries; anyone can search a pattern. Both lead to the deployment page.
+function deployPanel() {
+  const agent = wallet.player()?.agent ?? null, found = h('div'), note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
+  const say = text => { note.textContent = text; };
+  const search = patternSearch('deploy-pattern-names', '', say, pick => clear(found, h('div.row', { style: { gap: '10px' } }, matter(pick.asset), tokenStatus(pick.asset, { owner: agent }))));
+  const mine = agent ? pagedTable({ path: `/agents/${encodeURIComponent(agent)}/discoveries`, key: 'discoveries', limit: 10, empty: 'Your agent has not discovered a pattern yet.',
+    onError: () => true,
+    columns: [
+      { key: 'asset', label: 'Your agent’s patterns', render: r => matter(r.asset) },
+      { key: 'token', label: 'On Bitcoin', render: r => tokenStatus(r.asset, { owner: agent, lazy: true }) },
+    ] }) : null;
+  return panel('Found a new pattern?', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
+    h('p', { style: { margin: 0 } }, 'Inscribe it and deploy its token, once, from your own TAP Wallet. Then it mints like any other pattern. The discoverer does this first, during the finder week.'),
+    h('label.pager-ctl', {}, h('span', {}, 'Pattern'), ...search), found, note,
+    agent ? null : h('p.small.muted', { style: { margin: 0 } }, 'Connect the TAP Wallet linked to your agent to see the patterns it found. ', h('a', { href: '/table' }, 'Browse all patterns'), '.')),
+    mine?.el ?? null], { flush: true, id: 'deploy' });
+}
 // In-page navigation: a full reload would make wallet extensions ask to reconnect.
 const go = path => { history.pushState(null, '', path); dispatchEvent(new PopStateEvent('popstate')); };
 // TAP Wallet is what public minting needs: its connect button is the section's primary action.
@@ -396,7 +458,8 @@ function walletsHome(root, type) {
   const bitmap = type === 'link' ? block : null;
   const app = h('div.stack'), side = h('div.stack');
   root.append(h('div.page', {},
-    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Mint & wallets'), h('p', {}, PUBLIC_MINT_COPY))),
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Mint & wallets'), h('p', {}, PUBLIC_MINT_COPY, ' ',
+      h('a', { href: '#deploy', onclick: e => { e.preventDefault(); document.getElementById('deploy')?.scrollIntoView({ block: 'start' }); } }, 'Found a new pattern? Inscribe it and deploy its token')))),
     h('div.grid.cols-main', {}, app, side)));
   const policy = store.status?.feePolicy;
   side.append(...[panel('How public minting works', h('ol.numbered', {},
@@ -427,46 +490,13 @@ function walletsHome(root, type) {
     return h('span.row', { style: { gap: '6px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info', `Only the TAP Wallet holding ${r.block}.bitmap can mint this block.`) : null); };
   const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. ' + PUBLIC_MINT_COPY)); soon.hidden = false; list.el.hidden = true; return true; };
   let selectedAsset = chosen?.asset ?? (/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') ? asset : (store.patterns?.patterns ?? []).find(p => /^p2:(0|[1-9][0-9]*)$/.test(p.asset))?.asset ?? 'p2:0');
-  // A search field, not one control per pattern: there can be thousands. The server searches by name
-  // (/patterns?q=) as you type and returns at most ten suggestions.
-  const SUGGESTIONS = 10, P2 = /^p2:(0|[1-9][0-9]*)$/, choices = h('datalist', { id: 'public-pattern-names' });
-  const nameOf = p => assetName(p.asset) === p.asset ? title(p.name) : assetName(p.asset);
-  let asked = 0, typing;
-  // Up to ten { name, asset } suggestions for the typed text, or null when a newer search replaced this one.
-  async function suggest(text) {
-    const seq = ++asked, q = text.trim().toLowerCase().replace(/^dmw/, ''), hits = [];
-    if (q) {
-      const params = new URLSearchParams({ q, sort: 'name', limit: String(SUGGESTIONS) });
-      // The name search is a bounded scan: follow its cursor a few pages while it has not found enough.
-      for (let page = 0; page < 8 && hits.length < SUGGESTIONS; page++) {
-        const r = await get('/patterns?' + params);
-        hits.push(...(r.patterns ?? []).filter(p => P2.test(p.asset ?? '')).map(p => ({ name: nameOf(p), asset: p.asset })));
-        if (!r.next) break; params.set('cursor', r.next);
-      }
-    }
-    if (seq !== asked) return null;
-    clear(choices, ...hits.slice(0, SUGGESTIONS).map(p => h('option', { value: p.name })));
-    return hits.slice(0, SUGGESTIONS);
-  }
-  const search = h('input', { type: 'search', value: assetName(selectedAsset) === selectedAsset ? '' : assetName(selectedAsset), placeholder: 'Search a pattern by name',
-    'aria-label': 'Pattern', autocomplete: 'off',
-    oninput: () => { clearTimeout(typing); typing = setTimeout(() => suggest(search.value).catch(() => {}), 250); },
-    onchange: async () => {
-      const text = search.value.trim();
-      if (!text) return;
-      clearTimeout(typing);
-      let hits;
-      try { hits = await suggest(text); } catch (error) { listNote.textContent = `Pattern search failed (${walletError(error)}). Try again.`; return; }
-      if (!hits) return;
-      // The exact name, a pattern id, or the one pattern whose name contains the text ("null" finds Nullspar).
-      const want = text.toLowerCase().replace(/^dmw/, '');
-      const pick = hits.find(p => p.name.toLowerCase() === want) ?? (P2.test(text) ? { asset: text, name: assetName(text) } : hits.length === 1 ? hits[0] : null);
-      if (!pick) { listNote.textContent = hits.length ? `${hits.length === SUGGESTIONS ? 'Many' : fmtInt(hits.length)} patterns match “${text}”. Pick one from the suggestions.` : `No pattern named “${text}”.`; return; }
-      listNote.textContent = ''; selectedAsset = pick.asset; search.value = pick.name;
-      list.reset();
-    } });
-  search.setAttribute('list', 'public-pattern-names');
-  const picker = h('label.pager-ctl', {}, h('span', {}, 'Pattern'), search, choices);
+  const search = patternSearch('public-pattern-names', assetName(selectedAsset) === selectedAsset ? '' : assetName(selectedAsset), text => { listNote.textContent = text; },
+    pick => { selectedAsset = pick.asset; drawToken(); list.reset(); });
+  const picker = h('label.pager-ctl', {}, h('span', {}, 'Pattern'), ...search);
+  // The picked pattern's token on Bitcoin; until it is deployed, the way to inscribe and deploy it.
+  const tokenLine = h('div');
+  const drawToken = () => clear(tokenLine, tokenStatus(selectedAsset));
+  drawToken();
   list = pagedTable({ path: () => '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25, skipEmpty: true,
     empty: () => `No public blocks of ${assetName(selectedAsset)} right now. ${PUBLIC_MINT_COPY}`,
     onError: e => notOpen(e) && opensSoon(e),
@@ -481,7 +511,7 @@ function walletsHome(root, type) {
     ] });
   list.el.classList.add('public-mints');
   const publicPanel = panel('Public blocks', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
-    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
+    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, tokenLine, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
   // A block opened from elsewhere (/mint?asset=…&block=…): its current state from the point read.
   const bigger = b => { b.classList.remove('sm'); b.classList.add('cta'); return b; };
   let chosenBox = null;
@@ -516,11 +546,14 @@ function walletsHome(root, type) {
     refunds.hidden = true;
     return refunds;
   };
+  // Rebuilt only when the wallet's agent changes.
+  let deploy = null, deployAgent;
+  const deploySection = () => { const agent = wallet.player()?.agent ?? null; if (!deploy || agent !== deployAgent) { deployAgent = agent; deploy = deployPanel(); } return deploy; };
   const draw = () => {
     const any = wallet.connected();
     const out = [];
     if (chosen) out.push(panel(`${assetName(chosen.asset)} from block ${fmtInt(chosen.block)}`, chosenBox));
-    out.push(publicPanel, refundPanel());
+    out.push(publicPanel, deploySection(), refundPanel());
     out.push(panel('Your wallets', h('div.stack', { style: { gap: '10px' } },
       h('p', { style: { margin: 0 } }, any ? 'The wallets connected in the header. TAP Wallet pays and inscribes public mints. A wallet linked to an agent’s player is its payout wallet: that agent’s earnings reach it. Your agent starts the link; you sign it on the link it gives you.'
         : 'Connect here or in the header; it is one connection for the whole site. Minting public blocks needs only TAP Wallet.'),

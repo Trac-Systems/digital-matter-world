@@ -304,3 +304,34 @@ test('unsafe numeric block input and signing overrides are refused; expired inte
   assert.equal((await (await call('/api/mint', { asset: 'p2:1', block: '12' })).json()).requestId, requestId);
   assert.equal(f.packets.length, 2);
 });
+
+test('your patterns: a new pattern without claims offers Deploy, a deployed one does not, and the claims filter shows one pattern', async t => {
+  const f = await dashboardFixture(t), { call, dashboard } = await start(t, f);
+  const owner = f.agent.owner, settingsHash = f.claims[0].settingsHash;
+  f.patterns.push({ number: '2', asset: 'p2:2', name: 'dmwfresh', tier: 5 }, { number: '3', asset: 'p2:3', name: 'dmwother', tier: 2 });
+  f.discoveries.push({ number: '2', asset: 'p2:2', name: 'dmwfresh', tier: 5, discoverer: owner, state: 'accepted' });
+  f.unregistered.add('p2:2');
+  f.claims.push({ asset: 'p2:3', block: '9', count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  f.balances.set('p2:3', { amount: '100', current: true });
+  const { patterns } = await (await call('/api/patterns')).json();
+  assert.deepEqual(patterns.map(p => [p.asset, p.name, p.token, p.claims, p.discovered]),
+    [['p2:1', 'dmwtest', 'deployed', 2, false], ['p2:2', 'dmwfresh', 'not_deployed', 0, true], ['p2:3', 'dmwother', 'deployed', 1, false]]);
+  const fresh = patterns.find(p => p.asset === 'p2:2');
+  assert.equal(fresh.tier, 5); assert.equal(fresh.deploymentLink, f.service.deploymentLink('p2:2', f.agent.address));
+  for (const p of patterns.filter(p => p.token === 'deployed')) assert.equal(p.deploymentLink, null);
+  // The pattern inscription is in a block: the next step continues the same deployment page.
+  f.deployments.set('p2:2', { asset: 'p2:2', state: 'awaiting_player_deploy', phase: 'deployment', elementId: 'ab'.repeat(32) + 'i0' });
+  dashboard.state.patternCache = null;
+  const inscribed = (await (await call('/api/patterns')).json()).patterns.find(p => p.asset === 'p2:2');
+  assert.equal(inscribed.token, 'inscribed'); assert.equal(inscribed.deploymentLink, fresh.deploymentLink);
+  const only = async asset => (await (await call('/api/claims?asset=' + asset)).json()).claims.map(r => r.asset + '/' + r.block);
+  assert.deepEqual(await only('p2:3'), ['p2:3/9']);
+  assert.deepEqual(await only('p2:1'), ['p2:1/12', 'p2:1/11']);
+  assert.deepEqual(await only('p2:2'), []);
+  assert.equal((await (await call('/api/claims')).json()).claims.length, 3);
+  assert.equal((await call('/api/claims?asset=bad')).status, 400);
+  assert.equal((await call('/api/patterns?asset=p2:1')).status, 400);
+  // Reads only: no deployment is started and nothing is signed.
+  assert.equal(f.calls.some(c => c.path.startsWith('/mint/deployment/') || c.method !== 'GET'), false);
+  assert.equal(f.packets.length, 0);
+});

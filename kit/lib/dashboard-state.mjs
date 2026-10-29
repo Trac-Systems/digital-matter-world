@@ -29,6 +29,18 @@ function claimCursor(value) {
   return decoded;
 }
 const encodeClaimCursor = value => value ? Buffer.from(JSON.stringify(value)).toString('base64url') : null;
+// The pattern overview reads a few public pages per pattern; it is cached
+// briefly so the page's 15 s refresh and its filter clicks share one read.
+const PATTERN_TTL = 5000, PATTERN_LIMIT = 24, COUNT_PAGES = 2;
+const patternNumber = asset => { try { return BigInt(canonicalAsset(asset).slice(3)); } catch { return 0n; } };
+// Token state from the read-only deployment state: deployed, the pattern
+// inscription is in a block (the token deployment follows), or not yet.
+function tokenState(deployment) {
+  if (!deployment) return 'unknown';
+  if (deployment.state === 'registered') return 'deployed';
+  if (deployment.elementId || deployment.phase === 'deployment' || deployment.state === 'confirming') return 'inscribed';
+  return 'not_deployed';
+}
 
 // Financial requests have their own sequential queue. Mining's per-tip move
 // allowance must not make a human's mint click wait for another Bitcoin block.
@@ -118,14 +130,15 @@ export class DashboardState {
     if (BigInt(balance.amount) < BigInt(c.find.count)) return 'insufficient_balance';
     return c.allowed === true ? null : c.reason ?? 'mint_right_unavailable';
   }
-  async name(asset, fallback) {
-    if (fallback) return fallback;
-    if (!this.names.has(asset)) {
-      const page = await this.service.patterns({ asset: canonicalAsset(asset), limit: 1 });
-      this.names.set(asset, page.patterns?.[0]?.name ?? asset);
+  async pattern(asset) {
+    const key = canonicalAsset(asset);
+    if (!this.names.has(key)) {
+      const row = (await this.service.patterns({ asset: key, limit: 1 })).patterns?.[0];
+      this.names.set(key, { name: row?.name ?? asset, tier: row?.tier ?? null });
     }
-    return this.names.get(asset);
+    return this.names.get(key);
   }
+  async name(asset, fallback) { return fallback || (await this.pattern(asset)).name; }
   async claim(row, c, balance) {
     dashboardCheck(assetId(row.asset) && integer(row.block), 'invalid_claim_response', 502);
     const saved = this.savedSlot(row);
@@ -149,15 +162,17 @@ export class DashboardState {
         ? this.service.deploymentLink(canonicalAsset(row.asset), this.agent.address, this.agent.paymentOrigin) : null,
       paymentLink: requestId(id) ? this.service.paymentLink(id, this.agent.paymentOrigin) : null };
   }
-  async claims({ cursor, limit = 25 } = {}) {
+  // asset: one pattern only, in the form the gateway lists it (see patterns()).
+  async claims({ cursor, limit = 25, asset } = {}) {
     dashboardCheck(Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
+    dashboardCheck(asset === undefined || assetId(asset), 'invalid_asset');
     let position = claimCursor(cursor);
     const claims = [], balances = new Map();
     // The sources are disjoint: own finder-week rows, then other allowed and
     // blocked eligible rows. Each gateway cursor retains its filters/order.
     while (position && claims.length < limit) {
       const { source } = position;
-      const options = { limit: limit - claims.length, sort: 'block', order: 'desc', cursor: position.cursor, minted: false };
+      const options = { limit: limit - claims.length, sort: 'block', order: 'desc', cursor: position.cursor, minted: false, ...(asset ? { asset } : {}) };
       const page = source === 'finds'
         ? await this.service.profile(this.agent.address, { ...options, collection: 'finds' })
         : await this.service.mintRights(this.agent.address, { ...options, allowed: source === 'allowed' });
@@ -165,7 +180,7 @@ export class DashboardState {
       dashboardCheck(Array.isArray(entries), 'invalid_claim_page', 502);
       for (let i = 0; i < entries.length; i += 4) {
         const rows = await Promise.all(entries.slice(i, i + 4).map(async row => {
-          if (row.compound) return null;
+          if (row.compound || asset && canonicalAsset(row.asset) !== canonicalAsset(asset)) return null;
           const c = await this.candidate(row);
           if (row.minted || c.minted || !this.eligible(c)) return null;
           if ((this.role(c) === 'finder') !== (source === 'finds')) return null;
@@ -183,6 +198,67 @@ export class DashboardState {
       if (continuation) break;
     }
     return { claims, next: encodeClaimCursor(position), total: null, order: 'finder_then_asset_block' };
+  }
+  // Up to `pages` public pages of one agent collection.
+  async collect(read, key, pages) {
+    const rows = []; let cursor; const seen = new Set();
+    for (let i = 0; i < pages; i++) {
+      const page = await read(cursor);
+      dashboardCheck(Array.isArray(page[key]), 'invalid_pattern_page', 502);
+      rows.push(...page[key]); cursor = nextCursor(page);
+      if (!cursor || seen.has(cursor)) return { rows, more: false };
+      seen.add(cursor);
+    }
+    return { rows, more: true };
+  }
+  // "Your patterns": every pattern this agent discovered or holds unminted
+  // claims in, with its token state and claim count. Public paged reads only;
+  // the deployment state read never starts a deployment.
+  patterns() {
+    if (this.patternCache && Date.now() - this.patternCache.at < PATTERN_TTL) return this.patternCache.value;
+    this.patternTask ??= this.loadPatterns().then(value => { this.patternCache = { at: Date.now(), value }; return value; }).finally(() => { this.patternTask = null; });
+    return this.patternTask;
+  }
+  async loadPatterns() {
+    const address = this.agent.address, found = new Map();
+    const add = (asset, extra = {}) => {
+      if (!assetId(asset)) return;
+      const key = canonicalAsset(asset), old = found.get(key) ?? { asset: key, ids: new Set(), discovered: false };
+      old.ids.add(asset); found.set(key, Object.assign(old, extra));
+    };
+    const discoveries = await this.collect(cursor => this.service.profile(address, { collection: 'discoveries', limit: 50, cursor }), 'discoveries', 4);
+    for (const row of discoveries.rows) {
+      const discoverer = wireIdentities(row).discoverer;
+      if (!discoverer || discoverer === this.agent.owner) add(row.asset, { discovered: true, name: row.name ?? null, tier: row.tier ?? null });
+    }
+    // Patterns with claims: the newest own finds, mint rights and held units.
+    const pages = await Promise.all([
+      this.service.profile(address, { collection: 'finds', limit: 50, minted: false, sort: 'block', order: 'desc' }).then(p => p.finds),
+      this.service.mintRights(address, { limit: 50, minted: false }).then(p => p.mintRights),
+      this.service.profile(address, { collection: 'balances', limit: 50 }).then(p => p.balances)].map(read => read.catch(() => [])));
+    for (const rows of pages) for (const row of Array.isArray(rows) ? rows : []) if (!row.compound) add(row.asset);
+    const list = [...found.values()].sort((a, b) => patternNumber(a.asset) < patternNumber(b.asset) ? -1 : patternNumber(a.asset) > patternNumber(b.asset) ? 1 : 0);
+    const shown = list.slice(0, PATTERN_LIMIT), patterns = [];
+    for (let i = 0; i < shown.length; i += 4) patterns.push(...await Promise.all(shown.slice(i, i + 4).map(p => this.patternRow(p))));
+    return { patterns: patterns.filter(p => p.discovered || p.claims !== 0), more: discoveries.more || list.length > PATTERN_LIMIT };
+  }
+  async patternRow(p) {
+    let deployment = null;
+    try { deployment = await this.service.deploymentState(p.asset); } catch { /* shown as unknown */ }
+    // The gateway lists a pattern's rows under one id: legacy p0 or p2:NUMBER.
+    const id = assetId(deployment?.asset) && canonicalAsset(deployment.asset) === p.asset ? deployment.asset
+      : [...p.ids].find(id => id !== p.asset) ?? p.asset;
+    const unique = rows => rows.filter(row => !row.compound && row.eligible !== false && canonicalAsset(row.asset) === p.asset).map(row => String(row.block));
+    const [finds, rights, detail] = await Promise.all([
+      this.collect(cursor => this.service.profile(this.agent.address, { collection: 'finds', asset: id, limit: 50, minted: false, cursor }), 'finds', COUNT_PAGES).catch(() => null),
+      this.collect(cursor => this.service.mintRights(this.agent.address, { asset: id, limit: 50, minted: false, cursor }), 'mintRights', COUNT_PAGES).catch(() => null),
+      p.name && p.tier !== null && p.tier !== undefined ? null : this.pattern(p.asset).catch(() => null)]);
+    const token = tokenState(deployment);
+    return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? detail?.name ?? p.asset, tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
+      token, deploymentState: deployment?.state ?? null,
+      // null: the count could not be read this time.
+      claims: finds && rights ? new Set([...unique(finds.rows), ...unique(rights.rows)]).size : null, moreClaims: !!(finds?.more || rights?.more),
+      deploymentLink: token === 'deployed' ? null : this.service.deploymentLink(p.asset, this.agent.address, this.agent.paymentOrigin) };
   }
   async status(id, slot) {
     dashboardCheck(requestId(id), 'invalid_request');
