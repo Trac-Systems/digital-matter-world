@@ -1,19 +1,13 @@
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
+import { patternCatalogId } from '../../rules/src/public-claims.js';
+export { patternCatalogId };
 
 export const deploymentAssetId = asset => typeof asset === 'string' &&
   (/^[pc][0-9a-z]{1,23}$/.test(asset) || /^p2:(0|[1-9][0-9]*)$/.test(asset));
 
 // Imported finds and balances keep the v1 ledger key. The p2 catalog key is
 // only an alias for those patterns, never a second pool of mintable units.
-export function patternCatalogId(asset) {
-  if (/^p2:(0|[1-9][0-9]*)$/.test(asset)) return asset;
-  if (!/^p[0-9a-z]{1,23}$/.test(asset)) return null;
-  let number = 0n;
-  for (const digit of asset.slice(1)) number = number * 36n + BigInt(parseInt(digit, 36));
-  return 'p2:' + number;
-}
-
 // Public catalog rows use p2 ids; imported mint records retain the original
 // ledger id. Resolve that alias at read time without duplicating mint counts.
 export function patternMint(store, asset, block) {

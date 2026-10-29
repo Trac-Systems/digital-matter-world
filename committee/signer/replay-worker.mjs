@@ -42,7 +42,8 @@ if (!isMainThread) {
     try {
       const local = histories.views(sources), views = sources.map((_, i) => local[i] ?? view(i));
       const { state: _state, patterns: _patterns, ...result } = rebuildBatch(network, proposal, { ...context, ...views[0], views,
-        claimNode: (id, ancestors) => node('claimNode', id, ancestors), namedNode: (id, ancestors) => node('namedNode', id, ancestors) });
+        claimNode: (id, ancestors) => node('claimNode', id, ancestors), namedNode: (id, ancestors) => node('namedNode', id, ancestors),
+        publicMintGet: (asset, block) => call(0, 'publicMintGet', [asset, block]) });
       parentPort.postMessage({ result });
     } catch (e) { parentPort.postMessage({ error: e.message }); }
     finally { port.close(); }
@@ -93,7 +94,7 @@ export class BatchReplay {
     } finally { this.busy = false; }
   }
   perform(network, proposal, context) {
-    const { history, hashAt, views, claimNode, namedNode, replayNodes, ...data } = context;
+    const { history, hashAt, views, claimNode, namedNode, replayNodes, publicMintGet, ...data } = context;
     const source = views ?? context.inputs.map(() => ({ history, hashAt }));
     const signal = new SharedArrayBuffer(4), flag = new Int32Array(signal), { port1, port2 } = new MessageChannel();
     return new Promise((resolve, reject) => {
@@ -107,7 +108,8 @@ export class BatchReplay {
               if (!Array.isArray(rows) || !rows.length || rows.length > this.nodeCacheEntries || rows[0]?.[0] !== args[0]) throw Error('replay_node_batch');
               value = { row: rows[0][1], neighbors: rows.slice(1) };
             } else value = { row: await (method === 'claimNode' ? claimNode : namedNode)?.(...args) };
-          } else value = method === 'length' ? s.history.length : method === 'hashAt' ? s.hashAt(...args) : s.history[method](...args);
+          } else if (method === 'publicMintGet') value = await publicMintGet?.(...args);
+          else value = method === 'length' ? s.history.length : method === 'hashAt' ? s.hashAt(...args) : s.history[method](...args);
           port1.postMessage({ value });
         }
         catch (e) { port1.postMessage({ error: e.message }); }

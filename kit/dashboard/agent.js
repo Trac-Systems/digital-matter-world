@@ -77,7 +77,9 @@ export function mount(el) {
       { key: 'state', label: 'State', render: r => pill(words(r.state), STATE_KIND[r.state] ?? '') },
       { key: 'action', label: '', render: r => ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
         ? h('button.btn.sm', { onclick: event => mint(r, event.currentTarget) }, 'Resume')
-        : h('a.btn.sm', { href: '/mint/' + r.requestId }, r.state === 'permit_issued' ? 'Inscribe' : r.payable ? 'Pay' : 'Open') },
+        // Same conditions as the request page: Pay and mint with a set-aside; Inscribe only while the server is not sending.
+        : h('a.btn.sm', { href: '/mint/' + r.requestId }, r.state === 'permit_issued' ? (!r.mintSender || ['needs_user', 'returning', 'returned'].includes(r.mintSender.state) ? 'Inscribe' : 'Open')
+          : r.payable ? (r.mintFunding ? 'Pay and mint' : 'Pay') : 'Open') },
     ], { sortable: false }) : h('div.empty', {}, offset ? 'No more open requests.' : 'No open mint requests. Press Mint on a claimed block to start one.'));
     clear(requestPager, h('span.pager-total', {}, data.requests.length ? `${offset + 1}–${offset + data.requests.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !offset, onclick: () => { offset = 0; act('Loading…', loadRequests); } }, 'Newest'),

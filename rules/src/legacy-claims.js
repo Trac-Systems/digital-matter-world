@@ -5,6 +5,7 @@ import { settleClaims } from '../legacy/v1/rules/src/claims.js';
 import { boundedPages } from './claims-paged.js';
 import { encodeBinary } from './binary.js';
 import { merkleRoot } from './merkle.js';
+import { publicTaken } from './public-claims.js';
 
 // Only the terminal importer creates these rounds. The old slot IDs remain
 // the lottery domain, even though the continuation uses decimal IDs/pages.
@@ -21,13 +22,13 @@ export function freezeLegacyClaimWindow({ state, event, decidingHash, counted, s
       for (const number of c.patterns) {
         const id = findIdV2(c.block, number), slot = recordGet(state.claimSlots, `${event.window}/${id}`);
         if (slot) slots.set(id, slot);
-        if (recordGet(state.finds, id) || recordGet(state.claimReservations, id)) finds[findId(claim.block, safeNumberV2(number))] = true;
+        if (recordGet(state.finds, id) || recordGet(state.claimReservations, id) || slot && state.publicMintGet && publicTaken(state, slot)) finds[findId(claim.block, safeNumberV2(number))] = true;
       }
     }
   }
   for (const id of original.tipSlots) {
     const slot = recordGet(state.claimSlots, `${event.window}/${id}`); assert(slot, 'claim_input_missing'); slots.set(id, slot);
-    if (recordGet(state.finds, id) || recordGet(state.claimReservations, id)) finds[findId(safeNumberV2(slot.block), safeNumberV2(slot.pattern))] = true;
+    if (recordGet(state.finds, id) || recordGet(state.claimReservations, id) || state.publicMintGet && publicTaken(state, slot)) finds[findId(safeNumberV2(slot.block), safeNumberV2(slot.pattern))] = true;
   }
   for (let i = 0n; i < BigInt(event.headerCount); i++) {
     const agent = recordGet(state.headerInputs, `${event.window}/${i}`); assert(agent, 'header_input_missing');

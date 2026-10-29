@@ -1,4 +1,19 @@
-import { TapWalletMint } from './wallet.js';
+import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
+
+// One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
+const PAID_ONCE = 'Paid. Your mint goes out automatically when the permit arrives. You can close this page.';
+const NEEDS_USER = 'The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.';
+const SENDER_STATES = ['waiting_funding', 'funded', 'sending', 'sent', 'minted', 'needs_user', 'returning', 'returned'], SENDER_STOPPED = ['needs_user', 'returning', 'returned'];
+const txid = value => /^[0-9a-f]{64}$/.test(value ?? '') ? value : null;
+function senderWords(status, ms) {
+  if (status.state === 'minted' || ms.state === 'minted') return 'Minted.';
+  if (txid(ms.revealTxid)) return 'Mint sent. Waiting for Bitcoin to confirm the mint.';
+  if (ms.state === 'sending') return 'Permit issued. Our server is sending your mint inscription.';
+  if (status.state === 'permit_issued') return 'Permit issued. Your mint goes out shortly.';
+  if (ms.state === 'funded' || !['awaiting_payment', 'partly_paid'].includes(status.state)) return 'Payment confirmed. Waiting for the permit (next batch).';
+  return 'Waiting for your payment to confirm on Bitcoin.';
+}
+function txLink(label, value) { const link = el('a', label, 'mono'); link.href = 'https://mempool.space/tx/' + value; link.target = '_blank'; link.rel = 'noreferrer noopener'; return link; }
 
 const el = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
 const append = (parent, ...nodes) => { parent.append(...nodes.filter(Boolean)); return parent; };
@@ -28,6 +43,8 @@ const rows = el('tbody'), requests = el('div', undefined, 'stack'), payment = el
 const table = el('table'), head = el('tr');
 for (const label of ['Pattern', 'Block', 'Units / balance', 'Eligibility / state', '']) head.append(el('th', label));
 append(table, append(el('thead'), head), rows);
+const mintState = state => ({ public: 'Public', claimed: 'Claimed', already_minted: 'Minted', minted: 'Minted', paid: 'Payment confirmed', permit_issued: 'Being minted' })[state] ?? state.replaceAll('_', ' ');
+const mintReason = reason => ({ public_minted: 'This block was already taken by a public TAP Wallet mint.', claimed_first: 'An agent claimed this block before your payment was confirmed. Your payment is refunded.' })[reason] ?? reason?.replaceAll('_', ' ');
 let info, cursor, next, busy = false, activeId, wallet, timer, requestOffset = 0;
 const paymentDrafts = new Map();
 const mintAll = button('Mint all', async () => { await api('/api/mint-all', {}); note.textContent = 'Preparing eligible claimed blocks one by one. Approve each payment in your wallet.'; await refresh(); });
@@ -43,7 +60,7 @@ async function attempt(action) {
   if (busy) return; busy = true;
   for (const node of page.querySelectorAll('button')) node.disabled = true;
   try { await action(); }
-  catch (error) { note.textContent = error.message; }
+  catch (error) { note.textContent = mintReason(error.message); }
   finally { busy = false; for (const node of page.querySelectorAll('button')) node.disabled = node.dataset.disabled === 'true'; }
 }
 function disabled(node, value) { node.dataset.disabled = String(value); node.disabled = value || busy; }
@@ -69,8 +86,8 @@ async function refreshClaims() {
   rows.replaceChildren(); next = data.next;
   for (const row of data.claims) {
     const tr = el('tr'), action = el('td');
-    const reason = row.reason === 'insufficient_balance' ? `Not mintable: insufficient units (need ${row.count}, balance ${row.balance})` : row.reason?.replaceAll('_', ' ');
-    const state = el('td', [row.eligibility, row.state.replaceAll('_', ' '), reason].filter(Boolean).join(' · '));
+    const reason = row.reason === 'insufficient_balance' ? `Not mintable: insufficient units (need ${row.count}, balance ${row.balance})` : mintReason(row.reason);
+    const state = el('td', [row.eligibility, mintState(row.state), reason].filter(Boolean).join(' · '));
     state.title = [row.findHeight != null ? 'Found at ' + row.findHeight : null, row.finderUntil != null ? 'Finder week ends at counted height ' + row.finderUntil : null].filter(Boolean).join(' · ');
     if (row.canMint) { const mintButton = button('Mint', () => mint(row)); disabled(mintButton, !info.payoutAddress); action.append(mintButton); }
     else if (!row.minted && row.requestId) action.append(button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }));
@@ -85,8 +102,8 @@ async function refreshRequests() {
   requests.replaceChildren();
   if (data.batch) requests.append(el('p', `Mint all: ${data.batch.state} · ${data.batch.completed} prepared · ${data.batch.failed} failed${data.batch.error ? ' · ' + data.batch.error : ''}`));
   for (const error of data.batch?.errors ?? []) requests.append(el('p', `${error.asset} / ${error.block}: ${error.error}`, 'small'));
-  for (const row of data.batch?.deploymentNeeded ?? []) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block} · ${row.state.replaceAll('_', ' ')}`), row.deploymentLink ? externalLink('Deploy pattern', row.deploymentLink) : null));
-  for (const row of data.requests) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block ?? '—'} · ${row.state.replaceAll('_', ' ')}`),
+  for (const row of data.batch?.deploymentNeeded ?? []) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block} · ${mintState(row.state)}`), row.deploymentLink ? externalLink('Deploy pattern', row.deploymentLink) : null));
+  for (const row of data.requests) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block ?? '—'} · ${mintState(row.state)}`),
     button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }),
     ['unknown', 'authorizing'].includes(row.state) && row.block !== undefined ? button('Resume request', () => mint(row)) : null));
   if (requestOffset) requests.append(button('Newest requests', async () => { requestOffset = 0; await refreshRequests(); }));
@@ -105,20 +122,33 @@ async function refreshPayment() {
       if (reportedPayments.has(id)) note.textContent = 'Your payment was found on Bitcoin and reported. The permit follows with the next batch.';
     }
   }
-  payment.replaceChildren(el('h2', 'Mint payment'), el('p', activeId, 'mono'), el('p', 'State: ' + status.state.replaceAll('_', ' ')), el('p', 'Receiver: ' + status.receiver, 'mono'));
+  payment.replaceChildren(el('h2', 'Mint payment'), el('p', activeId, 'mono'), el('p', 'State: ' + mintState(status.state)), el('p', 'Receiver: ' + status.receiver, 'mono'));
   for (const item of status.missing) payment.append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → ${item.to}`));
+  const funding = status.payBy?.rail === 'tap' && Number.isSafeInteger(status.mintFunding?.satoshis) ? status.mintFunding : null;
+  const ms = SENDER_STATES.includes(status.mintSender?.state) ? status.mintSender : null, senderStopped = SENDER_STOPPED.includes(ms?.state);
+  if (funding) payment.append(el('p', `Bitcoin set aside for the mint inscription: ${funding.satoshis} sats`));
+  if (ms && !senderStopped) {
+    if (status.state !== 'minted' && !txid(ms.revealTxid)) payment.append(el('p', PAID_ONCE));
+    payment.append(append(el('p', 'Mint: ' + senderWords(status, ms) + ' '), txid(ms.commitTxid) ? txLink('Commit', ms.commitTxid) : null, txid(ms.commitTxid) && txid(ms.revealTxid) ? document.createTextNode(' · ') : null, txid(ms.revealTxid) ? txLink('Reveal', ms.revealTxid) : null));
+  }
+  if (ms && senderStopped && status.state === 'permit_issued') payment.append(el('p', NEEDS_USER));
   if (!globalThis.tapprotocol) {
     if (status.localWalletProgress) payment.append(el('p', 'This request has saved local wallet progress. Reconnect TAP Wallet here to resume it.'));
     else payment.append(el('p', 'TAP Wallet is not available on this local page. You can finish this request on the site.'), externalLink('Open payment page', status.paymentLink));
   }
-  if (globalThis.tapprotocol && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state)) payment.append(button('Pay missing items', async () => {
-    if (!confirm('Pay the remaining quoted fees from your bound TAP wallet?\n' + status.missing.map(item => `${item.role}: ${formatTap(item.amount)} TAP`).join('\n'))) return;
+  if (globalThis.tapprotocol && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state)) payment.append(button(funding ? 'Pay and mint' : 'Pay missing items', async () => {
+    // TAP Wallet 1.0.49 or newer, checked before the confirmation and any other wallet call.
+    await tapWalletCapabilities(globalThis.tapprotocol);
+    if (!confirm((funding ? 'Pay and mint? TAP Wallet asks once.\n' : '') + 'Pay the remaining quoted fees from your bound TAP wallet?\n' + status.missing.map(item => `${item.role}: ${formatTap(item.amount)} TAP`).join('\n')
+      + (funding ? `\nBitcoin set aside for the mint inscription: ${funding.satoshis} sats` : ''))) return;
     wallet.provider = globalThis.tapprotocol; await wallet.connect();
     let result = await wallet.pay(activeId);
     if (result.retryable && confirm('TAP Wallet returned no receipt for the last attempt.\nRetry only if your wallet shows no sent payment for this request.')) result = await wallet.pay(activeId, { retry: true });
-    note.textContent = result.message ?? 'Payment submitted. Waiting for confirmation.'; await refreshPayment();
+    note.textContent = result.message ?? (result.mintFunded ? PAID_ONCE : 'Payment submitted. Waiting for confirmation.'); await refreshPayment();
   }));
-  if (globalThis.tapprotocol && status.state === 'permit_issued') payment.append(button('Inscribe mint', async () => {
+  // With a set-aside the gateway sends the mint; Inscribe mint stays the fallback when it cannot (or never had one).
+  if (globalThis.tapprotocol && status.state === 'permit_issued' && (!ms || senderStopped)) payment.append(button('Inscribe mint', async () => {
+    await tapWalletCapabilities(globalThis.tapprotocol);
     wallet.provider = globalThis.tapprotocol; await wallet.connect();
     const result = await wallet.inscribe(activeId, { maxFeeSats: '1000000', confirm: async terms => confirm(`${terms.resume ? 'Resume' : 'Inscribe'} this mint?\nMiner fees: ${terms.feeSats} sat\nPostage: ${terms.postage} sat\nReceiver: ${terms.receiver}`) });
     if (result.state === 'broadcast') await api('/api/payment', { id: activeId, inscription: result.inscriptionId });

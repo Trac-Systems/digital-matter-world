@@ -153,7 +153,7 @@ export class Mints {
     await this.save(candidate); await this.refresh(candidate, await this.reads.counted(), payment);
     return this.public(id);
   }); }
-  public(id) { const r = this.store.get('mints', id); check(r, 'request_not_found', 404); return publicMint(r); }
+  public(id) { const r = this.store.get('mints', id); check(r, 'request_not_found', 404); const status = publicMint(r); return this.mintSender?.decorate(r, status) ?? status; }
   async save(row) { await this.store.transact([{ space: 'mints', id: row.id, value: row },
     ...(row.state !== 'reserving' ? [{ space: reservingSpace(row), id: row.id }] : [])]); return row; }
   async supervise() { /* No service transaction can need cancellation. */ }

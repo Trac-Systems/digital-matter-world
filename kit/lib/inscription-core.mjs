@@ -22,12 +22,13 @@ export function fundingAddress(publicKey, network) {
 const outputScript = (address, network) => btc.OutScript.encode(btc.Address(network).decode(address));
 const same = (a, b) => hex(a) === hex(b);
 
-// Only confirmed, explicitly cardinal P2TR inputs belonging to this signer.
-// The TAP Wallet adapter marks coins cardinal only after its asset filtering.
-function coinsFor(utxos, script) {
+// Wallet callers use confirmed, explicitly cardinal P2TR inputs. The server
+// may opt into spending its dedicated unconfirmed set-aside. The TAP Wallet
+// adapter marks coins cardinal only after its asset filtering.
+function coinsFor(utxos, script, allowUnconfirmed = false) {
   ensure(Array.isArray(utxos) && utxos.length <= 1000, 'Invalid funding coins');
   const seen = new Set();
-  return utxos.filter(c => c.cardinal === true && c.confirmed === true).map(c => {
+  return utxos.filter(c => c.cardinal === true && (c.confirmed === true || allowUnconfirmed && c.confirmed === false)).map(c => {
     ensure(/^[0-9a-f]{64}$/.test(c.txid) && Number.isSafeInteger(c.vout) && c.vout >= 0 && c.vout <= 0xffffffff, 'Invalid funding outpoint');
     ensure(typeof c.value === 'string' && /^[1-9][0-9]{0,15}$/.test(c.value), 'Funding value must be integer satoshis');
     ensure(same(unhex(c.script), script), 'Funding coin belongs to a different wallet');
@@ -37,7 +38,7 @@ function coinsFor(utxos, script) {
   }).sort((a, b) => a.amount === b.amount ? `${a.txid}:${a.vout}`.localeCompare(`${b.txid}:${b.vout}`) : a.amount > b.amount ? -1 : 1);
 }
 
-export function buildInscription({ text, receiver, publicKey, network, utxos, feeRate, maxFeeSats, postage = 546, secret = schnorr.utils.randomPrivateKey() }) {
+export function buildInscription({ text, receiver, publicKey, network, utxos, feeRate, maxFeeSats, postage = 546, secret = schnorr.utils.randomPrivateKey(), changeAddress, allowUnconfirmed = false, allowNoChange = false, dustSats = 546 }) {
   const net = networkFor(network), content = new TextEncoder().encode(text);
   ensure(typeof text === 'string' && content.length > 0 && content.length <= 80000, 'Inscription must contain 1–80000 UTF-8 bytes');
   ensure(Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= 1000, 'Choose a fee rate between 1 and 1000 sat/vB');
@@ -46,6 +47,8 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
   const pub = typeof publicKey === 'string' ? unhex(publicKey) : publicKey;
   const internal = pub.length === 33 ? pub.slice(1) : pub;
   const payer = btc.p2tr(internal, undefined, net), destination = outputScript(receiver, net);
+  ensure(Number.isSafeInteger(dustSats) && dustSats >= 546 && dustSats <= 100000, 'Invalid change dust');
+  const changeScript = changeAddress ? outputScript(changeAddress, net) : payer.script;
   const chunks = [schnorr.getPublicKey(secret), 'CHECKSIG', 0, 'IF', new TextEncoder().encode('ord'), Uint8Array.of(1), new TextEncoder().encode('text/plain;charset=utf-8'), 0];
   for (let i = 0; i < content.length; i += 520) chunks.push(content.slice(i, i + 520));
   const script = btc.Script.encode([...chunks, 'ENDIF']);
@@ -59,7 +62,7 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
     return tx;
   };
   const revealFee = BigInt(Math.ceil(reveal('00'.repeat(32), 1000000n, false).vsize * feeRate));
-  const commitValue = BigInt(postage) + revealFee, coins = coinsFor(utxos, payer.script);
+  const commitValue = BigInt(postage) + revealFee, coins = coinsFor(utxos, payer.script, allowUnconfirmed);
   let selected = [], total = 0n, commitFee = 0n, change = 0n;
   for (const coin of coins.slice(0, 16)) {
     selected.push(coin); total += coin.amount;
@@ -67,14 +70,15 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
     // potentially 65-byte SIGHASH_ALL wallet signature.
     commitFee = BigInt(Math.ceil((12 + selected.length * 58 + 2 * 43) * feeRate));
     change = total - commitValue - commitFee;
-    if (change >= 546n) break;
+    if (change >= BigInt(dustSats) || allowNoChange && change >= 0n) break;
   }
-  ensure(selected.length > 0 && change >= 546n, 'Fund this wallet with confirmed cardinal BTC (up to 16 inputs)');
+  ensure(selected.length > 0 && (change >= BigInt(dustSats) || allowNoChange && change >= 0n), 'Fund this wallet with confirmed cardinal BTC (up to 16 inputs)', allowUnconfirmed || allowNoChange ? 'bitcoin_funding_insufficient' : 'player_mint_invalid');
+  if (allowNoChange && change < BigInt(dustSats)) { commitFee += change; change = 0n; }
   ensure(commitFee + revealFee <= BigInt(maxFeeSats), 'Bitcoin fee exceeds the approved maximum', 'bitcoin_fee_limit');
   const commit = new btc.Transaction();
   for (const coin of selected) commit.addInput({ txid: coin.txid, index: coin.vout, sequence: 0xfffffffd, witnessUtxo: { script: payer.script, amount: coin.amount }, tapInternalKey: internal });
   commit.addOutput({ script: leaf.script, amount: commitValue });
-  commit.addOutput({ script: payer.script, amount: change });
+  if (change > 0n) commit.addOutput({ script: changeScript, amount: change });
   // Segwit signatures do not change the txid. Sign the reveal now and persist
   // it before allowing a commit broadcast; no ephemeral private key is saved.
   const commitTxid = hex(sha256(sha256(commit.unsignedTx)).reverse());

@@ -1,3 +1,6 @@
+import { mintSenderSettings } from './src/mint-sender-settings.mjs';
+import { MintSenderView } from './src/mint-sender-view.mjs';
+import { readMintSeed } from './src/mint-sender-keys.mjs';
 import { supportedNode } from '../node-version.mjs';
 import { rules } from './src/rules.mjs';
 import { evidencePublisher } from './prod/evidence.mjs';
@@ -72,7 +75,7 @@ async function startGateway(config, controller) {
   const resources = config.v2 ? runtimeResources(config.v2.resources, config.v2.document) : null;
   config = configuredResources(config);
   const http = await phase('gateway.listen', () => startupListener(config.listen));
-  let store, pipeline, adapters, scheduler, evidence, committee, operator, closed = false, closing;
+  let store, pipeline, adapters, scheduler, evidence, committee, operator, mintSender, closed = false, closing;
   const service = { ...http };
   const close = () => closing ??= (async () => {
     closed = true; scheduler?.stop();
@@ -87,7 +90,7 @@ async function startGateway(config, controller) {
       await replayStopped;
       await phase('gateway.pipeline_close', () => pipeline?.close());
     } finally {
-      evidence?.close();
+      evidence?.close(); mintSender?.close();
       try { await phase('gateway.adapters_close', () => adapters?.close?.()); }
       finally { await phase('gateway.store_close', () => store?.close({ checkpoint: true })); }
     }
@@ -115,6 +118,10 @@ async function startGateway(config, controller) {
       operations: v2 ? null : adapters.operations, links: v2 ? null : adapters.links, patterns: config.patterns ?? [], settings: v2?.settings ?? { claimsPerWindow: config.claimsPerWindow ?? rules.CLAIM_DEFAULTS.claimsPerWindow, puzzleBits: config.puzzleBits ?? 12, receiptSigners: config.committee.map(s => s.peer) }, limits: config.batchLimits ?? {} });
     v2?.recovery?.attach({ files, outbox, pipeline }); pipeline.recovery = v2?.recovery;
     const mints = v2 ? v2.mints : adapters.payments && adapters.operations ? new Mints({ store, network: config.network, committee, reads: adapters.reads, payments: adapters.payments, operations: adapters.operations, resources: config.assetResources }) : null;
+    if (mints && config.mintSender) {
+      const settings = mintSenderSettings(config.mintSender);
+      if (settings.seedFile) mints.mintSender = mintSender = new MintSenderView({ seed: await readMintSeed(settings.seedFile), network: config.mode === 'regtest' ? 'regtest' : 'mainnet', settings });
+    }
     const links = v2 ? v2.links : adapters.links;
     const publicIndex = new PublicIndex({ store, files, history, reads: adapters.reads });
     const publicViews = new PublicViews({ store, history, reads: adapters.reads, mints, network: config.network, claimsPerWindow: config.claimsPerWindow });

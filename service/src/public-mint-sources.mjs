@@ -7,6 +7,7 @@ import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { tapReceipts, inscriptionContents } from './mint-payments.mjs';
 import { permit } from '../../committee/signer/adapter.mjs';
 import { publicScanKey } from '../../contract/public-mint.js';
+import { plotKey } from '../../contract/financial-capacity.js';
 const DOMAIN = 'dmw-public-mint-quote-v1', PREFIX = 'dmw-public-pay-v1|';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 export const publicPaymentData = (intent, role) => PREFIX + Buffer.from(rules.stableJSON(intent)).toString('base64url') + '|' + role;
@@ -20,14 +21,23 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const context = await reads.rulesContext(), height = rules.decimalV2(at?.counted ?? await reads.counted());
     check(rules.publicMintActive(context.settings, height), 'public_mint_inactive'); return { document: context.settings, height };
   };
-  reads.publicMintContext = async (asset, block, at, feeQuote, { settled = false } = {}) => {
+  reads.publicMintContext = async (asset, block, at, feeQuote, { settled = false, scanning = false } = {}) => {
     const { document, height } = await active(at), context = await reads.assetContext(asset, block, at ?? 'tap', feeQuote);
     check(context.pattern && context.publicClaims && context.deployment?.active && context.deployment.kind === 'dmt', 'public_index_warming', 503);
     const minted = await reads.isMinted(context.deployment.id, context.deployment.tick, block, at);
-    const right = rules.publicBlockRight({ pattern: context.pattern, block, height, settings: document, find: context.find,
-      reserved: context.publicClaims.reservation, headerAward: context.publicClaims.headerAward, minted: !settled && minted });
-    check(right.state === 'public', right.state, 409);
-    check(!context.publicClaims.unsettled, 'public_scan_pending', 503);
+    const rightInput = { pattern: context.pattern, block, height, settings: document, find: context.find,
+      reserved: context.publicClaims.reservation, headerAward: context.publicClaims.headerAward, minted: !settled && minted };
+    let right = rules.publicBlockRight(rightInput);
+    const legacy = right.claimDeadline !== undefined;
+    if (!legacy) {
+      const winner = settled && (await reads.financialRecord(publicScanKey(rules.publicPlotId(asset, block)), at))?.winner;
+      const capacity = !settled && !scanning && await reads.financialRecord(plotKey(asset, block), at);
+      if (winner) right = rules.publicBlockRight({ ...rightInput, find: null, reserved: null, headerAward: false });
+      else if (capacity && right.state !== 'claimed') right = rules.publicBlockRight({ ...rightInput, minted: true });
+    }
+    // Scanning must continue after an agent takes the block so confirmed payments can be refunded.
+    check(scanning && !legacy || right.state === 'public', settled && !legacy && right.state === 'claimed' ? 'claimed_first' : right.state, 409);
+    check(!legacy || !context.publicClaims.unsettled, 'public_scan_pending', 503);
     const amount = String(rules.patternCount(context.pattern, await reads.publicMintHeader(block, at)));
     check(BigInt(amount) > 0n, 'mint_no_match');
     return { context, document, height, amount, ...right };
@@ -51,11 +61,11 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
   reads.publicMintQuote = async (input, at) => {
     const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document } = result;
     const body = { network, asset: input.asset, block: rules.decimalV2(input.block), tapAddress: input.tapAddress, amount, feeQuote,
-      price, split, fees: plan.fees, custody: plan.custody, claimDeadline, settingsHash: rules.hashObject(document) };
+      price, split, fees: plan.fees, custody: plan.custody, ...(claimDeadline === undefined ? {} : { claimDeadline }), settingsHash: rules.hashObject(document) };
     const intent = reads.feeQuotes.sign(DOMAIN, body), id = rules.publicRequestId(network, intent);
     const fees = plan.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) }));
     check(fees.length > 0 && fees.every(f => Buffer.byteLength(f.dta) <= document.values.moveBytes), 'public_quote_size');
-    return { id, intent, fees, amount, price, split, feeQuote, claimDeadline, deployment: c.deployment };
+    return { id, intent, fees, amount, price, split, feeQuote, deployment: c.deployment };
   };
   const payment = async (intent, reference, position, at) => {
     const signed = reads.feeQuotes.verify(DOMAIN, intent), id = rules.publicRequestId(network, intent);
@@ -69,7 +79,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
         same(result.plan.fees, signed.fees) && same(result.plan.custody, signed.custody), 'public_quote_changed');
       check(BigInt(position.height) >= BigInt(signed.feeQuote.validFrom) && BigInt(position.height) <= BigInt(signed.feeQuote.validUntil), 'quote_expired');
     } catch (error) {
-      if (!['bitmap_holder_only', 'claimed', 'quote_expired', 'public_quote_changed'].includes(error.message)) throw error;
+      if (!['bitmap_holder_only', 'claimed', 'claimed_first', 'quote_expired', 'public_quote_changed'].includes(error.message)) throw error;
       refusal = error.message;
     }
     const feeItems = signed.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) }));
@@ -95,8 +105,8 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const { document, height } = await active(at), { asset, block } = transition, id = rules.publicPlotId(asset, block);
     check(transition.id === id, 'public_scan_identity');
     const old = await reads.financialRecord(publicScanKey(id), at);
-    const ctx = old?.winner ? null : await reads.publicMintContext(asset, block, at);
-    const start = old?.next?.height ?? (BigInt(ctx.claimDeadline) > BigInt(document.values.publicMintActivationHeight) ? ctx.claimDeadline : document.values.publicMintActivationHeight);
+    const ctx = old?.winner ? null : await reads.publicMintContext(asset, block, at, undefined, { scanning: true });
+    const start = old?.next?.height ?? (ctx?.claimDeadline !== undefined && BigInt(ctx.claimDeadline) > BigInt(document.values.publicMintActivationHeight) ? ctx.claimDeadline : document.values.publicMintActivationHeight);
     const from = old?.next ?? { height: start, transactionIndex: '0', inscriptionIndex: '0' };
     check(BigInt(from.height) <= BigInt(height), 'public_scan_pending');
     if (old) check(await reads.publicBitcoinHash(old.scannedHeight, at) === old.blockHash, 'public_payment_reorg');

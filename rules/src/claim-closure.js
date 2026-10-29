@@ -6,6 +6,8 @@ import { claimSlotId, queueHeaderFind } from './claims-paged.js';
 import { merkleRoot } from './merkle.js';
 import { orderedIndex } from './closure-index.js';
 import { emptyFrontier, appendFrontier, frontierRoot } from './merkle-frontier.js';
+import { claimsNeverCloseActive } from './public-mint.js';
+import { publicTaken } from './public-claims.js';
 
 const exhausted = () => { throw Error('closure_budget'); };
 // Count authenticated row accesses, including cache hits, so local cache size
@@ -123,11 +125,11 @@ export function advanceClaimWindow({ state, event, decidingHash, counted, settin
           const current = next.current, claim = current.claim, id = claimSlotId(s, claim.block, claim.patterns[current.index]);
           const slot = get('claimSlots', `${window}/${id}`);
           // Match the existing priority across every slot in the plot.
-          const reason = !slot ? 'not_a_slot' : get('finds', id) || get('claimReservations', id) ? 'already_found' : (() => {
+          const reason = !slot ? 'not_a_slot' : (state.publicMintGet || claimsNeverCloseActive(s, counted)) && publicTaken(working, slot) ? 'public_minted' : get('finds', id) || get('claimReservations', id) ? 'already_found' : (() => {
             const draw = get('headerAwards', slot.block);
             return draw && BigInt(draw.senderCount ?? '0') > 0n && compareOrdinal(slot.pattern, draw.catalog.nextNumber) < 0 ? 'header_awarded' : null;
           })();
-          const priority = ['not_a_slot', 'already_found', 'header_awarded'];
+          const priority = ['not_a_slot', 'public_minted', 'already_found', 'header_awarded'];
           if (reason && (!current.reason || priority.indexOf(reason) < priority.indexOf(current.reason))) current.reason = reason;
           // A claim admitted while an earlier window was still closing may
           // first learn that header award here. Materialize the original draw,
@@ -179,6 +181,8 @@ export function advanceClaimWindow({ state, event, decidingHash, counted, settin
             winner = tree.selectStep(next.winnerSelection); if (!winner) return; delete next.winnerSelection;
           }
           const slot = get('claimSlots', `${window}/${id}`);
+          // A public scan can take the slot between bounded closure chunks.
+          if (slot && (state.publicMintGet || claimsNeverCloseActive(s, counted)) && publicTaken(working, slot)) { next.slot = String(BigInt(next.slot) + 1n); return; }
           assert(slot && !get('claimReservations', id), 'closure_reservation');
           set('claimReservations', id, { window, winner });
           emit('winners', { ...slot, winner, source: 'claim', tickets: clock.value(String(count)), reason: 'won' });

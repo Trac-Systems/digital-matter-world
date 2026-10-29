@@ -38,6 +38,7 @@ for (const mode of ['asset', 'request']) test(`public ${mode} link resumes both 
   page.on('request', request => requests.push([new URL(request.url()).pathname, request.method()]));
   await page.route('https://mempool.space/**', route => route.fulfill({ contentType: 'application/json', body: '{"halfHourFee":2}' }));
   await page.exposeFunction('testWallet', async (method, args) => {
+    if (method === 'getCapabilities') return { version: '1.0.49', singleTxTransferExtraOutputs: true };
     if (['requestAccounts', 'getAccounts'].includes(method)) return [address];
     if (method === 'getNetwork') return 'regtest';
     if (method === 'getPublicKey') return publicKey;
@@ -58,7 +59,7 @@ for (const mode of ['asset', 'request']) test(`public ${mode} link resumes both 
     assert.fail('unexpected wallet operation ' + method);
   });
   await page.addInitScript(() => {
-    globalThis.tapprotocol = Object.fromEntries(['requestAccounts', 'getAccounts', 'getNetwork', 'getPublicKey', 'getBitcoinUtxos', 'singleTxTransfer', 'signPsbt', 'pushPsbt', 'pushTx']
+    globalThis.tapprotocol = Object.fromEntries(['getCapabilities', 'requestAccounts', 'getAccounts', 'getNetwork', 'getPublicKey', 'getBitcoinUtxos', 'singleTxTransfer', 'signPsbt', 'pushPsbt', 'pushTx']
       .map(name => [name, (...args) => globalThis.testWallet(name, args)]));
   });
   const path = mode === 'asset' ? `/mint/${catalog}?owner=${owner}` : `/mint/${id}?owner=${encodeTracAddress('22'.repeat(32))}`;
@@ -91,7 +92,7 @@ for (const mode of ['asset', 'request']) test(`public ${mode} link resumes both 
   if (mode === 'request') {
     await page.getByRole('button', { name: 'Inscribe mint', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Inscribe', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('main').textContent.includes('minted'));
+    await page.locator('.pill').filter({ hasText: /^Minted$/ }).waitFor();
     assert.equal(signs, 3); assert.match(minted, /^[0-9a-f]{64}i0$/);
   } else await page.getByText('The token is deployed. Ask your agent to mint now, then open the payment link it gives you.', { exact: true }).waitFor();
   assert.ok(!requests.some(([path]) => path.startsWith('/mint/deployment/')));

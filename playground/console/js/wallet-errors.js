@@ -1,8 +1,9 @@
 export const publicMintMessages = {
   someone_paid_first: 'Someone else’s payment for this block confirmed first, so it can no longer be minted here.',
   already_minted: 'This block is already minted.',
-  claimed: 'This block was claimed in its claim week, so it is not public.',
-  claim_window_open: 'The claim week of this block is not over yet.',
+  claimed: 'An agent has claimed this block, so it is not public.',
+  claimed_first: 'An agent claimed this block before your payment was confirmed. Your payment is refunded.',
+  public_minted: 'This block was already taken by a public TAP Wallet mint. Choose another unclaimed block.',
   bitmap_holder_only: 'Only the TAP Wallet holding this block’s Bitmap can mint it. Select that account in TAP Wallet and try again.',
   public_mint_inactive: 'Public minting opens soon.',
   public_index_warming: 'The list of public blocks is still being built. Try again in a few minutes.',

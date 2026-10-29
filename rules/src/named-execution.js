@@ -8,13 +8,13 @@ import { compareUint } from './integers-v2.js';
 import { executeCraftV2 } from './craft-v2.js';
 import { executeTransferV2 } from './transfer-v2.js';
 import { advanceCompoundTier } from './compound-tier-v2.js';
-import { publicMintActive, assertClaimOpen } from './public-mint.js';
+import { publicMintActive, assertClaimOpen, claimsNeverCloseActive } from './public-mint.js';
 
 export const namedStateRoot = state => hashObject(['dmw-named-state-v2', state.nextPattern, state.catalogRevision, namedRoot(state.records)]);
 
 // Shared gateway/signer replay of an authenticated receipt segment. The batch
 // verifier separately checks segment inclusion/quorum and predecessor roots.
-export function replayNamedEntries(state, { entries, settings, settingsHistory, batch, gateway, history, hashAt, counted, executionHeight = counted, lastSequence, craftCatalog = state, renewal }) {
+export function replayNamedEntries(state, { entries, settings, settingsHistory, batch, gateway, history, hashAt, counted, executionHeight = counted, lastSequence, craftCatalog = state, renewal, claimSettings }) {
   uintV2(lastSequence);
   assert(Array.isArray(entries) && entries.length <= settings.values.observationBudget, 'named_observation_budget');
   const ordered = [...entries].sort((a, b) => compareUint(a.receipt.sequence, b.receipt.sequence));
@@ -25,7 +25,7 @@ export function replayNamedEntries(state, { entries, settings, settingsHistory, 
     assert(pairs <= settings.values.namedPairBudget && reveals <= settings.values.revealBudget && challenges <= settings.values.challengeBudget, 'named_work_budget');
     try {
       const original = move.settingsHash === hashObject(settings) ? settings : settingsHistory.get(move.settingsHash);
-      const result = executeNamedMove(next, { move, settings: original, settingsHistory, tip: receipt.tip, counted, executionHeight, receiptPosition: receipt.sequence, history, hashAt, craftCatalog,
+      const result = executeNamedMove(next, { move, settings: original, settingsHistory, tip: receipt.tip, counted, executionHeight, receiptPosition: receipt.sequence, history, hashAt, craftCatalog, claimSettings,
         provenance: { batch, receipt: hashObject(receipt), agent: move.a, ruleset: move.ruleset, settingsHash: move.settingsHash } });
       next = result.state; outcomes.push({ id: receipt.move, reason: 'accepted', record: result.record ?? null, results: result.results ?? null, challenge: result.challenge ?? null,
         ...(result.craft ? { craft: result.craft } : {}), ...(result.transfers ? { transfers: result.transfers } : {}), ...(result.progress ? { progress: result.progress } : {}) });
@@ -42,7 +42,7 @@ export function replayNamedEntries(state, { entries, settings, settingsHistory, 
 // Gateway and signers call this same transition AFTER authenticating the
 // receipt/segment. No receipt is acknowledged here. Only the bounded named
 // headers and indexed state passed by the caller are available to execution.
-export function executeNamedMove(state, { move, settings, settingsHistory, tip, counted, executionHeight = counted, receiptPosition, history, hashAt, provenance = null, craftCatalog = state }) {
+export function executeNamedMove(state, { move, settings, settingsHistory, tip, counted, executionHeight = counted, receiptPosition, history, hashAt, provenance = null, craftCatalog = state, claimSettings = settings }) {
   uintV2(tip); uintV2(counted); uintV2(receiptPosition);
   const invalid = checkMoveV2(move, { settings, tip, hashAt }); assert(!invalid, invalid);
   const id = moveIdV2(move);
@@ -50,7 +50,7 @@ export function executeNamedMove(state, { move, settings, settingsHistory, tip, 
   const common = { agent: move.a, tip, counted, receiptPosition, settings, history, provenance };
   let result;
   if (['header-v2', 'claim-v2'].includes(move.t)) {
-    if (move.t === 'claim-v2' && publicMintActive(settings, tip)) for (const plot of move.p.plots) for (const number of plot.patterns) {
+    if (move.t === 'claim-v2' && publicMintActive(settings, tip) && !claimsNeverCloseActive(claimSettings, executionHeight)) for (const plot of move.p.plots) for (const number of plot.patterns) {
       const key = namedGet(state.records, `number/${number}`), pattern = key && namedGet(state.records, `pattern/${key}`);
       assert(pattern, 'pattern_unknown'); assertClaimOpen({ pattern, block: plot.block, height: tip, settings });
     }

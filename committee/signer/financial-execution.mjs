@@ -7,6 +7,7 @@ import { verifyCreditOperations } from '../../rules/src/account-batch.js';
 import { hashObject } from '../../rules/src/core.js';
 import { compareOrdinal } from '../../rules/src/integers-v2.js';
 import { applyBeaconRecovery } from '../../contract/beacon/recovery.js';
+import { claimsNeverCloseActive } from '../../rules/src/public-mint.js';
 
 // Read accepted financial records from the independent notary snapshot, not
 // from gateway replay context. Sequential simulation checks each page against
@@ -42,7 +43,13 @@ export async function verifyFinancialExecution({ files, reads, document, network
     verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? []);
     for (const op of prefix) await apply(op);
     for (const input of inputs) {
-      const evidence = await sources.financialEvidence(input.transition, at);
+      let evidence = await sources.financialEvidence(input.transition, at);
+      if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
+        // Full rules replay already derived this decision after agent closure
+        // and moves. The external scan is read at the accepted predecessor and
+        // therefore cannot itself observe same-observation claim reservations.
+        evidence = { ...evidence, claim: input.evidence.claim };
+      }
       check(equal(evidence, input.evidence), 'financial_evidence_read');
       const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type.startsWith('recovery-') ?
         await reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor }) : undefined;

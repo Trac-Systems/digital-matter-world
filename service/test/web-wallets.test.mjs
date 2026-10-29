@@ -22,7 +22,7 @@ test('wallet journal resumes once and retains uncertain sends including 4001 aft
   await assert.rejects(j.step('uncertain',async()=>{sent++;}),/interrupted/);assert.equal(sent,1);
 });
 test('wallet network and payer checks fail before spending and add only configured local Anvil', async () => {
-  let network='mainnet';globalThis.window={tapprotocol:{getNetwork:async()=>network,switchNetwork:async n=>network=n,requestAccounts:async()=>['bcrt1ptest']}};
+  let network='mainnet';globalThis.window={tapprotocol:{getCapabilities:async()=>({version:'1.0.49',singleTxTransferExtraOutputs:true}),getNetwork:async()=>network,switchNetwork:async n=>network=n,requestAccounts:async()=>['bcrt1ptest']}};
   await tapAccount(target,'bcrt1ptest');assert.equal(network,'regtest');await assert.rejects(tapAccount(target,'bcrt1pother'),/payer/);
   let chain='0x1',added=false;const calls=[];
   window.ethereum={request:async({method,params})=>{calls.push(method);if(method==='eth_chainId')return chain;if(method==='wallet_switchEthereumChain'){if(!added)throw Object.assign(Error(),{code:4902});chain=params[0].chainId;}if(method==='wallet_addEthereumChain'){assert.deepEqual(params[0].rpcUrls,[config.endpoints.ethereum]);added=true;}if(method==='eth_requestAccounts')return ['0x'+'12'.repeat(20)];}};
@@ -70,6 +70,7 @@ test('production wallets switch only to Bitcoin mainnet and Ethereum 1', async (
   let network = 'regtest', chain = '0x7a69'; const requests = [];
   globalThis.window = {
     tapprotocol: {
+      getCapabilities: async () => ({ version: '1.0.49', singleTxTransferExtraOutputs: true }),
       getNetwork: async () => network,
       switchNetwork: async n => { requests.push(n); return network = n; },
       requestAccounts: async () => ['bc1ptest'],
@@ -114,12 +115,12 @@ test('a legacy TAP provider fails clearly before any Bitmap action or authority 
 });
 
 test('1.0.48 capability guard accepts all action methods and network/account refusal stays before payment', async () => {
-  const { tapWallet1048 } = await import('../../kit/test/tap-wallet-1048-fixture.mjs');
+  const { tapWallet1049 } = await import('../../kit/test/tap-wallet-1049-fixture.mjs');
   const { requireTapActions } = await import('../public/web/wallets.js');
-  const f = tapWallet1048({ address: 'bcrt1ptest', network: 'regtest' });
+  const f = tapWallet1049({ address: 'bcrt1ptest', network: 'regtest' });
   assert.doesNotThrow(() => requireTapActions(f.provider));
-  for (const method of ['sendInscription', 'createGlobalTapAuthority']) {
-    assert.throws(() => requireTapActions({ ...f.provider, [method]: undefined }), /cannot set up/);
+  for (const method of ['getCurrentAuthority', 'getAuthorityStatus']) {
+    assert.throws(() => requireTapActions({ ...f.provider, [method]: undefined }), /does not support 1-TX Transfers/);
   }
   globalThis.window = { tapprotocol: f.provider };
   f.provider.requestAccounts = async () => null;
@@ -144,4 +145,21 @@ test('regtest checkout uses the ord-tap native burn marker and gates release on 
     const old = payment; payment = { ...payment, [key]: value }; await assert.rejects(checkout.linkLock(id, paymentId), /link_/); payment = old;
   }
   payment.consumed = true; assert.equal((await checkout.linkLock(id, paymentId)).ready, false);
+});
+
+test('site TAP Wallet actions need 1.0.49 or newer and stop before any other wallet call', async () => {
+  const { tapAccount, oneTxReady, TAP_WALLET_MIN_VERSION } = await import('../public/web/wallets.js');
+  const { TAP_WALLET_MIN_VERSION: kitMinimum } = await import('../../kit/lib/tap-wallet-mint.mjs');
+  assert.equal(TAP_WALLET_MIN_VERSION, '1.0.49'); assert.equal(kitMinimum, TAP_WALLET_MIN_VERSION);
+  const target = { bitcoinNetwork: 'mainnet', ethereum: { chainId: '0x1' } };
+  for (const capabilities of [undefined, async () => ({ version: '1.0.48' }), async () => { throw Error('nope'); }, async () => ({ version: '1.0.4' })]) {
+    const calls = [], tap = Object.fromEntries(['getNetwork', 'switchNetwork', 'requestAccounts', 'getCurrentAuthority', 'getAuthorityStatus'].map(name => [name, async () => { calls.push(name); }]));
+    if (capabilities) tap.getCapabilities = capabilities;
+    globalThis.window = { tapprotocol: tap };
+    await assert.rejects(tapAccount(target), /^Error: This needs TAP Wallet 1\.0\.49 or newer\. Update TAP Wallet, then reload this page\.$/);
+    await assert.rejects(oneTxReady('bc1ptest'), /This needs TAP Wallet 1\.0\.49 or newer/);
+    assert.deepEqual(calls, []);
+  }
+  globalThis.window = { tapprotocol: { getCapabilities: async () => ({ version: '1.0.100' }), getNetwork: async () => 'mainnet', requestAccounts: async () => ['bc1p' + 'q'.repeat(58)] } };
+  assert.equal((await tapAccount(target)).address, 'bc1p' + 'q'.repeat(58));
 });

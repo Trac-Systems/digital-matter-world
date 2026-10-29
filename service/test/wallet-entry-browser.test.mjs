@@ -45,7 +45,7 @@ async function open(t, { address = linked, phone = false, ethereum } = {}) {
   const context = await browser.newContext(phone ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width: 1280, height: 860 } });
   await context.addInitScript(account => {
     window.walletPrompts = 0;
-    window.tapprotocol = { getNetwork: async () => 'regtest', switchNetwork: async () => {}, requestAccounts: async () => { window.walletPrompts++; return [account]; } };
+    window.tapprotocol = { getCapabilities: async () => ({ version: '1.0.49', singleTxTransferExtraOutputs: true }), getNetwork: async () => 'regtest', switchNetwork: async () => {}, requestAccounts: async () => { window.walletPrompts++; return [account]; } };
   }, address);
   // A MetaMask stand-in: eth_requestAccounts answers the account granted earlier, not the selected one, as MetaMask does.
   if (ethereum) await context.addInitScript(selected => {

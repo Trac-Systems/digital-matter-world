@@ -355,8 +355,7 @@ export class Agent {
           await assertHeaderChain({ history, height: q.block, hash: h.hash, trac: this.trac, head });
           for (const n of q.patterns) {
             const p = patterns.find(p => String(p.number) === String(n)); check(p && patternCount(p, h) > 0, 'Claimed pattern does not match');
-            try { assertClaimOpen({ pattern: p, block: q.block, height: head.tip.height, settings }); }
-            catch (error) { if (error.message === 'claim_deadline') throw Error('The claim week for this block has closed. Unclaimed blocks can only be minted with a TAP Wallet on the website.'); throw error; }
+            assertClaimOpen({ pattern: p, block: q.block, height: head.tip.height, settings });
           }
         }
       } });

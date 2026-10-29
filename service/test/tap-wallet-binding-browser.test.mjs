@@ -25,7 +25,7 @@ test('TAP Wallet page signs legacy output, reports refusals plainly and shows th
   await page.addInitScript(address => {
     window.activeAddress = address;
     window.badSignature = true;
-    window.tapprotocol = { getNetwork: async () => 'mainnet', requestAccounts: async () => [window.activeAddress],
+    window.tapprotocol = { getCapabilities: async () => ({ version: '1.0.49', singleTxTransferExtraOutputs: true }), getNetwork: async () => 'mainnet', requestAccounts: async () => [window.activeAddress],
       // TAP Wallet ignores the second argument; reproduce that provider contract.
       signMessage: async message => window.badSignature ? 'bad' : window.tapSign(message) };
   }, pending.request.address);

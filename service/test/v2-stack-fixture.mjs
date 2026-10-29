@@ -251,13 +251,13 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   if (scenario) return scenario({ store, files, contract, document, network, secret, committeeSecret, rulesContext, stamp,
     financial, drain, history, players, legacyRecord, runtime, reads, committee, pipeline, config, servers, notary, http,
     async observeNext() { tip++; await contract.advance(1); await observe(); },
-    async replayAccepted(n) {
+    async replayAccepted(n, rebuild = rebuildBatch) {
       const row = store.get('batches', heightKey(n));
       const saved = store.get('evidenceContexts', String(n));
       const context = JSON.parse(await readFile(join(contexts, saved.path), 'utf8'));
       const bytes = await Promise.all(row.publications.map(p => readFile(join(store.directory, 'static', p.audit.path.slice(1)))));
       const proposal = { batch: row.batch, files: bytes.map(b => b.toString('hex')) };
-      const result = rebuildBatch(network, proposal, { ...context, history: replayHistory, hashAt: history.hashAt,
+      const result = rebuild(network, proposal, { ...context, history: replayHistory, hashAt: history.hashAt,
         authority: { epoch: 0 }, namedNode: id => store.get('namedNodes', id), claimNode: id => store.get('claimNodes', id) });
       assert.deepEqual(result.batch, row.batch);
       for (let i = 0; i < bytes.length; i++) assert.deepEqual(Buffer.from(r.encodeBinary(result.files[i])), bytes[i]);
@@ -271,6 +271,17 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
           const response = await fetch(url + '/approve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(proposal) });
           assert.equal(response.status, 400); const result = await response.json();
           assert.match(result.error, /account_credit_derivation/); return result.error;
+        }));
+      } finally { tamperContext = null; }
+    },
+    async rejectPublicClaimEvidence(proposal, alter, reason) {
+      assert.equal(tamperContext, null);
+      tamperContext = context => { alter(context); return context; };
+      try {
+        return await Promise.all(servers.map(async url => {
+          const response = await fetch(url + '/approve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(proposal) });
+          assert.equal(response.status, 400); const result = await response.json();
+          assert.match(result.error, reason); return result.error;
         }));
       } finally { tamperContext = null; }
     },

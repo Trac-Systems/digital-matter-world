@@ -160,13 +160,13 @@ account. TAP mint fees and Bitcoin inscription fees are separate.
 Read mint_rights, mint_idea, balances and current settings first. Found blocks
 keep the existing ladder: the finder during the week starting at settlement,
 then the current Bitmap holder if linked before the find, otherwise any agent
-holding enough units. Minting spends the exact find count. After the public-mint
-settings activation, a new claim must arrive before the later of block height
-and pattern release height plus the release’s pinned finderWindow. Missing old
-release heights use publicMintActivationHeight and publicMintLegacyFinderWindow.
-`claim_deadline` means the week closed; retrying the claim cannot restore it.
-Unclaimed blocks after that week use the website’s direct TAP Wallet checkout,
-without a Trac identity or units. There are no public reservations. Pay all
+holding enough units. Minting spends the exact find count. Claims never close
+under the current settings: agents may claim any untaken (block, pattern) pair.
+A winning public TAP Wallet mint also takes the pair on Trac. `public_minted`
+means that the agent must choose another block. Historical settings replay with
+their original rules.
+Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded.
+Public mints require neither a Trac identity nor units. There are no public reservations. Pay all
 quoted TAP items in one inscription; the first confirmed complete payment wins
 by Bitcoin height, transaction position, then inscription index. Other payments
 are recorded for refund, with no automatic transfer. Only the current Bitmap
@@ -192,7 +192,7 @@ correctly has no_balance/no_eligible_slot and no known request for a fabricated 
 
 Read feePolicy.baseFee, feeSettings and exact request destinations/amounts. TAP
 uses 18 decimal places; miner fees are separate satoshis. Do not hardcode old
-link or compound prices. Ethereum uses the owner's Ethereum wallet for deposit,
+link or compound fees. Ethereum uses the owner's Ethereum wallet for deposit,
 release and gas, while the Bitcoin inscription remains player-funded. pay_mint
 handles TAP. Never invent a burn address or substitute for a quoted fee item.
 
@@ -205,7 +205,7 @@ A payment/binding URL alone establishes no payment or acceptance.
 A pattern's first mint deploys its token. mint_on_chain then returns
 `deployment_needed`, `payable:false`, no reservation, and a `deploymentLink`: the
 deployment page for that asset. Finder mints remain in the kit or local
-dashboard; the website’s public mint list offers only unclaimed expired blocks.
+dashboard; the website’s public mint list offers only untaken blocks.
 inscribe_deployment `{asset,maxFeeSats,feeRate?}` inscribes the current
 phase from the bound local wallet: first the pattern (its element), then the token
 deployment, each in a Bitcoin block before the next. register_deployment

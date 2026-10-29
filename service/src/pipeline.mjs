@@ -13,6 +13,7 @@ import { namedBatchEvidence } from './named-batch.mjs';
 import { buildCreditAccounts, AccountBatchOverlay } from './account-batch.mjs';
 import { publicFinancialOperations } from './public-financial.mjs';
 import { publishReceiptRenewal } from './receipt-renewal.mjs';
+import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
 export class Pipeline {
   constructor({ store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns = [], settings = {}, limits = {}, replay = new Replay(), archiveWritePage = 256, pipelineDepth = 1 }) {
     Object.assign(this, { store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns, settings, limits, replay, archiveWritePage });
@@ -193,11 +194,15 @@ export class Pipeline {
         input.claimEvidence = { nodes: [] };
         input.settingsDocuments = input.namedEvidence.settingsDocuments;
       }
-      const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes') } : undefined;
+      const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
+      const publicMintRead = (asset, block) => readPublicWinner({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, asset, block);
+      const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes'),
+        ...(publicClaimsActive ? { publicMintGet: publicMintRead } : {}) } : undefined;
       const replay = async () => {
         const { claimEvidence, namedEvidence, ...output } = await this.replay.run(input, history, claimReads);
         if (claimEvidence) input.claimEvidence = claimEvidence;
         if (namedEvidence) input.namedEvidence = namedEvidence;
+        if (publicClaimsActive) input.publicMintEvidence = output.file.publicMintEvidence;
         // Keep proof tables once in the input, rather than serializing another
         // full copy into every persisted output/draft.
         return output;
@@ -206,8 +211,11 @@ export class Pipeline {
       if (settings.document) {
         for (;;) {
           try {
+            const publicReaders = publicClaimsActive ? publicClaimReaders({ input, store: accountStore, claimNodes, publicMintRead }) : undefined;
+            const publicClaims = publicReaders && rules.publicClaimProjection(output, input, publicReaders.readers);
             const accounts = this.financial && !renewal && !anchored && clock.compare(execution, observation.counted) === 0
               ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, height: observation.counted, at: { counted: execution, last }, accountStore,
+                ...(publicClaims ? { publicClaims, preparePublicMint: publicReaders.prepare } : {}),
                 priorLinkInputs: items.reduce((n, i) => n + (i.output.file.financialOperations ?? []).filter(f => f.transition.action?.type?.startsWith('link-')).length, 0),
                 excluded: financialIncluded, remaining: settings.document.values.mintOperationBudget - financialIncluded.size, priorOperations: input.priorOperations,
                 priorAssetTouches: items.reduce((n, i) => n + (i.output.accountAssetTouches ?? 0), 0) })
@@ -221,7 +229,13 @@ export class Pipeline {
             // cases commit the witnessed receipt-chain advancement, so the
             // first activation batch does not require another player action.
             delete input.financialPlanning;
-            output = { ...rules.finalizeBlockV2Accounts(output, input), accountWrites: accounts.writes, accountAssetTouches: accounts.assetTouches };
+            if (publicClaims) {
+              const rows = new Map([...input.publicMintEvidence, ...publicClaims.evidence.rows()].map(row => [row.asset + '/' + row.block, row]));
+              input.publicMintEvidence = [...rows].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, row]) => row);
+              publicReaders.collect();
+            }
+            output = { ...rules.finalizeBlockV2Accounts(output, input, publicReaders?.readers), accountWrites: accounts.writes, accountAssetTouches: accounts.assetTouches };
+            publicReaders?.collect();
             break;
           } catch (error) {
             const rows = input.deliveryRows ?? settings.settlementPageRows * settings.settlementPagesPerObservation;

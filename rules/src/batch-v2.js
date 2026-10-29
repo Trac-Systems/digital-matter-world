@@ -3,7 +3,7 @@ import { parseHeader } from './headers.js';
 import { checkMove } from './moves.js';
 import { verifyReceipt, verifyReceiptRoot, verifyRootAttestations, claimWindow } from './receipts.js';
 import { receiptSegmentHash } from './receipt-segments.js';
-import { recordGet, recordSet } from './record-index.js';
+import { recordGet, recordSet, recordChanges } from './record-index.js';
 import { encodeBinary, summaryBytes } from './binary.js';
 import { merkleRoot } from './merkle.js';
 import { validateOp, notaryOp, batchDigest } from './operations.js';
@@ -19,12 +19,14 @@ import { namedGet } from './named-index.js';
 import { recordClaimOccurrences } from './claim-occurrences.js';
 import { validateSettingsDocument, settingsEffective } from './settings-v2.js';
 import { verifyCreditOperations, accountOperationsRoot } from './account-batch.js';
-import { ClaimStorage, claimEvidenceReader } from './claim-state.js';
+import { ClaimStorage, claimEvidenceReader, CLAIM_MAPS } from './claim-state.js';
 import { decodeNodeHints } from './node-evidence.js';
 import { financialBatchOperations } from './financial-execution.js';
 import { freezeLegacyClaimWindow } from './legacy-claims.js';
 import { verifyRenewalSegments, validateRenewalSlice } from './receipt-renewal.js';
 import { advanceClaimWindow, ClosureBudget } from './claim-closure.js';
+import { claimsNeverCloseActive } from './public-mint.js';
+import { publicMintEvidenceReader, applyPublicClaimScan } from './public-claims.js';
 
 export function processBlockV2(input, readers = {}) {
   const settings = batchSettings(input.settings);
@@ -45,6 +47,8 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
   const clock = ordinalCodec(!!input.settings?.document);
   let patterns = input.patterns;
   const s = batchSettings(input.settings), ruleset = s.ruleset, settingsRevision = s.settingsRevision;
+  const publicClaims = claimsNeverCloseActive(s, input.executionHeight ?? height) &&
+    publicMintEvidenceReader(input.publicMintEvidence, readers.publicMintGet, s.document.values.proofBytes);
   const claims = s.document && new ClaimStorage({ get: claimEvidenceReader(input.claimEvidence ?? { nodes: [] }, s.document, readers.claimNodeGet), cacheSize: s.document.values.proofDepth });
   if (claims) state = claims.load(state, { decimal: true });
   assert(typeof ruleset === 'string' && (s.document ? settingsRevision === s.document.revision : hex(settingsRevision, 32)), 'batch_rules_revision');
@@ -62,6 +66,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
   assert(decimalV2(receiptRoot.segment) === (prior ? nextUint(decimalV2(prior.segment)) : '0') && receiptRoot.previous === (prior?.hash ?? null), 'receipt_segment_predecessor');
   const next = { ...state, batchVersion: 2, counted: height, lastTip: clock.max(state.lastTip ?? clock.add(tip, -1), tip), highestTip: clock.max(state.highestTip ?? tip, tip), observation: clock.add(state.observation ?? 0),
     rounds: (state.rounds ?? []).map(r => ({ ...r })) };
+  if (publicClaims) next.publicMintGet = publicClaims.get;
   assert(clock.compare(clock.add(tip, s.claimWindowBlocks), state.highestTip ?? tip) > 0, 'receipt_window_closed');
   next.receiptSegments = recordSet(next.receiptSegments, key, { segment: receiptRoot.segment, hash: receiptSegmentHash(receiptRoot), last: receiptRoot.last ?? prior?.last ?? null });
   const outcomes = [], occurrences = [], settlements = [], closures = [], closureProgress = [], discoveries = [], crafts = [], transfers = [], refinements = [], budget = new CreditBudget(s, input.priorOperations);
@@ -139,7 +144,8 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     if (move.v === 2) {
       assert(s.document, 'batch_settings');
       const replayed = replayNamedEntries(named, { entries: [{ move, receipt }], settings: receiptDocument, settingsHistory,
-        batch: decimalV2(input.batchSequence), gateway, history, hashAt, counted: decimalV2(height), executionHeight: decimalV2(input.executionHeight ?? height), lastSequence: namedSequence, craftCatalog, renewal: input.renewal });
+        batch: decimalV2(input.batchSequence), gateway, history, hashAt, counted: decimalV2(height), executionHeight: decimalV2(input.executionHeight ?? height), lastSequence: namedSequence, craftCatalog, renewal: input.renewal,
+        claimSettings: s.document });
       named = replayed.state; namedSequence = replayed.lastSequence; next.namedSequence = namedSequence;
       const result = replayed.outcomes[0];
       if (result.transfers) transfers.push(...result.transfers.map(t => ({ ...t, move: receipt.move })));
@@ -165,7 +171,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
         const working = { ...next }, copy = { ...event };
         if (move.p.header) header(copy, move.p.header, move.a, working);
         const accepted = enterClaims({ state: working, event: copy, agent: move.a, plots: move.p.plots, patterns, history,
-          settings: receiptDocument ? { ...s, document: receiptDocument } : s, height: tip });
+          settings: publicClaims ? s : receiptDocument ? { ...s, document: receiptDocument } : s, height: tip });
         for (const slot of accepted.slots) {
           const oldDraw = recordGet(working.headerAwards, slot.block);
           assert(!oldDraw || oldDraw.windowHash === history.get(slot.block).hash, 'header_draw_reorg');
@@ -186,7 +192,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     } catch (error) {
       // Proof unavailability/corruption must not turn an otherwise valid
       // acknowledged move into a replayable rejection.
-      if (/^(named_storage_|claim_state_|claim_proof_|claim_node_)/.test(error.message)) throw error;
+      if (/^(named_storage_|claim_state_|claim_proof_|claim_node_|public_mint_evidence)/.test(error.message)) throw error;
       reason = error.message;
     }
     outcomes.push({ move: originalMove, reason: reason ?? 'accepted' });
@@ -203,22 +209,62 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
   }
   next.settlementRoundCursor = cursor;
   next.rounds = next.rounds.filter(r => !r.void && (!r.closed || clock.compare(r.cursor, r.pages) < 0));
+  delete next.publicMintGet;
   const file = { v: 5, ruleset, settingsRevision, observation: next.observation, previousHeight: clock.value(state.counted ?? clock.add(height, -1)), height, hash: blockHash, tip, previousTip: clock.value(state.lastTip ?? clock.add(tip, -1)), tipHash, confirmed: clock.min(height, tip),
     receipts: entries.map(e => e.receipt), receiptRoot, rootAttestations, receiptReference: null, moves: outcomes, settlements, closures, occurrences,
     ...(closureProgress.length ? { closureProgress } : {}),
+    ...(publicClaims ? { publicMintEvidence: publicClaims.rows() } : {}),
     discovery: { work: [], queued: 0, rejected: [] }, discoveries, crafts, ...(transfers.length ? { transfers } : {}), ...(refinements.length ? { refinements } : {}), commissions: [], mintOperations: [], mintOutcomes: [], linkOperations: [], linkOutcomes: [], ops: budget.operations(),
     ...(s.document ? { settingsHash: s.settingsHash, batchSequence: decimalV2(input.batchSequence), catalogRoot: next.catalogRoot } : {}),
     ...(input.renewal ? { renewal: input.renewal.id, renewalCursor: input.renewal.cursor } : {}) };
   const savedClaims = claims?.save(next);
   if (savedClaims) { file.claimPrevious = state.claimRoot; file.claimRoot = savedClaims.state.claimRoot; }
   return finalizeBlockV2Accounts({ state: savedClaims?.state ?? next, patterns: input.patterns, file,
-    ...(savedClaims ? { claimWrites: savedClaims.writes } : {}), ...(savedNamed ? { namedWrites: savedNamed.writes } : {}) }, input);
+    ...(savedClaims ? { claimWrites: savedClaims.writes } : {}), ...(savedNamed ? { namedWrites: savedNamed.writes } : {}) }, input, readers);
 }
 
-// Gateway planning already computed and authenticated the claim/named transition.
-// Attaching account proofs does not change either tree. Signers still execute the
-// complete transition independently; this is not a trusted replay certificate.
-export function finalizeBlockV2Accounts(output, input) {
+// Financial planning can attach scans after the free transition. Reopen only
+// the touched authenticated paths and extend the same claim checkpoint. This
+// is also used by full signer replay, which independently checks every decision.
+export function publicClaimProjection(output, input, readers = {}) {
+  const s = batchSettings(input.settings), height = input.executionHeight ?? input.height;
+  assert(claimsNeverCloseActive(s, height), 'claims_never_close_inactive');
+  const nodes = new Map((output.claimWrites ?? []).map(row => [row.id, row.value]));
+  const storage = new ClaimStorage({ get: claimEvidenceReader(input.claimEvidence ?? { nodes: [] }, s.document,
+    (id, ancestors) => nodes.get(id) ?? readers.claimNodeGet?.(id, ancestors)), cacheSize: s.document.values.proofDepth });
+  const state = storage.load(output.state, { decimal: true });
+  const namedNodes = new Map([...(input.namedEvidence?.nodes ?? []), ...(output.namedWrites ?? []).map(row => [row.id, row.value])]);
+  const namedStorage = new NamedStorage({ get: (id, ancestors) => namedNodes.get(id) ?? readers.namedNodeGet?.(id, ancestors), cacheSize: s.document.values.proofDepth });
+  const named = namedStorage.load(state.namedSnapshot);
+  const patterns = { get(number) { const key = namedGet(named.records, `number/${number}`); return key && namedGet(named.records, `pattern/${key}`); } };
+  const evidence = publicMintEvidenceReader(input.publicMintEvidence, readers.publicMintGet, s.document.values.proofBytes);
+  state.publicMintGet = evidence.get;
+  return { state, patterns, evidence, storage, settings: s, height };
+}
+export function finalizePublicClaims(output, input, readers = {}) {
+  const s = batchSettings(input.settings), height = input.executionHeight ?? input.height;
+  if (!claimsNeverCloseActive(s, height)) return output;
+  const operations = (input.financialOperations ?? []).flatMap(i => i.operations).filter(op => op.op === 'fp' && op.type === 'public-scan');
+  if (!operations.length) return output;
+  const { state, patterns, evidence, storage } = publicClaimProjection(output, input, readers);
+  // Receipt moves, completed reservations and header draws precede these
+  // scans. Scan order is the containing financial-operation order.
+  for (const operation of operations) applyPublicClaimScan({ state, patterns, operation, settings: s, height });
+  delete state.publicMintGet;
+  const saved = storage.save(state), writes = new Map([...(output.claimWrites ?? []), ...saved.writes].map(row => [row.id, row]));
+  // Preserve this observation's earlier projection deltas as well as the new
+  // public reservation; the checkpoint itself already contains both.
+  for (const field of CLAIM_MAPS) saved.state[field] = Object.entries(recordChanges(saved.state[field]))
+    .reduce((index, [key, value]) => recordSet(index, key, value), output.state[field]);
+  const used = new Map([...(output.file.publicMintEvidence ?? []), ...evidence.rows()].map(row => [`${row.asset}/${row.block}`, row]));
+  return { ...output, state: saved.state, claimWrites: [...writes.values()], file: { ...output.file, claimRoot: saved.state.claimRoot,
+    publicMintEvidence: [...used].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, row]) => row) } };
+}
+
+// Account attachment preserves the free transition; active public scans then
+// reserve their slots in its claim tree. Signers execute both stages themselves.
+export function finalizeBlockV2Accounts(output, input, readers = {}) {
+  output = finalizePublicClaims(output, input, readers);
   const s = batchSettings(input.settings), clock = ordinalCodec(!!s.document);
   const next = { ...output.state }, file = { ...output.file }, { crafts } = file;
   const { height, tip, entries, state } = input;

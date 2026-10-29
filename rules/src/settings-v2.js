@@ -61,15 +61,17 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
   // bounded closure as a complete group, authenticated by the settings hash.
   const bounded = Object.hasOwn(values, 'closureWorkBudget');
   const publicMint = Object.hasOwn(values, 'publicMintActivationHeight');
+  const neverClose = Object.hasOwn(values, 'claimsNeverCloseHeight');
   assert(exactKeys(values, [...Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k)),
-    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : [])]), 'settings_keys');
+    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : [])]), 'settings_keys');
+  if (neverClose) assert(publicMint && compareUint(uintV2(values.claimsNeverCloseHeight), values.publicMintActivationHeight) >= 0, 'settings_claims_never_close');
   for (const [key, value] of Object.entries(values)) {
     if (key === 'tierThresholds') {
       assert(Array.isArray(value) && value.length === 4 && value.every((n, i) => {
         uintV2(n); return compareUint(n, '0') > 0 && (!i || compareUint(n, value[i - 1]) > 0);
       }), 'settings_tiers');
     } else if (key === 'feePolicyRevision') assert(value === '0' || typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), 'settings_fee_revision');
-    else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight') uintV2(value);
+    else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight' || key === 'claimsNeverCloseHeight') uintV2(value);
     else assert(Number.isSafeInteger(value) && value >= (zeroAllowed.has(key) ? 0 : 1), 'settings_value');
     if (Object.hasOwn(capabilities, key)) assert(value <= capabilities[key], 'settings_capability');
   }
@@ -119,6 +121,9 @@ export function settingsSuccessor(previous, document) {
   assert(old === undefined ? next === undefined || compareUint(next, document.effectiveBitcoinWindow) >= 0 : next === old, 'settings_public_mint_boundary');
   if (next !== undefined) assert(old === undefined ? document.values.publicMintLegacyFinderWindow === document.values.finderWindow :
     document.values.publicMintLegacyFinderWindow === previous.values.publicMintLegacyFinderWindow, 'settings_public_claim_window');
+  const priorClaims = previous.values.claimsNeverCloseHeight, claims = document.values.claimsNeverCloseHeight;
+  assert(priorClaims === undefined ? claims === undefined || compareUint(claims, document.effectiveBitcoinWindow) >= 0 : claims === priorClaims,
+    'settings_claims_never_close_boundary');
   return document;
 }
 export function settingsEffective(document, batch, window) {

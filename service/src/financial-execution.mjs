@@ -7,11 +7,12 @@ import { assetResources } from './asset-resources.mjs';
 import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { financialTerminalOperations, FinancialLinkReconciler } from './financial-lifecycle.mjs';
 import { publicMintAcceptedWrites } from './public-mints.mjs';
+import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
 
 // Explicit source adapter: it must reconstruct fees, rights, chain settlement,
 // permit recovery and exits from independent point reads. There is no fallback
 // that treats a gateway-supplied evidence object as a source verification.
-export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0 }) {
+export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0, publicClaims, preparePublicMint }) {
   check(typeof reads.financialEvidence === 'function', 'financial_source_adapter_required');
   check(Array.isArray(transitions) && transitions.length <= document.values.mintOperationBudget, 'financial_batch_budget');
   if (reads.financialScope) {
@@ -32,7 +33,15 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     try {
     const link = /^(?:legacy-)?link-/.test(transition.action?.type ?? '');
     check(!link || linkInputs < document.values.linkOperationBudget, 'financial_link_budget');
-    const evidence = await sources.financialEvidence(transition, at), input = { transition, evidence };
+    let evidence = await sources.financialEvidence(transition, at);
+    if (transition.type === 'public-scan' && rules.claimsNeverCloseActive(document, height)) {
+      check(publicClaims && preparePublicMint, 'public_claim_projection_required');
+      const { pattern, asset } = rules.publicPatternForAsset(publicClaims.patterns, transition.asset);
+      check(asset === transition.asset, 'public_claim_asset');
+      await preparePublicMint(asset, transition.block);
+      evidence = { ...evidence, claim: rules.publicScanClaim({ ...publicClaims, pattern, asset, block: transition.block }) };
+    }
+    const input = { transition, evidence };
     if (reads.financialChainAnchor && transition.type !== 'beacon-recovery' && !transition.action?.type.startsWith('recovery-')) input.chainAnchor = await reads.financialChainAnchor({ at, prior: await execution.getAsync('fp/chain'), ethereum: evidence.ethereumAnchor });
     const plan = await financialPlan(input, { read: key => execution.getAsync(key), height, document }), operations = [];
     for (const op of plan) operations.push(op.op === 'ar' ? await execution.accounts(op.actions) : op.op === 'br' ?
@@ -47,6 +56,8 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     check(combined.length + 2 <= document.values.batchOps && Buffer.byteLength(rules.stableJSON(combined)) +
       document.values.batchEnvelopeReserveBytes <= document.values.batchBytes, 'financial_batch_bytes');
     check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
+    if (publicClaims) for (const operation of operations) if (operation.op === 'fp' && operation.type === 'public-scan')
+      rules.applyPublicClaimScan({ ...publicClaims, operation });
     inputs.push({ ...input, operations });
     if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') reservations.set(transition.id, evidence);
     if (link) linkInputs++;
@@ -183,6 +194,17 @@ export class FinancialExecution {
   async ready(args) {
     await this.linkReconciler.tick(args.height, args.at);
     if (!this.pending()) return false;
+    if (rules.claimsNeverCloseActive(this.document, args.height) && this.transitions().some(row => row.value.type === 'public-scan')) {
+      // Readiness uses accepted claims; the actual observation rebuilds this
+      // projection after its agent moves. Do not seal empty batches forever
+      // merely because a delayed scan remains queued without source evidence.
+      const store = args.accountStore ?? this.store;
+      const input = { settings: { document: this.document }, executionHeight: args.height };
+      const publicReaders = publicClaimReaders({ input, store, claimNodes: new Map(),
+        publicMintRead: (asset, block) => readPublicWinner({ store, reads: this.reads, at: args.at }, asset, block) });
+      args = { ...args, preparePublicMint: publicReaders.prepare,
+        publicClaims: rules.publicClaimProjection({ state: store.get('meta', 'ruleState') }, input, publicReaders.readers) };
+    }
     const result = await this.build(args);
     this.prepared = result.inputs.length ? result.inputs.map(i => ({ id: rules.hashObject(['dmw-financial-transition-v2', i.transition]), value: i.transition })) : null;
     return !!this.prepared;
@@ -190,13 +212,19 @@ export class FinancialExecution {
   acceptedOperations(draft) {
     const capacities = new Map();
     const projected = new Map(), view = { get: (space, id) => projected.has(space + '/' + id) ? projected.get(space + '/' + id) : this.store.get(space, id) };
-    return draft.items.flatMap(item => (item.output.file.financialOperations ?? []).flatMap(input => {
-      const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
-      const local = [...this.releaseAdmission(id, capacities), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input)];
-      for (const write of local) projected.set(write.space + '/' + write.id, write.value);
-      return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
-        request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },
-        ...local];
-    }));
+    return draft.items.flatMap(item => {
+      const records = new Map((item.output.accountWrites ?? []).filter(w => w.space === 'accountRecords').map(w => [w.id, w.value]));
+      const accepted = { get: (space, id) => space === 'accountRecords' && records.has(id) ? records.get(id) : view.get(space, id) };
+      const localWrites = (item.output.file.financialOperations ?? []).flatMap(input => {
+        const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
+        const local = [...this.releaseAdmission(id, capacities), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted)];
+        for (const write of local) projected.set(write.space + '/' + write.id, write.value);
+        return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
+          request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },
+          ...local];
+      });
+      for (const [id, value] of records) projected.set('accountRecords/' + id, value);
+      return localWrites;
+    });
   }
 }

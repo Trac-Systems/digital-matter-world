@@ -33,7 +33,8 @@ export function rebuildBatch(network, proposal, context) {
     const args = { ...input, renewal: context.renewal, priorOperations: rules.budgetOperations(files), executionHeight: context.counted, network, state, patterns, history: view.history, hashAt: view.hashAt, gateway: context.gateway, settings: context.settings };
     const output = context.settings?.document ? rules.processBlockV2(args, {
       claimNodeGet: (id, ancestors) => claimNodes.get(id) ?? context.claimNode?.(id, ancestors),
-      namedNodeGet: (id, ancestors) => namedNodes.get(id) ?? context.namedNode?.(id, ancestors) }) : rules.processBlock(args);
+      namedNodeGet: (id, ancestors) => namedNodes.get(id) ?? context.namedNode?.(id, ancestors),
+      publicMintGet: context.publicMintGet }) : rules.processBlock(args);
     for (const row of output.claimWrites ?? []) claimNodes.set(row.id, row.value);
     for (const row of output.namedWrites ?? []) namedNodes.set(row.id, row.value);
     state = output.state; patterns = output.patterns; files.push(output.file);

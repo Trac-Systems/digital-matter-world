@@ -10,7 +10,7 @@ import { Feeds } from '../../../service/src/feeds.mjs';
 import { createPublicAPI } from '../../../service/src/public-api.mjs';
 import { createWeb } from '../../../service/src/web.mjs';
 import { buildInscription, signCommit } from '../../../kit/lib/inscription-core.mjs';
-import { tapWallet1048 } from '../../../kit/test/tap-wallet-1048-fixture.mjs';
+import { tapWallet1049 } from '../../../kit/test/tap-wallet-1049-fixture.mjs';
 
 // The gateway, five HTTP signer policies, financial batches and notary are real
 // local fixtures. Only the wallet extension and Bitcoin/TAP indexing are mocked.
@@ -45,7 +45,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     // No request can leave the local fixture, including accidental API redirects.
     await page.route('**/*', route => new URL(route.request().url()).origin === f.http.url || route.request().url().startsWith('https://mempool.space/')
       ? route.fallback() : route.abort());
-    const extension = tapWallet1048({ address: f.receiver, publicKey: f.bitcoinPublic, network: 'regtest', active: true });
+    const extension = tapWallet1049({ address: f.receiver, publicKey: f.bitcoinPublic, network: 'regtest', active: true });
     const script = Buffer.from(btc.p2tr(secp256k1.getPublicKey(f.bitcoinSecret).slice(1)).script).toString('hex');
     await page.exposeFunction('testWallet', async (method, args) => {
       if (method === 'getBitcoinUtxos') return [{ txid: r.hash('browser-cardinal-' + funds), vout: 0, satoshi: 100000,
@@ -89,7 +89,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
       globalThis.tapprotocol.on = () => {};
     }, Object.keys(extension.provider));
     await page.goto(f.http.url + '/mint');
-    await page.getByText('Public minting opens soon. Blocks that nobody claimed in their claim week will be listed here.', { exact: true }).waitFor();
+    await page.getByText('Public minting opens soon. Blocks nobody has claimed yet will be listed here.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
     assert.equal(payments + signs, 0);
     await s.advance(1017); await s.runtime.intake.seal(); await drain(); await project();
@@ -148,7 +148,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     await f.mints.tick(); await drain(); await f.mints.tick();
     assert.equal(f.mints.public(checkoutId).state, 'minted');
     await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-    await page.locator('main .pill').filter({ hasText: /^minted$/ }).waitFor();
+    await page.locator('main .pill').filter({ hasText: /^Minted$/ }).waitFor();
     assert.equal(contract.db.get('ao/' + checkoutId), undefined);
     assert.equal(contract.db.get('dc/' + checkoutId).state, 'minted');
     assert.deepEqual([...contract.db].filter(([key]) => key.startsWith('ar/')), beforeAccounts, 'no public units debit');

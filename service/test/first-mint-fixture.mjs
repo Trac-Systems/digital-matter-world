@@ -243,12 +243,13 @@ export async function firstMintFixture(t, options) {
     assert.equal((await service.mintStatus(a.id)).state, 'minted');
     assert.equal(contract.db.get('dc/' + a.id).state, 'minted');
     const finalBlock = await service.request('/public-mints/' + catalogAsset + '/' + publicBlock);
-    assert.equal(finalBlock.state, 'minted');
+    assert.equal(finalBlock.state, 'already_minted');
     assert.deepEqual(contract.db.get('ar/' + agent.owner), beforeAccount, 'confirmed public mint still consumes no units');
     const restarted = new FinancialMints({ store, reads: independent, financial, committee, document, network, bitcoinNetwork: 'regtest' });
     await restarted.tick();
     assert.equal(restarted.public(a.id).mintContent.prv.hash, winner.mintContent.prv.hash);
     assert.equal(restarted.public(b.id).refunds[0].paymentId, second.inscriptionId);
   }
-  return { asset, requestId: id, deployment, permit: ready.mintContent, mints, service };
+  return { asset, requestId: id, deployment, permit: ready.mintContent, mints, service,
+    f, reads, receiver, transfers, bitcoinSecret, bitcoinPublic, publicBlocks, independent };
 }

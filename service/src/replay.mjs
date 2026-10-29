@@ -47,6 +47,16 @@ export class Replay {
         const done = () => { clearTimeout(timer); this.worker.off('message', message); this.worker.off('error', error); this.worker.off('exit', exit); };
         const message = msg => {
           if (msg.id !== id) return;
+          if (msg.requestPublicMint) {
+            const control = new Int32Array(publicMintShared, 0, 2);
+            void Promise.resolve().then(() => claims?.publicMintGet?.(...msg.requestPublicMint)).then(answer => {
+              check(answer === null || rules.hex(answer, 32), 'public_mint_evidence_missing');
+              const bytes = new TextEncoder().encode(answer ?? '');
+              new Uint8Array(publicMintShared, 8).set(bytes);
+              Atomics.store(control, 1, bytes.length); Atomics.store(control, 0, 1);
+            }).catch(() => Atomics.store(control, 0, -1)).finally(() => Atomics.notify(control, 0));
+            return;
+          }
           if (msg.requestHeaders) {
             const control = new Int32Array(shared, 0, 1), bytes = new Uint8Array(shared, 4);
             try {
@@ -64,7 +74,8 @@ export class Replay {
         };
         const error = e => { done(); reject(e); }, exit = () => error(Error('replay_worker_exit'));
         this.worker.on('message', message); this.worker.once('error', error); this.worker.once('exit', exit);
-        this.worker.postMessage({ id, input, headers, length: history.length, database, branch: history.branch, shared, headerPageSize, headerCachePages: this.headerCachePages, cacheKiB: this.cacheKiB,
+        const publicMintShared = new SharedArrayBuffer(72);
+        this.worker.postMessage({ id, input, headers, length: history.length, database, branch: history.branch, shared, publicMintShared, headerPageSize, headerCachePages: this.headerCachePages, cacheKiB: this.cacheKiB,
           ...(claims ? { claimDatabase: join(claims.store.directory, 'index.sqlite'), claimCacheKiB: claims.store.cacheKiB,
             claimNodes: [...claims.staged], namedNodes: [...(claims.namedStaged ?? [])] } : {}) });
       });

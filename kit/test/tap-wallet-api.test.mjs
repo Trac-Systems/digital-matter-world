@@ -6,6 +6,7 @@ import { fundingAddress, hex } from '../lib/inscription-core.mjs';
 import { tapBurnAddress } from '../../rules/src/tap-burn.js';
 
 import { tapWallet1048 } from './tap-wallet-1048-fixture.mjs';
+import { tapWallet1049 } from './tap-wallet-1049-fixture.mjs';
 import { ensureTapAuthority } from '../lib/tap-wallet-actions.mjs';
 // TAP Wallet 1.0.48 transfer result is funding, not a redeem inscription.
 test('Mint uses the public provider transfer API and preserves its funding receipt', async () => {
@@ -16,7 +17,7 @@ test('Mint uses the public provider transfer API and preserves its funding recei
     { role: 'burn', to: tapBurnAddress('mainnet'), ticker: 'tap', amount: '33900000000000000000', tt: 'a' },
   ];
   const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
-  const provider = { ...tapWallet1048({ address, publicKey }).provider, requestAccounts: async () => [address], getAccounts: async () => [address], getNetwork: async () => 'mainnet',
+  const provider = { ...tapWallet1049({ address, publicKey }).provider, requestAccounts: async () => [address], getAccounts: async () => [address], getNetwork: async () => 'mainnet',
     getPublicKey: async () => publicKey, getBitcoinUtxos: async () => [],
     signPsbt: async () => assert.fail('no inscription signing for a transfer'), pushPsbt: async () => assert.fail('no pushPsbt'), pushTx: async () => assert.fail('no pushTx'),
     singleTxTransfer: async items => {
@@ -38,25 +39,21 @@ test('Mint uses the public provider transfer API and preserves its funding recei
 
 function fixture(active = false) {
   const publicKey = hex(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true)), address = fundingAddress(publicKey, 'mainnet');
-  const f = tapWallet1048({ address, publicKey, active }), records = new Map(), id = '12'.repeat(32);
+  const f = tapWallet1049({ address, publicKey, active }), records = new Map(), id = '12'.repeat(32);
   const fees = [{ role: 'treasury', to: address, ticker: 'tap', amount: '1000000000000000000', tt: 'a' }];
   const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
   const journal = { get: async k => structuredClone(records.get(k)), put: async (k, v) => records.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
   const notices = [], options = { provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, notify: text => notices.push(text) };
   return { ...f, records, id, status, journal, notices, options, wallet: new TapWalletMint(options) };
 }
-test('fresh 1.0.48 Mint creates and activates a global authority before recording payment; reload never sends twice', async () => {
+test('Mint without 1-TX Transfers explains how to turn them on and sends nothing; with them on it pays once', async () => {
   const f = fixture(); await f.wallet.connect();
-  const transfer = f.provider.singleTxTransfer;
-  f.provider.singleTxTransfer = items => {
-    assert.equal(f.records.get(f.wallet.key(f.id)).payment.state, 'sending');
-    assert.ok(f.state.active); return transfer(items);
-  };
-  const create = f.provider.createGlobalTapAuthority;
-  f.provider.createGlobalTapAuthority = () => { assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined); return create(); };
+  await assert.rejects(f.wallet.pay(f.id), /Turn on 1-TX Transfers in TAP Wallet first/);
+  assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
+  assert.deepEqual(f.state.calls, []);
+  f.state.active = true;
   await f.wallet.pay(f.id);
-  assert.match(f.notices[0], /all TAP tokens/);
-  assert.deepEqual(f.state.calls.map(c => c[0]), ['createGlobalTapAuthority', 'getInscriptions', 'sendInscription', 'singleTxTransfer']);
+  assert.deepEqual(f.state.calls.map(c => c[0]), ['singleTxTransfer']);
   assert.deepEqual(f.records.get(f.wallet.key(f.id)).payment.result, { txid: f.funding });
   const resumed = new TapWalletMint(f.options); await resumed.connect();
   assert.equal((await resumed.pay(f.id)).localState, 'payment_pending');
@@ -64,19 +61,19 @@ test('fresh 1.0.48 Mint creates and activates a global authority before recordin
   assert.equal((await resumed.pay(f.id)).state, 'permit_issued');
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
 });
-test('1.0.48 hides scoped authorities and setup already in progress must not create another order', async () => {
+test('a scoped authority or a setup still in progress is explained, never created or activated by DMW', async () => {
   const f = fixture(true); f.state.scope = ['tap']; await f.wallet.connect();
+  await assert.rejects(f.wallet.pay(f.id), /Turn on 1-TX Transfers/);
   f.state.existingSetup = { state: 'ready-to-tap', tappingStatus: 2 };
-  await assert.rejects(f.wallet.pay(f.id), /already exists/);
+  await assert.rejects(f.wallet.pay(f.id), /still setting up 1-TX Transfers/);
   assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
   assert.deepEqual(f.state.calls, []);
-  f.state.existingSetup = null; await f.wallet.pay(f.id);
-  assert.equal(f.state.calls[0][0], 'createGlobalTapAuthority');
+  await assert.rejects(ensureTapAuthority({}, f.state.address), /does not support 1-TX Transfers/);
 });
 test('No authority found clears only the definite preflight failure; generic 4001 preserves payment after reload', async () => {
   const f = fixture(true); await f.wallet.connect();
   f.state.transferError = { code: 4001, message: 'No authority found' };
-  await assert.rejects(f.wallet.pay(f.id), /No payment was sent/);
+  await assert.rejects(f.wallet.pay(f.id), /Turn on 1-TX Transfers/);
   assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
   f.state.transferError = { code: 4001, message: 'User rejected the request.' };
   await assert.rejects(f.wallet.pay(f.id), /reports the payment was cancelled/);
@@ -98,42 +95,6 @@ test('No authority found clears only the definite preflight failure; generic 400
   const after = await resumed.pay(f.id, { retry: true });
   assert.equal(after.localState, 'payment_pending'); assert.equal(after.retryable, false);
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 3);
-});
-test('pending authority lookup failure and popup closure preserve authority recovery without marking Mint sending', async () => {
-  const f = fixture(); await f.wallet.connect(); f.state.pendingOrder = true; f.state.orderError = true;
-  await assert.rejects(f.wallet.pay(f.id), /could not read the saved inscription order/);
-  assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
-  const resumed = new TapWalletMint(f.options); await resumed.connect();
-  await assert.rejects(resumed.pay(f.id), /could not read/);
-  assert.equal(f.state.calls.filter(c => c[0] === 'createGlobalTapAuthority').length, 1);
-  const closed = fixture(); await closed.wallet.connect(); closed.state.actionError = { code: 4001, message: 'User rejected the request.' };
-  await assert.rejects(closed.wallet.pay(closed.id), error => error.code === 4001);
-  await assert.rejects(closed.wallet.pay(closed.id), /interrupted/);
-  assert.equal(closed.records.get(closed.wallet.key(closed.id))?.payment, undefined);
-});
-test('authority waits for inscription ownership, retries only definite missing UTXO, and resumes activation after confirmation', async () => {
-  const f = fixture(), data = {};
-  const steps = { getStep: name => data[name], step: async (name, action, { definitelyNotSent = () => false } = {}) => {
-    if (data[name]?.state === 'done') return data[name].result;
-    assert.equal(data[name], undefined); data[name] = { state: 'sending' };
-    try { const result = await action(); data[name] = { state: 'done', result }; return result; }
-    catch (error) { if (definitelyNotSent(error)) delete data[name]; throw error; }
-  } };
-  const options = { attempts: 1, wait: async () => {} };
-  f.state.available = false;
-  await assert.rejects(ensureTapAuthority(f.provider, f.state.address, steps, options), /not available/);
-  assert.equal(data['authority-activation'], undefined);
-  f.state.available = true; f.state.activationError = { message: 'UTXO not found.' };
-  await assert.rejects(ensureTapAuthority(f.provider, f.state.address, steps, options), { message: 'UTXO not found.' });
-  assert.equal(data['authority-activation'], undefined);
-  f.state.activationError = null;
-  const send = f.provider.sendInscription;
-  f.provider.sendInscription = async (...args) => { const tx = await send(...args); f.state.active = false; return tx; };
-  await assert.rejects(ensureTapAuthority(f.provider, f.state.address, steps, options), /activation is pending/);
-  f.state.active = true;
-  assert.equal(await ensureTapAuthority(f.provider, f.state.address, steps, options), f.authId);
-  assert.equal(f.state.calls.filter(c => c[0] === 'sendInscription').length, 2, 'one definite UTXO failure plus one broadcast');
-  assert.equal(f.state.calls.filter(c => c[0] === 'createGlobalTapAuthority').length, 1);
 });
 test('locked or changed 1.0.48 account fails before a durable payment attempt', async () => {
   const f = fixture(true); await f.wallet.connect();
@@ -172,15 +133,6 @@ test('account changes while refreshing after setup fail before the payment recor
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 0);
 });
 
-test('an older saved scoped authority is never activated as global or replaced by another paid order', async () => {
-  const f = fixture(); let actions = 0;
-  const old = { orderId: 'old-scoped-order', inscriptionId: f.authId, txid: f.authId.slice(0, 64), paymentTxid: f.funding, pending: false };
-  const journal = { getStep: () => ({ state: 'done', result: old }), step: async () => { actions++; return old; } };
-  await assert.rejects(ensureTapAuthority(f.provider, f.state.address, journal), /older payment flow/);
-  assert.equal(actions, 1); assert.deepEqual(f.state.calls, []);
-});
-
-
 test('public deployment uses only its receiving TAP wallet while agent and compound deployments retain bindings', async () => {
   const f = fixture(true); await f.wallet.connect();
   const text = 'dmwpublic.123.4.element', attemptId = 'ab'.repeat(32);
@@ -216,4 +168,80 @@ test('a submitted payment resolves its redeem inscription from Bitcoin for repor
   assert.equal(await f.wallet.paymentInscription(f.id), funding + 'i0', 'a receipt naming the reveal is used directly');
   assert.equal(await f.wallet.paymentInscription('34'.repeat(32)), null, 'no saved receipt, nothing to report');
   assert.ok(urls.every(url => url.startsWith('https://mempool.space/api/tx/')));
+});
+
+// TAP Wallet 1.0.49: one approval pays the fees and sets aside the Bitcoin for the server-sent mint.
+const setAsideAddress = (network = 'mainnet') => fundingAddress(hex(secp256k1.getPublicKey(new Uint8Array(32).fill(9), true)), network);
+function fixture1049({ version, mintFunding } = {}) {
+  const f = fixture(true), wallet = tapWallet1049({ address: f.status.receiver, publicKey: hex(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true)), active: true, version });
+  const seen = [], provider = new Proxy(wallet.provider, { get: (target, name) => typeof target[name] === 'function' ? (...args) => { seen.push([name, args.length]); return target[name](...args); } : target[name] });
+  if (mintFunding !== undefined) f.status.mintFunding = mintFunding;
+  const options = { ...f.options, provider };
+  return { ...f, ...wallet, seen, options, wallet: new TapWalletMint(options) };
+}
+test('1.0.49 with mintFunding sends one transfer carrying the set-aside output, journals it and never pays twice', async () => {
+  const mintFunding = { address: setAsideAddress(), satoshis: 4200, feeRate: 6, label: 'your mint inscription' };
+  const f = fixture1049({ mintFunding }); await f.wallet.connect();
+  const result = await f.wallet.pay(f.id);
+  assert.equal(result.localState, 'payment_submitted'); assert.equal(result.mintFunded, true);
+  const sent = f.state.calls.filter(c => c[0] === 'singleTxTransfer');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0][2], { extraOutputs: [{ address: mintFunding.address, satoshis: 4200, label: 'your mint inscription' }] });
+  const record = f.records.get(f.wallet.key(f.id)).payment;
+  assert.deepEqual(record.extraOutputs, [{ address: mintFunding.address, satoshis: 4200, label: 'your mint inscription' }]);
+  assert.deepEqual(record.result.extraOutputs, [{ address: mintFunding.address, satoshis: 4200, vout: 1 }]);
+  const again = new TapWalletMint(f.options); await again.connect();
+  assert.equal((await again.pay(f.id)).localState, 'payment_pending');
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
+});
+test('1.0.49 without mintFunding keeps the 1.0.48 transfer call: items only, no options argument', async () => {
+  const f = fixture1049(); await f.wallet.connect();
+  const result = await f.wallet.pay(f.id);
+  assert.equal(result.localState, 'payment_submitted'); assert.equal(result.mintFunded, undefined);
+  assert.deepEqual(f.seen.filter(c => c[0] === 'singleTxTransfer'), [['singleTxTransfer', 1]]);
+  assert.equal(f.records.get(f.wallet.key(f.id)).payment.extraOutputs, undefined);
+});
+test('a wallet older than 1.0.49 is refused before any other wallet call', async () => {
+  for (const version of [undefined, '1.0.48', '1.0', '0.9.99', 'v1.0.49', '']) {
+    const f = fixture1049({ version });
+    if (version === undefined) { f.provider.getCapabilities = undefined; assert.equal(typeof tapWallet1048({}).provider.getCapabilities, 'undefined'); }
+    const seen = [], provider = new Proxy(f.provider, { get: (target, name) => typeof target[name] === 'function' ? (...args) => { seen.push(name); return target[name](...args); } : target[name] });
+    const wallet = new TapWalletMint({ ...f.options, provider });
+    await assert.rejects(wallet.connect(), /This needs TAP Wallet 1\.0\.49 or newer\. Update TAP Wallet, then reload this page\./, String(version));
+    assert.deepEqual(seen.filter(name => name !== 'getCapabilities'), [], String(version));
+    assert.deepEqual(f.state.calls, []);
+  }
+  // A wallet downgraded after connecting is refused before the payment.
+  const f = fixture1049(); await f.wallet.connect(); f.state.version = '1.0.48';
+  await assert.rejects(f.wallet.pay(f.id), /1\.0\.49 or newer/);
+  assert.deepEqual(f.state.calls, []); assert.equal(f.records.get(f.wallet.key(f.id)), undefined);
+  for (const version of ['1.0.49', '1.0.50', '1.0.100', '1.1', '2.0.0']) { const ok = fixture1049({ version }); await ok.wallet.connect(); }
+});
+test('an invalid mintFunding is refused before the authority check, the journal and the transfer', async () => {
+  const good = { address: setAsideAddress(), satoshis: 4200, label: 'your mint inscription' };
+  const legacy = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT';
+  for (const mintFunding of [{ ...good, address: setAsideAddress('regtest') }, { ...good, address: legacy }, { ...good, address: good.address.toUpperCase() },
+    { ...good, address: good.address.slice(0, -1) + (good.address.endsWith('q') ? 'p' : 'q') }, { ...good, satoshis: 545 }, { ...good, satoshis: 100001 },
+    { ...good, satoshis: 4200.5 }, { ...good, satoshis: '4200' }, { ...good, label: 'x'.repeat(41) }, { ...good, label: '<b>mint</b>' }, { ...good, label: 'a\nb' }, 'bc1q', null]) {
+    const f = fixture1049({ mintFunding }); await f.wallet.connect();
+    if (mintFunding === null) { assert.equal((await f.wallet.pay(f.id)).localState, 'payment_submitted'); continue; }
+    await assert.rejects(f.wallet.pay(f.id), /set-aside for the mint is not valid\. Nothing was paid/, JSON.stringify(mintFunding));
+    assert.deepEqual(f.seen.filter(c => ['getCurrentAuthority', 'singleTxTransfer'].includes(c[0])), [], JSON.stringify(mintFunding));
+    assert.equal(f.records.get(f.wallet.key(f.id)), undefined);
+  }
+});
+test('mintFunding that changes while the wallet is checked stops the payment', async () => {
+  const f = fixture1049({ mintFunding: { address: setAsideAddress(), satoshis: 4200, label: 'your mint inscription' } }); await f.wallet.connect();
+  let reads = 0; const read = f.options.readStatus;
+  const wallet = new TapWalletMint({ ...f.options, readStatus: async id => { const s = await read(id); return ++reads > 1 ? { ...s, mintFunding: { ...s.mintFunding, satoshis: 5000 } } : s; } });
+  await wallet.connect();
+  await assert.rejects(wallet.pay(f.id), /Payment changed while checking the wallet/);
+  assert.deepEqual(f.state.calls.filter(c => c[0] === 'singleTxTransfer'), []);
+  assert.equal(f.records.get(f.wallet.key(f.id)), undefined);
+});
+test('a 1.0.49 wallet without extraOutputs support pays the two-step way', async () => {
+  const f = fixture1049({ mintFunding: { address: setAsideAddress(), satoshis: 4200, label: 'your mint inscription' } });
+  f.provider.getCapabilities = async () => ({ version: '1.0.49' });
+  await f.wallet.connect(); await f.wallet.pay(f.id);
+  assert.deepEqual(f.seen.filter(c => c[0] === 'singleTxTransfer'), [['singleTxTransfer', 1]]);
 });

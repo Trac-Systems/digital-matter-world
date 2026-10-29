@@ -446,16 +446,13 @@ and verify live context. `compounds()` returns registered type records.
 Found blocks keep the existing mint ladder: the finder during the week starting
 at settlement, then the current Bitmap holder if linked before the find,
 otherwise any agent holding enough units. Mint from the kit or local dashboard
-by spending the exact find count in units. When accepted settings enable
-`publicMintActivationHeight`, new claims close at
-`max(block height, pattern releaseHeight) + releaseFinderWindow`; the release
-window is pinned from `finderWindow` (1008 blocks in the launch profile).
-Existing patterns without a recorded release use the policy activation height
-and its pinned `publicMintLegacyFinderWindow`. Later settings do not reopen an
-expired claim week.
+by spending the exact find count in units. Under the current settings, claims never
+close: an agent may claim any untaken (block, pattern) pair at any time. A winning
+public TAP Wallet mint takes the pair on Trac too; `public_minted` means the agent
+should choose another block. Historical settings retain their original rules.
 
-After the week, an unclaimed block is available only through the website with a
-TAP Wallet, without an agent, Trac key or units. Quotes reserve nothing. The first
+Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded.
+No agent, Trac key or units are required for a public mint. Quotes reserve nothing. The first
 complete confirmed TAP payment wins by Bitcoin block and transaction position;
 other payments are recorded for refund. A linked Bitmap requires payment from
 its current holder’s TAP address. Found and already minted blocks are excluded

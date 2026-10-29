@@ -4,9 +4,10 @@ import { slotsFor } from './claims.js';
 import { encodeBinary } from './binary.js';
 import { merkleRoot } from './merkle.js';
 import { batchSettings } from './batch-settings.js';
-import { findIdV2, patternAssetV2, ordinalCodec, compareOrdinal } from './integers-v2.js';
+import { findIdV2, ordinalCodec, compareOrdinal } from './integers-v2.js';
 import { patternCount } from './patterns.js';
-import { assertClaimOpen, publicMintActive } from './public-mint.js';
+import { assertClaimOpen, publicMintActive, claimsNeverCloseActive } from './public-mint.js';
+import { patternLedgerAsset, publicTaken } from './public-claims.js';
 
 export const claimSlotId = (settings, block, number) => settings.document ? findIdV2(String(block), String(number)) : findId(block, number);
 
@@ -31,7 +32,11 @@ export function enterClaims({ state, event, agent, plots, patterns, history, set
   // After overflow only the invalidation flag is needed, never an unbounded set.
   const slots = [];
   for (const plot of plots) {
-    if (publicMintActive(settings, height)) for (const number of plot.patterns)
+    if (state.publicMintGet || claimsNeverCloseActive(settings, height)) for (const number of plot.patterns) {
+      const pattern = namedPattern(patterns, number);
+      assert(!publicTaken(state, { id: findId(plot.block, number), asset: patternLedgerAsset(pattern), block: plot.block }), 'public_minted');
+    }
+    if (!state.publicMintGet && publicMintActive(settings, height)) for (const number of plot.patterns)
       assertClaimOpen({ pattern: namedPattern(patterns, number), block: plot.block, height, settings });
     assert(compareOrdinal(plot.block, event.claimableHeight) <= 0 || plot.block === event.window, 'not_counted');
     assert(plot.patterns.every(number => !recordGet(state.finds, findId(plot.block, number)) && !recordGet(state.claimReservations, findId(plot.block, number))), 'already_found');
@@ -47,7 +52,7 @@ export function enterClaims({ state, event, agent, plots, patterns, history, set
       const row = history.get(plot.block);
       slots.push(...(s.document ? missing.flatMap(p => {
         const count = patternCount(p, row); return count > 0 ? [{ id: findId(plot.block, p.number), block: plot.block,
-          pattern: p.number, asset: p.legacy?.asset ?? patternAssetV2(String(p.number)), count }] : [];
+          pattern: p.number, asset: patternLedgerAsset(p), count }] : [];
       }) : slotsFor(row, missing)));
     }
   }
@@ -80,7 +85,8 @@ export function boundedPages(rows, field, settings = {}) {
   if (page.length) emit(page); return pages;
 }
 
-export function implicitHeaderFind({ state, slot, pattern, materializedAt }) {
+export function implicitHeaderFind({ state, slot, pattern, materializedAt, settings }) {
+  if ((state.publicMintGet || settings && claimsNeverCloseActive(settings, materializedAt)) && publicTaken(state, slot)) return null;
   const draw = recordGet(state.headerAwards, slot.block);
   if (!draw || BigInt(draw.senderCount) === 0n || compareOrdinal(pattern.number, draw.catalog.nextNumber) >= 0 || recordGet(state.claimReservations, slot.id)) return null;
   const index = headerSenderIndex(draw, slot.id), page = String(BigInt(index) / BigInt(draw.senderPageRows)), offset = Number(BigInt(index) % BigInt(draw.senderPageRows));
@@ -92,7 +98,7 @@ export function implicitHeaderFind({ state, slot, pattern, materializedAt }) {
 }
 
 export function queueHeaderFind({ state, slot, pattern, height, settings }) {
-  const w = implicitHeaderFind({ state, slot, pattern, materializedAt: height });
+  const w = implicitHeaderFind({ state, slot, pattern, materializedAt: height, settings });
   if (!w || recordGet(state.finds, slot.id)) return;
   const clock = ordinalCodec(!!settings.document), draw = recordGet(state.headerAwards, slot.block);
   put(state, 'claimReservations', slot.id, { window: w.window, winner: w.winner });
@@ -132,6 +138,7 @@ export function freezeClaimWindow({ state, event, decidingHash, counted, setting
     let reason = agent?.exceeded ? 'claim_budget' : distinct.length > 1 ? 'conflicting_claims' : null;
     const slots = c.patterns.map(n => recordGet(state.claimSlots, `${event.window}/${findId(c.block, n)}`));
     if (!reason && slots.some(s => !s)) reason = 'not_a_slot';
+    if (!reason && (state.publicMintGet || claimsNeverCloseActive(settings, counted)) && slots.some(slot => publicTaken(state, slot))) reason = 'public_minted';
     if (!reason && slots.some(slot => recordGet(state.finds, slot.id) || recordGet(state.claimReservations, slot.id))) reason = 'already_found';
     if (!reason && slots.some(slot => {
       const draw = recordGet(state.headerAwards, slot.block);

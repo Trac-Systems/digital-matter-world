@@ -60,9 +60,10 @@ export async function acceptedAssetProvenance({ store, reads, asset, block }) {
       if (rules.publicMintActive(context.settings, claims.hot.counted)) {
         const claimRead = (name, key) => get('claimNodes', claims.maps[name].storage, claims.maps[name].root, key);
         const reservation = await claimRead('claimReservations', rules.findIdV2(height, number));
-        const draw = await claimRead('headerAwards', height), deadline = rules.claimDeadline(pattern, height, context.settings);
+        const draw = await claimRead('headerAwards', height);
+        const right = rules.publicBlockRight({ pattern, block: height, height: claims.hot.counted, settings: context.settings, find, reserved: reservation });
         publicClaims = { reservation, headerAward: !!(draw && BigInt(draw.senderCount) > 0n && BigInt(number) < BigInt(draw.catalog.nextNumber)),
-          unsettled: claims.hot.rounds.some(round => !round.closed && BigInt(round.window) < BigInt(deadline)) };
+          unsettled: right.claimDeadline !== undefined && claims.hot.rounds.some(round => !round.closed && BigInt(round.window) < BigInt(right.claimDeadline)) };
       }
     }
     check(Number.isSafeInteger(pattern.tier) && pattern.tier >= 1 && pattern.tier <= 5, 'asset_provenance_tier');

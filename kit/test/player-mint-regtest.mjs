@@ -35,7 +35,7 @@ const until = async (fn, label, ms = 30000) => {
   throw Error(`Timed out: ${label}${last ? ': ' + last.message : ''}`);
 };
 
-test('isolated fresh browser wallet activates authority, pays fees, inscribes mints, and verifies native lock burns', { timeout: 240000 }, async t => {
+test('isolated browser wallet with 1-TX Transfers on pays fees, inscribes mints, and verifies native lock burns', { timeout: 240000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'dmw-player-mint-')), children = [], wallets = [], journals = [];
   let server, browser, browserLocked = false;
   const browserLock = join(root, '.local/browser.lock');
@@ -130,7 +130,7 @@ test('isolated fresh browser wallet activates authority, pays fees, inscribes mi
   await write(committee, { p: 'tap', op: 'token-deploy', tick: 'tap', max: '1000', dec: '18' });
   for (const who of [kit, web]) {
     await write(who, { p: 'tap', op: 'token-mint', tick: 'tap', amt: '100' });
-    if (who === web) continue; // The browser must onboard a fresh global authority.
+    // Players turn on 1-TX Transfers in TAP Wallet before they take part.
     const auth = await activate(who, authority(who.key));
     who.local.close(); who.local = localBitcoinWallet({ wallet: who.trac, network: 'regtest', source: who.source, authority: auth });
     assert.ok((await tap(`getAccountAuthList/${who.local.address}`)).some(a => a.ins === auth));
@@ -338,7 +338,7 @@ test('isolated fresh browser wallet activates authority, pays fees, inscribes mi
   const consumedLock = await tap('getLockConsume/' + lockInscription + ':0');
   assert.equal(consumedLock.ins, claim); assert.equal(consumedLock.action, 'claim');
   assert.equal(consumedLock.al[0].to, TAP_BURN);
-  const proof = { fixture: 'player mint API; fresh global authority; deferred address fee items; native lock burn and claim; real regtest indexing',
+  const proof = { fixture: 'player mint API; global authority set up in the wallet; deferred address fee items; native lock burn and claim; real regtest indexing',
     compoundDeploy: deployId, kit: { payment: payment.inscriptionId, mint: made.inscriptionId, units: '2' },
     web: { compoundDeploy: webDeployId, recoveredLostRevealReply: true, mint: (await statusFor(web.id)).inscription, units: '3', paymentCalls, psbtSigns }, processesStoppedByTestCleanup: true };
   t.diagnostic(JSON.stringify(proof));

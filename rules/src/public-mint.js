@@ -6,6 +6,11 @@ export function publicMintActive(settings, height) {
   const v = publicMintValues(settings);
   return v.publicMintActivationHeight !== undefined && BigInt(decimalV2(height)) >= BigInt(uintV2(v.publicMintActivationHeight));
 }
+export function claimsNeverCloseActive(settings, height) {
+  const v = publicMintValues(settings);
+  return v.claimsNeverCloseHeight !== undefined && publicMintActive(settings, height) &&
+    BigInt(decimalV2(height)) >= BigInt(uintV2(v.claimsNeverCloseHeight));
+}
 export function claimDeadline(pattern, block, settings) {
   const v = publicMintValues(settings), height = BigInt(decimalV2(block));
   // Older native v2 catalogs did not retain an immutable release clock.
@@ -16,10 +21,11 @@ export function claimDeadline(pattern, block, settings) {
   return ((height > start ? height : start) + BigInt(window)).toString();
 }
 export function assertClaimOpen({ pattern, block, height, settings }) {
-  if (publicMintActive(settings, height)) assert(BigInt(decimalV2(height)) < BigInt(claimDeadline(pattern, block, settings)), 'claim_deadline');
+  if (publicMintActive(settings, height) && !claimsNeverCloseActive(settings, height)) assert(BigInt(decimalV2(height)) < BigInt(claimDeadline(pattern, block, settings)), 'claim_deadline');
 }
 export function publicBlockRight({ pattern, block, height, settings, find, reserved, headerAward, minted }) {
   assert(publicMintActive(settings, height), 'public_mint_inactive');
+  if (claimsNeverCloseActive(settings, height)) return { state: minted || reserved?.publicMint ? 'already_minted' : find || reserved || headerAward ? 'claimed' : 'public' };
   const deadline = claimDeadline(pattern, block, settings);
   if (minted) return { state: 'already_minted', claimDeadline: deadline };
   if (find || reserved || headerAward) return { state: 'claimed', claimDeadline: deadline };
@@ -34,11 +40,12 @@ export function paymentOrder(a, b) {
   }
   return 0;
 }
-export function settlePublicPayments(previous, payments) {
+export function settlePublicPayments(previous, payments, { claimed = false } = {}) {
   let winner = previous ?? null; const refunds = [];
   for (const payment of [...payments].sort(paymentOrder)) {
     assert(hex(payment.id, 32) && typeof payment.reference === 'string', 'public_payment');
-    if (!winner && payment.complete) winner = payment;
+    if (!winner && claimed) refunds.push({ ...payment, reason: 'claimed_first', winner: null, state: 'owed' });
+    else if (!winner && payment.complete) winner = payment;
     else if (!winner || payment.reference !== winner.reference) refunds.push({ ...payment,
       reason: payment.complete ? 'someone_paid_first' : 'public_payment_incomplete', winner: winner?.id ?? null, state: 'owed' });
   }

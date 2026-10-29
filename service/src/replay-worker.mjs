@@ -2,7 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import { rules, processObservation } from './rules.mjs';
 import { NodeEvidence } from './node-evidence.mjs';
-parentPort.on('message', ({ id, input, headers, length, database, branch, shared, headerPageSize, claimDatabase, claimCacheKiB, claimNodes, namedNodes, headerCachePages = 8, cacheKiB = 4096 }) => {
+parentPort.on('message', ({ id, input, headers, length, database, branch, shared, publicMintShared, headerPageSize, claimDatabase, claimCacheKiB, claimNodes, namedNodes, headerCachePages = 8, cacheKiB = 4096 }) => {
   let db, claimDb;
   try {
     const decimal = !!input.settings?.document;
@@ -74,7 +74,14 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
         return row;
       };
     }
-    const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet });
+    const publicMintGet = (asset, block) => {
+      const control = new Int32Array(publicMintShared, 0, 2);
+      Atomics.store(control, 0, 0); parentPort.postMessage({ id, requestPublicMint: [asset, block] });
+      Atomics.wait(control, 0, 0);
+      if (Atomics.load(control, 0) !== 1) throw Error('public_mint_evidence_missing');
+      return new TextDecoder().decode(new Uint8Array(publicMintShared, 8, Atomics.load(control, 1))) || null;
+    };
+    const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet, publicMintGet });
     parentPort.postMessage({ id, output: claimDatabase ? { ...output, claimEvidence: claimProof.value(), namedEvidence: namedProof.value() } : output });
   } catch (e) { parentPort.postMessage({ id, error: e.message }); }
   finally { db?.close(); claimDb?.close(); }

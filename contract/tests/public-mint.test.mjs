@@ -70,3 +70,38 @@ test('capacity collision or late validation failure leaves every financial recor
   before = [...f.db]; await assert.rejects(applyPublicScan(f.store, op, f.context), /financial_capacity/);
   assert.deepEqual([...f.db], before);
 });
+
+test('active agent-first scans refund complete and partial payments without issuing capacity or a public plot', async () => {
+  const f = fixture(); f.context.settings.claimsNeverCloseHeight = '110';
+  const a = payment(1), b = payment(2, '100', false), op = { ...scan(f, [a, b]), claim: { pattern: '7', claimed: true, publicWinner: null } };
+  await applyPublicScan(f.store, op, f.context);
+  assert.equal(f.db.get(publicScanKey(op.id)).winner, null);
+  for (const p of [a, b]) assert.equal(f.db.get(publicRefundKey(p)).reason, 'claimed_first');
+  assert.equal(f.db.has('dc/plot/' + asset + '/' + block), false);
+  assert.equal(f.db.has('fp/' + a.id), false); assert.equal(f.db.has(capacityKey(deployment)), false);
+  assert.equal(f.db.get('fd/' + generation).reserved, '0');
+});
+
+test('active public winner is permanent and later scans must bind its accepted predecessor', async () => {
+  const f = fixture(); f.context.settings.claimsNeverCloseHeight = '110';
+  const a = payment(1), op = { ...scan(f, [a]), claim: { pattern: '7', claimed: false, publicWinner: null } };
+  await applyPublicScan(f.store, op, f.context);
+  assert.equal(f.db.get('fp/' + a.id).owner, null);
+  const late = { ...scan(f, [payment(2, '101')], '102'), claim: { ...op.claim, publicWinner: a.id } };
+  const before = [...f.db];
+  await assert.rejects(applyPublicScan(f.store, { ...late, claim: op.claim }, f.context), /public_claim_predecessor/);
+  assert.deepEqual([...f.db], before);
+  await applyPublicScan(f.store, late, f.context);
+  assert.equal(f.db.get(publicScanKey(op.id)).winner.id, a.id);
+  assert.equal(f.db.get(publicRefundKey(payment(2, '101'))).reason, 'someone_paid_first');
+});
+
+test('claim decisions are mandatory and identity-bound only at the new activation height', async () => {
+  const f = fixture(); f.context.settings.claimsNeverCloseHeight = '110';
+  const op = scan(f, [payment(1)]), before = [...f.db];
+  await assert.rejects(applyPublicScan(f.store, op, f.context), /public_claim_binding/);
+  await assert.rejects(applyPublicScan(f.store, { ...op, claim: { pattern: '8', claimed: false, publicWinner: null } }, f.context), /public_claim_binding/);
+  assert.deepEqual([...f.db], before);
+  await applyPublicScan(f.store, op, { ...f.context, height: '109' });
+  assert.equal(f.db.get(publicScanKey(op.id)).winner.id, payment(1).id);
+});

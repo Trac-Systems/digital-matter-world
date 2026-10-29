@@ -41,6 +41,11 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       if (await web.handle(req, res, body)) return;
       if (headers && await headers.serve(req, res)) return;
       const operatorURL = new URL(req.url, 'http://127.0.0.1');
+      if (req.method === 'GET' && operatorURL.pathname === '/internal/mint-sender/requests') {
+        check(mints?.mintSender && mints.mintSender.authorized(req.headers.authorization), 'not_found', 404);
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(mints.mintSender.page(mints, operatorURL.searchParams))); return;
+      }
       if (mints?.publicMints && ['GET', 'HEAD'].includes(req.method) &&
           (operatorURL.pathname.startsWith('/public-mints') || operatorURL.pathname === '/mint-rights' && rules.publicMintActive(mints.document, intake.store.get('meta', 'ruleState')?.counted ?? '0'))) {
         const path = decodeURIComponent(operatorURL.pathname), detail = /^\/public-mints\/([^/]+)\/(0|[1-9][0-9]*)$/.exec(path);

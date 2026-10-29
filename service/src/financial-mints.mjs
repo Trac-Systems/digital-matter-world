@@ -102,13 +102,14 @@ export class FinancialMints extends Mints {
     const blocked = financialBlock(this.store, ['fp/' + id, 'ao/' + id, 'dc/' + id, 'fp/usage',
       ...(capacity ? ['fd/' + capacity.deployment] : []), ...(external ? [capacityKey(external.deployment),
         'fi/deployment/' + external.deployment, ...(external.block === null ? [] : [plotKey(external.asset, external.block)])] : [])]);
-    return { ...publicMint(row), financialVersion: 2, state: row.state,
+    const status = { ...publicMint(row), financialVersion: 2, state: row.state,
       payable: !blocked && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
       // The reported, not yet confirmed mint inscription: every page hides a second inscribe.
       ...(row.mintInscription && row.state !== 'minted' ? { sentInscription: row.mintInscription } : {}),
       reservation: obligation?.state ?? 'pending', funding: funding ? { state: funding.state, paid: funding.paid, sequence: funding.sequence, root: funding.root } : null,
       ...(row.work ? { transition: { id: row.work, state: this.store.get('financialAccepted', row.work)?.state ?? 'queued',
         reason: this.store.get('financialDeferred', row.work)?.reason ?? null } } : {}) };
+    return this.mintSender?.decorate(row, status) ?? status;
   }
   // Background ticks advance the same request; the player's (identical) request waits for them.
   request(body) { return this.mintWork.run(financialMintId(this.network, body.request), async () => {

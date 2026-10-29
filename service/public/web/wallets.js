@@ -1,4 +1,5 @@
-import { ensureTapAuthority, tapOrderResult, requireAuthorityAPI } from '../../../kit/lib/tap-wallet-actions.mjs';
+import { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, tapWalletCapabilities } from '../../../kit/lib/tap-wallet-actions.mjs';
+export { TAP_WALLET_MIN_VERSION, TAP_WALLET_TOO_OLD } from '../../../kit/lib/tap-wallet-actions.mjs';
 export const wait = ms => new Promise(r => setTimeout(r, ms));
 export const hex = bytes => Array.from(bytes, n => n.toString(16).padStart(2, '0')).join('');
 export async function sha256(bytes) { return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))); }
@@ -11,6 +12,7 @@ function walletTarget(target) {
 export async function tapAccount(target, expected) {
   walletTarget(target);
   const tap = window.tapprotocol; if (!tap?.requestAccounts) fail('Open this page with the TAP wallet extension.');
+  await requireTapWallet(tap);
   const network = await tap.getNetwork();
   if (network !== target.bitcoinNetwork) await tap.switchNetwork(target.bitcoinNetwork);
   if (await tap.getNetwork() !== target.bitcoinNetwork) fail('Switch TAP wallet to Bitcoin, then try again.');
@@ -61,6 +63,10 @@ export function requireTapActions(tap) {
   }
   requireAuthorityAPI(tap);
 }
+// Every TAP Wallet action on the site needs TAP Wallet 1.0.49 or newer; asked before any other wallet call.
+export async function requireTapWallet(tap = window.tapprotocol) {
+  try { return await tapWalletCapabilities(tap); } catch (e) { fail(e.message); }
+}
 // Durable per-step checkpoints avoid resending after cancellation or a reload.
 // An unresolved provider call is deliberately not silently retried.
 export class WalletJournal {
@@ -75,6 +81,12 @@ export class WalletJournal {
     try { const result = await action(); this.data[name] = { state: 'done', result }; this.save(); return result; }
     catch (e) { if (definitelyNotSent(e)) { delete this.data[name]; this.save(); } throw e; }
   }
+}
+// Checked before a mint or link starts, so nobody reserves what their wallet cannot pay.
+export async function oneTxReady(address) {
+  const tap = window.tapprotocol; if (!tap?.requestAccounts) fail('Open this page with the TAP wallet extension.');
+  await requireTapWallet(tap);
+  return ensureTapAuthority(tap, address);
 }
 export async function authority(tap, address, journal, notify, checkAccount) {
   requireTapActions(tap);

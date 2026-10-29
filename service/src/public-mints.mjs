@@ -30,11 +30,12 @@ export class PublicMints {
     const headerAward = !!(draw && BigInt(draw.senderCount) > 0n && BigInt(pattern.number) < BigInt(draw.catalog.nextNumber));
     const minted = this.store.get('minted', ledgerAsset + '/' + block) ?? this.store.get('minted', catalogAsset + '/' + block);
     const right = rules.publicBlockRight({ pattern, block, height, settings: this.document, find, reserved, headerAward, minted });
-    const unsettled = claims.rounds.some(round => !round.closed && BigInt(round.window) < BigInt(right.claimDeadline));
+    // Historical policies retain their settlement fence; the activated read has no deadline.
+    const unsettled = right.claimDeadline !== undefined && claims.rounds.some(round => !round.closed && BigInt(round.window) < BigInt(right.claimDeadline));
     const capacity = this.store.get('accountRecords', plotKey(ledgerAsset, block)) ?? this.store.get('accountRecords', 'fi/plot/' + ledgerAsset + '/' + block);
-    let state = minted ? 'minted' : scan?.winner ? this.store.get('mints', scan.winner.id)?.permit ? 'permit_issued' : 'paid' : capacity ? 'already_minted' : right.state;
-    if (state === 'public' && (!occurrence || unsettled)) state = 'public_scan_pending';
-    return { asset: catalogAsset, ledgerAsset, block, amount: occurrence?.count ?? (find ? String(find.count) : null), claimDeadline: right.claimDeadline,
+    let state = minted ? 'already_minted' : scan?.winner ? this.store.get('mints', scan.winner.id)?.permit ? 'permit_issued' : 'paid' : right.state === 'claimed' ? 'claimed' : capacity ? 'already_minted' : right.state;
+    if (state === 'public' && right.claimDeadline !== undefined && (!occurrence || unsettled)) state = 'public_scan_pending';
+    return { asset: catalogAsset, ledgerAsset, block, amount: occurrence?.count ?? (find ? String(find.count) : null),
       state, bitmapHolderOnly: !!this.store.get('links', heightKey(block)), winner: scan?.winner ? { id: scan.winner.id, tapAddress: scan.winner.tapAddress, paymentId: scan.winner.reference } : null,
       refunds: '/public-mints/refunds?asset=' + encodeURIComponent(catalogAsset) + '&block=' + block };
   }
@@ -62,12 +63,12 @@ export class PublicMints {
     check(!this.parent.financial.admissionReady || await this.parent.financial.admissionReady(), 'financial_admission_fenced', 503);
     payoutAddress('tap', input.tapAddress, this.parent.bitcoinNetwork);
     const needed = await Mints.prototype.deploymentNeeded.call(this.parent, resolved.asset, { block, receiver: input.tapAddress, kind: 'tap' });
-    if (needed) return { ...needed, publicMint: true, reservation: 'none', claimDeadline: state.claimDeadline };
+    if (needed) return { ...needed, publicMint: true, reservation: 'none' };
     const generation = await this.reads.financialDeployment(resolved.asset, await this.reads.batchStamp());
     if (!generation.existing) {
       await this.parent.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
       return { id: null, requestId: null, asset: resolved.catalogAsset, block, receiver: input.tapAddress, kind: 'tap', publicMint: true,
-        state: 'deployment_pending', payable: false, reservation: 'none', fees: [], missing: [], claimDeadline: state.claimDeadline };
+        state: 'deployment_pending', payable: false, reservation: 'none', fees: [], missing: [] };
     }
     const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress }, await this.reads.batchStamp());
     const row = { id: q.id, publicMint: true, catalogAsset: resolved.catalogAsset, intent: q.intent, receiver: input.tapAddress, payer: input.tapAddress, kind: 'tap',
@@ -75,7 +76,7 @@ export class PublicMints {
       quote: { ...q, payableAmount: q.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), baseFee: q.feeQuote.baseFee,
         feeSettings: q.feeQuote.feeSettings, actualTicker: q.deployment.tick, deploymentId: q.deployment.id },
       context: { deployment: q.deployment }, state: 'awaiting_payment', paymentIds: [] };
-    if (!start) return { ...publicMint(row), id: null, requestId: null, payable: false, reservation: 'none', claimDeadline: q.claimDeadline };
+    if (!start) return { ...publicMint(row), id: null, requestId: null, payable: false, reservation: 'none' };
     check(this.store.count('publicMintRequests') < this.parent.resources.activeMints || this.store.get('mints', row.id), 'mint_capacity', 503);
     const plot = rules.publicPlotId(resolved.asset, block);
     if (!this.store.get('mints', row.id)) await this.store.transact([{ space: 'mints', id: row.id, value: row }, { space: 'publicMintRequests', id: row.id, value: true },
@@ -86,12 +87,18 @@ export class PublicMints {
     const row = this.store.get('mints', id); check(row?.publicMint, 'request_not_found', 404);
     const scan = this.store.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block)));
     const refunds = this.store.list('publicMintRefundsByRequest/' + id, { limit: this.document.values.publicMintPageSize }).map(r => refundView(r.value));
-    const lost = !!scan?.winner && scan.winner.id !== id, state = row.permit ? row.state : refunds.length && scan?.winner?.id !== id ? 'refundable' : lost ? 'someone_paid_first' : row.state;
+    const lost = !!scan?.winner && scan.winner.id !== id;
     const expired = BigInt(this.store.get('meta', 'ruleState')?.counted ?? row.created) > BigInt(row.expiry);
-    return { ...publicMint(row), payer: row.payer, state, reservation: 'none', unitsConsumed: false, publicMint: true, catalogAsset: row.catalogAsset,
-      payable: !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length,
-      claimDeadline: row.quote.claimDeadline, refunds, winner: scan?.winner ? { id: scan.winner.id, tapAddress: scan.winner.tapAddress } : null,
-      reason: lost ? 'someone_paid_first' : row.reason ?? null, paymentPage: '/mint/' + id };
+    // A checkout reserves nothing. Recheck before offering an unpaid request to the wallet.
+    const current = !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length ? this.state(row.request.asset, row.request.block) : null;
+    const unavailable = current && current.state !== 'public' ? current.state : null;
+    const state = row.permit ? row.state : refunds.length && scan?.winner?.id !== id ? 'refundable' : lost ? 'someone_paid_first' : unavailable ?? row.state;
+    const status = { ...publicMint(row), payer: row.payer, state, reservation: 'none', unitsConsumed: false, publicMint: true, catalogAsset: row.catalogAsset,
+      payable: !unavailable && !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length,
+      refunds, winner: scan?.winner ? { id: scan.winner.id, tapAddress: scan.winner.tapAddress } : null,
+      reason: refunds.find(refund => refund.reason === 'claimed_first')?.reason ?? (lost ? 'someone_paid_first' : refunds[0]?.reason ?? unavailable ?? row.reason ?? null), paymentPage: '/mint/' + id,
+      ...(row.mintInscription ? { sentInscription: row.mintInscription } : {}) };
+    return this.parent.mintSender?.decorate(row, status) ?? status;
   }
   async payment({ id, requestId, paymentId, paymentIds = [], inscription }) {
     id ??= requestId; const row = this.store.get('mints', id); check(row?.publicMint, 'request_not_found', 404);
@@ -175,12 +182,14 @@ export class PublicMints {
   }
 }
 
-export function publicMintAcceptedWrites(store, input) {
+export function publicMintAcceptedWrites(store, input, accepted = store) {
   if (input.transition.type !== 'public-scan') return [];
-  const e = input.evidence, prior = store.get('accountRecords', publicScanKey(input.transition.id));
-  const { winner, refunds } = rules.settlePublicPayments(prior?.winner, e.payments), writes = [];
-  for (const row of refunds) {
-    const id = publicRefundKey(row).split('/').at(-1), { source, ...refund } = row;
+  const key = publicScanKey(input.transition.id), prior = store.get('accountRecords', key);
+  const winner = accepted.get('accountRecords', key)?.winner, writes = [];
+  for (const payment of input.evidence.payments) {
+    const key = publicRefundKey(payment), row = accepted.get('accountRecords', key);
+    if (!row) continue;
+    const id = key.split('/').at(-1), { source, ...refund } = row;
     for (const space of ['publicMintRefunds', 'publicMintRefundsByRequest/' + row.id, 'publicMintRefundsByAddress/' + rules.hash(row.tapAddress)]) writes.push({ space, id, value: refund });
   }
   if (winner && !prior?.winner) writes.push({ space: 'financialCustodyPending', id: winner.id, value: true });

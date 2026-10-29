@@ -1,4 +1,5 @@
-import { publicMintActive, publicPlotId, paymentOrder, settlePublicPayments } from '../rules/src/public-mint.js';
+import { publicMintActive, publicPlotId, paymentOrder, settlePublicPayments, claimsNeverCloseActive } from '../rules/src/public-mint.js';
+import { validatePublicScanClaim } from '../rules/src/public-claims.js';
 import { hashObject, hex, stableJSON } from '../rules/src/core.js';
 import { uintV2 } from '../rules/src/integers-v2.js';
 import { reserveFinancialCapacity } from './financial-capacity.js';
@@ -23,7 +24,14 @@ export async function applyPublicScan(store, op, { height, settings }) {
     typeof p.complete === 'boolean' && p.asset === op.asset && p.block === op.block && typeof p.tapAddress === 'string' && p.tapAddress.length <= 128 &&
     Array.isArray(p.fees) && p.fees.length <= settings.paymentPage && p.fees.every(f => typeof f.amount === 'string' && /^[1-9][0-9]*$/.test(f.amount)) &&
     paymentOrder(p, op.from) >= 0 && paymentOrder(p, op.next) < 0 && (!i || paymentOrder(op.payments[i - 1], p) < 0)), 'public_scan_payments');
-  const { winner, refunds } = settlePublicPayments(old?.winner, op.payments), writes = [];
+  const active = claimsNeverCloseActive(settings, height);
+  if (active) {
+    // Agent state is authenticated by the independently replayed quorum batch.
+    // Bind its public predecessor to the contract's own accepted payment row.
+    validatePublicScanClaim(op.claim, op.asset);
+    check(op.claim.publicWinner === (old?.winner?.id ?? null), 'public_claim_predecessor');
+  }
+  const { winner, refunds } = settlePublicPayments(old?.winner, op.payments, { claimed: active && op.claim.claimed }), writes = [];
   if (winner && !old?.winner) {
     const source = winner.source;
     check(source?.publicMint === true && source.requestId === winner.id && source.asset === op.asset && source.request.block === op.block &&

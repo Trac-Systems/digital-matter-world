@@ -1,7 +1,8 @@
 import { ordinalCodec } from './integers-v2.js';
 import { assert, hex, hashObject, stableJSON, exactKeys } from './core.js';
 import { financialLifecyclePlan, reserveCapacity, terminalCapacity } from './financial-lifecycle.js';
-import { publicMintActive, publicPlotId } from './public-mint.js';
+import { publicMintActive, publicPlotId, claimsNeverCloseActive } from './public-mint.js';
+import { validatePublicScanClaim } from './public-claims.js';
 
 // Financial evidence is independently reconstructed by every signer. These
 // plans bind it to exact notary effects; a gateway cannot smuggle arbitrary
@@ -21,6 +22,7 @@ async function financialEffects(input, { read, height, document }) {
   assert(t && hex(t.id, 32), 'financial_identity');
   if (t.type === 'public-scan') {
     const e = input.evidence;
+    if (claimsNeverCloseActive(document, height)) validatePublicScanClaim(e.claim, t.asset);
     assert(publicMintActive(document, height) && exactKeys(t, ['type', 'id', 'asset', 'block', 'previous']) &&
       t.id === publicPlotId(t.asset, t.block) && e.requestId === t.id && e.asset === t.asset && e.block === t.block &&
       t.previous === e.previous && e.previous === hashObject(await read('fp/public/' + t.id) ?? null), 'public_scan_binding');

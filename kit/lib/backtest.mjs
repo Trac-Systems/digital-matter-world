@@ -45,5 +45,5 @@ export async function backtest({ history, patterns, owner, strategy = chooseClai
     if ((h - start) % 1000 === 0) { onProgress({ height: h, end, wins }); await new Promise(resolve => setImmediate(resolve)); }
   }
   return { snapshot: proof, start, end, events, settledEvents: events - pending.length, unsettledEvents: pending.length, selections: claimed, wins, units: units.toString(), balances,
-    opponents: opponents.length, opponentOwners: opponents.map(o => encodeTracAddress(o.owner)), catalogSize: catalog.length, catalogIds: catalog.map(patternAsset), settings, assumptions: ['All counted history is claimable; finds are excluded in later windows', 'Fixed catalog known at replay start', 'Every supplied header is accepted', 'No reorgs', 'Only supplied opponents compete', 'No transaction fees or mint prices modeled'] };
+    opponents: opponents.length, opponentOwners: opponents.map(o => encodeTracAddress(o.owner)), catalogSize: catalog.length, catalogIds: catalog.map(patternAsset), settings, assumptions: ['All counted history is claimable; finds are excluded in later windows', 'Fixed catalog known at replay start', 'Every supplied header is accepted', 'No reorgs', 'Only supplied opponents compete', 'No transaction fees or mint fees modeled'] };
 }

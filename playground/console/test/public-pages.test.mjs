@@ -4,6 +4,9 @@ import { serve } from '../../../service/src/http.mjs';
 import { createWeb } from '../../../service/src/web.mjs';
 import { encodeTracAddress } from '../../../rules/src/trac-address.js';
 const { chromium } = await import('playwright');
+import { secp256k1 } from '../../../kit/node_modules/@noble/curves/secp256k1.js';
+import { fundingAddress } from '../../../kit/lib/inscription-core.mjs';
+import { tapWallet1049 } from '../../../kit/test/tap-wallet-1049-fixture.mjs';
 const owner = encodeTracAddress('11'.repeat(32));
 const pattern = { asset: 'p0', number: 0, name: 'dmwdigit', pat: '[0-9]', fld: 4, tier: 1, rarity: 1, supply: '10' };
 const events = [3, 2, 1].map(sequence => ({ sequence, id: `event${sequence}`, at: 1, type: 'block', data: { height: sequence, tip: sequence } }));
@@ -209,18 +212,21 @@ test('About prices and the existing status cell follow the live policy and unava
 const tapAddress = 'bcrt1pzyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsqysakq';
 const atomic = n => (BigInt(n) * 10n ** 18n).toString();
 const publicRows = [
-  { asset: 'p2:0', block: '151', amount: '3', claimDeadline: '1159', state: 'public', bitmapHolderOnly: false },
-  { asset: 'p2:0', block: '66', amount: '2', claimDeadline: '1074', state: 'public', bitmapHolderOnly: true },
-  { asset: 'p2:0', block: '12', amount: '1', claimDeadline: '1020', state: 'paid', bitmapHolderOnly: false },
+  { asset: 'p2:0', block: '151', amount: '3', state: 'public', bitmapHolderOnly: false },
+  { asset: 'p2:0', block: '66', amount: '2', state: 'public', bitmapHolderOnly: true },
+  { asset: 'p2:0', block: '12', amount: '1', state: 'paid', bitmapHolderOnly: false },
 ];
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-async function publicMintPage(t, { list = route => json(route, { v: 3, rows: publicRows, next: null, nextCursor: null, total: null }), refunds, connected = false } = {}) {
+async function publicMintPage(t, { list = route => json(route, { v: 3, rows: publicRows, next: null, nextCursor: null, total: null }), refunds, connected = false, oneTx = true, version = '1.0.49' } = {}) {
   const p = await open(t), calls = [];
   p.on('request', r => { const u = new URL(r.url()); if (u.pathname.startsWith('/public-mints') || u.pathname.startsWith('/mint-rights') || u.pathname === '/patterns') calls.push([r.method(), u.pathname + u.search, r.postDataJSON?.() ?? null]); });
-  await p.addInitScript(([address, connected]) => {
+  await p.addInitScript(([address, connected, oneTx, version]) => {
     if (connected) localStorage.setItem('dmw-web-v1/wallets', JSON.stringify({ tap: address }));
-    globalThis.tapprotocol = { getNetwork: async () => 'regtest', switchNetwork: async () => {}, requestAccounts: async () => [address], getAccounts: async () => [address], on() {} };
-  }, [tapAddress, connected]);
+    globalThis.walletCalls = [];
+    globalThis.tapprotocol = { ...(version ? { getCapabilities: async () => ({ version, singleTxTransferExtraOutputs: true }) } : {}), getNetwork: async () => { walletCalls.push('getNetwork'); return 'regtest'; }, switchNetwork: async () => {}, requestAccounts: async () => [address], getAccounts: async () => [address], on() {},
+      getCurrentAuthority: async () => oneTx ? { ins: 'a1'.repeat(32) + 'i0', auth: [], addr: address } : null,
+      getAuthorityStatus: async () => ({ currentAuthority: null, readyToTap: null, pendingAuthority: null }) };
+  }, [tapAddress, connected, oneTx, version]);
   // The server's name search: q matches part of the name.
   await p.route('**/patterns?*', route => { const q = new URL(route.request().url()).searchParams.get('q');
     json(route, { patterns: !q || pattern.name.includes(q) ? [{ ...pattern, asset: 'p2:0', number: '0', legacy: { asset: 'p0' } }] : [], next: null }); });
@@ -242,7 +248,7 @@ test('the Mint page lists only the public blocks the API returns, with one Mint 
   assert.match(await list.locator('tbody tr').nth(2).innerText(), /Payment confirmed/);
   assert.equal(await list.locator('tbody tr').first().locator('td').first().getByRole('link').getAttribute('href'), '/pattern/p2:0');
   assert.equal(await list.locator('tbody tr').first().getByRole('link', { name: '151' }).getAttribute('href'), '/block/151');
-  await list.getByText('First confirmed payment wins. If someone else’s payment confirms first, yours is refunded.', { exact: true }).waitFor();
+  await list.getByText('Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded. First confirmed payment wins. If someone else’s payment confirms first, yours is refunded.', { exact: true }).waitFor();
   assert.ok(!calls.some(([, path]) => path.startsWith('/mint-rights')), 'no agent mint rights are read');
   assert.equal(await p.getByRole('heading', { name: 'What you can mint', exact: true }).count(), 0);
   assert.doesNotMatch(await p.locator('main').innerText(), /ask your agent to mint|Mint On-Chain/i);
@@ -265,13 +271,14 @@ test('the Mint page lists only the public blocks the API returns, with one Mint 
 
 test('a block opened from elsewhere shows its point-read state and mints only when public', async t => {
   const { p, calls } = await publicMintPage(t);
-  for (const [block, state] of [['151', 'public'], ['152', 'claim_window_open']]) {
-    await p.route(`**/public-mints/p2:0/${block}`, route => json(route, { asset: 'p2:0', block, amount: '3', claimDeadline: '1159', state, bitmapHolderOnly: false, refunds: '/public-mints/refunds' }));
+  for (const [block, state] of [['151', 'public'], ['152', 'claimed'], ['153', 'already_minted'], ['154', 'paid'], ['155', 'permit_issued']]) {
+    await p.route(`**/public-mints/p2:0/${block}`, route => json(route, { asset: 'p2:0', block, amount: '3', state, bitmapHolderOnly: false, refunds: '/public-mints/refunds' }));
     await p.goto(server.url + `/mint?asset=p2:0&block=${block}`);
     const box = panel(p, `Digit from block ${block}`);
     await box.locator('.pill').first().waitFor();
     assert.equal(await box.getByRole('button', { name: 'Mint', exact: true }).count(), state === 'public' ? 1 : 0);
-    if (state !== 'public') await box.getByText(/claim week is not over yet/).waitFor();
+    assert.equal(await box.locator('.pill').first().innerText(), ({ public: 'Public', claimed: 'Claimed', already_minted: 'Minted', paid: 'Payment confirmed', permit_issued: 'Being minted' })[state]);
+    assert.doesNotMatch(await box.innerText(), /claim week|claim_window_open|already_minted|price/i);
   }
   assert.ok(calls.some(([, path]) => path === '/public-mints/p2:0/151'));
 });
@@ -279,7 +286,7 @@ test('a block opened from elsewhere shows its point-read state and mints only wh
 test('Mint connects TAP Wallet, shows the quote and opens the payment page of the started request', async t => {
   const id = 'cd'.repeat(32);
   const { p, calls } = await publicMintPage(t), list = panel(p, 'Public blocks');
-  await p.route('**/public-mints/quote', route => json(route, { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), payable: false, reservation: 'none', claimDeadline: '1159',
+  await p.route('**/public-mints/quote', route => json(route, { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), payable: false, reservation: 'none',
     fees: [{ role: 'treasury', to: tapAddress, ticker: 'tap', amount: atomic(150), tt: 'a', dta: 'x' }, { role: 'burn', to: tapAddress, ticker: 'tap', amount: atomic(76), tt: 'a', dta: 'x' }], feeQuote: { unit: { decimals: 18 } } }));
   await p.route('**/public-mints/start', route => json(route, { id, requestId: id, asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', state: 'awaiting_payment', payable: true, reservation: 'none', fees: [], missing: [], paymentPage: '/mint/' + id }));
   await p.goto(server.url + '/mint');
@@ -310,23 +317,23 @@ test('a lost race or a cancelled quote leaves the list without starting a reques
 for (const [name, status, error] of [['missing', 404, 'not_found'], ['inactive', 503, 'public_mint_inactive']]) test(`a ${name} public mint API shows a calm opens-soon note`, async t => {
   const { p } = await publicMintPage(t, { list: route => json(route, { error }, status) }), list = panel(p, 'Public blocks');
   await p.goto(server.url + '/mint');
-  await list.getByText('Public minting opens soon. Blocks that nobody claimed in their claim week will be listed here.', { exact: true }).waitFor();
+  await list.getByText('Public minting opens soon. Blocks nobody has claimed yet will be listed here.', { exact: true }).waitFor();
   assert.equal(await list.getByRole('alert').count(), 0, 'no error wall');
   assert.equal(await list.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
   assert.equal(await list.locator('table').count(), 0);
 });
 
-test('a connected TAP Wallet with owed refunds sees a Your refunds box', async t => {
+for (const [reason, message] of [['someone_paid_first', 'Another payment confirmed first'], ['claimed_first', 'An agent claimed this block before your payment was confirmed. Your payment is refunded.']]) test(`a connected TAP Wallet sees its ${reason} refund`, async t => {
   const id = 'ef'.repeat(32), seen = [];
   const { p } = await publicMintPage(t, { connected: true, refunds: route => { seen.push(new URL(route.request().url()).searchParams.get('tapAddress'));
-    return json(route, { v: 3, rows: [{ id, requestId: id, asset: 'p2:0', block: '151', tapAddress, paymentId: 'ab'.repeat(32) + 'i0', reason: 'someone_paid_first', winner: 'cd'.repeat(32) + 'i0',
+    return json(route, { v: 3, rows: [{ id, requestId: id, asset: 'p2:0', block: '151', tapAddress, paymentId: 'ab'.repeat(32) + 'i0', reason, winner: 'cd'.repeat(32) + 'i0',
       fees: [{ role: 'treasury', amount: atomic(150) }, { role: 'burn', amount: atomic(76) }], state: 'owed' }], next: null, nextCursor: null, total: null }); } });
   await p.goto(server.url + '/mint');
   const refunds = panel(p, 'Your refunds');
   await refunds.locator('tbody tr').first().waitFor();
   assert.deepEqual(seen, [tapAddress]);
   const row = await refunds.locator('tbody tr').first().innerText();
-  assert.match(row, /151/); assert.match(row, /226 TAP/); assert.match(row, /Another payment confirmed first/);
+  assert.match(row, /151/); assert.match(row, /226 TAP/); assert.ok(row.includes(message));
   assert.equal(await refunds.getByRole('link', { name: 'Request', exact: true }).getAttribute('href'), '/mint/' + id);
 });
 
@@ -406,21 +413,22 @@ for (const change of [{ asset: 'p2:9' }, { receiver: 'different' }, { block: '15
   });
 }
 
-test('a public refundable request displays the owed refund without offering another payment', async t => {
+for (const reason of ['someone_paid_first', 'claimed_first']) test(`a public ${reason} request displays the owed refund without offering another payment`, async t => {
   const { p } = await publicMintPage(t), id = 'ab'.repeat(32);
   await p.route('**/mint/' + id, route => route.request().resourceType() === 'document' ? route.continue() : json(route, {
     requestId: id, publicMint: true, asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, payer: tapAddress,
-    state: 'refundable', payable: false, payBy: { rail: 'tap' }, fees: [], missing: [], refunds: [{ state: 'owed', reason: 'someone_paid_first' }],
+    state: 'refundable', payable: false, payBy: { rail: 'tap' }, fees: [], missing: [], refunds: [{ state: 'owed', reason }],
   }));
   await p.route('**/mint/deployment-state/p2:0', route => json(route, { asset: 'p0', state: 'registered' }));
   await p.goto(server.url + '/mint/' + id);
   await p.getByText('Owed; not sent automatically', { exact: true }).waitFor();
+  if (reason === 'claimed_first') await p.getByText('An agent claimed this block before your payment was confirmed. Your payment is refunded.', { exact: true }).waitFor();
   assert.equal(await p.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
   assert.equal(await p.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
   assert.doesNotMatch(await p.locator('main').innerText(), /units have been consumed/);
 });
 
-for (const [code, message] of [['payment_unconfirmed', 'waiting for a Bitcoin confirmation'], ['public_payment_incomplete', 'did not cover every quoted fee']]) {
+for (const [code, message] of [['payment_unconfirmed', 'waiting for a Bitcoin confirmation'], ['public_payment_incomplete', 'did not cover every quoted fee'], ['claimed_first', 'An agent claimed this block before your payment was confirmed. Your payment is refunded.'], ['public_minted', 'This block was already taken by a public TAP Wallet mint.']]) {
   test(`public checkout explains ${code} without starting another payment`, async t => {
     const { p, calls } = await publicMintPage(t);
     await p.route('**/public-mints/quote', route => json(route, { error: code }, 409));
@@ -430,3 +438,138 @@ for (const [code, message] of [['payment_unconfirmed', 'waiting for a Bitcoin co
     assert.ok(!calls.some(([, path]) => path === '/public-mints/start'));
   });
 }
+
+test('Mint without 1-TX Transfers in TAP Wallet explains how to turn them on and asks for no quote', async t => {
+  const { p, calls } = await publicMintPage(t, { connected: true, oneTx: false }), list = panel(p, 'Public blocks');
+  await p.goto(server.url + '/mint');
+  await list.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await p.getByText(/Turn on 1-TX Transfers in TAP Wallet first/).first().waitFor();
+  assert.ok(!calls.some(([, path]) => path.startsWith('/public-mints/quote') || path.startsWith('/public-mints/start')), 'nothing is quoted or started');
+});
+
+test('Mint asks TAP Wallet 1.0.49 or newer before the quote; an older wallet is refused with nothing quoted', async t => {
+  const { p, calls } = await publicMintPage(t, { version: '1.0.48' }), list = panel(p, 'Public blocks');
+  await p.goto(server.url + '/mint');
+  await list.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await p.getByText('This needs TAP Wallet 1.0.49 or newer. Update TAP Wallet, then reload this page.', { exact: true }).first().waitFor();
+  assert.ok(!calls.some(([, path]) => path.startsWith('/public-mints/quote') || path.startsWith('/public-mints/start')), 'nothing is quoted or started');
+  assert.deepEqual(await p.evaluate(() => globalThis.walletCalls), [], 'no wallet call besides the version check');
+  assert.equal(await p.getByRole('dialog').count(), 0);
+});
+
+test('the public Mint confirmation names the Bitcoin set aside and that TAP Wallet asks once', async t => {
+  const { p } = await publicMintPage(t), list = panel(p, 'Public blocks');
+  await p.route('**/public-mints/quote', route => json(route, { asset: 'p2:0', block: '151', amount: '3', receiver: tapAddress, kind: 'tap', price: atomic(226), payable: false, reservation: 'none', claimDeadline: '1159',
+    fees: [{ role: 'treasury', to: tapAddress, ticker: 'tap', amount: atomic(226), tt: 'a', dta: 'x' }], feeQuote: { unit: { decimals: 18 } }, mintFunding: { satoshis: 4200, feeRate: 3, label: 'your mint inscription' } }));
+  await p.goto(server.url + '/mint');
+  await list.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  const dialog = p.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Continue to payment', exact: true }).waitFor();
+  const text = await dialog.innerText();
+  assert.match(text, /TAP Wallet asks once/); assert.match(text, /Bitcoin set aside for the mint inscription\s+4,200 sats/);
+  assert.doesNotMatch(text, /\bprices?\b/i);
+  await shot(p, 'public-mint-confirm-set-aside');
+});
+
+test('refunds show a returned set-aside when the read has one', async t => {
+  const id = 'ef'.repeat(32);
+  const { p } = await publicMintPage(t, { connected: true, refunds: route => json(route, { v: 3, rows: [{ id, requestId: id, asset: 'p2:0', block: '151', tapAddress, reason: 'someone_paid_first',
+    fees: [{ role: 'treasury', amount: atomic(226) }], state: 'owed', mintSender: { state: 'returned', satoshis: 4200 } },
+    { id: 'fe'.repeat(32), asset: 'p2:0', block: '66', tapAddress, reason: 'someone_paid_first', fees: [{ role: 'treasury', amount: atomic(76) }], state: 'owed' }], next: null, nextCursor: null, total: null }) });
+  await p.goto(server.url + '/mint');
+  const refunds = panel(p, 'Your refunds');
+  await refunds.locator('tbody tr').first().waitFor();
+  assert.match(await refunds.locator('tbody tr').first().innerText(), /4,200 sats returned/);
+  assert.match(await refunds.locator('tbody tr').nth(1).innerText(), /–/);
+});
+
+// The /mint/<request> page with a TAP Wallet stand-in (1.0.49 fixture, or older).
+const requestId = '9a'.repeat(32), walletKey = new Uint8Array(32).fill(41);
+const walletPublicKey = Buffer.from(secp256k1.getPublicKey(walletKey)).toString('hex'), payer = fundingAddress(walletPublicKey, 'regtest');
+const setAsideAddress = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(42))).toString('hex'), 'regtest');
+const shots = process.env.DMW_SHOTS;
+async function shot(p, name) { if (shots) await p.screenshot({ path: `${shots}/${name}.png`, fullPage: true }); }
+async function requestPage(t, status, { version = '1.0.49' } = {}) {
+  const p = await open(t), posts = [], wallet = tapWallet1049({ address: payer, publicKey: walletPublicKey, network: 'regtest', version });
+  if (version === null) delete wallet.provider.getCapabilities;
+  const seen = [];
+  await p.exposeFunction('tapWallet', (name, args) => { seen.push(name); return wallet.provider[name](...args); });
+  await p.addInitScript(methods => { globalThis.tapprotocol = Object.fromEntries(methods.map(name => [name, (...args) => globalThis.tapWallet(name, args)])); }, Object.keys(wallet.provider));
+  p.on('request', r => { if (r.method() !== 'GET') posts.push(new URL(r.url()).pathname); });
+  await p.route('**/web-api/target', route => json(route, { network: 'dmw-regtest', bitcoinNetwork: 'regtest', ethereum: { chainId: '0x7a69' } }));
+  await p.route('https://mempool.space/**', route => json(route, { halfHourFee: 3 }));
+  await p.route('**/mint/deployment-state/*', route => json(route, { asset: 'p0', state: 'registered' }));
+  await p.route(u => new URL(u).pathname === '/mint/' + requestId, route => route.request().resourceType() === 'fetch' ? json(route, status) : route.continue());
+  await p.goto(server.url + '/mint/' + requestId);
+  return { p, posts, wallet, seen };
+}
+const fee = { role: 'treasury', to: payer, ticker: 'tap', amount: atomic(226), tt: 'a' };
+const awaiting = () => ({ requestId, receiver: payer, payer, asset: 'p0', amount: '3', publicMint: true, fees: [fee], missing: [fee], state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' },
+  mintFunding: { address: setAsideAddress, satoshis: 4200, feeRate: 3, label: 'your mint inscription' } });
+
+test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside, then the server-sent mint is followed in plain words', async t => {
+  const status = awaiting(), { p, wallet } = await requestPage(t, status);
+  const pay = p.getByRole('button', { name: 'Pay and mint', exact: true });
+  await pay.waitFor();
+  assert.equal(await p.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
+  assert.match(await p.locator('main').innerText(), /Bitcoin set aside for the mint inscription\s+4,200 sats/);
+  await pay.click();
+  const dialog = p.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Pay and mint', exact: true }).waitFor();
+  assert.match(await dialog.innerText(), /TAP Wallet asks once/); assert.match(await dialog.innerText(), /Bitcoin set aside for the mint inscription\s+4,200 sats/);
+  await shot(p, 'request-pay-and-mint-confirm');
+  await dialog.getByRole('button', { name: 'Pay and mint', exact: true }).click();
+  await p.getByText('Paid. Your mint goes out automatically when the permit arrives. You can close this page.', { exact: true }).first().waitFor();
+  const sent = wallet.state.calls.filter(c => c[0] === 'singleTxTransfer');
+  assert.equal(sent.length, 1, 'one wallet approval');
+  assert.deepEqual(sent[0][2], { extraOutputs: [{ address: setAsideAddress, satoshis: 4200, label: 'your mint inscription' }] });
+  await shot(p, 'request-paid-once');
+  // The gateway follows the set-aside: payment confirmed → permit → mint sent → minted.
+  Object.assign(status, { state: 'paid', missing: [], payable: false, mintFunding: undefined, mintSender: { state: 'funded', fundingOutpoint: 'ab'.repeat(32) + ':1' } });
+  await p.getByRole('button', { name: 'Refresh', exact: true }).click();
+  const mine = panel(p, 'Your mint');
+  await mine.getByText(/Done: your payment and the set-aside confirmed on Bitcoin\./).waitFor();
+  await mine.getByText(/Now: waiting for the permit/).waitFor();
+  assert.equal(await p.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
+  const commit = 'c1'.repeat(32), reveal = 'c2'.repeat(32);
+  Object.assign(status, { state: 'permit_issued', mintSender: { state: 'sent', commitTxid: commit, revealTxid: reveal, inscriptionId: reveal + 'i0' } });
+  await p.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await mine.getByText(/Now: waiting for Bitcoin to confirm the mint\./).waitFor();
+  assert.equal(await mine.locator(`a[href="https://mempool.space/tx/${commit}"]`).count(), 1);
+  assert.equal(await mine.locator(`a[href="https://mempool.space/tx/${reveal}"]`).count(), 1);
+  assert.equal(await p.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0, 'no second wallet step');
+  await shot(p, 'request-mint-sent');
+  Object.assign(status, { state: 'minted', inscription: reveal + 'i0', mintSender: { ...status.mintSender, state: 'minted' } });
+  await p.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await p.getByText(/^Minted\. Inscription/).waitFor();
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
+  assert.doesNotMatch(await p.locator('main').innerText(), /\bprices?\b/i);
+});
+
+test('needs_user: the server cannot send, so the page explains it and offers Inscribe mint with the wallet', async t => {
+  const status = { ...awaiting(), state: 'permit_issued', missing: [], payable: false, mintFunding: undefined, mintSender: { state: 'needs_user' },
+    mintContent: { p: 'tap', op: 'token-mint', tick: 'dmwfixture', amt: '3', dta: requestId, prv: { address: payer, hash: '56'.repeat(32) } } };
+  const { p, wallet } = await requestPage(t, status);
+  await p.getByText('The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.', { exact: true }).waitFor();
+  await p.getByRole('button', { name: 'Inscribe mint', exact: true }).waitFor();
+  assert.equal(await p.getByRole('heading', { name: 'Your mint', exact: true }).count(), 0);
+  await shot(p, 'request-needs-user');
+  // A mint without any server sending keeps today's Inscribe mint step.
+  Object.assign(status, { mintSender: undefined });
+  await p.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await p.getByText('Your payment won. This permit has no expiry; you can inscribe when ready.', { exact: true }).waitFor();
+  await p.getByRole('button', { name: 'Inscribe mint', exact: true }).waitFor();
+  assert.deepEqual(wallet.state.calls, []);
+});
+
+for (const version of [null, '1.0.48']) test(`a TAP Wallet ${version ?? 'without getCapabilities'} is refused on the request page before any other wallet call`, async t => {
+  const { p, posts, wallet, seen } = await requestPage(t, awaiting(), { version });
+  const tooOld = 'This needs TAP Wallet 1.0.49 or newer. Update TAP Wallet, then reload this page.';
+  await p.getByText(tooOld, { exact: true }).waitFor();
+  await p.getByRole('button', { name: 'Pay and mint', exact: true }).click();
+  await p.getByText(tooOld, { exact: true }).waitFor();
+  assert.equal(await p.getByRole('dialog').count(), 0, 'no confirmation');
+  assert.deepEqual(seen.filter(name => name !== 'getCapabilities'), []);
+  assert.deepEqual(wallet.state.calls, []); assert.deepEqual(posts, []);
+  if (version === null) await shot(p, 'request-wallet-too-old');
+});

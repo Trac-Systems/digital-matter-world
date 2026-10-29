@@ -8,15 +8,15 @@ import { Store } from '../src/store.mjs';
 import { agent, temp } from './helpers.mjs';
 import { testPayoutAddress } from './payout-wallets.mjs';
 import { signTapWalletMessage } from '../../rules/test/tap-wallet-signing.mjs';
-import { tapWallet1048 } from '../../kit/test/tap-wallet-1048-fixture.mjs';
+import { tapWallet1049 } from '../../kit/test/tap-wallet-1049-fixture.mjs';
 import { rules } from '../src/rules.mjs';
 
 // Source-contract browser test, no installed extension or chain transactions.
 // Run while holding the shared browser lock, like the binding browser test.
-test('fresh Link prepares, preserves its secret on cancellation, activates authority, and releases only a verified lock after reload', { timeout: 60000 }, async t => {
+test('fresh Link prepares, preserves its secret on cancellation, asks for 1-TX Transfers, and releases only a verified lock after reload', { timeout: 60000 }, async t => {
   const store = await Store.open(await temp('tap-link-page-')); t.after(() => store.close());
   const who = agent(85), payer = testPayoutAddress(who.secret.toString('hex'), 'tap', 'mainnet');
-  const wallet = tapWallet1048({ address: payer, active: false });
+  const wallet = tapWallet1049({ address: payer, active: false });
   const config = { network: 'dmw-mainnet', mode: 'prod', prod: { ethereum: { chainId: '1' } } };
   const lockId = 'd4'.repeat(32) + 'i0:0'; let lockMessage, claimMessage, lockReads = 0, cancelSignature = true, failOrderRead = true;
   const reads = {
@@ -89,15 +89,18 @@ test('fresh Link prepares, preserves its secret on cancellation, activates autho
   assert.deepEqual(Object.keys(prepareBodies[0]).sort(), ['paymentHash', 'walletSignature']);
   assert.doesNotMatch(JSON.stringify(prepareBodies), new RegExp(savedSecret));
   assert.equal(wallet.state.calls.length, 0, 'preparation does not pay');
-  await page.getByRole('button', { name: 'Approve payment in wallet' }).click();
-  await page.getByText(/could not read the saved inscription order/).waitFor();
+  const approve = page.getByRole('button', { name: 'Approve payment in wallet' });
+  await approve.click(); await page.getByText(/Turn on 1-TX Transfers in TAP Wallet first/).waitFor();
+  assert.equal(wallet.state.calls.length, 0, 'no wallet action without 1-TX Transfers');
+  wallet.state.active = true;
+  await approve.click(); await page.getByText(/could not read the saved inscription order/).waitFor();
   assert.equal(claimMessage, undefined);
   failOrderRead = false;
   await page.reload(); await page.getByRole('button', { name: 'Resume payment' }).click();
   await page.getByText('Confirmed: accepted.', { exact: true }).waitFor();
   assert.equal(claimMessage.actions[0].preimage, savedSecret);
-  assert.equal(wallet.state.calls.filter(c => c[0] === 'createGlobalTapAuthority').length, 1);
-  assert.equal(wallet.state.calls.filter(c => c[0] === 'sendInscription').length, 1);
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'createGlobalTapAuthority').length, 0);
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'sendInscription').length, 0);
   assert.deepEqual(wallet.state.calls.filter(c => c[0] === 'redeemTapActions').map(c => c[1].actions[0].op), ['lock', 'claim']);
   assert.deepEqual(errors, []);
 });
@@ -105,7 +108,7 @@ test('fresh Link prepares, preserves its secret on cancellation, activates autho
 test('activated Link waits for reservation and retries direct fee notification without paying twice', { timeout: 60000 }, async t => {
   const store = await Store.open(await temp('financial-link-page-')); t.after(() => store.close());
   const who = agent(87), payer = testPayoutAddress(who.secret.toString('hex'), 'tap', 'mainnet');
-  const wallet = tapWallet1048({ address: payer, active: true }), id = 'b7'.repeat(32), paymentId = 'c8'.repeat(32) + 'i0';
+  const wallet = tapWallet1049({ address: payer, active: true }), id = 'b7'.repeat(32), paymentId = 'c8'.repeat(32) + 'i0';
   const fees = rules.mintFeeItems({ treasury: '10', burn: '2' }, { treasury: 'treasury' }, id, payer, 'tap', 'mainnet');
   let state = 'reserving', sends = 0, reports = 0;
   await store.put('financialLinks', id, { id });
