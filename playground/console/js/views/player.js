@@ -71,7 +71,7 @@ export function mount(root, params) {
         { key: 'finderUntil', label: 'Finder window ends', num: true, render: r => !r.finderUntil ? h('span.faint', {}, '–') : counted() >= r.finderUntil ? h('span.faint', { 'data-tip': `Ended at block ${fmtInt(r.finderUntil)}` }, 'ended') : h('span.mono', {}, fmtInt(r.finderUntil)) },
         { key: 'go', label: '', render: r => (r.allowed || r.rightAllowed && r.reason === 'asset_unregistered' && BigInt(r.balance ?? '0') >= BigInt(r.amount)) && !r.minted && !r.pending ? h('button.btn.sm.primary', { onclick: () => mintFlow({ asset: r.asset, block: r.block, amount: r.amount }) }, 'Mint On-Chain') : null },
       ],
-    }, { tip: 'The finder alone for 1,008 blocks; then the Bitmap holder if linked before the find; otherwise anyone.' });
+    }, { tip: 'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.' });
   }
   function pendingPanel() {
     const KIND = { awaiting_payment: 'warn', partly_paid: 'warn', paid: 'info', permit_issued: 'info', minted: 'good', waiting_payment: 'warn', complete: 'good', failed: 'bad', expired: '', refunded: '', cancelled: '' };
@@ -288,7 +288,7 @@ export function mount(root, params) {
     const comp = (store.player?.balances ?? []).filter(b => b.amount !== '0' && assetKind(b.asset) === 'compound');
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. After payment is final, your units are consumed and your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
-      kv([['Who may mint a block', 'The finder alone for 1,008 blocks; then the Bitmap holder if the Bitmap was linked before the find; otherwise anyone.'],
+      kv([['Who may mint a block', 'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.'],
         ['Fee', `By rarity tier: ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
       savedMintIntents().length ? h('div', {}, h('h3', {}, 'Resume a quote'), ...savedMintIntents().map(intent => h('button.btn.sm', { onclick: () => mintFlow({ resumeIntent: intent }) }, `${assetName(intent.asset)} · ${intent.actionId}`))) : null,
@@ -299,7 +299,7 @@ export function mount(root, params) {
   function bitmapForm() {
     const terms = feeTerms('link');
     return h('div.form', {},
-      h('p.small.muted', { style: { margin: 0 } }, 'Link a Bitmap you hold to its plot. Linked plots earn the Bitmap holder share of every mint fee, and blocks found after the link may only be minted by the holder once the finder window ends. Paid once; the link stays with the Bitmap.'),
+      h('p.small.muted', { style: { margin: 0 } }, 'Link a Bitmap you hold to its plot. Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. Paid once; the link stays with the Bitmap.'),
       terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link fee ${tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
       h('div.section-label', { style: { padding: '6px 0 0' } }, 'Your Bitmaps'),
       formPaged({

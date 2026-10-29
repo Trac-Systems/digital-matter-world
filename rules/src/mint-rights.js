@@ -1,3 +1,4 @@
+import { bitmapMintOpenActive } from './public-mint.js';
 import { recordGet } from './record-index.js';
 import { assert, integer, hex, findId } from './core.js';
 import { patternCount } from './patterns.js';
@@ -10,7 +11,7 @@ export function mintCandidate({ pattern, block, history, state }) {
   assert(find && hex(find.finder, 32), 'mint_no_find');
   return { ...find, count };
 }
-export function mintRight({ find, owner, counted, link = null, currentHolder = null, finderWindow = 1008 }) {
+export function mintRight({ find, owner, counted, link = null, currentHolder = null, finderWindow = 1008, settings = {} }) {
   if (find?.settingsHash !== undefined) {
     assert(hex(owner, 32) && hex(find.settingsHash, 32) && hex(find.finder, 32), 'mint_find');
     const now = decimalV2(counted), height = decimalV2(find.findHeight), until = uintV2(find.finderUntil);
@@ -20,14 +21,14 @@ export function mintRight({ find, owner, counted, link = null, currentHolder = n
     // The accepted find carries its creation policy. An amendment cannot
     // shorten or renew that authenticated deadline, including lazy awards.
     if (compareUint(now, until) < 0) return { allowed: owner === find.finder, role: 'finder', until };
-    if (link && compareUint(decimalV2(link.linkHeight), height) < 0) return { allowed: hex(currentHolder, 32) && owner === currentHolder, role: 'bitmap', until: null };
+    if (!bitmapMintOpenActive(settings, now) && link && compareUint(decimalV2(link.linkHeight), height) < 0) return { allowed: hex(currentHolder, 32) && owner === currentHolder, role: 'bitmap', until: null };
     return { allowed: true, role: 'public', until: null };
   }
   assert(hex(owner, 32) && integer(counted) && integer(finderWindow) && finderWindow > 0, 'mint_right_input');
   assert(find && integer(find.block, 0xffffffff) && integer(find.count) && find.count > 0 && integer(find.findHeight) && counted >= find.findHeight && hex(find.finder, 32), 'mint_find');
   if (link) assert(link.block === find.block && integer(link.linkHeight), 'mint_link');
   if (counted < find.findHeight + finderWindow) return { allowed: owner === find.finder, role: 'finder', until: find.findHeight + finderWindow };
-  if (link && link.linkHeight < find.findHeight) return { allowed: hex(currentHolder, 32) && owner === currentHolder, role: 'bitmap', until: null };
+  if (!bitmapMintOpenActive(settings, counted) && link && link.linkHeight < find.findHeight) return { allowed: hex(currentHolder, 32) && owner === currentHolder, role: 'bitmap', until: null };
   return { allowed: true, role: 'public', until: null };
 }
 // Invoke in accepted contract order and persist atomically with that acceptance.
@@ -42,7 +43,7 @@ export function acceptMintRequest({ state = { holds: {}, minted: {}, pending: {}
   if (compound) assert(!Object.hasOwn(request, 'block'), 'compound_block');
   else {
     assert(find && request.block === find.block && request.asset === find.asset && request.amount === String(find.count), 'mint_count');
-    const right = mintRight({ find, owner: request.owner, counted, link, currentHolder, finderWindow: s.finderWindow });
+    const right = mintRight({ find, owner: request.owner, counted, link, currentHolder, finderWindow: s.finderWindow, settings: s });
     assert(right.allowed, `mint_${right.role}`); key = `${request.asset}/${request.block}`;
     assert(!minted && !state.minted[key], 'already_minted');
     const hold = state.holds[key]; assert(!hold || counted > hold.expiry, 'block_pending');

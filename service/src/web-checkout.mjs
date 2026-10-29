@@ -5,6 +5,7 @@ import { publicIdentities, wireIdentities } from '../../rules/src/trac-address.j
 import { verifyTapMessage, payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { calldata, TYPES, expectedEscrowSplit, escrowSplitForItems } from '../../committee/signer/escrow.mjs';
 import { publicMint } from './mints.mjs';
+import { publicMintTargetVisible, privatePublicMintView } from './public-mint-privacy.mjs';
 import { createRecordHighlights } from './web-records.mjs';
 
 export function webTarget(config) {
@@ -80,7 +81,7 @@ export class WebCheckout {
       Number.isSafeInteger(payment.eventIndex) && payment.eventIndex >= 0, 'link_payment');
     return { ready: !payment.consumed, consumed: payment.consumed, paymentId };
   }
-  async plan(type, id) {
+  async plan(type, id, requesterSecret) {
     check(['mint', 'link'].includes(type) && rules.hex(id, 32), 'payment_request');
     if (type === 'link' && this.links?.financialVersion === 2 && this.store.get('financialLinks', id)) {
       const status = await this.links.public(id);
@@ -97,6 +98,13 @@ export class WebCheckout {
         counted, target: this.target, walletPreparation: true });
     }
     check(row, 'request_not_found', 404);
+    if (type === 'mint' && row.publicMint) {
+      const raw = this.mints ? this.mints.public(id, requesterSecret) : publicMint(row);
+      const status = publicMintTargetVisible(this.store, row, requesterSecret) ? raw : privatePublicMintView(raw);
+      return publicIdentities({ ...status, type, target: this.target, counted: await this.reads.counted(), deadline: row.expiry,
+        refundAfter: null, networkFee: null, submit: '/mint/payment', walletPreparation: false, bitcoinWalletRequired: true,
+        redeem: { items: status.payable && !status.blocked.length ? rules.walletFeeItems(status.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] } });
+    }
     const counted = await this.reads.counted(), mint = type === 'mint', kind = mint ? row.kind : 'tap';
     let state, payment;
     if (mint) { state = row.state; payment = row.paymentId; }

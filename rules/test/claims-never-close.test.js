@@ -51,13 +51,52 @@ test('old blocks stay claimable forever only after activation; 100-pair budget a
   assert.equal(r.freezeClaimWindow({ ...over, counted: '1202', decidingHash: hashAt('1202') }).winners, '0');
 });
 
-test('active public reads have exactly three states and no deadline, including new blocks', () => {
-  const f = fixture(active, '1200');
+test('active public reads open an untaken block after its first week; claimed and minted states have no deadline', () => {
+  const base = fixture(active, '1200'), from = r.claimDeadline(base.pattern, base.block, active);
+  // A brand-new untaken block waits one finder window before public minting; claims stay open throughout.
+  const fresh = { ...base, block: '1200', height: '1200' }, freshFrom = r.claimDeadline(base.pattern, '1200', active);
+  assert.deepEqual(r.publicBlockRight(fresh), { state: 'not_yet_public', publicFrom: freshFrom });
+  assert.deepEqual(r.publicBlockRight({ ...fresh, height: String(BigInt(freshFrom) - 1n) }), { state: 'not_yet_public', publicFrom: freshFrom });
+  assert.deepEqual(r.publicBlockRight({ ...fresh, height: freshFrom }), { state: 'public' });
+  const f = { ...base, height: BigInt(from) > 1200n ? from : base.height };
   assert.deepEqual(r.publicBlockRight(f), { state: 'public' });
   for (const key of ['find', 'reserved', 'headerAward']) assert.deepEqual(r.publicBlockRight({ ...f, [key]: true }), { state: 'claimed' });
   assert.deepEqual(r.publicBlockRight({ ...f, minted: true }), { state: 'already_minted' });
   assert.deepEqual(r.publicBlockRight({ ...f, reserved: { publicMint: true } }), { state: 'already_minted' });
-  assert.equal(r.publicBlockRight({ ...f, settings: previous }).state, 'claim_window_open');
+  assert.equal(r.publicBlockRight({ ...fresh, settings: previous }).state, 'claim_window_open');
+});
+
+for (const [name, release, publicFrom] of [
+  ['block after release', { releaseHeight: '1000', releaseFinderWindow: 1008 }, '2208'],
+  ['release after block', { releaseHeight: '1400', releaseFinderWindow: 1008 }, '2408'],
+  ['legacy release after block', { legacy: { releaseHeight: '1400' } }, '2408'],
+  ['activation fallback', {}, '2208'],
+]) test(`the public week starts at the later block or pattern release: ${name}`, () => {
+  const f = fixture(active, '1200'); f.pattern = { ...f.pattern, ...release };
+  assert.equal(r.claimDeadline(f.pattern, f.block, active), publicFrom);
+  for (const height of ['1200', String(BigInt(publicFrom) - 1n)]) {
+    const fresh = { ...f, height };
+    assert.deepEqual(r.publicBlockRight(fresh), { state: 'not_yet_public', publicFrom });
+    assert.doesNotThrow(() => r.assertClaimOpen(fresh));
+    for (const key of ['find', 'reserved', 'headerAward']) assert.deepEqual(r.publicBlockRight({ ...fresh, [key]: true }), { state: 'claimed' });
+    assert.deepEqual(r.publicBlockRight({ ...fresh, minted: true }), { state: 'already_minted' });
+    assert.deepEqual(r.publicBlockRight({ ...fresh, reserved: { publicMint: true } }), { state: 'already_minted' });
+  }
+  for (const height of [publicFrom, String(BigInt(publicFrom) + 1n)]) {
+    assert.deepEqual(r.publicBlockRight({ ...f, height }), { state: 'public' });
+    assert.doesNotThrow(() => r.assertClaimOpen({ ...f, height }));
+  }
+});
+
+test('signed agent claims are accepted while fresh blocks are not yet public', () => {
+  for (const block of ['1199', '1200']) {
+    const f = fixture(active, block);
+    assert.deepEqual(r.publicBlockRight(f), { state: 'not_yet_public', publicFrom: r.claimDeadline(pattern, block, active) });
+    const input = withSignedClaim(replayFixture(active, { block }).input, { block });
+    const output = r.processBlockV2(input);
+    assert.equal(output.file.moves[0].reason, 'accepted');
+    assert.equal(output.file.occurrences[0].block, block);
+  }
 });
 
 test('catalog mapping is bidirectional for native and legacy assets without a duplicate ledger slot', () => {

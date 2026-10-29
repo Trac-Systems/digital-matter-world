@@ -1,3 +1,4 @@
+import { MintRefundTap } from './mint-refund-source.mjs';
 import { readTapSourceURL } from './source-url.mjs';
 import { check } from './util.mjs';
 import { btc } from './mint-sender-keys.mjs';
@@ -49,6 +50,17 @@ export class MintSenderBitcoin {
     }
     return result;
   }
+  async paymentFunding(address, reference) {
+    check(/^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(reference), 'mint_refund_reference');
+    const raw = await this.http.request('/tx/' + reference.slice(0, 64) + '/hex', { text: true });
+    check(typeof raw === 'string', 'mint_sender_transaction_missing');
+    const payment = btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true, allowUnknownOutputs: true });
+    check(payment.id === reference.slice(0, 64), 'mint_sender_transaction_binding');
+    const parents = new Set(Array.from({ length: payment.inputsLength }, (_, i) => hex(payment.getInput(i).txid)));
+    // TAP Wallet extraOutputs are siblings of the payment's commit output.
+    // Never charge another payment's set-aside, even for the same request id.
+    return (await this.utxos(address)).filter(coin => parents.has(coin.txid));
+  }
   async feeRate() {
     const rates = await this.http.request('/fee-estimates'), rate = rates?.[String(this.settings.feeTargetBlocks)];
     check(Number.isFinite(rate) && rate > 0, 'mint_sender_fee_unavailable'); return Math.max(1, rate);
@@ -57,7 +69,7 @@ export class MintSenderBitcoin {
     check(/^[0-9a-f]{64}$/.test(txid), 'mint_sender_txid');
     const tx = await this.http.request('/tx/' + txid);
     check(!tx || tx.txid === txid, 'mint_sender_transaction_binding');
-    return tx ? { confirmed: tx.status?.confirmed === true } : null;
+    return tx ? { confirmed: tx.status?.confirmed === true, ...(tx.status?.confirmed === true ? { height: tx.status.block_height, blockHash: tx.status.block_hash } : {}) } : null;
   }
   async broadcast(raw, txid) {
     if (await this.transaction(txid)) return txid;
@@ -78,6 +90,7 @@ export async function createMintSenderBitcoin({ config, settings, network, signa
     await verify();
     check(await tap.request('/r/blockhash/0') === await http.request('/block-height/0', { text: true }), 'mint_sender_source_network');
   };
+  source.tap = new MintRefundTap({ http: tap, bitcoin: source, settings });
   return source;
 }
 export class MintSenderGateway {
@@ -85,6 +98,14 @@ export class MintSenderGateway {
   async list(after, limit) {
     const page = await this.http.request('/internal/mint-sender/requests?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
     check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
+  }
+  async refunds(after, limit) {
+    const page = await this.http.request('/internal/mint-sender/refunds?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
+    check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
+  }
+  async refund(id) {
+    const result = await this.http.request('/internal/mint-sender/refunds/' + id, { authorization: this.authorization });
+    check(result?.record?.refundId === id, 'mint_sender_gateway_unavailable'); return result;
   }
   async status(id) {
     const status = await this.http.request('/mint/' + id);

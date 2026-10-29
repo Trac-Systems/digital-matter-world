@@ -11,7 +11,7 @@ export const R3_RESOURCES = Object.freeze({
   publicCachePages: 64,
 });
 export function runtimeResources(document, consensus) {
-  if (![2, 3, 4].includes(document?.version)) throw Error('resource_upgrade_required');
+  if (![2, 3, 4, 5].includes(document?.version)) throw Error('resource_upgrade_required');
   const v = validateResourceDocument(document).values;
   const timing = closureTimeouts(consensus, document);
   return {
@@ -31,6 +31,7 @@ export function runtimeResources(document, consensus) {
       source: { requestsPerSecond: v.sourceRps, timeoutMs: v.sourceTimeoutMs, retries: v.sourceRetries, maxQueue: v.sourceQueue,
         maxBytes: v.sourceResponseBytes, backoffMs: v.sourceBackoffMs, maxBackoffMs: v.sourceMaxBackoffMs },
       assets: { activeMints: v.assetActiveMints, activeLinks: v.assetActiveLinks, mintsPerAgent: v.assetMintsPerAgent, linksPerAgent: v.assetLinksPerAgent,
+        ...(document.version >= 5 ? { publicMintsPerPayer: v.assetPublicMintsPerPayer, publicMintsPerIP: v.assetPublicMintsPerIP, publicMintStartsPerMinute: v.assetPublicMintStartsPerMinute } : {}),
         mintInputCapacity: v.assetInputCapacity, workPage: v.assetWorkPage, creditPage: v.assetCreditPage, outboxPage: v.outboxCapacity },
       lookups: { headerPageRows: v.headerPageSize, headerCachePages: v.headerCachePages, headerCacheKiB: v.sqliteCacheKiB, seedChunkRows: v.archiveWritePage },
       readers: { auditFileBytes: v.archiveObjectBytes, auditTotalBytes: v.archiveObjectBytes,

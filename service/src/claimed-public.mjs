@@ -43,7 +43,7 @@ export function claimedPublicRead(store, url, settings = {}) {
       const find = row.find, until = find?.finderUntil;
       check(until, 'rights_policy_missing', 503);
       const link = store.get('links', heightKey(row.height)), exclusive = rules.compareUint(counted, until) < 0,
-        bitmap = !exclusive && link && rules.compareUint(rules.decimalV2(link.linkHeight), rules.decimalV2(find.findHeight)) < 0;
+        bitmap = !exclusive && !rules.bitmapMintOpenActive(settings.document, counted) && link && rules.compareUint(rules.decimalV2(link.linkHeight), rules.decimalV2(find.findHeight)) < 0;
       return { ...row, right: exclusive ? 'finder' : bitmap ? 'bitmap' : 'public',
         eligible: exclusive ? find.finder === owner : bitmap ? null : true, finderUntil: until,
         ...(bitmap ? { requires: 'current_bitmap_ownership_evidence' } : {}) };

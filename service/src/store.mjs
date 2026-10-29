@@ -143,6 +143,16 @@ export class Store {
         this.db.exec("INSERT INTO public_projection_fixes VALUES('legacy-pattern-finds'); COMMIT");
       } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     }
+    if (this.publicProjectionActive && !this.db.prepare("SELECT 1 FROM public_projection_fixes WHERE name='public-mint-request-privacy'").get()) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const r of this.db.prepare("SELECT id,value FROM records WHERE space='mints'").iterate()) {
+          const value = JSON.parse(r.value);
+          if (value.publicMint) projectPublicRecord(this, { space: 'mints', id: r.id, value }, null);
+        }
+        this.db.exec("INSERT INTO public_projection_fixes VALUES('public-mint-request-privacy'); COMMIT");
+      } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    }
   }
   get(space, id) { const row = this.getStmt.get(space, String(id)); return row ? JSON.parse(row.value) : null; }
   list(space, { after = '', limit = this.defaultPageRows } = {}) {

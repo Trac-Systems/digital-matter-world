@@ -85,3 +85,27 @@ test('public deployment tools accept p2 IDs and register the authoritative legac
   await assert.rejects(tools.register_deployment.run({ ...registration, asset: 'p2:1' }), /Only this compound/);
   for (const asset of ['p2:01', 'p2:-1', 'p2:1/other']) assert.equal(tools.inscribe_deployment.schema.safeParse({ ...args, asset }).success, false);
 });
+
+test('local agent gate opens linked nonholder mints and retains the finder week', async t => {
+  const directory = await temp(t), network = 'dmw-kit-test', wallet = testWallet();
+  const { PUBLIC_MINT_SETTINGS, hash } = await import('../../rules/src/index.js');
+  const settings = settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100',
+    values: { ...SETTINGS_PROFILE, ...PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '100', bitmapMintOpenHeight: '110' } });
+  const context = { settings, settingsHash: hashObject(settings) }, journal = await Journal.open(directory, network, { intervalMs: 0 }); cleanup(t, () => journal.close());
+  let counted = '109';
+  const service = { network, mintQuote: async () => ({ feeQuote: { settingsHash: context.settingsHash } }) };
+  const a = new Agent({ wallet, network, service, journal, dryRun: true, trac: { network, head: async () => ({ counted }) } });
+  const candidate = { link: { block: '1', linkHeight: '101' }, currentHolder: hash('holder'),
+    find: { asset: 'p2:0', block: '1', count: '3', finder: hash('finder'), findHeight: '102', finderUntil: '105', settingsHash: context.settingsHash } };
+  const intent = { asset: 'p2:0', block: '1', amount: '3', receiver: 'receiver', payer: 'payer', kind: 'tap' };
+  await assert.rejects(makeFinancialMint(a, intent, 'open', candidate, context), /Mint right unavailable/);
+  counted = '110'; assert.equal((await makeFinancialMint(a, intent, 'open', candidate, context)).state, 'dry-run');
+  const { chooseMint } = await import('../strategies/default.mjs');
+  assert.equal(chooseMint({ candidates: [candidate], owner: a.owner, counted, balance: '3', settings }), candidate);
+  assert.equal(chooseMint({ candidates: [candidate], owner: a.owner, counted, balance: '2', settings }), null);
+  candidate.find.finderUntil = '111';
+  await assert.rejects(makeFinancialMint(a, intent, 'week', candidate, context), /Mint right unavailable/);
+  candidate.find.finder = a.owner;
+  assert.equal((await makeFinancialMint(a, intent, 'week', candidate, context)).state, 'dry-run');
+  assert.equal(journal.recent().length, 0);
+});

@@ -3,6 +3,7 @@ import { rules } from './rules.mjs';
 import { heightKey } from './util.mjs';
 import { bumpProjection } from './projection-state.mjs';
 import { rankingSchema, rankFind } from './public-rankings.mjs';
+import { publicMintTargetVisible } from './public-mint-privacy.mjs';
 export const PUBLIC_SORTS = {
   patterns: 'number name tier rarity supply minted madeReal discoverer', compounds: 'id name tier recipe supply madeReal firstMaker mass',
   agents: 'finds address discoveries crafts mints links', finds: 'block asset pattern count finder findHeight',
@@ -123,7 +124,7 @@ export function projectPublicRecord(store, op, previous) {
   if (op.space.startsWith('publicResults/')) item(op.space.slice(14), '', id, row);
   if (op.space === 'publicSupply') item('supply', '', id, row);
   if (op.space === 'mints' && (row ?? previous)?.request?.v !== 2) {
-    item('mints', '', id, row && { id, requestId: id, asset: row.request.asset, block: row.request.block ?? null,
+    item('mints', '', id, row && !publicMintTargetVisible(store, row) ? { id, requestId: id, kind: row.kind, state: row.state, price: row.quote?.price ?? null } : row && { id, requestId: id, asset: row.request.asset, block: row.request.block ?? null,
       amount: row.request.amount, owner: row.request.owner, receiver: row.receiver, kind: row.kind,
       state: row.state, price: row.quote?.price ?? null, inscription: row.mintInscription ?? null,
       checkedAt: row.checkedAt ?? null, source: 'verified_request_projection' });

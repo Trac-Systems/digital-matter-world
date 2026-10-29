@@ -9,6 +9,16 @@ import { paymentPlan } from '../wallets.mjs';
 import { installLocalFetch } from '../../service/src/http-client.mjs';
 
 const ownerKey = 'a'.repeat(64), owner = encodeTracAddress(ownerKey), url = path => new URL(path, 'http://127.0.0.1');
+test('the dashboard forwards requester access only for a specific mint status or payment plan', async () => {
+  const calls = [], context = { requesterSecret: 'd'.repeat(64) };
+  const engine = { state: { player: { address: ownerKey } }, get: async (path, options) => { calls.push({ path, options }); return {}; } };
+  const api = createReadAPI({ engine, views: {} });
+  for (const path of ['/mint/', '/web-api/mint/']) {
+    await api(url('/api/gateway' + path + ownerKey), context);
+    assert.equal(calls.at(-1).options, context);
+  }
+  await api(url('/api/results/mints'), context); assert.equal(calls.at(-1).options, undefined);
+});
 test('public playground routes forward the gateway shape and cursors without local joins', async () => {
   const calls = [], value = { finds: [{ id: 1 }], total: 9, next: 'gateway-cursor', limit: 1, sort: 'block', order: 'desc', route: '/finds' };
   const engine = { state: { player: { address: ownerKey } }, get: async path => { calls.push(path); return value; }, trac() { throw Error('private join'); } };

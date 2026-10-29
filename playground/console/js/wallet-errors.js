@@ -1,12 +1,23 @@
+// Request states before the wallet can pay; the page shows a spinner until the Pay button appears.
+export const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
+export const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
+export const publicOpeningLabel = row => typeof row?.publicFrom === 'string' && /^(0|[1-9][0-9]*)$/.test(row.publicFrom)
+  ? `Opens at block ${row.publicFrom}` : null;
 export const publicMintMessages = {
+  public_mint_payer_capacity: 'Too many open mint requests from this wallet. Finish or let one expire first.',
+  public_mint_ip_capacity: 'Too many open mint requests from this connection. Finish or let one expire first.',
+  public_mint_start_rate: 'Too many new mint requests. Wait a minute and try again.',
+  public_mint_requester_required: 'Open this request in the browser where you created it to review the block and pay.',
+  public_mint_storage_unavailable: 'Allow this site to save the mint request in your browser, then try again.',
   someone_paid_first: 'Someone else’s payment for this block confirmed first, so it can no longer be minted here.',
   already_minted: 'This block is already minted.',
   claimed: 'An agent has claimed this block, so it is not public.',
   claimed_first: 'An agent claimed this block before your payment was confirmed. Your payment is refunded.',
   public_minted: 'This block was already taken by a public TAP Wallet mint. Choose another unclaimed block.',
-  bitmap_holder_only: 'Only the TAP Wallet holding this block’s Bitmap can mint it. Select that account in TAP Wallet and try again.',
+  bitmap_holder_only: 'This quote uses an earlier mint policy. Refresh the block and request a new quote.',
   public_mint_inactive: 'Public minting opens soon.',
   public_index_warming: 'The list of public blocks is still being built. Try again in a few minutes.',
+  not_yet_public: 'This block is not public yet. It shows up for public minting once its 1-week finder window has passed without a claim.',
   public_scan_pending: 'Recent Bitcoin payments for this block are still being checked. Try again in a few minutes.',
   payment_unconfirmed: 'The payment is waiting for a Bitcoin confirmation. Keep this request and check again; do not pay again.',
   public_payment_incomplete: 'The payment did not cover every quoted fee. Check this request and its refund record before sending another payment.',
@@ -40,9 +51,10 @@ const messages = {
 };
 // Keep existing plain wallet guidance, but never put a bare protocol code on a
 // payment page. Unknown codes get a retry message without implying a new send.
-export function walletError(error) {
+export function walletError(error, details = error) {
   if (Number(error?.code) === 4001) return 'Wallet request cancelled. You can retry.';
   const message = typeof error === 'string' ? error : error?.message;
+  if (message === 'not_yet_public' && publicOpeningLabel(details)) return publicOpeningLabel(details) + '.';
   if (Object.hasOwn(messages, message)) return messages[message];
   if (typeof message === 'string' && message && !/^[a-z][a-z0-9_]{0,80}$/.test(message)) return message;
   return `The wallet or gateway request could not be completed${typeof message === 'string' && message ? ` (${message})` : ''}. Refresh its status before trying again.`;

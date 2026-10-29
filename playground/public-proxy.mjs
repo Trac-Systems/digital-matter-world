@@ -31,10 +31,10 @@ function publicPathForOwner(input, owner) {
 }
 
 export function sharedReads({ engine, local }) {
-  return async input => {
+  return async (input, context) => {
     const url = new URL(input), owner = ownerAddress(engine.state.player.address), path = url.pathname.slice(5);
     const target = publicPathForOwner(url, owner);
-    if (target) return engine.get(target);
+    if (target) return engine.get(target, /^\/(?:web-api\/)?mint\/[0-9a-f]{64}$/.test(target) ? context : undefined);
     if (path === 'player') {
       const profile = await engine.get('/agents/' + owner + url.search), own = await local(url);
       return { ...profile, ...own, counts: { ...profile.counts, ...own.counts }, pages: { ...profile.pages, ...own.pages } };

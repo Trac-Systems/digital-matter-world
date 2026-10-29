@@ -47,7 +47,8 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     payoutAddress('tap', tapAddress, bitcoinNetwork);
     const resolved = await reads.publicMintContext(asset, block, at, feeQuote, { settled }), { context: c, document } = resolved;
     const holder = c.link ? c.bitmapHolder ?? await reads.bitmap(block, at) : null;
-    check(!c.link || holder?.address === tapAddress, 'bitmap_holder_only', 409);
+    if (rules.bitmapMintOpenActive(document, resolved.height) && c.link) check(typeof holder?.address === 'string' && holder.address.length > 0, 'bitmap_missing');
+    check(rules.bitmapMintOpenActive(document, resolved.height) || !c.link || holder?.address === tapAddress, 'bitmap_holder_only', 409);
     const q = feeQuote ?? await reads.feeQuotes.issue(mintFeeScope(asset, block, 'tap'), resolved.height, c.payouts, c.deployment.id);
     await reads.feeQuotes.validate(q, mintFeeScope(asset, block, 'tap'));
     const original = await reads.financialSettings(q.settingsHash);

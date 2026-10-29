@@ -12,8 +12,9 @@ import { v2StackFixture } from './v2-stack-fixture.mjs';
 import { firstMintFixture } from './first-mint-fixture.mjs';
 
 test('settings activate permanent claims and ordered public takes through gateway and five HTTP signers', { timeout: 180000 }, t =>
-  v2StackFixture(t, { finderWindow: 2, settingsValues: { ...r.PUBLIC_MINT_SETTINGS,
-    publicMintActivationHeight: '1010', publicMintLegacyFinderWindow: 2 }, scenario: async s => {
+  // One fixture block represents the finder week, leaving the two-block header draw open at publicFrom.
+  v2StackFixture(t, { finderWindow: 1, historyLength: 1040, settingsValues: { ...r.PUBLIC_MINT_SETTINGS,
+    publicMintActivationHeight: '1010', publicMintLegacyFinderWindow: 1 }, scenario: async s => {
     const { store, files, contract, history, players, document, drain, legacyRecord } = s;
     const agent = players[7].agent, pattern = { ...legacyRecord, number: 0 }, asset = 'p0', catalogAsset = 'p2:0';
     const claim = (who, block) => who.claim({ event: { window: s.tip, hash: history.hashAt(s.tip) },
@@ -133,7 +134,7 @@ test('settings activate permanent claims and ordered public takes through gatewa
       assert.ok(replay.files.flatMap(f => f.publicMintEvidence).some(row => row.asset === asset && row.block === '11' && row.id === historicalPublic.id));
       await s.advance(s.tip + 2); await s.runtime.intake.seal(); await drain();
       assert.equal(find('21').finder, agent.owner);
-      assert.equal(find('21').finderUntil, r.addUint(find('21').findHeight, '2'));
+      assert.equal(find('21').finderUntil, r.addUint(find('21').findHeight, String(document.values.finderWindow)));
       assert.equal(find('11'), null);
     });
 
@@ -177,9 +178,11 @@ test('settings activate permanent claims and ordered public takes through gatewa
     });
 
     await t.test('a header award skips a public plot accepted before its draw', async () => {
-      const block = String(s.tip), status = await checkout(block); pay(status); await scanThrough(block);
+      const block = String(s.tip), publicFrom = r.claimDeadline(pattern, block, successor);
+      await s.advance(Number(publicFrom)); await s.runtime.intake.seal(); await drain();
+      const status = await checkout(block); pay(status); await scanThrough(block);
       assert.equal(reservation(block).winner, status.id);
-      await players[4].agent.headers({ height: s.tip, raw: Buffer.from(history.raw(s.tip)).toString('hex'), history }); await drain();
+      await players[4].agent.headers({ height: Number(block), raw: Buffer.from(history.raw(Number(block))).toString('hex'), history }); await drain();
       await s.advance(s.tip + 2); await s.runtime.intake.seal(); await drain();
       const state = claims(), draw = r.recordGet(state.headerAwards, block);
       assert.equal(draw.senderCount, '1');

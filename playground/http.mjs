@@ -65,7 +65,7 @@ export async function serveControl({token,events,route,publicEvents,port=59000})
           res.write(': connected\n\n');
           streams.add(res);const timer=setInterval(()=>res.write(': heartbeat\n\n'),15000);req.on('close',()=>{clearInterval(timer);streams.delete(res);});return;
         }
-        const value=await route(req.method,url,req.method==='POST'?await body(req):undefined);send(req.method==='POST'?202:200,value);return;
+        const value=await route(req.method,url,req.method==='POST'?await body(req):undefined,{requesterSecret:req.headers['x-mint-requester-secret']});send(req.method==='POST'?202:200,value);return;
       }
       if(req.method!=='GET'&&req.method!=='HEAD')return send(405,{error:'method_not_allowed'});
       if(url.pathname==='/rules/src/trac-address.js'){res.writeHead(200,{'content-type':'text/javascript','cache-control':'no-cache','x-content-type-options':'nosniff'});res.end(req.method==='HEAD'?undefined:await readFile(new URL('../rules/src/trac-address.js',import.meta.url)));return;}

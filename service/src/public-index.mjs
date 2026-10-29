@@ -611,6 +611,7 @@ class PublicReadIndex {
         find: row.find,
         owner: owner ?? row.finder ?? currentHolder ?? '0'.repeat(64),
         counted: this.counted,
+        settings: this.views.mints?.document,
         link,
         currentHolder,
       });

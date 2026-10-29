@@ -4,6 +4,7 @@ import * as r from '../src/index.js';
 import { requestInput, network, hashAt } from './observation-fixture.mjs';
 import { paidInput } from './pay-first-fixture.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
+import { accountSettings } from '../src/account-settings.js';
 import { financialSplit } from '../src/financial-fees.js';
 import { historicalPublicPolicyReplay } from './public-policy-replay-fixture.mjs';
 const old = r.settingsRevision({ network: 'dmw-regtest', effectiveBatch: '1', effectiveBitcoinWindow: '1', values: { ...r.SETTINGS_PROFILE } });
@@ -122,4 +123,25 @@ test('pre-activation discovery, claim and settlement bytes match the retained ba
     state: '024728280640d00624020a60839531fab13e9d06af81cdba81fa746b1eb4aaa2',
     finder: { allowed: true, role: 'finder', until: '1123' }, holder: { allowed: true, role: 'public', until: null }
   });
+});
+
+test('open Bitmap mint settings are optional, exact, immutable and cannot retroactivate', () => {
+  const make = (previous, values, window = '110') => r.settingsRevision({ network: previous.network, previous,
+    effectiveBatch: r.nextUint(previous.effectiveBatch), effectiveBitcoinWindow: window, values });
+  const next = make(document, { ...document.values, bitmapMintOpenHeight: '120' });
+  assert.equal(r.settingsSuccessor(document, next), next);
+  assert.equal(r.bitmapMintOpenActive(document, '999999'), false);
+  assert.equal(r.bitmapMintOpenActive(next, '119'), false);
+  assert.equal(r.bitmapMintOpenActive(next, '120'), true);
+  assert.equal(accountSettings(next).bitmapMintOpenHeight, '120');
+  assert.throws(() => r.settingsSuccessor(document, make(document, { ...document.values, bitmapMintOpenHeight: '109' })), /settings_bitmap_mint_open_boundary/);
+  for (const height of [undefined, '121']) {
+    const values = { ...next.values }; if (height === undefined) delete values.bitmapMintOpenHeight; else values.bitmapMintOpenHeight = height;
+    assert.throws(() => r.settingsSuccessor(next, make(next, values)), /settings_bitmap_mint_open_boundary/);
+  }
+  for (const height of [120, '0120', '-1', '99']) assert.throws(() => r.validateSettings({ ...document.values, bitmapMintOpenHeight: height }));
+  assert.throws(() => r.validateSettings({ ...old.values, bitmapMintOpenHeight: '120' }), /settings_bitmap_mint_open/);
+  const huge = '9007199254740993123456789';
+  assert.equal(r.bitmapMintOpenActive({ bitmapMintOpenHeight: huge }, (BigInt(huge) - 1n).toString()), false);
+  assert.equal(r.bitmapMintOpenActive({ bitmapMintOpenHeight: huge }, huge), true);
 });

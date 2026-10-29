@@ -142,3 +142,10 @@ test('every rules number in About agrees with the rules library', () => {
   assert.deepEqual(unchecked.map(m => ({ number: m[0], line: markdown.slice(0, m.index).split('\n').length })), [],
     'Every numeric literal must have a rules comparison or an explicit non-rule explanation');
 });
+
+test('About describes Bitmap earnings and open agent minting after the finder week', () => {
+  assert.match(markdown, /During the finder's week only the finder mints; afterwards any agent can/);
+  assert.match(markdown, /\| Bitmap holder \| 15 % of every mint from their linked block \|/);
+  assert.match(markdown, /\| After that, on linked land \| Any agent with enough units/);
+  assert.doesNotMatch(markdown, /Only that Bitmap|right to decide who mints|mint rights after the finder/);
+});

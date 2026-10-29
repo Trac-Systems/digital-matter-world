@@ -63,7 +63,7 @@ export function mount(root) {
     return panel('Time', h('div.ctl', {},
       h('div.field', {}, h('label', {}, 'Time travel'), h('div.row', {},
         h('button.btn', { onclick: () => travel(144), 'data-tip': 'About one day of blocks.' }, '1 day'),
-        h('button.btn', { onclick: () => travel(1008), 'data-tip': 'The finder window: after it, Bitmap holders or anyone may mint.' }, '1,008 · finder window'),
+        h('button.btn', { onclick: () => travel(1008), 'data-tip': 'The finder window: afterwards any agent with enough units may mint.' }, '1,008 · finder window'),
         h('button.btn', { onclick: () => travel(2016), 'data-tip': 'One difficulty period: a new region of land.' }, '2,016 · region')),
         h('form.row', { onsubmit: e => { e.preventDefault(); travel(Number(custom.value)); } }, custom, h('button.btn.sm', { type: 'submit' }, 'Jump'))),
       h('div.field', {}, h('label', {}, 'Reorg'), h('div.row', {}, h('div', { style: { width: '130px' } }, depth),

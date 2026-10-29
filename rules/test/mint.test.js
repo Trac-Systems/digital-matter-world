@@ -131,3 +131,31 @@ test('signed expiry is absolute, bounded at admission and unaffected by pending 
   assert.throws(() => acceptMintRequest({ ...args, counted: 527 }), /request_expiry/);
   assert.equal(acceptMintRequest({ ...args, counted: 526 }).pending.expiry, 532);
 });
+
+for (const revisioned of [false, true]) test(`linked mint rights open only at the explicit height; revisioned=${revisioned}`, () => {
+  const recorded = revisioned ? { ...find, settingsHash: hash('find-policy'), finderUntil: '1208' } : find;
+  const input = { find: recorded, owner: other, currentHolder: owner, link: { block: 100, linkHeight: 199 } };
+  const settings = { bitmapMintOpenHeight: '1210' };
+  assert.deepEqual(mintRight({ ...input, counted: 1209, settings }), mintRight({ ...input, counted: 1209 }));
+  assert.deepEqual(mintRight({ ...input, counted: 1209, settings }), { allowed: false, role: 'bitmap', until: null });
+  assert.deepEqual(mintRight({ ...input, counted: 1210, settings }), { allowed: true, role: 'public', until: null });
+  assert.equal(mintRight({ ...input, counted: 999999 }).allowed, false, 'absent activation retains historical policy');
+  for (const link of [null, input.link, { block: 100, linkHeight: 201 }]) {
+    const early = { ...input, link, counted: 1207, settings: { bitmapMintOpenHeight: '200' } };
+    assert.equal(mintRight(early).allowed, false);
+    assert.equal(mintRight({ ...early, owner }).allowed, true);
+    assert.equal(mintRight({ ...early, counted: 1208 }).allowed, true);
+  }
+});
+test('open linked mints still require units and preserve accepted legacy request bytes before activation', () => {
+  const request = { owner, asset: 'p1', block: 100, amount: '3', receive: hash('recipient'), nonce: hash('open-mint'), until: 2000, expires: 1640 };
+  const input = { request, sig: signRequest('rq', 'local', request, secret), network: 'local', counted: 1208,
+    find, link: { block: 100, linkHeight: 199 }, currentHolder: other, balance: '3' };
+  assert.throws(() => acceptMintRequest(input), /mint_bitmap/);
+  assert.throws(() => acceptMintRequest({ ...input, settings: { bitmapMintOpenHeight: '1209' } }), /mint_bitmap/);
+  const open = { ...input, settings: { bitmapMintOpenHeight: '1208' } };
+  assert.equal(acceptMintRequest(open).pending.owner, owner);
+  assert.throws(() => acceptMintRequest({ ...open, balance: '2' }), /mint_balance/);
+  const historic = { ...input, currentHolder: owner };
+  assert.equal(JSON.stringify(acceptMintRequest(historic)), JSON.stringify(acceptMintRequest({ ...historic, settings: { bitmapMintOpenHeight: '1209' } })));
+});

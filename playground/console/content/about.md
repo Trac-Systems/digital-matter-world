@@ -20,7 +20,7 @@ To make matter real yourself, or to link a Bitmap you own, install **[Tap Wallet
 
 **Supply nobody can print.** Every pattern's total is fixed by Bitcoin's own history plus the blocks still to come. No team, no deployer, no admin key can add more. That makes matter clean collateral: a lender can check the full supply of what they lend against without trusting anyone.
 
-**Land that pays rent.** Bitmap holders link their block once and earn 15 % of every mint from it, forever, plus the right to decide who mints it once the finder's week is over. The right moves with the Bitmap to every new owner. Genesis-era blocks, halving blocks and famous dates become prime real estate with an income.
+**Land that pays rent.** Bitmap holders link their block once and earn 15 % of every mint from it, forever. The income moves with the Bitmap to every new owner. During the finder's week only the finder mints; afterwards any agent can. Genesis-era blocks, halving blocks and famous dates become prime real estate with an income.
 
 **Patterns as royalties.** The agent that discovers a new pattern earns 5 % of every mint of that pattern, on every block, past and future. A pattern that hits thousands of historic blocks is a royalty stream on Bitcoin's entire history. Agents race to find them first.
 
@@ -64,7 +64,7 @@ To make matter real yourself, or to link a Bitmap you own, install **[Tap Wallet
 Every block, from block 0 to the newest one, is open from day one. There is no schedule and no waiting: an agent that knows where a pattern occurs can go after all of those blocks at once. Finding a good pattern is half of the job. Finding every block it occurs in is the other half.
 
 ### 2. Agents claim
-An agent can claim a pattern in any block where it occurs, old or new, as long as nobody has taken that pattern in that block. Claims never close. Claims are collected for each Bitcoin block and settled with the hash of a later block, so being fast gives no edge. If several agents claim the same pattern in the same block in the same round, a fair draw picks one of them. A pattern in a block can be found only once. Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded. A winning public mint takes that pattern in the block on Trac. Claimed blocks keep their finder week and mint rights. Each agent has a claim budget per Bitcoin block, as spam protection, so the agents with the best maps of where patterns occur come out ahead.
+An agent can claim a pattern in any block where it occurs, old or new, as long as nobody has taken that pattern in that block. Claims never close. Claims are collected for each Bitcoin block and settled with the hash of a later block, so being fast gives no edge. If several agents claim the same pattern in the same block in the same round, a fair draw picks one of them. A pattern in a block can be found only once. Blocks nobody claims within their first week can then be minted on the website with TAP Wallet, without an agent. A winning public mint takes that pattern in the block on Trac. Claimed blocks keep their finder week and mint rights. Each agent has a claim budget per Bitcoin block, as spam protection, so the agents with the best maps of where patterns occur come out ahead.
 
 ### 3. The winner becomes the finder
 The finder receives that pattern's match count in that block as units on Trac. Units are fungible: 5 units of a pattern are worth the same whichever block they came from. The finder also gets the finder's rights described below.
@@ -86,8 +86,8 @@ Who may mint a block:
 | When | Who |
 |---|---|
 | First 1,008 blocks (about a week) after the find | Only the finder |
-| After that, if a Bitmap was linked before the find | Only that Bitmap's current holder |
-| Otherwise | Anyone with enough units of that pattern in their Trac balance |
+| After that, on linked land | Any agent with enough units of that pattern in their Trac balance |
+| After that, on unlinked land | Any agent with enough units of that pattern in their Trac balance |
 
 Paying works two ways. With TAP on Bitcoin, [Tap Wallet](https://chromewebstore.google.com/detail/tap-wallet/blcaacmeglnfblclocdgaomhopnfobof) for people and the agent's own wallet for agents, the fee goes directly to everyone who earns from it in one transfer. With bridged TAP on Ethereum, the fee goes into a small escrow contract, and the payer or any recipient releases it with the committee's signature. Either way, the mint itself is inscribed on Bitcoin by you.
 
@@ -151,7 +151,7 @@ Who earns:
 | Header sender | A draw for every unclaimed pattern in the blocks they report; winning makes them the finder |
 | Discoverer | Their name on the periodic table and 5 % of every mint of their pattern, forever |
 | First maker | 30 % of every mint of their compound type |
-| Bitmap holder | 15 % of every mint from their linked block and the mint rights after the finder's week |
+| Bitmap holder | 15 % of every mint from their linked block |
 | Every TAP holder | The burned share shrinks the TAP supply with every mint |
 
 ## Who pays what

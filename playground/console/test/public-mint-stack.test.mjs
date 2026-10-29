@@ -40,7 +40,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     const errors = [], requests = [], pending = [];
     let signs = 0, funds = 0, payments = 0, checkoutId, minted;
     page.on('pageerror', error => errors.push(error.message));
-    page.on('request', request => requests.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.postDataJSON() }));
+    page.on('request', request => requests.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.postDataJSON(), requester: !!request.headers()['x-mint-requester-secret'] }));
     await page.route('https://mempool.space/**', route => route.fulfill({ contentType: 'application/json', body: '{"halfHourFee":2}' }));
     // No request can leave the local fixture, including accidental API redirects.
     await page.route('**/*', route => new URL(route.request().url()).origin === f.http.url || route.request().url().startsWith('https://mempool.space/')
@@ -70,7 +70,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
       }
       if (method === 'singleTxTransfer') {
         payments++; assert.equal(payments, 1);
-        const status = f.mints.public(checkoutId); assert.deepEqual(args[0], r.walletFeeItems(status.fees, 'regtest'));
+        const status = store.get('mints', checkoutId).quote; assert.deepEqual(args[0], r.walletFeeItems(status.fees, 'regtest'));
         const payload = { p: 'tap', op: 'token-auth', redeem: { items: args[0] } };
         const payment = buildInscription({ text: JSON.stringify(payload), receiver: f.receiver, publicKey: f.bitcoinPublic, network: 'regtest', feeRate: 1, maxFeeSats: '1000000',
           utxos: [{ txid: r.hash('browser-payment'), vout: 0, value: '10000000', script, confirmed: true, cardinal: true }] });
@@ -89,7 +89,7 @@ test('a TAP-only browser deploys and mints a public block through the activated 
       globalThis.tapprotocol.on = () => {};
     }, Object.keys(extension.provider));
     await page.goto(f.http.url + '/mint');
-    await page.getByText('Public minting opens soon. Blocks nobody has claimed yet will be listed here.', { exact: true }).waitFor();
+    await page.getByText('Public minting opens soon. Blocks show up here once their 1-week finder window has passed without a claim.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
     assert.equal(payments + signs, 0);
     await s.advance(1017); await s.runtime.intake.seal(); await drain(); await project();
@@ -128,6 +128,10 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     await page.waitForURL(url => /^\/mint\/[0-9a-f]{64}$/.test(url.pathname));
     checkoutId = new URL(page.url()).pathname.slice(6);
     assert.equal(f.mints.public(checkoutId).payer, f.receiver);
+    assert.equal(f.mints.public(checkoutId).block, undefined);
+    assert.ok(await page.evaluate(id => /^[0-9a-f]{64}$/.test(localStorage.getItem('dmw-public-mint-requester/' + id)), checkoutId));
+    await page.getByRole('button', { name: 'Pay missing items', exact: true }).waitFor();
+    assert.ok(requests.some(r => r.path === '/mint/' + checkoutId && r.requester), 'the requester browser authenticates its status reads');
     await page.getByRole('button', { name: 'Pay missing items', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Pay from my wallet', exact: true }).click();
     await page.waitForFunction(() => !Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Pay missing items' && b.disabled));

@@ -1,6 +1,7 @@
 import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
 
 // One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
+const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
 const PAID_ONCE = 'Paid. Your mint goes out automatically when the permit arrives. You can close this page.';
 const NEEDS_USER = 'The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.';
 const SENDER_STATES = ['waiting_funding', 'funded', 'sending', 'sent', 'minted', 'needs_user', 'returning', 'returned'], SENDER_STOPPED = ['needs_user', 'returning', 'returned'];
@@ -52,7 +53,7 @@ const refreshButton = button('Refresh', () => refresh());
 const first = button('First', async () => { cursor = undefined; await refreshClaims(); });
 const more = button('Next', async () => { cursor = next; await refreshClaims(); });
 append(page, append(el('div', undefined, 'page-head'), el('h1', 'Claimed blocks you may mint')),
-  el('p', "During the finder's week only the finder mints; afterwards the Bitmap holder (if linked before the find) or any agent holding enough units. Units can be sent with transfer. Minting spends units and pays to your bound TAP wallet. You approve the TAP payment and Bitcoin inscription fees in TAP Wallet."), owner, payout,
+  el('p', "During the finder's week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Units can be sent with transfer. Minting spends units and pays to your bound TAP wallet. You approve the TAP payment and Bitcoin inscription fees in TAP Wallet."), owner, payout,
   append(el('div', undefined, 'row'), mintAll, refreshButton), note,
   table, append(el('div', undefined, 'row'), first, more), el('h2', 'Open requests'), requests, payment);
 root.append(page);
@@ -128,7 +129,7 @@ async function refreshPayment() {
   const ms = SENDER_STATES.includes(status.mintSender?.state) ? status.mintSender : null, senderStopped = SENDER_STOPPED.includes(ms?.state);
   if (funding) payment.append(el('p', `Bitcoin set aside for the mint inscription: ${funding.satoshis} sats`));
   if (ms && !senderStopped) {
-    if (status.state !== 'minted' && !txid(ms.revealTxid)) payment.append(el('p', PAID_ONCE));
+    if (ms.state !== 'waiting_funding' && status.state !== 'minted' && !txid(ms.revealTxid)) payment.append(el('p', PAID_ONCE));
     payment.append(append(el('p', 'Mint: ' + senderWords(status, ms) + ' '), txid(ms.commitTxid) ? txLink('Commit', ms.commitTxid) : null, txid(ms.commitTxid) && txid(ms.revealTxid) ? document.createTextNode(' · ') : null, txid(ms.revealTxid) ? txLink('Reveal', ms.revealTxid) : null));
   }
   if (ms && senderStopped && status.state === 'permit_issued') payment.append(el('p', NEEDS_USER));
@@ -136,6 +137,7 @@ async function refreshPayment() {
     if (status.localWalletProgress) payment.append(el('p', 'This request has saved local wallet progress. Reconnect TAP Wallet here to resume it.'));
     else payment.append(el('p', 'TAP Wallet is not available on this local page. You can finish this request on the site.'), externalLink('Open payment page', status.paymentLink));
   }
+  if (!status.payable && ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'].includes(status.state)) payment.append(el('p', PAY_SOON));
   if (globalThis.tapprotocol && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state)) payment.append(button(funding ? 'Pay and mint' : 'Pay missing items', async () => {
     // TAP Wallet 1.0.49 or newer, checked before the confirmation and any other wallet call.
     await tapWalletCapabilities(globalThis.tapprotocol);

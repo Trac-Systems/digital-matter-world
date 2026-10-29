@@ -5,10 +5,10 @@ supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
 
-Prices are set in TAP by the operator and can change. Read the live
+Fees are set in TAP by the operator and can change. Read the live
 `public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
-costs `baseFee × feeSettings.link`. Find prices use the tier multiplier;
-compound prices use the greater of that multiplier and `compoundMinimum`.
+costs `baseFee × feeSettings.link`. Find fees use the tier multiplier;
+compound fees use the greater of that multiplier and `compoundMinimum`.
 Check the request’s quote before paying. Existing requests keep their signed terms.
 
 Use your own local Trac signer to find, discover and craft matter, then reserve, pay and
@@ -38,7 +38,7 @@ listens only on `127.0.0.1`, chooses a free port unless `--port` is supplied,
 and accepts one dashboard per signer journal. Treat the link as private.
 
 The dashboard lists claimed blocks this agent is eligible to mint, with the
-reason (own find, Bitmap holder or units), required units, current asset balance
+reason (own find or units), required units, current asset balance
 and request state. Own finder-week blocks come first, then other eligible blocks
 paged by asset and block. Minted blocks are excluded. Short balances remain
 visible with a reason and cannot mint. **Mint** signs that block's mint request
@@ -49,9 +49,9 @@ sign a request. Financial signing does not wait for a mining round.
 
 The receiver and TAP payer are your agent's verified, bound TAP payout address,
 shown at the top. Complete `bind_payout_wallet` first if no binding is present.
-During the finder's week only the finder mints; afterwards the Bitmap holder
-(if the Bitmap was linked before the find) or any agent holding enough units
-of that asset may mint. Minting spends the required units. `transfer` submits unit authorizations after the public-mint settings activation; see
+During the finder's week only the finder mints; afterwards any agent can.
+Bitmap holders earn 15% of every mint on their plot. Agents need enough units
+of that asset to mint. Minting spends the required units. `transfer` submits unit authorizations after the public-mint settings activation; see
 [unit transfers](docs/ACTIONS.md#unit-transfers-on-v2). Unclaimed blocks use a separate website flow.
 All mint requests still pass shared validation and accepted reservation.
 
@@ -443,19 +443,18 @@ deadline, and refuses redirects. The wallet stays local.
 General selection traverses all rights pages. Explicit blocks use direct lookup
 and verify live context. `compounds()` returns registered type records.
 
-Found blocks keep the existing mint ladder: the finder during the week starting
-at settlement, then the current Bitmap holder if linked before the find,
-otherwise any agent holding enough units. Mint from the kit or local dashboard
+During the finder's week only the finder mints; afterwards any agent can.
+Bitmap holders earn 15% of every mint on their plot. The finder week starts at
+settlement, and agents need enough units to mint. Mint from the kit or local dashboard
 by spending the exact find count in units. Under the current settings, claims never
 close: an agent may claim any untaken (block, pattern) pair at any time. A winning
 public TAP Wallet mint takes the pair on Trac too; `public_minted` means the agent
 should choose another block. Historical settings retain their original rules.
 
-Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded.
+Blocks nobody claims within their first week can then be minted on the website with TAP Wallet, without an agent.
 No agent, Trac key or units are required for a public mint. Quotes reserve nothing. The first
 complete confirmed TAP payment wins by Bitcoin block and transaction position;
-other payments are recorded for refund. A linked Bitmap requires payment from
-its current holder’s TAP address. Found and already minted blocks are excluded
+other payments are recorded for refund. Linked and unlinked public blocks are open to any TAP Wallet. Found and already minted blocks are excluded
 from public offers. Historical settings retain their original rules.
 
 ## Actions and MCP
@@ -654,7 +653,7 @@ entries, leave the last two windows unsettled and record snapshot, catalogIds,
 settings and opponents. They model all-history claims, excluding earlier finds.
 The CLI defaults to an empty catalog; use `--patterns FILE` for an
 accepted catalog with discovery heights. Without opponent strategies this is a
-single-agent experiment, not an earnings forecast; TAP prices and TNK fees are
+single-agent experiment, not an earnings forecast; TAP fees and TNK fees are
 not modeled.
 
 ## Checks

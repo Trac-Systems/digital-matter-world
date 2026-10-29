@@ -1,17 +1,19 @@
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from '../dom.js';
 import { tap } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities } from './wallet.js';
-import { walletError } from '../wallet-errors.js';
+import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from '../wallet-errors.js';
 import { PAYMENT_STATE } from '../words.js';
 import { validateTracAddress } from '../../../../rules/src/trac-address.js';
+import { rememberRequester, requesterHeaders } from '../requester-storage.js';
 
 // Protocol responses must retain chain/network fields; the display-only public
 // read adapter deliberately strips those and cannot be used for wallet signing.
 async function api(path, body) {
-  const response = await fetch(path, { ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}), headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) }, credentials: 'same-origin' });
+  const response = await fetch(path, { ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}), headers: { accept: 'application/json', ...requesterHeaders(path, body), ...(body ? { 'content-type': 'application/json' } : {}) }, credentials: 'same-origin' });
   // A proxy timeout returns an empty body; report it as an unfinished request, not a JSON error.
   const result = await response.json().catch(() => ({ error: 'request_failed' }));
   if (!response.ok) throw Error(result.error ?? 'request_failed');
+  rememberRequester(result);
   return result;
 }
 const STOPPED = /^(?:expired|cancelled|rejected|refundable|refund_\w+|unpaid_expired|quarantined|recovery|failed)$/;
@@ -23,6 +25,14 @@ export const PAID_ONCE = 'Paid. Your mint goes out automatically when the permit
 export const NEEDS_USER = 'The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.';
 const txid = value => /^[0-9a-f]{64}$/.test(value ?? '') ? value : null;
 const txLink = (value, label = value) => h('a.mono', { href: 'https://mempool.space/tx/' + value, target: '_blank', rel: 'noreferrer noopener' }, label);
+export function refundStatus(record) {
+  const delivery = record?.refundDelivery;
+  if (['refund_sent', 'refund_confirmed'].includes(delivery?.state) && txid(delivery.revealTxid))
+    return h('span', {}, 'Refund sent: ', txLink(delivery.revealTxid));
+  if (delivery?.state === 'refund_waiting_funds') return 'Refund waiting for operator funds';
+  if (delivery?.state === 'refund_needs_operator') return 'Refund waiting for operator action';
+  return 'Refund pending';
+}
 const sats = n => `${fmtInt(n)} sats`;
 const setAside = status => Number.isSafeInteger(status?.mintFunding?.satoshis) ? status.mintFunding : null;
 const sender = status => SENDER_STATES.includes(status?.mintSender?.state) ? status.mintSender : null;
@@ -62,10 +72,10 @@ export function mount(root, { id, onPublicMint }) {
   // A wallet payment is reported by its redeem inscription, found on Bitcoin.
   let reported = null, lastLookup = 0;
   const reportPayment = async current => {
-    if (reported || Date.now() - lastLookup < 30000) return; lastLookup = Date.now();
+    if (Date.now() - lastLookup < 30000) return; lastLookup = Date.now();
     // This browser's saved payment first; otherwise the payment found on Bitcoin (paid from another browser).
-    const paymentId = await wallet.paymentInscription(id, current.payer ?? current.receiver).catch(() => null)
-      ?? await findPayment(id, current.payer ?? current.receiver, { network: wallet.network }).catch(() => null);
+    const paymentId = reported ?? await wallet.paymentInscription(id, current.payer ?? current.receiver).catch(() => null)
+      ?? await findPayment(id, current.payer ?? current.receiver, { network: wallet.network, paymentData: current.fees?.map(fee => fee.dta) }).catch(() => null);
     if (!paymentId) return;
     try { await api('/mint/payment', { id, paymentId }); }
     catch (error) { if (error.message !== 'financial_transition_pending') return; }
@@ -179,10 +189,11 @@ export function mount(root, { id, onPublicMint }) {
       return renderDeployment(await api('/mint/deployment-state/' + id));
     }
     status = await wallet.status(id);
-    if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payBy?.rail === 'tap') void reportPayment(status);
+    if (['awaiting_payment', 'partly_paid', 'scanning'].includes(status.state) && status.payBy?.rail === 'tap') void reportPayment(status);
     if (stopped) return;
     const funding = status.payBy?.rail === 'tap' ? setAside(status) : null, ms = sender(status), serverSends = !!(funding || ms) && !SENDER_STOPPED.includes(ms?.state);
-    if (status.publicMint) intro.textContent = 'Pay every quoted fee in one TAP payment. The first confirmed complete payment wins. No units are consumed. ' + (serverSends ? 'TAP Wallet asks once: our server sends your mint inscription when the permit is issued.' : 'After your permanent permit is issued, inscribe the mint from your TAP Wallet.');
+    if (status.requesterRequired) intro.textContent = 'Open this request in the browser where you created it to review the block and pay. The block becomes public after the payment wins.';
+    else if (status.publicMint) intro.textContent = 'Pay every quoted fee in one TAP payment. The first confirmed complete payment wins. No units are consumed. ' + (serverSends ? 'TAP Wallet asks once: our server sends your mint inscription when the permit is issued. If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.' : 'After your permanent permit is issued, inscribe the mint from your TAP Wallet.');
     else if (serverSends) intro.textContent = 'Pay the fee items. TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when your permanent permit is ready.';
     if (/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(status.asset)) {
       const deployment = await api('/mint/deployment-state/' + status.asset);
@@ -195,7 +206,8 @@ export function mount(root, { id, onPublicMint }) {
     const kind = state === 'minted' ? 'good' : failed ? 'bad' : ['awaiting_payment', 'partly_paid'].includes(state) ? 'warn' : 'info';
     const due = status.missing.reduce((sum, item) => sum + BigInt(item.amount), 0n);
     clear(lead, status.missing.length && !failed ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(due.toString()))) : null,
-      ms && !failed && state !== 'minted' && !SENDER_STOPPED.includes(ms.state) && !txid(ms.revealTxid) ? h('div.callout.info', {}, PAID_ONCE) : null,
+      BEFORE_PAY.includes(status.state) && !status.payable && !failed && !status.sentInscription ? h('div.callout.busy', {}, PAY_SOON) : null,
+      ms && ms.state !== 'waiting_funding' && !failed && state !== 'minted' && !SENDER_STOPPED.includes(ms.state) && !txid(ms.revealTxid) ? h('div.callout.info', {}, PAID_ONCE) : null,
       ms && SENDER_STOPPED.includes(ms.state) && state === 'permit_issued' ? h('div.callout.warn', {}, NEEDS_USER, typeof ms.message === 'string' && ms.message.length <= 200 ? h('div.small', {}, ms.message) : null) : null,
       state === 'permit_issued' && !serverSends ? h('p.lead', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your units have been consumed once. This permit has no expiry; you can inscribe when ready.') : null,
       state === 'minted' ? h('div.callout.good', {}, 'Minted. ', status.inscription ? ['Inscription ', hashEl(status.inscription)] : null) : null);
@@ -207,17 +219,17 @@ export function mount(root, { id, onPublicMint }) {
     if (fees && status.missing.length > 1) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(due.toString()))), h('td')));
     clear(body, fees ? panel('Remaining fees', fees, { flush: true }) : null, ms && !SENDER_STOPPED.includes(ms.state) && !failed ? panel('Your mint', senderSteps(status, ms), { flush: true }) : null);
     const aside = funding ?? (Number.isSafeInteger(ms?.satoshis) ? ms : null);
-    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], ['Receiver', hashEl(status.receiver)], ['Units', fmtInt(status.amount)],
-      aside ? ['Bitcoin set aside for the mint inscription', sats(aside.satoshis)] : null,
+    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], ['Receiver', hashEl(status.receiver)], ['Units', fmtInt(status.amount)],
+      aside ? ['Bitcoin set aside for the mint inscription and a possible refund', sats(aside.satoshis)] : null,
       ms?.state === 'returning' ? ['Set-aside', 'Being returned to you'] : ms?.state === 'returned' ? ['Set-aside', txid(ms.returnTxid) ? h('span', {}, 'Returned to you: ', txLink(ms.returnTxid, ms.returnTxid.slice(0, 12) + '…')) : 'Returned to you'] : null,
-      status.publicMint && status.refunds?.length ? ['Refund', 'Owed; not sent automatically'] : null, status.publicMint && (status.reason || status.refunds?.[0]?.reason) ? ['Reason', walletError(status.reason ?? status.refunds[0].reason)] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]), { flush: true }));
+      status.publicMint && status.refunds?.length ? ['Refund', h('span', {}, status.refunds.flatMap((r, i) => [i ? ' · ' : '', refundStatus(r)]))] : null, status.publicMint && (status.reason || status.refunds?.[0]?.reason) ? ['Reason', walletError(status.reason ?? status.refunds[0].reason, status)] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')], rest = [];
     if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payable) next.push(button(funding ? 'Pay and mint' : 'Pay missing items', async () => {
       // Every TAP Wallet action needs 1.0.49 or newer: checked before the confirmation and any other wallet call.
       if (status.payBy.rail === 'tap') await tapWalletCapabilities(globalThis.tapprotocol);
       const once = funding ? 'TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when the permit arrives. ' : '';
-      if (!await confirmModal({ title: funding ? 'Pay and mint?' : 'Pay the remaining fees?', lead: once + (status.publicMint ? 'Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded. Pay every fee in one TAP payment. First confirmed complete payment wins; later payments are recorded for refund. Refunds are not sent automatically.' : 'Your wallet pays the quoted recipients. We do not refund these payments.'),
-        rows: [...status.missing.map(item => [item.role, tap(item.amount)]), funding ? ['Bitcoin set aside for the mint inscription', sats(funding.satoshis)] : null].filter(Boolean), confirm: funding ? 'Pay and mint' : 'Pay from my wallet' })) return;
+      if (!await confirmModal({ title: funding ? 'Pay and mint?' : 'Pay the remaining fees?', lead: once + (status.publicMint ? 'Pay every fee in one TAP payment. First confirmed complete payment wins. ' + (funding ? 'If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.' : 'If your payment does not win the block, your refund needs operator action because this payment has no Bitcoin set-aside.') : 'Your wallet pays the quoted recipients. We do not refund these payments.'),
+        rows: [...status.missing.map(item => [item.role, tap(item.amount)]), funding ? ['Bitcoin set aside for the mint inscription and a possible refund', sats(funding.satoshis)] : null].filter(Boolean), confirm: funding ? 'Pay and mint' : 'Pay from my wallet' })) return;
       if (status.payBy.rail === 'tap') {
         await wallet.connect(); let result = await wallet.pay(id);
         if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this request.', rows: status.missing.map(item => [item.role, tap(item.amount)]), confirm: 'Retry payment' })) result = await wallet.pay(id, { retry: true });
@@ -285,16 +297,16 @@ export function scriptText(hex) {
 }
 
 // The inscription id ("<txid>i0") of the payment for request `id` from `address`, or null.
-export async function findPayment(id, address, { network = 'mainnet', fetchImpl = globalThis.fetch } = {}) {
+export async function findPayment(id, address, { network = 'mainnet', fetchImpl = globalThis.fetch, paymentData = [] } = {}) {
   if (!/^[0-9a-f]{64}$/.test(id ?? '') || !address || network === 'regtest') return null;
   const base = 'https://mempool.space' + (network === 'mainnet' ? '' : '/' + network) + '/api/address/' + encodeURIComponent(address) + '/txs';
   const response = await fetchImpl(base, { redirect: 'error', signal: AbortSignal.timeout(10000) });
   if (!response.ok) return null;
-  const marker = `dmw-pay-v2|${id}|`;
+  const markers = [`dmw-pay-v2|${id}|`, ...paymentData.filter(data => typeof data === 'string' && data.startsWith('dmw-public-pay-v1|'))];
   for (const tx of await response.json()) {
     if (!tx.status?.confirmed) continue;
     const script = tx.vin?.[0]?.witness?.find(w => w.length > 200);
-    if (script && scriptText(script).includes(marker)) return tx.txid + 'i0';
+    if (script && markers.some(marker => scriptText(script).includes(marker))) return tx.txid + 'i0';
   }
   return null;
 }

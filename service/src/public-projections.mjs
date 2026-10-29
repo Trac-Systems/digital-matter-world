@@ -162,7 +162,7 @@ function world(store, params, settings, map = false) {
 }
 function rights(store, owner, params, settings, onlyBlock) {
   check(/^[0-9a-f]{64}$/.test(owner ?? ''), 'agent_key');
-  const clock = clocks(store), revision = ['finds', 'links', 'minted', 'holds', 'replay/mints/holds', 'submittedBitmaps', 'publicBalances', 'publicDeployments', 'meta/publicRegistryRevision', 'publicBalanceHeads/' + owner, 'accountRecords', 'financialHealth'].map(s => projectionRevision(store, s)).join('/') + '/' + clock.counted + '/' + (store.get('meta', 'head')?.hash ?? '');
+  const clock = clocks(store), revision = ['finds', 'links', 'minted', 'holds', 'replay/mints/holds', 'submittedBitmaps', 'publicBalances', 'publicDeployments', 'meta/publicRegistryRevision', 'publicBalanceHeads/' + owner, 'accountRecords', 'financialHealth'].map(s => projectionRevision(store, s)).join('/') + '/' + clock.counted + '/' + (store.get('meta', 'head')?.hash ?? '') + '/' + (settings.document?.values.bitmapMintOpenHeight ?? '');
   const blocked = financialBlock(store, ['ar/' + owner, 'ar/supply', 'fp/chain']);
   const p = paging(params, 'rights/' + owner + '/' + (onlyBlock ?? ''), revision, settings, ['asset', 'block', 'allowed', 'whoMayMint', 'reason', 'minted', 'pending']);
   check(!params.has('sort') || params.get('sort') === 'block', 'projection_sort');
@@ -207,7 +207,7 @@ function rights(store, owner, params, settings, onlyBlock) {
   const hydrate = r => {
     const f = JSON.parse(r.value), link = store.get('links', heightKey(f.block)), bitmap = store.get('submittedBitmaps', rules.uintKeyV2(rules.decimalV2(f.block))), fresh = bitmapFresh(store, bitmap);
     const exclusive = rules.compareUint(clock.counted, rules.decimalV2(f.finderUntil)) < 0;
-    const role = exclusive ? 'finder' : link && rules.compareUint(rules.decimalV2(link.linkHeight), rules.decimalV2(f.findHeight)) < 0 ? 'bitmap' : 'public';
+    const role = exclusive ? 'finder' : !rules.bitmapMintOpenActive(settings.document, clock.counted) && link && rules.compareUint(rules.decimalV2(link.linkHeight), rules.decimalV2(f.findHeight)) < 0 ? 'bitmap' : 'public';
     const rightAllowed = role === 'finder' ? f.finder === owner : role === 'bitmap' ? fresh ? bitmap.agent === owner : null : true;
     const balance = store.get('publicBalances', owner + '/' + f.asset), account = store.get('accountRecords', 'ar/' + owner);
     const balanceHead = store.get('publicBalanceHeads', owner) ?? balance;

@@ -18,9 +18,9 @@ transport policy. mint_quote, craft and link_bitmap can request POST previews
 without signing or reserving. Under a GET-only policy do not call those previews.
 submit_bitmap is an action, not a read; its dry-run sends nothing.
 
-Found blocks keep their mint ladder: the finder during the week starting at
-settlement, then the current Bitmap holder if linked before the find, otherwise
-any agent holding enough units. Minting spends the exact find count in units.
+During the finder's week only the finder mints; afterwards any agent can.
+Bitmap holders earn 15% of every mint on their plot. The week starts at settlement;
+agents need enough units to mint. Minting spends the exact find count in units.
 After the accepted publicMintActivationHeight, new claims close at max(block height, pattern releaseHeight) plus the
 releaseFinderWindow pinned from settings.finderWindow (launch 1008 blocks).
 Patterns without a recorded release use the policy activation height and its
@@ -28,8 +28,7 @@ pinned publicMintLegacyFinderWindow. New settings do not reopen closed claims.
 Unclaimed blocks after the week are minted only on the website with a TAP Wallet,
 without agents, Trac keys or units. Quotes reserve nothing. The first complete
 confirmed payment wins by Bitcoin block, transaction position and inscription
-index; other payments are recorded for refund. Linked public blocks require
-payment from the current Bitmap holder’s TAP address. Public lists exclude
+index; other payments are recorded for refund. Linked public blocks are open to any TAP Wallet. Public lists exclude
 found and already minted blocks. Agent mint_rights reads /agents/ADDRESS/mintRights;
 /mint-rights and /public-mints are the wallet-only public offers after activation.
 
@@ -95,7 +94,7 @@ Block mintRights reads require an owner; the kit defaults it to this player.
    compound ID or use historical frozen rarity as the v2 result. A pending exact
    tier can be advanced with refine_compound using its accepted cursor.
 7. mint_rights and mint_idea check actual finds, ownership, balances, reservations
-   and finder/Bitmap rights. A no-funds player correctly receives no_balance or
+   and finder rights. A no-funds player correctly receives no_balance or
    no_eligible_slot. Use current feePolicy and the request's signed fee terms.
 
 ### Regular expressions and counting
@@ -139,7 +138,7 @@ accepted reservation and payable:true. pay_mint uses the explicitly authorized
 local Bitcoin signer; poll_mint reads progress; inscribe_mint uses the issued
 permit; indexer confirmation establishes minted. Fees are TAP atomic integers
 with 18 decimals. Bitcoin miner fees are separate satoshi integers. Read current
-feePolicy/feeSettings; no fixed legacy link or compound prices apply. Requests
+feePolicy/feeSettings; no fixed legacy link or compound fees apply. Requests
 retain their signed fee terms. Ethereum payment/release uses the owner's
 Ethereum wallet and gas; the kit's pay_mint path handles TAP.
 
@@ -184,11 +183,10 @@ public gateway assertions in production.
 starts a loopback-only dashboard on the signer's machine; `--port` is optional.
 The owner unlocks locally and opens its one-use private login link. Mint signs
 an eligible claimed block immediately; Mint all queues eligible blocks. Each row
-shows why (own find / Bitmap holder / units), required units and this agent's
+shows why (own find / units), required units and this agent's
 balance. Short balances are not mintable; minted blocks are excluded. During the
-finder's week only the finder mints; afterwards the Bitmap holder (if linked
-before the find) or any agent holding enough units of that asset may mint, by
-spending units. Unit transfers activate with the public-mint settings height. Both receiver and TAP payer come from the
+finder's week only the finder mints; afterwards any agent can. Bitmap holders
+earn 15% of every mint on their plot. Minting requires and spends enough units. Unit transfers activate with the public-mint settings height. Both receiver and TAP payer come from the
 verified payout binding. This command
 explicitly enables live mint signing on clicks without requiring --live. It
 never pays automatically: the owner approves the quoted TAP fees and Bitcoin

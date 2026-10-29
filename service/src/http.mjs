@@ -12,6 +12,7 @@ import { accountKey } from '../../contract/account-tree.js';
 import { financialAsset } from '../../rules/src/financial-mint.js';
 import { deploymentAssetId } from './mint-assets.mjs';
 import { responseBudget } from './response-budget.mjs';
+import { publicMintClientIP } from './public-mint-admission.mjs';
 async function body(req, maxBytes) {
   check(!req.headers['content-length'] || Number(req.headers['content-length']) <= maxBytes, 'body_limit', 413);
   check((req.headers['content-type'] ?? '').split(';')[0] === 'application/json', 'content_type', 415);
@@ -46,11 +47,25 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
         res.end(JSON.stringify(mints.mintSender.page(mints, operatorURL.searchParams))); return;
       }
+      if (mints?.public && ['GET', 'HEAD'].includes(req.method) && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) {
+        const result = mints.public(req.url.slice(6), req.headers['x-mint-requester-secret']);
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('Vary', 'Accept, X-Mint-Requester-Secret');
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify(publicIdentities(result))); return;
+      }
+      if (req.method === 'GET' && (operatorURL.pathname === '/internal/mint-sender/refunds' || /^\/internal\/mint-sender\/refunds\/[0-9a-f]{64}$/.test(operatorURL.pathname) || operatorURL.pathname === '/internal/mint-sender/status')) {
+        check(mints?.mintSender && mints.mintSender.authorized(req.headers.authorization), 'not_found', 404);
+        const view = mints.mintSender;
+        const result = operatorURL.pathname.endsWith('/status') ? view.status() : operatorURL.pathname === '/internal/mint-sender/refunds' ?
+          view.refundPage(mints, operatorURL.searchParams) : view.refundRecord(mints, operatorURL.pathname.split('/').at(-1));
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(result)); return;
+      }
       if (mints?.publicMints && ['GET', 'HEAD'].includes(req.method) &&
           (operatorURL.pathname.startsWith('/public-mints') || operatorURL.pathname === '/mint-rights' && rules.publicMintActive(mints.document, intake.store.get('meta', 'ruleState')?.counted ?? '0'))) {
         const path = decodeURIComponent(operatorURL.pathname), detail = /^\/public-mints\/([^/]+)\/(0|[1-9][0-9]*)$/.exec(path);
-        const result = path === '/public-mints/refunds' ? mints.publicMints.refunds(operatorURL.searchParams) : detail ? mints.publicMints.state(detail[1], detail[2]) :
+        let result = path === '/public-mints/refunds' ? mints.publicMints.refunds(operatorURL.searchParams, req.headers['x-mint-requester-secret']) : detail ? mints.publicMints.state(detail[1], detail[2]) :
           ['/public-mints', '/mint-rights'].includes(path) ? mints.publicMints.list(operatorURL.searchParams) : null;
+        if (result && path === '/public-mints/refunds' && mints.mintSender) result = { ...result, rows: result.rows.map(r => mints.mintSender.decorateRefund(r)) };
         check(result, 'not_found', 404); res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
         res.end(req.method === 'HEAD' ? undefined : JSON.stringify(result)); return;
       }
@@ -92,7 +107,16 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       }
       if (operator && ['GET', 'HEAD'].includes(req.method) && ['/operator', '/operator.js', '/operator/status', '/operator/deployments'].includes(operatorURL.pathname)) {
         res.setHeader('Cache-Control', 'no-store');
-        if (['/operator/status', '/operator/deployments'].includes(operatorURL.pathname)) { res.setHeader('Content-Type', 'application/json'); res.end(req.method === 'HEAD' ? undefined : JSON.stringify(publicIdentities(await (operatorURL.pathname.endsWith('deployments') ? operator.deployments(operatorURL.searchParams) : operator.status())))); }
+        if (['/operator/status', '/operator/deployments'].includes(operatorURL.pathname)) {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method === 'HEAD') res.end();
+          else {
+            const deployments = operatorURL.pathname.endsWith('deployments');
+            let result = await (deployments ? operator.deployments(operatorURL.searchParams) : operator.status());
+            if (!deployments && mints?.mintSender) result = { ...result, mintSender: mints.mintSender.status() };
+            res.end(JSON.stringify(publicIdentities(result)));
+          }
+        }
         else { res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : 'text/html'); res.end(req.method === 'HEAD' ? undefined : await readFile(new URL('../public/' + (req.url.endsWith('.js') ? 'operator.js' : 'operator.html'), import.meta.url))); }
         return;
       }
@@ -147,10 +171,13 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input.asset), 'deployment_asset');
         result = input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input);
       }
-      else if (mints?.publicMints && req.method === 'POST' && ['/public-mints/quote', '/public-mints/start'].includes(req.url)) result = await mints.publicMints.quote(JSON.parse(await body(req, mints.document.values.moveBytes)), req.url.endsWith('/start'));
+      else if (mints?.publicMints && req.method === 'POST' && ['/public-mints/quote', '/public-mints/start'].includes(req.url)) {
+        result = await mints.publicMints.quote(JSON.parse(await body(req, mints.document.values.moveBytes)), req.url.endsWith('/start'), { clientIP: publicMintClientIP(req), requesterSecret: req.headers['x-mint-requester-secret'] });
+        if (req.url.endsWith('/quote') && mints.mintSender) result = mints.mintSender.estimate(result);
+      }
       else if (mints && req.method === 'POST' && req.url === '/mint/quote') result = await mints.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (mints && req.method === 'POST' && req.url === '/mint/request') result = await mints.request(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 8192)));
-      else if (mints && req.method === 'POST' && req.url === '/mint/payment') result = await mints.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
+      else if (mints && req.method === 'POST' && req.url === '/mint/payment') result = await mints.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)), req.headers['x-mint-requester-secret']);
       else if (mints?.refund && req.method === 'POST' && req.url === '/mint/refund') result = await mints.refund(JSON.parse(await body(req, intake.settings.document.values.moveBytes)));
       else if (financialActions && req.method === 'POST' && req.url === '/financial/action') result = await financialActions.submit(JSON.parse(await body(req, intake.settings.document.values.moveBytes)));
       else if (financialActions && req.method === 'GET' && /^\/financial\/action\/[0-9a-f]{64}$/.test(req.url)) result = financialActions.status(req.url.split('/').at(-1));

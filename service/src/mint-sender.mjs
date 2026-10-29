@@ -1,3 +1,4 @@
+import { MintRefundSender } from './mint-refund-sender.mjs';
 import { mintSenderError } from './mint-sender-errors.mjs';
 import { join } from 'node:path';
 import { requestKey, btc, validRequestId, validDestination } from './mint-sender-keys.mjs';
@@ -30,6 +31,7 @@ export class MintSender {
     Object.assign(this, { seed, network, settings, journal, gateway, bitcoin, now, log });
     this.keyId = senderKeyId(seed, network); this.policy = senderPolicy(settings); this.active = new Map(); this.lastHealth = 0; this.lastDiscovery = 0;
     this.cursor = journal.meta('cursor') ?? ''; this.sourceReady = false; this.sourceVerified = false; this.lastSourceCheck = 0; this.stopped = false;
+    this.refunds = new MintRefundSender(this); this.refundJob = null;
   }
   async discover() {
     const page = await this.gateway.list(this.cursor, this.settings.pageSize);
@@ -43,8 +45,8 @@ export class MintSender {
       const old = this.journal.get(id);
       check(!old || old.payer === status.payer && old.receiver === status.receiver && old.address === address, 'mint_sender_request_changed');
       // Existing work is never rewritten by a concurrent discovery response.
-      if (!old) this.journal.save({ id, payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted });
-      else if (!this.active.has(id) && status.counted !== old.counted) this.journal.save({ ...old, counted: status.counted });
+      if (!old) this.journal.save({ id, payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted, fundingReference: status.fundingReference });
+      else if (!this.active.has(id) && (status.counted !== old.counted || status.fundingReference !== old.fundingReference)) this.journal.save({ ...old, counted: status.counted, fundingReference: status.fundingReference });
     }
     this.cursor = page.next ?? ''; this.journal.meta('cursor', this.cursor); this.lastDiscovery = this.now();
   }
@@ -78,12 +80,15 @@ export class MintSender {
       await this.gateway.report(id, row.plan.inscriptionId);
       return row;
     }
-    const coins = await this.bitcoin.utxos(row.address);
-    const previous = row.coin && coins.find(c => c.txid === row.coin.txid && c.vout === row.coin.vout);
+    if (this.settings.refundsEnabled && status.publicMint && status.state === 'permit_issued' && !row.fundingReference)
+      return this.save(row, { message: 'Waiting for the accepted winning payment funding reference.' });
+    const coins = this.settings.refundsEnabled && row.fundingReference ? await this.bitcoin.paymentFunding(row.address, row.fundingReference) : await this.bitcoin.utxos(row.address);
+    const available = coins.filter(c => !this.journal.coinOwner(c));
+    const previous = row.coin && available.find(c => c.txid === row.coin.txid && c.vout === row.coin.vout);
     // A wallet fee bump can replace its payment before the permit arrives.
     // No spend has been signed in this branch, so follow the available output
     // at the same derived address. Signed plans above never change inputs.
-    const coin = previous ?? coins.filter(c => BigInt(c.value) >= BigInt(this.settings.dustSats))
+    const coin = previous ?? available.filter(c => BigInt(c.value) >= BigInt(this.settings.dustSats))
       .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)) || `${a.txid}:${a.vout}`.localeCompare(`${b.txid}:${b.vout}`))[0];
     if (!coin) {
       if (row.coin) return this.save(row, { message: 'Funding output unavailable; retrying Bitcoin lookup.' });
@@ -92,6 +97,8 @@ export class MintSender {
     if (!row.coin || !previous) row = this.save(row, { coin, fundedAt: row.fundedAt ?? this.now(), state: row.returnReason ? row.state : 'funded' });
     else check(row.coin.value === coin.value && row.coin.script === coin.script, 'mint_sender_coin_changed');
     const reason = row.returnReason ?? terminal(status);
+    if (this.settings.refundsEnabled && status.publicMint && status.winner?.id !== row.id && (reason || status.refunds?.length || ['claimed', 'already_minted', 'claimed_first'].includes(status.state)))
+      return this.save(row, { message: 'Bitcoin set-aside held for automatic TAP refund settlement.' });
     if (reason) return this.returnFunding(row, reason);
     if (status.state !== 'permit_issued') return row;
     // The client may have broadcast its own inscription before discovering the
@@ -151,9 +158,15 @@ export class MintSender {
   health(force = false) {
     if (!force && this.now() - this.lastHealth < this.settings.healthMs) return;
     const { counts, oldestWaitingMs, stuck } = this.journal.health(this.settings.stuckMs, this.settings.pageSize);
-    const ready = this.sourceReady && this.lastDiscovery > 0 && this.now() - this.lastDiscovery <= this.settings.heartbeatMaxAgeMs;
-    senderJSON(join(this.settings.directory, 'health.json'), { keyId: this.keyId, policy: this.policy, at: this.now(), ready, counts, oldestWaitingMs });
-    this.log({ event: 'mint_sender_health', ready, counts, oldestWaitingMs });
+    const ready = this.sourceReady && this.lastDiscovery > 0 && this.now() - this.lastDiscovery <= this.settings.heartbeatMaxAgeMs &&
+      (!this.settings.refundsEnabled || this.refunds.lastDiscovery > 0 && this.now() - this.refunds.lastDiscovery <= this.settings.heartbeatMaxAgeMs);
+    const refundCounts = this.journal.refundCounts(), refundFloat = this.refunds.float;
+    const pendingRefund = this.journal.pendingRefund(), refundStuck = !!pendingRefund && this.now() - pendingRefund.createdAt >= this.settings.stuckMs;
+    const refundAlarm = refundStuck || !!(refundCounts.refund_waiting_funds || refundCounts.refund_needs_operator) || this.settings.refundsEnabled &&
+      (refundFloat.authority.state !== 'active' || !refundFloat.checkedAt || this.now() - refundFloat.checkedAt > this.settings.heartbeatMaxAgeMs);
+    senderJSON(join(this.settings.directory, 'health.json'), { keyId: this.keyId, policy: this.policy, at: this.now(), ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
+    this.log({ event: 'mint_sender_health', ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
+    if (refundStuck) this.log({ event: 'mint_refund_stuck', refundId: pendingRefund.id, requestId: pendingRefund.record.id, state: pendingRefund.state, waitingMs: this.now() - pendingRefund.createdAt });
     for (const row of stuck)
       this.log({ event: 'mint_sender_stuck', requestId: row.id, state: row.state, waitingMs: this.now() - Math.max(row.permitAt, row.fundedAt) });
     this.lastHealth = this.now();
@@ -174,7 +187,21 @@ export class MintSender {
         } finally { this.lastSourceCheck = this.now(); }
       }
       try { await this.discover(); } catch (error) { this.log({ event: 'mint_sender_discovery_retry', code: mintSenderError(error) }); }
+      try { await this.refunds.discover(); } catch (error) { this.log({ event: 'mint_refund_discovery_retry', code: mintSenderError(error) }); }
       if (this.sourceVerified) {
+        if (this.settings.refundsEnabled && this.now() - this.refunds.lastFloat >= this.settings.healthMs) {
+          try { await this.refunds.refreshFloat(); } catch (error) { this.log({ event: 'mint_refund_float_retry', code: mintSenderError(error) }); }
+        }
+        if (!this.refundJob) {
+          const pending = this.journal.pendingRefund();
+          const row = (pending ? [pending] : this.settings.refundsEnabled ? this.journal.refundDue(this.settings.pageSize) : []).find(r =>
+            !this.active.has(r.record.id) && (r.nextAttempt ?? 0) <= this.now());
+          if (row && this.active.size < this.settings.concurrency) {
+            const job = this.refunds.attempt(row.id).catch(() => this.log({ event: 'mint_refund_journal_error', refundId: row.id }))
+              .finally(() => { this.active.delete(row.record.id); this.refundJob = null; });
+            this.refundJob = job; this.active.set(row.record.id, job);
+          }
+        }
         const due = this.journal.due(this.settings.pageSize).filter(r => !this.active.has(r.id));
         for (const row of due) {
           if (this.active.size >= this.settings.concurrency) break;

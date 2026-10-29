@@ -109,7 +109,8 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   register('mint_idea', 'Choose an eligible unminted block that fits your balance, preferring supplied UTC dates.', { asset, specialDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).default([]) }, async ({ asset, specialDates }) => {
     const balance = await agent.trac.balance(agent.owner, asset);
     if (BigInt(balance) === 0n) return { suggestion: null, reason: 'no_balance' };
-    const suggestion = (strategies.chooseMint ?? chooseMint)({ candidates: publicIdentities(await candidates(asset)), owner: encodeTracAddress(agent.owner), counted: (await agent.trac.head()).counted, balance, specialDates }) ?? null;
+    const context = await agent.namedContext();
+    const suggestion = (strategies.chooseMint ?? chooseMint)({ candidates: publicIdentities(await candidates(asset)), owner: encodeTracAddress(agent.owner), counted: (await agent.trac.head()).counted, balance, settings: context?.settings, specialDates }) ?? null;
     return { suggestion, reason: suggestion ? null : 'no_eligible_slot' };
   });
   register('mint_on_chain', 'Reserve units with a signed quote. Then use pay_mint, poll_mint and inscribe_mint; the player pays and inscribes from their own wallet.', {

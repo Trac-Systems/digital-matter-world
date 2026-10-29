@@ -94,9 +94,9 @@ export class FinancialMints extends Mints {
     return { ...quote, ...(resolved ? { catalogAsset: resolved.catalogAsset } : {}), financialVersion: 2, settingsHash: quote.feeQuote.settingsHash ?? rules.hashObject(this.document) };
   }
   async deploymentNeeded() { return null; }
-  public(id) {
+  public(id, requesterSecret) {
     const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
-    if (row.publicMint) return this.publicMints.public(id);
+    if (row.publicMint) return this.publicMints.public(id, requesterSecret);
     const funding = this.store.get('accountRecords', 'fp/' + id), obligation = this.store.get('accountRecords', 'ao/' + id);
     const capacity = this.store.get('accountRecords', 'dc/' + id), external = funding?.capacity;
     const blocked = financialBlock(this.store, ['fp/' + id, 'ao/' + id, 'dc/' + id, 'fp/usage',
@@ -195,9 +195,9 @@ export class FinancialMints extends Mints {
     }
     check(allowEmpty || receipts.length > 0, 'payment_unconfirmed'); return null;
   }
-  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.mintWork.run(id ?? requestId, async () => {
+  payment({ id, requestId, paymentId, paymentIds = [], inscription }, requesterSecret) { return this.mintWork.run(id ?? requestId, async () => {
     id ??= requestId; const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
-    if (row.publicMint) return this.publicMints.payment({ id, paymentId, paymentIds, inscription });
+    if (row.publicMint) return this.publicMints.payment({ id, paymentId, paymentIds, inscription }, requesterSecret);
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(inscription), 'mint_inscription');
       await this.store.put('mints', id, { ...row, mintInscription: inscription }); return this.public(id);

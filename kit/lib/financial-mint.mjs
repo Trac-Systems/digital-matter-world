@@ -23,7 +23,7 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
   const head = await agent.trac.head();
   check(compound ? block === undefined : candidate?.find?.asset === asset && decimalV2(candidate.find.block) === block && String(candidate.find.count) === amount &&
     !candidate.void && !candidate.pending && !candidate.minted && mintRight({ find: candidate.find, owner, counted: head.counted,
-      link: candidate.link, currentHolder: candidate.currentHolder, finderWindow: v.finderWindow }).allowed, 'Mint right unavailable');
+      link: candidate.link, currentHolder: candidate.currentHolder, finderWindow: v.finderWindow, settings: policy }).allowed, 'Mint right unavailable');
   const quoteInput = { asset, amount, ...(block === undefined ? {} : { block }), kind, payer, receiver };
   const quote = old?.body.feeQuote ? { feeQuote: old.body.feeQuote } : await service.mintQuote(quoteInput);
   if (quote.deploymentNeeded || quote.state === 'deployment_pending') return { ...quote, signed: false,

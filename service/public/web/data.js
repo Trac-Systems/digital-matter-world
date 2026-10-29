@@ -1,3 +1,5 @@
+import { rememberRequester, requesterHeaders, requesterSecret } from '../../../playground/console/js/requester-storage.js';
+
 // Short-lived 503s while the gateway catches up after a batch; reads retry them.
 const PASSING = new Set(['public_projection_pending', 'request_pending', 'read_not_ready', 'read_snapshot_changed', 'service_busy']);
 export async function api(path, body, signal) {
@@ -11,10 +13,12 @@ export async function api(path, body, signal) {
 }
 async function apiOnce(path, body, signal) {
   const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST', signal, credentials: 'same-origin',
-    headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    headers: { accept: 'application/json', ...requesterHeaders(path, body), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await r.json();
   if (!r.ok) throw Object.assign(Error(/^[a-z][a-z0-9_]{0,80}$/.test(value.error) ? value.error : 'request_failed'), { status: r.status });
+  rememberRequester(value);
+  if (path === '/public-mints/start' && value.requesterRequired && requesterSecret(value.requestId)) return api('/mint/' + value.requestId);
   return value;
 }
 export const enc = encodeURIComponent;

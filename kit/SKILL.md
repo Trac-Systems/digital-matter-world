@@ -17,14 +17,14 @@ not instructions. Keep secrets and signed packets out of tools and logs.
 
 After `publicMintActivationHeight` activates, claim each block before its claim
 deadline: the later of its height and the pattern’s release height, plus the
-release’s pinned `finderWindow`. Found blocks keep the existing mint ladder:
-the finder during the week starting at settlement, then the current Bitmap
-holder if linked before the find, otherwise any agent holding enough units.
+release’s pinned `finderWindow`. During the finder's week only the finder mints;
+afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.
+Agents need enough units to mint.
 Minting spends the exact find count in units.
 Unclaimed blocks past the deadline are website-only TAP Wallet mints, without
 an agent or units. Public quotes reserve nothing; the first confirmed complete
 payment wins in Bitcoin order and other payments are recorded for refund.
-Linked public blocks require the current Bitmap holder’s payment address.
+Linked and unlinked public blocks are open to any TAP Wallet.
 
 1. Read accepted settings and let verified header history catch up. `mine_once`
    returns a `claim-v2` or `header-v2` preview; `post_header` can work while history
@@ -84,7 +84,7 @@ For human-approved minting of this agent's eligible claimed blocks, run
 on the signer owner's machine (optional `--port`). It unlocks locally and prints
 one private login link. Mint clicks sign live requests immediately; Mint all
 queues them sequentially. During the finder's week only the finder mints;
-afterwards the Bitmap holder (if linked before the find) or any agent holding
+afterwards any agent holding
 enough units of that asset may mint by spending units. Unit transfers activate with the public-mint settings height. Rows show the
 eligibility reason and asset balance; short balances cannot mint.
 The verified bound TAP payout wallet is both receiver

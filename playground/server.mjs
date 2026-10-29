@@ -43,7 +43,7 @@ async function dispatch(type,args){
   if(type==='automation/bots'){await botsOnce(engine);return engine.botState();}
   throw Error('unknown_action');
 }
-async function route(method,url,args){
+async function route(method,url,args,context){
   const path=url.pathname.slice(5);
   if(method==='GET'&&path==='status'&&!engine)return manifest;
   if(method==='GET'&&path.startsWith('jobs/'))return createReadAPI({views,engine,jobs,events,paymentPlan})(url);
@@ -51,7 +51,7 @@ async function route(method,url,args){
   if(method==='POST'&&path==='gateway/mint/deployment')return forwardDeployment(engine,args);
   if(method==='POST')return projectJob(await jobs.submit(path,args));
   check(method==='GET','method_not_allowed');
-  return createReadAPI({views,engine,jobs,events,paymentPlan})(url);
+  return createReadAPI({views,engine,jobs,events,paymentPlan})(url,context);
 }
 async function shutdown(){if(stopping)return;stopping=true;clearInterval(timer);if(jobs){jobs.accepting=false;await jobs.tail.catch(()=>{});}await progress('stopping');
   await http?.close();if(game?.gateway)await processes.stop(game.gateway);await engine?.close();await game?.bootstrap.close();await base?.walletGateway.stop();

@@ -201,5 +201,5 @@ export function createControlReadAPI(options) {
 
 export function createReadAPI(options) {
   const read = sharedReads({ engine: options.engine, local: createControlReadAPI(options) });
-  return async input => publicIdentities(await read(input));
+  return async (input, context) => publicIdentities(await read(input, context));
 }

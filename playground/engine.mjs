@@ -36,7 +36,7 @@ export class Engine {
     return this;
   }
   async close() {for(const a of this.actors.values()){a.journal.close();wipeWallet(a.wallet);}this.reads?.close();}
-  async get(path) {check(typeof path==='string'&&path.startsWith('/')&&!path.startsWith('//')&&!path.includes('..'),'gateway_read_path');const r=await jsonRequest(this.url+path,{publicQuery:true,timeout:20000});const b=r.value;if(!r.ok)throw Object.assign(Error(b.error??'gateway_read'),{status:r.status});return b;}
+  async get(path,{requesterSecret}={}) {check(typeof path==='string'&&path.startsWith('/')&&!path.startsWith('//')&&!path.includes('..'),'gateway_read_path');const r=await jsonRequest(this.url+path,{publicQuery:true,timeout:20000,headers:typeof requesterSecret==='string'?{'X-Mint-Requester-Secret':requesterSecret}:{}});const b=r.value;if(!r.ok)throw Object.assign(Error(b.error??'gateway_read'),{status:r.status});return b;}
   async post(path,body) {const r=await fetch(this.url+path,{method:'POST',headers:{'content-type':'application/json'},body:rules.stableJSON(body),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok)throw Error(b.error??'gateway_write');return b;}
   async drain({timeout=180000}={}) {await until(async()=>{const h=await this.get('/health'),head=await this.trac('head');return h.tip===await bitcoin(this.manifest,'getblockcount') && h.observations===0 && (await this.trac('batchLast')).to===head.counted;},'gateway drain',{timeout,checkAlive:()=>this.processes.alive()});}
   async snapshot() {const tip=await bitcoin(this.manifest,'getbestblockhash');if(this.history?.get(this.history.length-1).hash!==tip)this.history=await historySnapshot(this.reads,this.directory);return this.history;}

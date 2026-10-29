@@ -1,3 +1,5 @@
+import { rememberRequester, requesterHeaders } from './requester-storage.js';
+
 // The login link printed by the playground sets an HttpOnly session cookie; the page never sees a token.
 export class ApiError extends Error {
   constructor(status, reason, body) { super(reason); this.status = status; this.body = body; }
@@ -18,7 +20,7 @@ async function apiOnce(path, { method = 'GET', body, signal } = {}) {
   const res = await fetch(`/api${path}`, {
     method, signal,
     credentials: 'same-origin',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    headers: { ...requesterHeaders(path, body), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -29,6 +31,7 @@ async function apiOnce(path, { method = 'GET', body, signal } = {}) {
     if (data?.error === 'playground_not_ready') bus.emit('not-ready');
     throw new ApiError(res.status, data?.error ?? `HTTP ${res.status}`, data);
   }
+  rememberRequester(data);
   return data;
 }
 export const get = (path, opts) => api(path, opts);

@@ -86,7 +86,7 @@ export function chooseCompound({ patterns, compounds = [], balances, historyLeng
   }
   return best ?? null;
 }
-export function chooseMint({ candidates, owner, counted, balance, specialDates = [] }) {
+export function chooseMint({ candidates, owner, counted, balance, settings, specialDates = [] }) {
   const dates = new Set(specialDates);
   const special = candidate => {
     if (!dates.size || candidate.time == null) return false;
@@ -96,6 +96,6 @@ export function chooseMint({ candidates, owner, counted, balance, specialDates =
   };
   return candidates.filter(c => {
     if (!c.find?.finder || c.void || c.minted || c.pending || BigInt(c.find.count) > BigInt(balance)) return false;
-    try { return mintRight(wireIdentities({ find: c.find, owner, counted, link: c.link, currentHolder: c.currentHolder })).allowed; } catch { return false; }
+    try { return mintRight(wireIdentities({ find: c.find, owner, counted, link: c.link, currentHolder: c.currentHolder, settings })).allowed; } catch { return false; }
   }).sort((a, b) => Number(special(b)) - Number(special(a)) || compareCount(b.find.count, a.find.count) || compareCount(a.find.block, b.find.block))[0] ?? null;
 }

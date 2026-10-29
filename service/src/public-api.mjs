@@ -73,7 +73,7 @@ export function createPublicAPI({ views, files, settings = {} }) {
     if (claimed) return claimedPage(views.store, claimed[1], params, pageSettings);
     if (views.store?.get('meta', 'ruleState')?.batchVersion === 2) {
       const extended = extendedPublicRead(views.store, url, { ...pageSettings, document: views.mints?.document }); if (extended !== undefined) return extended;
-      const projected = claimedPublicRead(views.store, url, pageSettings); if (projected !== undefined) return projected;
+      const projected = claimedPublicRead(views.store, url, { ...pageSettings, document: views.mints?.document }); if (projected !== undefined) return projected;
       if (!(path === '/status' || path === '/list' || /^\/mint\/[0-9a-f]{64}$/.test(path) || staticPath(path))) return notFound();
     }
     if (path === '/world/map') {
@@ -151,7 +151,11 @@ export function createPublicAPI({ views, files, settings = {} }) {
     // Health/readiness and live mint state also depend on adapters and time.
     // A database revision alone cannot authenticate a cached answer for them.
     const path = normalize(input).pathname, cacheable = version2 && path !== '/status' && !path.startsWith('/mint/');
-    const revisionOf = () => version2 ? publicProjectionRevision(views.store, tracReadRoute(input)) : null, revision = revisionOf();
+    const revisionOf = () => {
+      const value = version2 ? publicProjectionRevision(views.store, tracReadRoute(input)) : null;
+      return value !== null && (path === '/mint-rights' || path.endsWith('/mintRights'))
+        ? value + '/' + (views.mints?.document?.values.bitmapMintOpenHeight ?? '') : value;
+    }, revision = revisionOf();
     if (cacheable && revision !== null && cache.get(input)?.revision === revision) { const saved = cache.get(input); cache.delete(input); cache.set(input, saved); return saved.result; }
     const bytes = Buffer.from(JSON.stringify(await publicRead(input))), result = { bytes, etag: '"' + hash(bytes) + '"' };
     if (cacheable && revision !== null && revision === revisionOf()) {

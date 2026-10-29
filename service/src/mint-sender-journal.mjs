@@ -3,6 +3,7 @@ import { mkdirSync, chmodSync, lstatSync, realpathSync, writeFileSync, renameSyn
 import { join, resolve } from 'node:path';
 import { validRequestId } from './mint-sender-keys.mjs';
 import { check } from './util.mjs';
+import { REFUND_STATES } from './mint-refund-view.mjs';
 import { SENDER_STATES } from './mint-sender-view.mjs';
 
 export function senderJSON(path, value) {
@@ -16,6 +17,8 @@ export class MintSenderJournal {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     check(realpathSync(directory) === resolve(directory) && !(lstatSync(directory).mode & 0o077), 'mint_sender_directory');
     mkdirSync(join(directory, 'status'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(directory, 'refunds'), { recursive: true, mode: 0o700 });
+    check(realpathSync(join(directory, 'refunds')) === join(directory, 'refunds'), 'mint_sender_status_path');
     const filename = join(directory, 'sender.sqlite'), marker = join(directory, 'identity.json');
     check(!existsSync(marker) || existsSync(filename), 'mint_sender_journal_missing');
     check(!existsSync(filename) || !lstatSync(filename).isSymbolicLink(), 'mint_sender_journal_path');
@@ -26,6 +29,13 @@ export class MintSenderJournal {
       this.db.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;');
       this.db.exec('CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY, value TEXT NOT NULL);');
       this.db.exec("CREATE INDEX IF NOT EXISTS requests_due ON requests(CASE json_extract(value,'$.state') WHEN 'waiting_funding' THEN 1 ELSE 0 END, COALESCE(json_extract(value,'$.nextAttempt'),0), id) WHERE json_extract(value,'$.state') NOT IN ('minted','returned');");
+      this.db.exec(`CREATE TABLE IF NOT EXISTS refunds(id TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS refunds_due ON refunds(COALESCE(json_extract(value,'$.nextAttempt'),0), id) WHERE json_extract(value,'$.state') != 'refund_confirmed';
+        CREATE INDEX IF NOT EXISTS refunds_confirmed_height ON refunds(json_extract(value,'$.evidence.height') DESC) WHERE json_extract(value,'$.state') = 'refund_confirmed';
+        CREATE INDEX IF NOT EXISTS refunds_pending ON refunds(id) WHERE json_extract(value,'$.plan') IS NOT NULL AND json_extract(value,'$.state') != 'refund_confirmed';
+        CREATE INDEX IF NOT EXISTS refunds_request ON refunds(json_extract(value,'$.record.id'));
+        CREATE INDEX IF NOT EXISTS refunds_coin ON refunds(json_extract(value,'$.coin.txid'), json_extract(value,'$.coin.vout'));
+        CREATE INDEX IF NOT EXISTS requests_coin ON requests(json_extract(value,'$.coin.txid'), json_extract(value,'$.coin.vout'));`);
       chmodSync(join(directory, 'sender.sqlite'), 0o600);
       const identity = { keyId, network }, prior = this.meta('identity');
       check(!prior || JSON.stringify(prior) === JSON.stringify(identity), 'mint_sender_journal_identity');
@@ -50,6 +60,43 @@ export class MintSenderJournal {
       .all(this.now() - stuckMs, limit).map(r => JSON.parse(r.value));
     return { counts, oldestWaitingMs: oldest === null ? 0 : this.now() - oldest, stuck };
   }
+  refund(id) { return JSON.parse(this.db.prepare('SELECT value FROM refunds WHERE id=?').get(id)?.value ?? 'null'); }
+  refundDue(limit) {
+    return this.db.prepare("SELECT value FROM refunds WHERE COALESCE(json_extract(value,'$.nextAttempt'),0)<=? AND json_extract(value,'$.state') != 'refund_confirmed' ORDER BY COALESCE(json_extract(value,'$.nextAttempt'),0), id LIMIT ?")
+      .all(this.now(), limit).map(r => JSON.parse(r.value));
+  }
+  pendingRefund() {
+    return JSON.parse(this.db.prepare("SELECT value FROM refunds WHERE json_extract(value,'$.plan') IS NOT NULL AND json_extract(value,'$.state') != 'refund_confirmed' ORDER BY id LIMIT 1").get()?.value ?? 'null');
+  }
+  lastRefundHeight() {
+    return this.db.prepare("SELECT json_extract(value,'$.evidence.height') AS height FROM refunds WHERE json_extract(value,'$.state') = 'refund_confirmed' ORDER BY json_extract(value,'$.evidence.height') DESC LIMIT 1").get()?.height ?? 0;
+  }
+  refundCounts() {
+    return Object.fromEntries(this.db.prepare("SELECT json_extract(value,'$.state') AS state, COUNT(*) AS n FROM refunds GROUP BY state").all().map(r => [r.state, r.n]));
+  }
+  coinOwner(coin) {
+    if (!coin) return null;
+    for (const [table, prefix, predicate] of [['requests', 'mint', "(json_extract(value,'$.plan') IS NOT NULL OR json_extract(value,'$.returnPlan') IS NOT NULL)"], ['refunds', 'refund', "json_extract(value,'$.plan') IS NOT NULL"]]) {
+      const row = this.db.prepare(`SELECT id FROM ${table} WHERE json_extract(value,'$.coin.txid')=? AND json_extract(value,'$.coin.vout')=? AND ${predicate} LIMIT 1`).get(coin.txid, coin.vout);
+      if (row) return prefix + ':' + row.id;
+    }
+    return null;
+  }
+  saveRefund(row) {
+    check(validRequestId(row.id) && row.id === row.record?.refundId && REFUND_STATES.has(row.state), 'mint_refund_record');
+    const prior = this.refund(row.id);
+    check(row.state !== 'refund_confirmed' || row.plan && Number.isSafeInteger(row.evidence?.height) && row.evidence.height >= 0, 'mint_refund_evidence');
+    check(prior?.state !== 'refund_confirmed' || row.state === 'refund_confirmed' && JSON.stringify(row.evidence) === JSON.stringify(prior.evidence), 'mint_refund_evidence_immutable');
+    check(!prior || JSON.stringify(prior.record) === JSON.stringify(row.record), 'mint_refund_record_changed');
+    check(!prior?.plan || JSON.stringify([prior.coin, prior.plan, prior.payload, prior.amounts]) === JSON.stringify([row.coin, row.plan, row.payload, row.amounts]), 'mint_refund_plan_immutable');
+    const owner = this.coinOwner(row.coin);
+    check(!row.plan || !owner || owner === 'refund:' + row.id, 'mint_sender_spend_conflict');
+    row = { ...row, updatedAt: this.now() };
+    this.db.prepare('INSERT OR REPLACE INTO refunds VALUES(?,?)').run(row.id, JSON.stringify(row));
+    senderJSON(join(this.directory, 'refunds', row.id + '.json'), { keyId: this.keyId, refundId: row.id, requestId: row.record.id, payer: row.record.tapAddress,
+      delivery: { state: row.state, ...(row.message ? { message: row.message } : {}), ...(row.plan ? { revealTxid: row.evidence?.txid ?? row.plan.revealTxid, inscriptionId: row.evidence?.inscriptionId ?? row.plan.inscriptionId } : {}) } });
+    return row;
+  }
   save(row) {
     check(validRequestId(row.id) && SENDER_STATES.has(row.state), 'mint_sender_request');
     const prior = this.get(row.id);
@@ -58,6 +105,8 @@ export class MintSenderJournal {
     check(!prior?.plan || JSON.stringify(prior.plan) === JSON.stringify(row.plan), 'mint_sender_plan_immutable');
     check(!prior?.returnPlan || JSON.stringify(prior.returnPlan) === JSON.stringify(row.returnPlan), 'mint_sender_return_immutable');
     check(!(row.plan && row.returnPlan), 'mint_sender_spend_conflict');
+    const owner = this.coinOwner(row.coin);
+    check(!(row.plan || row.returnPlan) || !owner || owner === 'mint:' + row.id, 'mint_sender_spend_conflict');
     row = { ...row, updatedAt: this.now() };
     this.db.prepare('INSERT OR REPLACE INTO requests VALUES(?,?)').run(row.id, JSON.stringify(row));
     const mintSender = { state: row.state,

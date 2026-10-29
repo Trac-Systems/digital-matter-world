@@ -3,6 +3,9 @@
 // /mint/<request> page with the header's TAP Wallet / MetaMask connection.
 import { h, clear, panel, table, hashEl, pill, toast, figures, short } from '/web/console/js/dom.js';
 import { assetName, mineral } from '/web/console/js/words.js';
+// Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
+const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
+const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
 
 async function api(path, body) {
   const response = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -78,8 +81,8 @@ export function mount(el) {
       { key: 'action', label: '', render: r => ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
         ? h('button.btn.sm', { onclick: event => mint(r, event.currentTarget) }, 'Resume')
         // Same conditions as the request page: Pay and mint with a set-aside; Inscribe only while the server is not sending.
-        : h('a.btn.sm', { href: '/mint/' + r.requestId }, r.state === 'permit_issued' ? (!r.mintSender || ['needs_user', 'returning', 'returned'].includes(r.mintSender.state) ? 'Inscribe' : 'Open')
-          : r.payable ? (r.mintFunding ? 'Pay and mint' : 'Pay') : 'Open') },
+        : h(!r.payable && BEFORE_PAY.includes(r.state) ? 'a.btn.sm.busy' : 'a.btn.sm', { href: '/mint/' + r.requestId, title: !r.payable && BEFORE_PAY.includes(r.state) ? PAY_SOON : null }, r.state === 'permit_issued' ? (!r.mintSender || ['needs_user', 'returning', 'returned'].includes(r.mintSender.state) ? 'Inscribe' : 'Open')
+          : r.payable ? (r.mintFunding ? 'Pay and mint' : 'Pay') : BEFORE_PAY.includes(r.state) ? 'Preparing…' : 'Open') },
     ], { sortable: false }) : h('div.empty', {}, offset ? 'No more open requests.' : 'No open mint requests. Press Mint on a claimed block to start one.'));
     clear(requestPager, h('span.pager-total', {}, data.requests.length ? `${offset + 1}–${offset + data.requests.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !offset, onclick: () => { offset = 0; act('Loading…', loadRequests); } }, 'Newest'),
@@ -91,7 +94,7 @@ export function mount(el) {
     clear(links, data.links.length ? table(data.links, [
       { key: 'block', label: 'Bitmap', render: r => r.block !== null ? h('a', { href: '/block/' + r.block }, `${r.block}.bitmap`) : '—' },
       { key: 'state', label: 'State', render: r => pill(words(r.state), r.state === 'linked' || r.state === 'accepted' ? 'good' : r.payable ? 'warn' : '') },
-      { key: 'action', label: '', render: r => h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
+      { key: 'action', label: '', render: r => !r.payable && BEFORE_PAY.includes(r.state) ? h('a.btn.sm.busy', { href: r.paymentLink, title: PAY_SOON }, 'Preparing…') : h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
     ], { sortable: false }) : h('div.empty', {}, linkOffset ? 'No more link requests.' : 'No Bitmap link requests yet.'));
     clear(linkPager, h('span.pager-total', {}, data.links.length ? `${linkOffset + 1}–${linkOffset + data.links.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !linkOffset, onclick: () => { linkOffset = 0; act('Loading…', loadLinks); } }, 'Newest'),
@@ -117,7 +120,7 @@ export function mount(el) {
     h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s claimed blocks, with one click to mint. Everything else on this dashboard is the live site.'))),
     h('div.stack', {}, note, profile,
       panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
-        'During the finder’s week only the finder mints; afterwards the Bitmap holder (if linked before the find) or any agent holding enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), claims, pager), { flush: true }),
+        'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), claims, pager), { flush: true }),
       h('div.grid.cols-main', {},
         panel('Open requests', h('div', {}, requests, requestPager), { flush: true }),
         panel('Bitmap links', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } }, 'Earn the Bitmap holder share for a block you hold as a .bitmap. ',

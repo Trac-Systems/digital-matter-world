@@ -36,12 +36,13 @@ test('local resources have pinned retained history without changing consensus de
 test('resource v4 upgrades retain the original v3 document and reject pages beyond local storage capacity', () => {
   const { relayObservationPage, committeeHealthMs, committeeReadyMs, committeeRequestMs,
     committeeResponseBytes, committeePollMs, committeeHistoryPage,
-    closureWorkPerSecond, closureReadsPerSecond, closureBytesPerSecond, closureTimeoutPaddingMs, ...previousValues } = RESOURCE_PROFILE;
+    closureWorkPerSecond, closureReadsPerSecond, closureBytesPerSecond, closureTimeoutPaddingMs,
+    assetPublicMintsPerPayer, assetPublicMintsPerIP, assetPublicMintStartsPerMinute, ...previousValues } = RESOURCE_PROFILE;
   const previous = { version: 3, operator: 'fixture', revision: '0', previousHash: null, values: previousValues };
   const pinned = hashObject(previous), history = new ResourceHistory();
   assert.equal(validateResourceDocument(previous), previous); history.append(previous, pinned);
   const next = resourceRevision({ operator: 'fixture', previous, values: { ...RESOURCE_PROFILE, relayObservationPage: 1, committeeHistoryPage: 1 } });
-  assert.equal(next.version, 4); assert.equal(next.previousHash, pinned); history.append(next, hashObject(next));
+  assert.equal(next.version, 5); assert.equal(next.previousHash, pinned); history.append(next, hashObject(next));
   assert.equal(hashObject(history.get(pinned)), pinned); assert.equal(history.get(pinned).version, 3);
   for (const key of ['relayObservationPage', 'committeeHistoryPage']) assert.throws(() => resourceRevision({
     operator: 'fixture', values: { ...RESOURCE_PROFILE, [key]: RESOURCE_PROFILE.storePageRows + 1 }

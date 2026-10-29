@@ -89,9 +89,10 @@ export function installFinancialSources(reads, options) {
     check((d.kind === 'dmt') === Object.hasOwn(r, 'block') && d.id === row.quote.feeQuote.deploymentId, 'financial_deployment_binding');
     check(BigInt(d.remaining) >= BigInt(r.amount) && (!d.limit || d.limit === '0' || BigInt(r.amount) <= BigInt(d.limit)), 'financial_capacity');
     const holder = context.link ? context.bitmapHolder ?? await reads.bitmap(r.block, at) : null;
+    if (rules.bitmapMintOpenActive(original, counted) && context.link) check(typeof holder?.address === 'string' && holder.address.length > 0, 'bitmap_missing');
     if (d.kind === 'dmt') {
       check(context.find?.asset === r.asset && rules.decimalV2(context.find.block) === rules.decimalV2(r.block) && String(context.find.count) === r.amount, 'financial_find');
-      check(rules.mintRight({ find: context.find, owner: r.owner, counted, link: context.link, currentHolder: holder?.agent, finderWindow: v.finderWindow }).allowed, 'financial_mint_right');
+      check(rules.mintRight({ find: context.find, owner: r.owner, counted, link: context.link, currentHolder: holder?.agent, finderWindow: v.finderWindow, settings: original }).allowed, 'financial_mint_right');
       check(await reads.isMinted(d.id, d.tick, r.block, at) === false, 'financial_already_minted');
     }
     const kind = d.kind === 'dmt' ? 'find' : 'compound';

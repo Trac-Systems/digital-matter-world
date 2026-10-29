@@ -25,7 +25,7 @@ async function setup() {
   await store.put('meta', 'ruleState', { batchVersion: 2, counted: '100' });
   const feeds = new Feeds({ store, files, history: { get() { throw Error('unnamed_header_read'); } }, reads: {}, settings: { feedEventRows: 1 } });
   const views = { store, patterns() { throw Error('catalog_scan'); }, rows() { throw Error('history_scan'); }, reads: new Proxy({}, { get() { throw Error('source_request'); } }) };
-  return { root, store, files, feeds, api: createPublicAPI({ views, files }) };
+  return { root, store, files, feeds, views, api: createPublicAPI({ views, files }) };
 }
 
 test('scoped pending fences and cursors survive unrelated writes and restart', async () => {
@@ -203,5 +203,33 @@ test('owner rights skip unrelated assets and continue across owned patterns and 
     assert.notEqual(await api.response('/patterns/p2:0/claimed-blocks?minted=true'), before);
     assert.equal((await api.read('/patterns/p2:0/claimed-blocks?minted=true')).rows.length, 1);
     assert.equal((await api.read('/patterns/p2:0/claimed-blocks?minted=false')).rows.length, 0);
+  } finally { await store.close(); }
+});
+
+test('agent mint projections and cached responses open linked plots at the settings height', async () => {
+  const f = await setup(), { store, views, api } = f;
+  try {
+    const document = rules.settingsRevision({ network: 'test', effectiveBatch: '1', effectiveBitcoinWindow: '100',
+      values: { ...rules.SETTINGS_PROFILE, ...rules.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '100', bitmapMintOpenHeight: '110' } });
+    views.mints = { document };
+    await store.put('meta', 'ruleState', { batchVersion: 2, counted: '109' });
+    await store.put('publicDeployments', 'p2:0', { id: 'deployment', suspended: false });
+    await store.put('publicBalances', owner + '/p2:0', { owner, asset: 'p2:0', amount: '3' });
+    await store.put('finds', rules.findIdV2('2', '0'), { block: '2', pattern: '0', asset: 'p2:0', count: '3', finder: other, findHeight: '10', finderUntil: '50' });
+    const { heightKey } = await import('../src/util.mjs');
+    await store.put('links', heightKey('2'), { block: '2', linkHeight: '5' });
+    const path = '/agents/' + address + '/mintRights?asset=p2%3A0';
+    const before = await api.response(path); assert.equal(JSON.parse(before.bytes).mintRights[0].whoMayMint, 'bitmap');
+    assert.equal(JSON.parse(before.bytes).mintRights[0].allowed, false);
+    await store.put('meta', 'ruleState', { batchVersion: 2, counted: '110' });
+    const opened = await api.response(path), row = JSON.parse(opened.bytes).mintRights[0];
+    assert.equal(row.whoMayMint, 'public'); assert.equal(row.allowed, true);
+    assert.notEqual(opened.etag, before.etag);
+    views.mints.document = { ...document, values: { ...document.values, bitmapMintOpenHeight: '111' } };
+    assert.equal(JSON.parse((await api.response(path)).bytes).mintRights[0].allowed, false, 'same-height settings changes invalidate cached rights');
+    views.mints.document = document;
+    await store.put('finds', rules.findIdV2('2', '0'), { ...row.find, finderUntil: '111' });
+    assert.equal((await api.read(path)).mintRights[0].whoMayMint, 'finder');
+    assert.equal((await api.read(path)).mintRights[0].allowed, false);
   } finally { await store.close(); }
 });

@@ -157,20 +157,18 @@ account. TAP mint fees and Bitcoin inscription fees are separate.
 
 ## Minting and Bitmap links
 
-Read mint_rights, mint_idea, balances and current settings first. Found blocks
-keep the existing ladder: the finder during the week starting at settlement,
-then the current Bitmap holder if linked before the find, otherwise any agent
-holding enough units. Minting spends the exact find count. Claims never close
+Read mint_rights, mint_idea, balances and current settings first. During the
+finder's week only the finder mints; afterwards any agent can. Bitmap holders
+earn 15% of every mint on their plot. Agents need enough units to mint. Minting spends the exact find count. Claims never close
 under the current settings: agents may claim any untaken (block, pattern) pair.
 A winning public TAP Wallet mint also takes the pair on Trac. `public_minted`
 means that the agent must choose another block. Historical settings replay with
 their original rules.
-Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded.
+Blocks nobody claims within their first week can then be minted on the website with TAP Wallet, without an agent.
 Public mints require neither a Trac identity nor units. There are no public reservations. Pay all
 quoted TAP items in one inscription; the first confirmed complete payment wins
 by Bitcoin height, transaction position, then inscription index. Other payments
-are recorded for refund, with no automatic transfer. Only the current Bitmap
-holder’s TAP address may pay for a linked public block.
+are recorded for refund, with no automatic transfer. Any TAP Wallet may pay for a linked public block.
 Use the asset exactly as mint_rights or your find shows it: p2:N, c2:COMMITMENT,
 or an imported pattern's ledger asset (the catalog lists dmwflorite as p2:0 with
 `legacy.asset` p0; its finds and balances use p0). Never convert between them.

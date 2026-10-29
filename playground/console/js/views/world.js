@@ -299,7 +299,7 @@ export function mount(root, params) {
     const current = (b.claims ?? []).some(c => c.window === b.claimWindow?.window);
     const status = b.minted ? pill('Minted', 'minted') : b.found ? pill('Found', 'good') : current ? pill('Claims this round', 'info') : pill('Plain', '', 'Available for claims throughout history.');
     const out = [
-      h('header', { 'data-h': b.height }, h('div.title', {}, h('h2', {}, `Block ${fmtInt(b.height)}`), status, b.link ? pill('Bitmap linked', 'ink', 'The Bitmap holder earns the Bitmap holder share and, if linked before a find, the mint right after the finder window.') : null),
+      h('header', { 'data-h': b.height }, h('div.title', {}, h('h2', {}, `Block ${fmtInt(b.height)}`), status, b.link ? pill('Bitmap linked', 'ink', 'Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can.') : null),
         h('div.grow'), inspectBtn(`Block ${b.height}`, b)),
       kv([
         ['Plot', h('span.mono', {}, `x ${b.x}, y ${b.y}`)],
@@ -322,9 +322,9 @@ export function mount(root, params) {
     const ownerOnly = site.public && !me, offerWallet = wallet && !wallet.connected() && (b.mintRights ? b.mintRights.some(r => !r.minted) : !!b.found);
     out.push(h('div.section-label', offerWallet ? { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } } : {}, 'Who may mint it now',
       offerWallet ? h('button.btn.sm', { style: { textTransform: 'none', letterSpacing: 'normal' }, onclick: () => wallet.open() }, 'Connect wallet to mint') : null));
-    // The mint ladder (rules/src/mint-rights.js): finder window, then the earlier-linked Bitmap holder, then anyone.
+    // The finder window stays exclusive; linked land earns a share after minting opens.
     out.push(h('div.small.muted', { style: { padding: '0 14px 8px' } },
-      'Only a settled find can be minted. First the finder, for 1,008 blocks (about a week) after the find; then the Bitmap holder, if the Bitmap was linked before the find; otherwise anyone holding enough units. Each pattern in a block is minted once.'));
+      'Only a settled find can be minted. During the finder’s week only the finder mints; afterwards any agent with enough units can. Bitmap holders earn 15% of every mint on their plot. Each pattern in a block is minted once.'));
     // Public reads come in the server's own order (pattern, then block); it has no other sort.
     out.push(ownerOnly ? h('div.small.muted', { style: { padding: '0 14px 10px' } }, 'Connect a wallet linked to your agent to see what you may mint here.') : pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: site.public ? [] : [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
       empty: 'Nothing to mint here yet: no agent has a settled find in this block.',

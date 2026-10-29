@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { check } from './src/util.mjs';
 import { mintSenderSettings } from './src/mint-sender-settings.mjs';
-import { readMintSeed } from './src/mint-sender-keys.mjs';
+import { readMintSeed, fundingAmount } from './src/mint-sender-keys.mjs';
 import { senderToken, senderKeyId } from './src/mint-sender-view.mjs';
 import { MintSenderJournal } from './src/mint-sender-journal.mjs';
 import { MintSender } from './src/mint-sender.mjs';
@@ -20,6 +20,7 @@ export async function startMinter(config, { signal, log, initialize = false } = 
   check(resolve(settings.directory) !== resolve(config.data) && !resolve(settings.directory).startsWith(resolve(config.data) + '/'), 'mint_sender_separate_store');
   check(config.listen?.host === '127.0.0.1' && Number.isSafeInteger(config.listen.port) && config.listen.port > 0, 'mint_sender_gateway_loopback');
   if (!initialize) check(existsSync(join(settings.directory, 'sender.sqlite')) && existsSync(join(settings.directory, 'identity.json')), 'mint_sender_journal_missing');
+  fundingAmount(settings); // Validate the configured reserve and combined quote cap before signing.
   const seed = await readMintSeed(settings.seedFile);
   let journal;
   try {
@@ -35,11 +36,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const stop = () => controller.abort();
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   try {
-    const initialize = process.argv[2] === '--initialize';
-    const filename = process.argv[initialize ? 3 : 2]; check(isAbsolute(filename ?? '') && await realpath(filename) === filename, 'mint_sender_config_path');
+    const initialize = process.argv[2] === '--initialize', createRefundAuthority = process.argv[2] === '--create-refund-authority';
+    const filename = process.argv[initialize || createRefundAuthority ? 3 : 2]; check(isAbsolute(filename ?? '') && await realpath(filename) === filename, 'mint_sender_config_path');
     const config = JSON.parse(await readFile(filename, 'utf8'));
     sender = await startMinter(config, { signal: controller.signal, initialize });
     if (initialize) console.log('mint_sender_journal_initialized');
+    else if (createRefundAuthority) console.log(JSON.stringify({ event: 'mint_refund_authority', ...await sender.refunds.createAuthority() }));
     else {
       // Health is independent of discovery and per-request network work.
       heartbeat = setInterval(() => { try { sender.health(true); } catch { console.error('mint_sender_health_write_failed'); } }, sender.settings.healthMs);

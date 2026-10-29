@@ -1,3 +1,4 @@
+import { publicRefundKey } from '../../contract/public-mint.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, chmod } from 'node:fs/promises';
@@ -19,7 +20,7 @@ test('claimed/public status, payment response and existing checkout plan carry t
   store = await Store.open(join(directory, 'gateway'));
   const settings = mintSenderSettings({ enabled: true, directory: join(directory, 'sender'), seedFile: join(directory, 'seed'), bitcoinApiUrlFile: join(directory, 'source') });
   const seed = new Uint8Array(32).fill(29), receiver = requestKey(seed, '11'.repeat(32), 'regtest').address;
-  const document = { values: { pendingBlocks: 432, publicMintPageSize: 50 } };
+  const document = { values: { pendingBlocks: 432, publicMintPageSize: 50, moveBytes: 4096 } };
   const mints = new FinancialMints({ store, network: 'fixture', reads: { counted: async () => '50' }, document, financial: {} });
   view = mints.mintSender = new MintSenderView({ seed, network: 'regtest', settings });
   // This fixture has no pattern index; the live gateway rechecks availability and finds the block public.
@@ -35,7 +36,7 @@ test('claimed/public status, payment response and existing checkout plan carry t
     await store.put('accountRecords', 'fp/' + id, { state: 'open', paid: [] });
   }
   const checkout = new WebCheckout({ store, mints, reads: { counted: async () => '50' }, config: { mode: 'regtest', network: 'fixture', endpoints: { ethereum: 'http://127.0.0.1:1' }, local: { escrow: { chainId: '31337' } } } });
-  http = await serve({ intake: { store }, mints, files: { serve: async () => false }, web: { handle: async () => false } });
+  http = await serve({ intake: { store }, mints, operator: { status: async () => ({ ready: true }) }, files: { serve: async () => false }, web: { handle: async () => false } });
   const request = async (path, options) => { const response = await fetch(http.url + path, options); return { code: response.status, body: await response.json() }; };
   assert.equal((await request('/internal/mint-sender/requests')).code, 404);
   const page = await request('/internal/mint-sender/requests?limit=1', { headers: { authorization: 'Bearer ' + view.token } });
@@ -56,4 +57,30 @@ test('claimed/public status, payment response and existing checkout plan carry t
   const ethereum = { ...store.get('mints', ids[0]), kind: 'ethereum' }; await store.put('mints', ids[0], ethereum);
   assert.equal((await request('/mint/' + ids[0])).body.mintSender, undefined);
   assert.equal((await request('/internal/mint-sender/requests?limit=101', { headers: { authorization: 'Bearer ' + view.token } })).code, 400);
+  const refund = { id: ids[1], reference: 'ee'.repeat(32) + 'i0', state: 'owed', tapAddress: receiver, fees: [{ ticker: 'tap', amount: '1' }] };
+  const refundKey = publicRefundKey(refund), refundId = refundKey.split('/').at(-1), headers = { authorization: 'Bearer ' + view.token };
+  await store.put('publicMintRefunds', refundId, refund);
+  assert.equal((await request('/internal/mint-sender/refunds')).code, 404);
+  assert.equal((await request('/internal/mint-sender/status')).code, 404);
+  assert.equal((await request('/internal/mint-sender/refunds', { headers })).body.rows.length, 0);
+  await store.put('accountRecords', refundKey, refund);
+  await store.put('publicMintRefundsByRequest/' + ids[1], refundId, refund);
+  assert.deepEqual((await request('/internal/mint-sender/refunds?limit=1', { headers })).body.rows, [{ ...refund, refundId }]);
+  assert.deepEqual((await request('/internal/mint-sender/refunds/' + refundId, { headers })).body.record, { ...refund, refundId });
+  assert.equal((await request('/internal/mint-sender/refunds?limit=101', { headers })).code, 400);
+  assert.equal((await request('/internal/mint-sender/refunds?after=../bad', { headers })).code, 400);
+  assert.match((await request('/internal/mint-sender/status', { headers })).body.float.address, /^bcrt1p/);
+  assert.match((await request('/operator/status')).body.mintSender.float.address, /^bcrt1p/);
+  journal.saveRefund({ id: refundId, record: { ...refund, refundId }, state: 'refund_waiting_funds' });
+  assert.equal((await request('/mint/' + ids[1])).body.refunds[0].refundDelivery.state, 'refund_waiting_funds');
+  mints.publicMints.active = () => {};
+  assert.equal((await request('/public-mints/refunds')).body.rows[0].refundDelivery.state, 'refund_waiting_funds');
+  assert.deepEqual(store.get('accountRecords', refundKey), refund);
+  mints.publicMints.quote = async () => ({ publicMint: true, kind: 'tap', state: 'awaiting_payment', requestId: null, payable: false });
+  const preview = await request('/public-mints/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(preview.body.mintFundingEstimate.satoshis, view.satoshis);
+  assert.equal(preview.body.mintFundingEstimate.address, undefined); assert.equal(preview.body.mintFunding, undefined);
+  assert.equal(preview.body.payable, false); assert.equal(preview.body.requestId, null);
+
+
 });

@@ -26,6 +26,10 @@ async function body(req) {
 
 async function proxy(req, res, url, upstream) {
   const headers = { accept: req.headers.accept ?? '*/*' };
+  const requester = req.headers['x-mint-requester-secret'];
+  if (/^\/(?:web-api\/)?mint\/[0-9a-f]{64}$/.test(url.pathname) || req.method === 'POST' && url.pathname === '/mint/payment') {
+    if (typeof requester === 'string' && /^[0-9a-f]{64}$/.test(requester)) headers['x-mint-requester-secret'] = requester;
+  }
   const init = { method: req.method, redirect: 'manual', headers, signal: AbortSignal.timeout(url.pathname.startsWith('/events') ? 3600000 : 30000) };
   if (req.method === 'POST') { init.body = JSON.stringify(await body(req)); headers['content-type'] = 'application/json'; }
   // /me is this dashboard's own page; the site's shell renders it.

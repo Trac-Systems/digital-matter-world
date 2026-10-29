@@ -312,7 +312,7 @@ export class PublicViews {
         const link = links.get(block);
         if (link && !holders.has(block)) holders.set(block, await this.reads.bitmap(block).then(b => b.agent).catch(() => null));
         const currentHolder = holders.get(block) ?? null;
-        const right = rules.mintRight({ find, owner: owner ?? find.finder ?? currentHolder ?? '0'.repeat(64), counted: h.counted, link, currentHolder });
+        const right = rules.mintRight({ find, owner: owner ?? find.finder ?? currentHolder ?? '0'.repeat(64), counted: h.counted, link, currentHolder, settings: this.mints?.document });
         const minted = this.store.get('minted', `${asset}/${block}`), hold = this.store.get('holds', `${asset}/${block}`) ?? this.store.get('replay/mints/holds', `${asset}/${block}`);
         const pending = hold && (hold.expiry >= h.counted || hold.safeToReplace === false) ? { id: hold.id, expiry: hold.expiry } : null;
         const unavailable = right.role === 'bitmap' && !currentHolder;
@@ -384,7 +384,7 @@ export class PublicViews {
     return output;
   }
   async resultList(kind) {
-    if (kind === 'mints') return this.rows('mints').map(r => ({ ...this.mints.public(r.id), asset: r.request.asset, block: r.request.block, amount: r.request.amount, kind: r.kind, owner: r.request.owner }));
+    if (kind === 'mints') return this.rows('mints').map(r => ({ ...this.mints.public(r.id), ...(r.publicMint ? {} : { asset: r.request.asset, block: r.request.block, amount: r.request.amount, kind: r.kind, owner: r.request.owner }) }));
     if (kind === 'ethereum') return Promise.all(this.rows('mints').filter(r => r.kind === 'ethereum' && (r.payment?.split || r.payment?.depositFinal)).map(async r => ({ id: r.id, ...await (this.reads.publicEscrow ?? this.reads.escrowDeposit)(r.payer, r.id) })));
     if (kind === 'payments') {
       const direct = new Map();

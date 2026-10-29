@@ -1,6 +1,6 @@
 import { api } from './data.js';
-import { walletError, publicMintMessages } from './console/js/wallet-errors.js';
-import { mount as mintPage, findPayment } from './console/js/inscribe/public.js';
+import { walletError, publicMintMessages, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from './console/js/wallet-errors.js';
+import { mount as mintPage, findPayment, refundStatus } from './console/js/inscribe/public.js';
 import { presentation, get, store, site } from './console/js/api.js';
 import { pagedTable } from './console/js/paged.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
@@ -106,7 +106,8 @@ async function request(app, type, id, target, progress) {
       h('div.body.small.muted', {}, type === 'link' ? 'Bitmap links are paid before publication. The link follows the Bitmap when it changes owners.'
         : type === 'mint' ? 'Pay the remaining fees first. After payment is final, your units are consumed and your permanent permit is ready. You then inscribe it from your Bitcoin wallet, including when paying with Ethereum.' : 'The wallet can refund after the displayed deadline if payment remains unspent.'));
     if (type === 'mint' || plan.financialVersion === 2) {
-      if (plan.blocked?.length) review.append(h('div.note.bad', {}, 'This payment is not currently available.'));
+      if (!mayPay() && BEFORE_PAY.includes(plan.state)) review.append(h('div.callout.busy', {}, PAY_SOON));
+      else if (plan.blocked?.length) review.append(h('div.note.bad', {}, 'This payment is not currently available.'));
       if (plan.missing?.length) review.append(h('div.section-label', {}, 'Remaining fees'), table(plan.missing, [
         { key: 'role', label: 'Fee', render: f => String(f.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
         { key: 'amount', label: 'Amount', num: true, render: f => h('span.mono', {}, formatTap(f.amount, 18)) }], { sortable: false }));
@@ -289,8 +290,12 @@ async function binding(app, id, target) {
 }
 // Mint & wallets: public blocks anyone mints with TAP Wallet, refunds owed to the connected TAP Wallet,
 // the header's wallets and Bitmap links. /link and /bind-payout without a request link open the same page at their section.
-const PUBLIC_STATES = { public: ['Public', 'good'], claimed: ['Claimed', ''], paid: ['Payment confirmed', 'info'], permit_issued: ['Being minted', 'info'], minted: ['Minted', ''], already_minted: ['Minted', ''] };
-const PUBLIC_MINT_COPY = 'Blocks nobody has claimed yet can be minted with TAP Wallet. If an agent claims the block before your payment is confirmed, your payment is refunded.';
+const PUBLIC_STATES = { public: ['Public', 'good'], not_yet_public: ['Not public yet', ''], claimed: ['Claimed', ''], paid: ['Payment confirmed', 'info'], permit_issued: ['Being minted', 'info'], minted: ['Minted', ''], already_minted: ['Minted', ''] };
+const publicState = row => {
+  const [label, kind] = PUBLIC_STATES[row.state] ?? [String(row.state ?? '–').replace(/_/g, ' '), 'warn'];
+  return [row.state === 'not_yet_public' ? publicOpeningLabel(row) ?? label : label, kind];
+};
+const PUBLIC_MINT_COPY = 'Blocks show up here once their 1-week finder window has passed without a claim.';
 const SET_ASIDE = { waiting_funding: 'not sent', funded: 'held', sending: 'held', sent: 'spent on the mint', minted: 'spent on the mint', needs_user: 'to be returned', returning: 'being returned', returned: 'returned' };
 function setAsideCell(r) {
   const sats = [r.setAside?.satoshis, r.mintFunding?.satoshis, r.mintSender?.satoshis].find(Number.isSafeInteger), state = SET_ASIDE[r.setAside?.state ?? r.mintSender?.state];
@@ -337,16 +342,17 @@ async function mintPublic(row, notify) {
   if (preparation(quote)) return;
   const decimals = quote.feeQuote?.unit?.decimals ?? 18;
   // With server sending on, the quote names the Bitcoin the payment sets aside for the mint inscription.
-  const setAside = Number.isSafeInteger(quote.mintFunding?.satoshis) ? quote.mintFunding.satoshis : null;
+  const budget = quote.mintFunding ?? quote.mintFundingEstimate;
+  const setAside = Number.isSafeInteger(budget?.satoshis) ? budget.satoshis : null;
   notify('');
   if (!await confirmModal({ title: `Mint ${assetName(row.asset)} from block ${fmtInt(row.block)}?`,
-    lead: PUBLIC_MINT_COPY + ' First confirmed payment wins. If someone else’s payment confirms first, yours is refunded. ' + (setAside !== null
-      ? 'Nothing is reserved. TAP Wallet asks once: on the next page it pays the fee and sets aside the Bitcoin for your mint inscription; our server then sends the mint.'
+    lead: (setAside !== null
+      ? 'Nothing is reserved. TAP Wallet asks once: on the next page it pays the fee and sets aside the Bitcoin for your mint inscription; our server then sends the mint. If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.'
       : 'Nothing is reserved: the next page asks TAP Wallet to pay, then to inscribe the mint.'),
     rows: [['Pattern', assetName(row.asset)], ['Block', fmtInt(row.block)], ['Units', fmtInt(quote.amount ?? row.amount)],
       ['Fee', h('strong.mono', {}, formatTap(quote.price, decimals))],
       ...(quote.fees ?? []).map(f => [`· ${String(f.role ?? 'fee').replace(/_/g, ' ')}`, h('span.mono', {}, formatTap(f.amount, decimals))]),
-      setAside !== null ? ['Bitcoin set aside for the mint inscription', h('span.mono', {}, `${fmtInt(setAside)} sats`)] : null,
+      setAside !== null ? ['Bitcoin set aside for the mint inscription and a possible refund', h('span.mono', {}, `${fmtInt(setAside)} sats`)] : null,
       ['Bitcoin fee rate', rate ?? 'TAP Wallet shows the network fee before you approve'],
       ['Receiver', hashEl(quote.receiver ?? tapAddress)]],
     confirm: 'Continue to payment' })) return;
@@ -394,11 +400,10 @@ function walletsHome(root, type) {
     h('div.grid.cols-main', {}, app, side)));
   const policy = store.status?.feePolicy;
   side.append(...[panel('How public minting works', h('ol.numbered', {},
-    h('li', {}, 'An unclaimed block is public immediately. A claimed or minted block cannot be minted here.'),
+    h('li', {}, PUBLIC_MINT_COPY + ' A claimed or minted block cannot be minted here.'),
     h('li', {}, 'Press Mint on a block and connect TAP Wallet. You see the fee before anything is paid.'),
     h('li', {}, 'On the payment page, pay the fee in TAP from TAP Wallet, then inscribe the mint. The tokens arrive in your wallet.'),
-    h('li', {}, h('strong', {}, 'Token not deployed yet? '), 'The payment page first asks you to inscribe the pattern and deploy its token, once, each in its own Bitcoin block.'),
-    h('li', {}, h('strong', {}, 'First confirmed payment wins. '), 'If someone else’s payment confirms first, yours is refunded.'))),
+    h('li', {}, h('strong', {}, 'Token not deployed yet? '), 'The payment page first asks you to inscribe the pattern and deploy its token, once, each in its own Bitcoin block.'))),
     // Fees: the two headline fees, then one cell per tier.
     policy?.baseFee ? panel('Fees', [kv([['Base fee', h('span.mono', {}, tap(policy.baseFee, policy.unit))], policy.feeSettings ? ['Bitmap link', h('span.mono', {}, feePrice(policy, 'link'))] : null]),
       policy.feeSettings ? [h('div.section-label', {}, 'A block’s fee is the base fee times its pattern’s tier'),
@@ -418,9 +423,9 @@ function walletsHome(root, type) {
       if (['someone_paid_first', 'already_minted', 'claimed', 'claimed_first', 'public_minted'].includes(error.message)) list?.reload();
     } finally { b.disabled = false; b.classList.remove('busy'); }
   } }, 'Mint');
-  const stateCell = r => { const [label, kind] = PUBLIC_STATES[r.state] ?? [String(r.state ?? '–').replace(/_/g, ' '), 'warn'];
+  const stateCell = r => { const [label, kind] = publicState(r);
     return h('span.row', { style: { gap: '6px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info', `Only the TAP Wallet holding ${r.block}.bitmap can mint this block.`) : null); };
-  const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. Blocks nobody has claimed yet will be listed here.')); soon.hidden = false; list.el.hidden = true; return true; };
+  const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. ' + PUBLIC_MINT_COPY)); soon.hidden = false; list.el.hidden = true; return true; };
   let selectedAsset = chosen?.asset ?? (/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') ? asset : (store.patterns?.patterns ?? []).find(p => /^p2:(0|[1-9][0-9]*)$/.test(p.asset))?.asset ?? 'p2:0');
   // A search field, not one control per pattern: there can be thousands. The server searches by name
   // (/patterns?q=) as you type and returns at most ten suggestions.
@@ -463,7 +468,7 @@ function walletsHome(root, type) {
   search.setAttribute('list', 'public-pattern-names');
   const picker = h('label.pager-ctl', {}, h('span', {}, 'Pattern'), search, choices);
   list = pagedTable({ path: () => '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25, skipEmpty: true,
-    empty: () => `No public blocks of ${assetName(selectedAsset)} right now. Blocks nobody has claimed yet can be minted with TAP Wallet.`,
+    empty: () => `No public blocks of ${assetName(selectedAsset)} right now. ${PUBLIC_MINT_COPY}`,
     onError: e => notOpen(e) && opensSoon(e),
     onPage: (_rows, body) => { if (body.state === 'inactive') return opensSoon(); soon.hidden = true; list.el.hidden = false; },
     columns: [
@@ -476,16 +481,16 @@ function walletsHome(root, type) {
     ] });
   list.el.classList.add('public-mints');
   const publicPanel = panel('Public blocks', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
-    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY + ' First confirmed payment wins. If someone else’s payment confirms first, yours is refunded.')), picker, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
+    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
   // A block opened from elsewhere (/mint?asset=…&block=…): its current state from the point read.
   const bigger = b => { b.classList.remove('sm'); b.classList.add('cta'); return b; };
   let chosenBox = null;
   if (chosen) {
     chosenBox = h('div.stack.chosen', { style: { gap: '12px' } }, h('div.faint', {}, 'Loading…'));
     get(`/public-mints/${chosen.asset}/${chosen.block}`).then(r => {
-      const [label, kind] = PUBLIC_STATES[r.state] ?? [String(r.state).replace(/_/g, ' '), 'warn'];
+      const [label, kind] = publicState(r);
       clear(chosenBox, h('div.row', { style: { gap: '10px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info') : null, h('span.price', {}, `${fmtInt(r.amount)} units`)),
-        r.state === 'public' ? h('div.row', {}, bigger(mintButton({ ...chosen, ...r, asset: chosen.asset, block: chosen.block }))) : h('p', { style: { margin: 0 } }, publicMintMessages[r.state] ?? 'This block is not public, so it cannot be minted here.'));
+        r.state === 'public' ? h('div.row', {}, bigger(mintButton({ ...chosen, ...r, asset: chosen.asset, block: chosen.block }))) : h('p', { style: { margin: 0 } }, Object.hasOwn(publicMintMessages, r.state) ? walletError(r.state, r) : 'This block is not public, so it cannot be minted here.'));
     }, e => clear(chosenBox, h('p', { style: { margin: 0 } }, notOpen(e) ? 'Public minting opens soon.' : `This block is not listed as public (${publicError(e)}).`)));
   }
   // Refunds owed to the connected TAP Wallet; shown only when there are any.
@@ -501,13 +506,13 @@ function walletsHome(root, type) {
         { key: 'asset', label: 'Pattern', render: r => matter(r.asset) },
         { key: 'block', label: 'Block', num: true, render: r => blockLink(r.block) },
         { key: 'fees', label: 'Paid', num: true, render: r => h('span.mono', {}, formatTap(tapTotal(r.fees), 18)) },
-        { key: 'reason', label: 'Why', render: r => REFUND_REASONS[r.reason] ?? String(r.reason ?? '–').replace(/_/g, ' ') },
+        { key: 'reason', label: 'Why', render: r => h('span', {}, REFUND_REASONS[r.reason] ?? String(r.reason ?? '–').replace(/_/g, ' '), ' · ', refundStatus(r)) },
         // The Bitcoin a one-approval payment set aside for the mint goes back to the payer as well.
         { key: 'setAside', label: 'Set aside', num: true, render: r => setAsideCell(r) },
         { key: 'id', label: '', render: r => /^[0-9a-f]{64}$/.test(r.requestId ?? r.id ?? '') ? h('a.btn.sm.ghost', { href: '/mint/' + (r.requestId ?? r.id) }, 'Request') : null },
       ] });
     box.el.classList.add('public-mints');
-    refunds = panel('Your refunds', [h('p', { style: { margin: 0, padding: '12px 14px' } }, 'These payments from your TAP Wallet did not win their blocks. They are owed back to you. Refunds are not sent automatically; each stays listed here until it is paid back.'), box.el], { flush: true, id: 'refunds' });
+    refunds = panel('Your refunds', [h('p', { style: { margin: 0, padding: '12px 14px' } }, 'These payments from your TAP Wallet did not win their blocks. Your TAP is refunded automatically using the Bitcoin set aside with your payment. Payments without a Bitcoin set-aside need operator action.'), box.el], { flush: true, id: 'refunds' });
     refunds.hidden = true;
     return refunds;
   };
@@ -523,7 +528,7 @@ function walletsHome(root, type) {
       wallet.ethereum && !wallet.tap ? h('p.small.muted', { style: { margin: 0 } }, 'Also connect TAP Wallet: mints are paid and inscribed on Bitcoin.') : null,
       primaryTap(connectButtons(undefined, status)), status), { id: 'wallets' }));
     out.push(panel('Link a Bitmap', h('div.stack', { style: { gap: '8px' } },
-      h('p', { style: { margin: 0 } }, 'Linking a Bitmap earns you the Bitmap holder share whenever a pattern in that block is minted, and, if linked before a find, the mint right after the finder window. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
+      h('p', { style: { margin: 0 } }, 'Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
       globalThis.DMW_LOCAL_AGENT === true ? localLink(bitmap)
         : bitmap !== null ? h('div.small', {}, 'Block ', blockLink(bitmap), `: hold ${bitmap}.bitmap in TAP Wallet, then ask your agent to link it.`) : null,
       wallet.tap ? null : h('p.small.muted', { style: { margin: 0 } }, wallet.ethereum ? 'MetaMask cannot do this: Bitmaps live on Bitcoin. Connect TAP Wallet above.' : 'Needs TAP Wallet: connect it above.'),

@@ -53,15 +53,15 @@ export function mintRule(r, counted) {
   if (rule === 'finder' || (!who && r.finderUntil && counted !== undefined && counted < r.finderUntil)) {
     const left = r.finderUntil && counted !== undefined ? r.finderUntil - counted : null;
     return { label: r.allowed ? 'You, as finder' : 'Finder only', kind: r.allowed ? 'good' : 'info',
-      text: `Only the finder may mint until block ${fmtInt(r.finderUntil)}${left !== null && left > 0 ? ` (${fmtInt(left)} blocks left)` : ''}. After that, the Bitmap holder if the Bitmap was linked before the find, otherwise anyone.` };
+      text: `Only the finder may mint until block ${fmtInt(r.finderUntil)}${left !== null && left > 0 ? ` (${fmtInt(left)} blocks left)` : ''}. Afterwards any agent with enough units can mint. Bitmap holders earn 15% of every mint on their plot.` };
   }
   if (rule === 'bitmap' || rule === 'landowner') {
-    return { label: r.allowed ? 'You, as Bitmap holder' : 'Bitmap holder only', kind: r.allowed ? 'good' : 'info',
-      text: 'The Bitmap was linked before the find, so only whoever holds that Bitmap now may mint it. No time limit.' };
+    return { label: r.allowed ? 'Eligible' : 'Mint unavailable', kind: r.allowed ? 'good' : 'info',
+      text: 'This request uses an earlier mint policy. Refresh its quote to check availability.' };
   }
   if (rule === 'holder') return { label: r.allowed ? 'You hold units' : 'Holders of units', kind: r.allowed ? 'good' : '', text: 'Compounds are minted by whoever holds their units, in any amount.' };
   if (rule === 'public' || rule === 'anyone' || rule === '') {
-    return { label: 'Anyone', kind: r.allowed ? 'good' : '', text: 'The finder window is over and no earlier Bitmap link exists, so anyone holding enough units may mint it.' };
+    return { label: 'Anyone', kind: r.allowed ? 'good' : '', text: 'The finder window is over. Any agent with enough units may mint it. Bitmap holders earn 15% of every mint on their plot.' };
   }
   return { label: r.allowed ? 'You may mint' : rule.replace(/_/g, ' '), kind: r.allowed ? 'good' : '', text: rule ? `Rule: ${rule.replace(/_/g, ' ')}.` : '' };
 }
@@ -208,7 +208,7 @@ export function plainError(e) {
   const s = String(e?.message ?? e ?? 'error');
   const known = {
     mint_finder: 'only the finder may mint this block during the finder window',
-    mint_bitmap: 'only the linked Bitmap\'s holder may mint this block',
+    mint_bitmap: 'this request uses an earlier mint policy; refresh its quote',
     mint_balance: 'not enough units in your balance',
     already_minted: 'this block is already minted for this pattern',
     block_pending: 'another mint request holds this block right now',

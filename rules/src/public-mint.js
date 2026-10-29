@@ -6,6 +6,11 @@ export function publicMintActive(settings, height) {
   const v = publicMintValues(settings);
   return v.publicMintActivationHeight !== undefined && BigInt(decimalV2(height)) >= BigInt(uintV2(v.publicMintActivationHeight));
 }
+export function bitmapMintOpenActive(settings, height) {
+  const v = publicMintValues(settings);
+  return v.bitmapMintOpenHeight !== undefined &&
+    BigInt(decimalV2(height)) >= BigInt(uintV2(v.bitmapMintOpenHeight));
+}
 export function claimsNeverCloseActive(settings, height) {
   const v = publicMintValues(settings);
   return v.claimsNeverCloseHeight !== undefined && publicMintActive(settings, height) &&
@@ -25,7 +30,13 @@ export function assertClaimOpen({ pattern, block, height, settings }) {
 }
 export function publicBlockRight({ pattern, block, height, settings, find, reserved, headerAward, minted }) {
   assert(publicMintActive(settings, height), 'public_mint_inactive');
-  if (claimsNeverCloseActive(settings, height)) return { state: minted || reserved?.publicMint ? 'already_minted' : find || reserved || headerAward ? 'claimed' : 'public' };
+  if (claimsNeverCloseActive(settings, height)) {
+    if (minted || reserved?.publicMint) return { state: 'already_minted' };
+    if (find || reserved || headerAward) return { state: 'claimed' };
+    // An untaken block opens to public minting after its first week; agent claims stay open.
+    const publicFrom = claimDeadline(pattern, block, settings);
+    return BigInt(decimalV2(height)) < BigInt(publicFrom) ? { state: 'not_yet_public', publicFrom } : { state: 'public' };
+  }
   const deadline = claimDeadline(pattern, block, settings);
   if (minted) return { state: 'already_minted', claimDeadline: deadline };
   if (find || reserved || headerAward) return { state: 'claimed', claimDeadline: deadline };

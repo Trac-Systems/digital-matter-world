@@ -35,7 +35,7 @@ export function createViews(e) {
     for(const find of records){
       const link=await e.reads.link(find.block);let currentHolder=null;
       if(link)currentHolder=await e.reads.bitmap(find.block).then(b=>b.agent).catch(()=>null);
-      const r=rules.mintRight({find,owner,counted:head.counted,link,currentHolder}),minted=e.store.get('minted',`${find.asset}/${find.block}`),pending=await e.trac('hold',[find.asset,find.block]);
+      const r=rules.mintRight({find,owner,counted:head.counted,link,currentHolder,settings:e.mints?.document}),minted=e.store.get('minted',`${find.asset}/${find.block}`),pending=await e.trac('hold',[find.asset,find.block]);
       const balance=await e.trac('balance',[owner,find.asset]),deploymentRegistered=!!registry.assets[find.asset];
       out.push({asset:find.asset,block:find.block,amount:String(find.count),deploymentRegistered,allowed:deploymentRegistered&&r.allowed&&!minted&&!pending&&BigInt(balance)>=BigInt(find.count),rightAllowed:r.allowed,whoMayMint:r.role,reason:minted?'minted':pending?'pending':!deploymentRegistered?'asset_unregistered':BigInt(balance)<BigInt(find.count)?'insufficient_balance':r.role,finderUntil:find.findHeight===null?null:find.findHeight+1008,minted,pending,finder:find.finder,link,currentHolder});
     }return out;
@@ -75,7 +75,7 @@ export function createViews(e) {
   };
   const resultList=async kind=>{
     if(kind==='mints'){
-      const out=[];for(const r of viewRows(e,'mints'))out.push({...await e.get('/mint/'+r.id),asset:r.request.asset,block:r.request.block,amount:r.request.amount,kind:r.kind,owner:r.request.owner});return out;
+      const out=[];for(const r of viewRows(e,'mints'))out.push({...await e.get('/mint/'+r.id),...(r.publicMint?{}:{asset:r.request.asset,block:r.request.block,amount:r.request.amount,kind:r.kind,owner:r.request.owner})});return out;
     }
     if(kind==='ethereum'){
       const out=[];for(const r of viewRows(e,'mints').filter(r=>r.kind==='ethereum'&&r.paymentId))out.push({id:r.id,...await e.reads.escrow.deposit(r.payer,r.id)});return out;

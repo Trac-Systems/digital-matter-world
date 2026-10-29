@@ -43,3 +43,18 @@ test('standard legacy payer/receiver addresses remain eligible while funding its
   }
   assert.match(fundingQuote(seed, id, 'mainnet', settings).address, /^bc1p/);
 });
+
+test('refund reserve is operator-configured and returned in a winning mint commit', async () => {
+  const { refundBudget, refundFloatKey } = await import('../src/mint-sender-keys.mjs');
+  const enabled = mintSenderSettings({ refundsEnabled: true });
+  assert.ok(enabled.refundReserveSats >= refundBudget(enabled));
+  assert.equal(fundingAmount(enabled) - fundingAmount(settings), enabled.refundReserveSats);
+  assert.throws(() => fundingAmount({ ...enabled, refundReserveSats: 1 }), /refund_reserve/);
+  const float = refundFloatKey(seed, 'regtest'), signer = requestKey(seed, id, 'regtest');
+  assert.notEqual(float.address, signer.address); assert.match(float.path, /\/2\/0$/);
+  const coin = { txid: '11'.repeat(32), vout: 0, value: String(fundingAmount(enabled)), script: hex(btc.p2tr(unhex(signer.publicKey).slice(1)).script), cardinal: true, confirmed: true };
+  const plan = signCommit(buildInscription({ text: 'mint', receiver: signer.address, changeAddress: signer.address, publicKey: signer.publicKey, network: 'regtest', utxos: [coin], feeRate: 2, maxFeeSats: '90000' }), signer.privateKey);
+  const tx = btc.Transaction.fromRaw(unhex(plan.commitHex));
+  assert.equal(tx.outputsLength, 2); assert.ok(tx.getOutput(1).amount >= BigInt(enabled.refundReserveSats));
+  assert.equal(tx.getOutput(1).amount, BigInt(coin.value) - BigInt(plan.postage) - BigInt(plan.feeSats));
+});

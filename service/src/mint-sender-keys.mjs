@@ -18,24 +18,39 @@ export function requestKey(seed, id, network, branch = 0) {
   try { return { privateKey: child.privateKey.slice(), publicKey: hex(child.publicKey), address: fundingAddress(child.publicKey, network), path }; }
   finally { child.wipePrivateData(); root.wipePrivateData(); }
 }
+// Dedicated float account: branch 2 never overlaps request funding (0) or reveal (1).
+export function refundFloatKey(seed, network) {
+  networkFor(network);
+  const path = `m/86'/${network === 'mainnet' ? 0 : 1}'/0'/2/0`;
+  const root = HDKey.fromMasterSeed(seed), child = root.derive(path);
+  try { return { privateKey: child.privateKey.slice(), publicKey: hex(child.publicKey), address: fundingAddress(child.publicKey, network), path }; }
+  finally { child.wipePrivateData(); root.wipePrivateData(); }
+}
 export function validDestination(address, network) {
   try { const decoded = btc.Address(networkFor(network)).decode(address); return ['tr', 'wpkh', 'wsh', 'pkh', 'sh'].includes(decoded.type); }
   catch { return false; }
 }
-export function fundingAmount(settings) {
+export function inscriptionBudget(settings, contentBytes = settings.contentBytes, feeRate = settings.feeRate, margin = settings.feeMargin) {
   // Use the shared builder to measure the largest configured permit envelope.
   const key = new Uint8Array(32); key[31] = 1;
   const pub = btc.utils.pubSchnorr(key), payer = btc.p2tr(pub), max = '1000000000';
-  const plan = buildInscription({ text: 'x'.repeat(settings.contentBytes), receiver: payer.address, publicKey: pub,
+  const plan = buildInscription({ text: 'x'.repeat(contentBytes), receiver: payer.address, publicKey: pub,
     network: 'mainnet', utxos: [{ txid: '00'.repeat(32), vout: 0, value: max, script: hex(payer.script), cardinal: true, confirmed: true }],
-    feeRate: settings.feeRate, maxFeeSats: max, postage: settings.postageSats, secret: key });
-  const satoshis = settings.postageSats + settings.dustSats + Math.ceil(Number(plan.feeSats) * settings.feeMargin);
+    feeRate, maxFeeSats: max, postage: settings.postageSats, secret: key });
+  return settings.postageSats + settings.dustSats + Math.ceil(Number(plan.feeSats) * margin);
+}
+export function refundBudget(settings) {
+  return inscriptionBudget(settings, settings.refundContentBytes, settings.maxRefundFeeRate, 1);
+}
+export function fundingAmount(settings) {
+  if (settings.refundsEnabled) check(settings.refundReserveSats >= refundBudget(settings), 'mint_sender_refund_reserve');
+  const satoshis = inscriptionBudget(settings) + (settings.refundsEnabled ? settings.refundReserveSats : 0);
   check(satoshis <= settings.maxFundingSats, 'mint_sender_funding_cap');
   return satoshis;
 }
 export function fundingQuote(seed, id, network, settings) {
   const key = requestKey(seed, id, network);
-  try { return { address: key.address, satoshis: fundingAmount(settings), feeRate: settings.feeRate, label: 'your mint inscription' }; }
+  try { return { address: key.address, satoshis: fundingAmount(settings), feeRate: settings.feeRate, label: settings.refundsEnabled ? 'mint inscription and possible refund' : 'your mint inscription' }; }
   finally { key.privateKey.fill(0); }
 }
 export async function readMintSeed(filename, { credentialsDirectory = process.env.CREDENTIALS_DIRECTORY, rootOwned = process.platform === 'linux' } = {}) {
