@@ -67,7 +67,7 @@ export function mintRule(r, counted) {
 }
 
 const JOB_NAMES = {
-  mine: 'Mine blocks', mining: 'Auto-mine', 'time-travel': 'Time travel', reorg: 'Reorg', fee: 'Change base price', bots: 'Bot settings',
+  mine: 'Mine blocks', mining: 'Auto-mine', 'time-travel': 'Time travel', reorg: 'Reorg', fee: 'Change base fee', bots: 'Bot settings',
   header: 'Send header', claim: 'Claim', 'discovery-commit': 'Discovery commit', 'discovery-reveal': 'Discovery reveal', commit: 'Discovery commit', reveal: 'Discovery reveal',
   craft: 'Craft', transfer: 'Transfer',
   'mint-quote': 'Mint quote', mint: 'Mint request', 'compound-mint': 'Compound mint', pay: 'Payment', bitmap: 'Inscribe Bitmap', link: 'Bitmap link',
@@ -153,10 +153,30 @@ export function describe(e) {
     case 'component': text = d.name ? `${d.name} is ${d.state ?? 'changed'}` : d.phase ? `Playground: ${d.phase}` : d.state ? `Playground ${d.state}` : 'System update'; break;
     case 'error': text = plainError(d.message ?? d.error ?? 'error'); break;
     default:
+      // Money steps (financial_<action>): only link-complete (type 'link') means a Bitmap is linked.
+      if (e.type.startsWith('financial_')) { text = moneyStep(d); block = d.block ?? block; break; }
       if (d.error) { text = `${d.state ? `${String(d.state).replace(/_/g, ' ')}: ` : ''}${plainError(d.error)}`; break; }
       text = sentence(d) ?? (d.action ? String(d.action).replace(/[/_-]/g, ' ') : e.type);
   }
   return { actor, text, block };
+}
+function moneyStep(d) {
+  const what = d.asset ? `${d.amount ? `${fmtInt(d.amount)} ` : ''}${assetName(d.asset)}` : null, from = d.block !== undefined ? ` from block ${fmtInt(d.block)}` : '';
+  const bitmap = `the Bitmap of block ${fmtInt(d.block)}`;
+  const steps = {
+    reserve: () => `asked to mint ${what ?? 'matter'}${from}; awaiting payment`,
+    fund: () => `paid the fees to mint ${what ?? 'matter'}${from}`,
+    surplus: () => `paid more than needed${from}; the extra is refunded`,
+    consume: () => `payment final: permit to mint ${what ?? 'matter'}${from}`,
+    refund: () => `request${from} ended; payment refunded`,
+    'link-reserve': () => `asked to link ${bitmap}; awaiting payment`,
+    'link-exit': () => `link request for ${bitmap} ended without a link`,
+    'legacy-link-exit': () => `link request for ${bitmap} ended without a link`,
+    'legacy-link-complete': () => `linked ${bitmap}`,
+    'deployment-open': () => `deployed the ${what ?? 'pattern'} token`,
+  };
+  const f = steps[d.action];
+  return f ? f().replace(/\s+/g, ' ').trim() : String(d.action ?? 'payment step').replace(/[/_-]/g, ' ');
 }
 function sentence(d) {
   const a = String(d.action ?? d.kind ?? '').toLowerCase().replace(/[/_.:]/g, '-');
@@ -174,7 +194,7 @@ function sentence(d) {
     'discovery-reveal': () => `revealed a pattern discovery${d.name && d.name !== 'owner' && !/^bot/.test(d.name) ? `: ${title(d.name)}` : ''}`,
     craft: () => `crafted ${r.compound ? assetName(r.compound.id ?? r.compound) : 'a compound'}`,
     transfer: () => `sent ${things(d.assets ?? r.assets) || 'matter'}${(d.to ?? r.to) ? ` to ${who(d.to ?? r.to)}` : ''} on Trac`,
-    'mint-quote': () => `asked the price to mint ${asset ?? ''} from block ${fmtInt(at)}${r.price ? `: ${tap(r.price, r.unit)}` : ''}`,
+    'mint-quote': () => `asked for the fee to mint ${asset ?? ''} from block ${fmtInt(at)}${r.price ? `: ${tap(r.price, r.unit)}` : ''}`,
     mint: () => `asked to mint ${asset ?? 'matter'}${at !== undefined ? ` from block ${fmtInt(at)}` : ''}`,
     'compound-mint': () => `asked to mint ${asset ?? 'a compound'} on-chain`,
     pay: () => q.inscription ? `paid and minted on Bitcoin${asset ? `: ${asset}` : ''}` : `paid ${q.price ? tap(q.price, q.unit) : ''}`.trim(),

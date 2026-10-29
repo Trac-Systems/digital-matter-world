@@ -26,7 +26,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 // Real settled catalog/find roots, account balances, financial batches and
 // notary from v2-stack. Only the Bitcoin index and payment receipt are fixtures.
 export async function firstMintStack(t, { store, contract, document, network, secret, committeeSecret,
-  rulesContext, stamp, financial, sourceReady, history, clientOptions = {}, initialize = async () => {}, configureReads = () => {}, httpOptions = () => ({}) }) {
+  rulesContext, stamp, financial, sourceReady, history, runtime, clientOptions = {}, initialize = async () => {}, configureReads = () => {}, httpOptions = () => ({}) }) {
   const f = await provisioningFixture(t, { secret: committeeSecret });
   await writeFile(f.registryPath, JSON.stringify({ assets: {}, feePolicy: createFeePolicy('100') }));
   await initialize(f);
@@ -75,8 +75,9 @@ export async function firstMintStack(t, { store, contract, document, network, se
       { network, publicKey, id: approvals[0].details.id });
     return { session: r.hash('first-mint-session'), payload: attachPermit(approvals[0].permit, { r: String(signed.r), s: String(signed.s), v: signed.recovery }) };
   } };
-  const provisioner = new Provisioner({ ...f, store, reads }), mints = new FinancialMints({ store, reads, financial, committee, document, network, bitcoinNetwork: 'regtest' });
-  mints.provisioner = provisioner;
+  const provisioner = new Provisioner({ ...f, store, reads }), mints = runtime?.mints ?? new FinancialMints({ store, reads, financial, committee, document, network, bitcoinNetwork: 'regtest' });
+  Object.assign(mints, { reads, committee, provisioner });
+  reads.feeQuotes.settings = () => mints.document;
   const http = await serve({ intake: { store }, files: { serve: async () => false }, mints, operator: { provisioner },
     publicAPI: createPublicAPI({ views: { store, mints } }), ...httpOptions({ reads, mints, f }) }); t.after(() => http.close());
   const service = new ServiceClient({ origin: http.url, network, ...clientOptions });
@@ -157,12 +158,13 @@ export async function firstMintFixture(t, options) {
   assert.equal(requested.state, 'submitted'); assert.equal(store.get('mints', id).request.asset, asset);
   await drain(); await mints.tick();
   assert.equal((await service.mintStatus(id)).payable, true);
-  await options.afterReserve?.({ id, asset, amount });
+  await options.afterReserve?.({ id, asset, amount, mints, reads, f, service });
   const row = store.get('mints', id), payment = r.hash('first-mint-payment-' + asset) + 'i0';
   transfers.set(payment, row.quote.fees.map(fee => ({ ins: payment, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
   await assert.rejects(service.reportMintPayment({ id, paymentId: payment }), /payment_unconfirmed/);
   f.canonical.set(payment, 100);
-  await service.reportMintPayment({ id, paymentId: payment }); await drain();
+  await service.reportMintPayment({ id, paymentId: payment });
+  await options.beforePaymentBatch?.({ id, mints, reads, service }); await drain();
   await mints.tick(); await drain(); await mints.tick();
   const ready = await service.mintStatus(id);
   assert.equal(ready.state, 'permit_issued'); assert.equal(ready.mintContent.dep, deployment);
@@ -175,6 +177,14 @@ export async function firstMintFixture(t, options) {
   assert.ok(signCommit(plan, bitcoinSecret).revealHex);
   await service.reportMintPayment({ id, inscription: plan.inscriptionId });
   assert.equal(store.get('mints', id).mintInscription, plan.inscriptionId);
+  if (options.confirmMint) {
+    const source = await reads.assetContext(asset, block);
+    mintedObservations.set(id, { accepted: true, fail: false, confirmations: 1, inscription: plan.inscriptionId,
+      deployment, tick: source.deployment.tick, receiver, amount, block, dta: ready.mintContent.dta, permitHash: ready.mintContent.prv.hash, committee: publicKey });
+    await mints.tick(); await drain(); await mints.tick();
+    assert.equal((await service.mintStatus(id)).state, 'minted');
+    assert.equal(contract.db.get('dc/' + id).state, 'minted');
+  }
   if (publicChecks) {
     await project();
     const publicBlock = '201', otherSecret = new Uint8Array(32).fill(45), otherPublic = Buffer.from(secp256k1.getPublicKey(otherSecret)).toString('hex');
@@ -240,5 +250,5 @@ export async function firstMintFixture(t, options) {
     assert.equal(restarted.public(a.id).mintContent.prv.hash, winner.mintContent.prv.hash);
     assert.equal(restarted.public(b.id).refunds[0].paymentId, second.inscriptionId);
   }
-  return { asset, requestId: id, deployment, permit: ready.mintContent };
+  return { asset, requestId: id, deployment, permit: ready.mintContent, mints, service };
 }

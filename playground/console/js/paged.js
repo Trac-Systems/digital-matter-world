@@ -10,7 +10,8 @@ export function pageRows(r, key) {
 // One server page at a time: total count, sort, filters and a cursor pager. Only the current page is rendered.
 // opts: path (string or () => string), key, columns, sorts [['key:asc|desc', label]], sort, filters
 // [{ name, label, options: [[value, label]], value }], limit, empty (text, or filters => text), onRow, selected, onPage(rows, body), group(rows) to merge rows before rendering,
-// render(rows) for a custom body instead of a table, onError(error) returning true when the caller shows the failure itself.
+// render(rows) for a custom body instead of a table, onError(error) returning true when the caller shows the failure itself,
+// skipEmpty to read past empty pages of a bounded scan.
 export function pagedTable(opts) {
   const state = { sort: opts.sort ?? opts.sorts?.[0]?.[0] ?? null, filters: Object.fromEntries((opts.filters ?? []).map(f => [f.name, f.value ?? ''])), cursors: [null], at: 0, seq: 0, loading: false, count: 0 };
   const limit = opts.limit ?? 50;
@@ -52,6 +53,14 @@ export function pagedTable(opts) {
     }
     if (seq !== state.seq) return;
     const rows = pageRows(r, opts.key);
+    // Bounded server scans can return empty pages with a cursor: keep reading instead of showing a blank page.
+    for (let pages = 0; opts.skipEmpty && !rows.length && r.next && pages < 60; pages++) {
+      const more = new URLSearchParams(params); more.set('cursor', r.next);
+      let n;
+      try { n = await get(`${base}${base.includes('?') ? '&' : '?'}${more}`); } catch { break; }
+      if (seq !== state.seq) return;
+      rows.push(...pageRows(n, opts.key)); r = n;
+    }
     // A group (one settlement of finds) can spill over the server's page cap: keep reading while it continues.
     for (let pages = 0; opts.joins && r.next && rows.length && pages < 30; pages++) {
       const more = new URLSearchParams(params); more.set('cursor', r.next);

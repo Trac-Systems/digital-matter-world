@@ -33,9 +33,12 @@ export class Policy {
       const selected = accepted.receiptRenewal ? await this.reads.settingsByHash(accepted.receiptRenewal.cutoff.settingsHash) :
         rules.effectiveSettings(accepted.settings, accepted.scheduledSettings, rules.decimalV2(proposal.batch.n), rules.decimalV2(proposal.batch.execution.height));
       context = { ...context, renewal: accepted.receiptRenewal ?? undefined };
-      check(manifest.network === this.network && rules.hashObject(accepted.settings) === accepted.settingsHash &&
-        rules.hashObject(context.settings.document) === rules.hashObject(selected) && proposal.batch.settingsHash === rules.hashObject(selected) &&
-        context.activation?.manifestHash === accepted.manifestHash, 'batch_settings_read');
+      // Separate codes name the failing read in the refusal log.
+      check(manifest.network === this.network && rules.hashObject(accepted.settings) === accepted.settingsHash, 'batch_settings_read');
+      check(selected, 'batch_settings_selected_unknown');
+      check(rules.hashObject(context.settings.document) === rules.hashObject(selected), 'batch_settings_context_mismatch');
+      check(proposal.batch.settingsHash === rules.hashObject(selected), 'batch_settings_proposal_mismatch');
+      check(context.activation?.manifestHash === accepted.manifestHash, 'batch_settings_activation_mismatch');
       const documents = new Map(context.inputs.flatMap(i => i.settingsDocuments ?? []).map(d => [rules.hashObject(d), d]));
       for (const [hash, document] of documents) {
         const pinned = hash === accepted.settingsHash ? accepted.settings : await this.reads.settingsByHash?.(hash);

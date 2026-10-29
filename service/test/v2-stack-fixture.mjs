@@ -28,6 +28,7 @@ import { FinancialExecution } from '../src/financial-execution.mjs';
 import { Store } from '../src/store.mjs';
 import { Files } from '../src/files.mjs';
 import { Feeds } from '../src/feeds.mjs';
+import { PublicViews } from '../src/public-views.mjs';
 import { createPublicAPI } from '../src/public-api.mjs';
 import { Outbox } from '../src/transport.mjs';
 import { serve } from '../src/http.mjs';
@@ -38,8 +39,8 @@ import { hash, edPublic, heightKey } from '../src/util.mjs';
 import { Agent } from '../../kit/lib/agent.mjs';
 import { Journal } from '../../kit/lib/journal.mjs';
 import { ServiceClient } from '../../kit/lib/service-client.mjs';
-import { loadRegtestHistory } from '../../kit/lib/headers.mjs';
-import { temp, network, secret, agent as witness } from './helpers.mjs';
+import { loadHistory, loadRegtestHistory } from '../../kit/lib/headers.mjs';
+import { temp, network as fixtureNetwork, secret, agent as witness } from './helpers.mjs';
 import { claimAttackChecks } from './claim-policy-attacks.mjs';
 import { firstMintFixture } from './first-mint-fixture.mjs';
 import { createFeePolicy } from '../src/fees.mjs';
@@ -47,34 +48,38 @@ import { createFeePolicy } from '../src/fees.mjs';
 // Five independent policy/evidence instances and loopback HTTP endpoints. The
 // fixture uses one disposable committee key after all five policies agree;
 // production threshold ceremony coverage remains in committee/test/services.
-export async function v2StackFixture(t, { scenario, historyLength = 1030, observationsPerBatch = 1, finderWindow = r.SETTINGS_PROFILE.finderWindow } = {}) {
+export async function v2StackFixture(t, { scenario, historyLength = 1030, observationsPerBatch = 1, finderWindow = r.SETTINGS_PROFILE.finderWindow, chainFixture, connectNotary, settingsValues = {} } = {}) {
+  const network = chainFixture?.network ?? fixtureNetwork, anchor = chainFixture?.anchor ?? 1010;
   const path = await temp('v2-stack-'), closes = [], journals = [], timings = [];
   t.after(async () => { for (const j of journals) j.close(); for (const close of closes.reverse()) await close(); });
   const genesis = '01000000' + '00'.repeat(32) + '3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a' + 'dae5494dffff7f2002000000';
-  const checkpoint = { ...parseHeader(genesis), height: 0, chainwork: workFor(0x207fffff).toString() };
-  const raw = [genesis, ...chain(historyLength, checkpoint)]; await writeFile(join(path, 'headers.bin'), Buffer.from(raw.join(''), 'hex'));
-  const history = await loadRegtestHistory(join(path, 'headers.bin')); history.hashAt = h => history.get(Number(h)).hash;
+  const checkpoint = chainFixture?.checkpoint ?? { ...parseHeader(genesis), height: 0, chainwork: workFor(0x207fffff).toString() };
+  const raw = chainFixture?.raw ?? [genesis, ...chain(historyLength, checkpoint)]; await writeFile(join(path, 'headers.bin'), Buffer.from(raw.join(''), 'hex'));
+  const history = await (chainFixture ? loadHistory : loadRegtestHistory)(join(path, 'headers.bin')); history.hashAt = h => history.get(Number(h)).hash;
   const replayHistory = { length: history.length, get: h => history.get(h), raw: h => history.raw(h), field: (...args) => history.field(...args), hashAt: history.hashAt };
-  const options = { ...deployment, network, beacon: { checkpoint, params: REGTEST_PARAMS } };
-  const old = harness(options); await old.advance(1009); assert.equal(await old.batch([]), null); await old.advance(1);
-  const imported = prepareTerminalImport({ records: old.db, height: 1010, pageBytes: 10000 });
-  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: '1010', values: { ...r.SETTINGS_PROFILE, puzzleBits: 0, proofBytes: 262144,
+  const options = { ...deployment, ...chainFixture?.deployment, network, beacon: { checkpoint, params: chainFixture?.params ?? REGTEST_PARAMS } };
+  const old = harness(options);
+  if (chainFixture) old.advance = async count => { const start = Number((await old.state().head()).tip.height) + 1, headers = raw.slice(start, start + count);
+    for (let i = 0; i < headers.length; i += 20) assert.equal(await old.run('hd', { headers: headers.slice(i, i + 20) }), null); return headers; };
+  await old.advance(anchor - 1); assert.equal(await old.batch([]), null); await old.advance(1);
+  const imported = prepareTerminalImport({ records: old.db, height: anchor, pageBytes: 10000 });
+  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(anchor), values: { ...r.SETTINGS_PROFILE, puzzleBits: 0, proofBytes: 262144,
     settlementPageRows: 100, settlementPagesPerObservation: 2, compoundPrecisionBits: 1, compoundWorkBudget: 8, adminDelayTips: 1, finderWindow,
     feePolicyRevision: createFeePolicy('100').current, linkMultiplier: r.FEE_DEFAULTS.link, observationsPerBatch,
     closureReadBudget: r.SETTINGS_PROFILE.closureReadBudget * observationsPerBatch,
-    closureByteBudget: r.SETTINGS_PROFILE.closureByteBudget * observationsPerBatch } });
+    closureByteBudget: r.SETTINGS_PROFILE.closureByteBudget * observationsPerBatch, ...settingsValues } });
   const named = r.emptyNamedDiscovery();
   const legacyPattern = { number: 0, name: 'dmwflorite', pat: '1', fld: 4, dt: 'n', tier: 1, rarity: 1,
-    discoverer: r.bytesToHex(ed25519.getPublicKey(r.hashBytes('isolated-kit-player-7'))), historyHeight: 1009, historyHash: history.hashAt(1009) };
+    discoverer: r.bytesToHex(ed25519.getPublicKey(r.hashBytes('isolated-kit-player-7'))), historyHeight: anchor - 1, historyHash: history.hashAt(anchor - 1) };
   const legacyKey = r.definitionKey({ name: legacyPattern.name, pat: legacyPattern.pat, fld: legacyPattern.fld, dt: legacyPattern.dt }, document), legacyRecord = { ...legacyPattern, number: '0', key: legacyKey,
     legacy: { asset: 'p0', record: legacyPattern }, knownMatchCount: '0', knownOccurrenceTotal: '0', evidenceRoot: r.namedRoot(null),
     catalogRevision: '0', settingsHash: r.hashObject(document), definitionSettingsHash: r.hashObject(document),
-    anchor: { height: '1009', hash: history.hashAt(1009) }, attributionProvisional: false };
+    anchor: { height: String(anchor - 1), hash: history.hashAt(anchor - 1) }, attributionProvisional: false };
   for (const [key, value] of [['number/0', legacyKey], ['pattern/' + legacyKey, legacyRecord], ['name/' + legacyPattern.name, legacyKey], ['revision/' + legacyKey + '/0', legacyRecord]])
     named.records = r.namedSet(named.records, key, value);
   named.nextPattern = '1';
   const manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2',
-    previousBatchRoot: old.db.get('bt/1'), bitcoinAnchor: { height: '1010', hash: history.hashAt(1010) }, settingsHash: r.hashObject(document),
+    previousBatchRoot: old.db.get('bt/1'), bitcoinAnchor: { height: String(anchor), hash: history.hashAt(anchor) }, settingsHash: r.hashObject(document),
     catalogRoot: r.namedStateRoot(named), accountsRoot: imported.financialRoot, receiptSegmentStart: '0',
     schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
   const manifestHash = r.hashObject(manifest), resources = r.resourceRevision({ operator: 'isolated-stack', values: { ...r.RESOURCE_PROFILE } });
@@ -82,21 +87,23 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     encryption: witness(950 + i).address, url: `http://127.0.0.1:${58330 + i}` } }));
   const receiptPin = { receiptProtocol: 1, gateway: edPublic(secret), receiptSigners: members.map(({ peer: { id, identity } }) => ({ id, identity })) };
   const contract = harness({ ...options, v2: { manifest, manifestHash, document, ...receiptPin, importRoot: imported.importRoot, importRows: imported.importRows } });
-  for (const page of imported.pages) assert.equal(await contract.run('ad_import', page), null);
+  for (const page of imported.pages) assert.equal(await contract.run('ad_import', page, options.admin), null);
   for (const [key, value] of old.db) assert.deepEqual(contract.db.get(key), value);
-  const rulesContext = async () => ({ ruleset: 'dmw-v2', ready: true, manifest, manifestHash, settings: contract.db.get('v2/settings'), settingsHash: r.hashObject(contract.db.get('v2/settings')), scheduledSettings: contract.db.get('v2/settings-next'),
+  const notary = await connectNotary?.({ path, contract, imported, history, raw, options });
+  if (notary?.close) closes.push(() => notary.close());
+  const rulesContext = notary?.rulesContext ?? (async () => ({ ruleset: 'dmw-v2', ready: true, manifest, manifestHash, settings: contract.db.get('v2/settings'), settingsHash: r.hashObject(contract.db.get('v2/settings')), scheduledSettings: contract.db.get('v2/settings-next'),
     last: await contract.state().batchLast(), catalogRoot: contract.db.get('v2/catalog'), accountsRoot: contract.db.get('v2/accounts'), claimsRoot: contract.db.get('v2/claims'), receiptRenewal: contract.db.get('v2/receipt-renewal') ?? null,
-    receiptProtocol: contract.db.get('v2/receipt-protocol') ?? null });
+    receiptProtocol: contract.db.get('v2/receipt-protocol') ?? null }));
   let store = await Store.open(join(path, 'gateway')); const files = new Files(join(store.directory, 'static')); closes.push(() => store.close());
   const fenceReaders = [];
   const attackChecks = claimAttackChecks({ network, store, contract, rulesContext, history: replayHistory, t, receiptFences: () => fenceReaders[0] }); closes.push(() => attackChecks.close());
-  await store.put('meta', 'ruleState', initialState(1010, history.hashAt(1010), 1009));
+  await store.put('meta', 'ruleState', initialState(anchor, history.hashAt(anchor), anchor - 1));
   await installGatewayActivation({ store, manifest, manifestHash, document, imported, named });
-  let tip = 1010, pipeline, runtime, approvals = 0, proofRequests = 0, maximumProofBytes = 0, tamperContext = null, craftAttacks = 0, mixedBatches = 0;
+  let tip = anchor, pipeline, runtime, approvals = 0, proofRequests = 0, maximumProofBytes = 0, tamperContext = null, craftAttacks = 0, mixedBatches = 0;
   const contexts = join(path, 'contexts'); await mkdir(contexts);
-  const config = { network, epoch: 0, data: store.directory, committee: members, prod: { contexts }, v2: { manifest, manifestHash, document, resources, ...receiptPin } };
-  const stamp = async () => { const head = await contract.state().head(); return { counted: head.counted, revision: head.revision,
-    tip: head.tip.height, tipHash: head.tip.hash, last: await contract.state().batchLast() }; };
+  const config = { network, epoch: 0, ...(notary ? { mode: 'regtest', assetRecoveryVersion: 2 } : {}), data: store.directory, committee: members, prod: { contexts }, v2: { manifest, manifestHash, document, resources, ...receiptPin } };
+  const stamp = notary?.stamp ?? (async () => { const head = await contract.state().head(); return { counted: head.counted, revision: head.revision,
+    tip: head.tip.height, tipHash: head.tip.hash, last: await contract.state().batchLast() }; });
   const publisher = evidencePublisher({ config, store, reads: { trac: stamp }, secret }); closes.push(() => publisher.close());
   const rpc = async (url, route, value) => {
     const response = await fetch(url + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
@@ -116,7 +123,8 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
       identity: witness(900 + i).secret, gateway: edPublic(secret), source: { request: async (_, { body }) => { proofRequests++; return publisher(body); } },
       clock: async () => ({ tip, tipHash: history.hashAt(tip) }), stamp }); closes.push(() => reader.close());
     evidenceReaders.push(reader);
-    const reads = { authority: async () => ({ network, committee: options.committee, epoch: 0 }), counted: async () => tip, tip: async () => ({ tip }), rulesContext, settingsByHash: async hash => contract.db.get('v2/settings/' + hash),
+    const reads = { authority: async () => ({ network, committee: options.committee, epoch: 0 }), counted: async () => tip, tip: async () => ({ tip }), rulesContext, settingsByHash: notary?.settingsByHash ?? (async hash => contract.db.get('v2/settings/' + hash)),
+      renewalSlice: notary?.renewalSlice ?? (async n => contract.db.get('v2/receipt-renewal-slice/' + n) ?? null),
       batchRoot: async n => contract.db.get('bt/' + n) ?? null,
       batchStamp: stamp, financialRecord: async key => contract.db.get(key) ?? null, financialEvidence,
       batchContext: async n => { const original = await reader.context(n), c = tamperContext ? tamperContext(structuredClone(original)) : original; checkBatchReceiptRoster(config, c.settings); return { ...c, history: replayHistory, hashAt: history.hashAt }; },
@@ -125,7 +133,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     receiptObservation: (h, hash, segment) => reader.get('receiptObservations', `${h}/${hash}/${segment}`),
       replayNodes: (...args) => reader.replayNodes(...args),
       claimNode: (id, ancestors) => reader.claimNode(id, ancestors),
-      preflight: (batch, at) => preflightBatch(batch, at, { read: key => contract.db.get(key), deployment: contract.options }) };
+      preflight: (batch, at) => notary ? notary.reads.preflight(batch, at) : preflightBatch(batch, at, { read: key => contract.db.get(key), deployment: contract.options }) };
     const journal = await new SignerJournal(join(path, `admissions-${i}.log`), 'disposable-stack', network, members[i].id).load(); closes.push(() => journal.close());
     const receiptFences = new ReceiptFences({ journal, reads, members: members.map(m => m.peer), network, gateway: edPublic(secret), signer: members[i].id, secret: witness(900 + i).secret });
     fenceReaders.push(receiptFences);
@@ -133,6 +141,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     const policy = new Policy({ network, publicKey: options.committee, reads, receiptFences, replayBatch: replay.run.bind(replay) });
     const server = createServer(async (req, res) => {
       try {
+        if (req.method === 'GET' && req.url === '/health') { res.end(JSON.stringify({ id: members[i].id, ...await reads.authority() })); return; }
         const chunks = []; for await (const chunk of req) chunks.push(chunk); const body = JSON.parse(Buffer.concat(chunks));
         await reader.refresh(); let result;
         if (req.url === '/ack') result = await receiptFences.admit(body.receipt, body.checkpoint);
@@ -191,9 +200,10 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
       const context = { last: d.last, counted: d.execution, state: d.startState, patterns: d.startPatterns, gateway: edPublic(secret),
         settings: d.settings, limits: d.limits, headers: d.headers, activation: d.activation, previousRoot: d.previousRoot, inputs: d.items.map(i => i.input) };
       if (d.items.length) await attackChecks(d, context);
-      const bytes = Buffer.from(JSON.stringify(context)), digest = hash(bytes); await writeFile(join(contexts, digest + '.json'), bytes);
+      const bytes = Buffer.from(JSON.stringify(context)), digest = hash(bytes); await writeFile(join(contexts, digest + '.json'), bytes, { mode: 0o600 });
       await store.put('evidenceContexts', String(n), { path: digest + '.json', hash: digest });
     } };
+  if (notary) { Object.assign(reads, await notary.gatewayReads({ config, store, history })); reads.financialRecord = (key, at) => notary.reads.financialRecord(key, at); }
   runtime = await createV2Runtime({ config, store, secret, history, reads, committee });
   // Production's observation and pipeline workers can refresh simultaneously.
   // A slow quorum read must not multiply queued signer/source operations.
@@ -218,12 +228,13 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   assert.equal(await runtime.refresh(), true);
   assert.equal(healthCalls, 3, 'settled results and failures are never reused');
   committee.healthy = healthy;
-  const transport = { prepareMessage: async (op, value) => ({ op, value }), sendMessage: async m => { assert.equal(await contract.run(m.op, m.value), null); },
+  const transport = notary?.transport ?? { prepareMessage: async (op, value) => ({ op, value }), sendMessage: async m => { assert.equal(await contract.run(m.op, m.value), null); },
     status: async job => ({ state: contract.db.get('bt/' + job.value.n) === job.value.root ? 'accepted' : 'pending' }) };
-  reads.financialRecord = async key => contract.db.get(key) ?? null;
-  const financial = new FinancialExecution({ store, reads, document, resources: { workPage: 32, mintInputCapacity: 100 } });
+  reads.financialRecord ??= async key => contract.db.get(key) ?? null;
+  const financial = runtime.financial ?? new FinancialExecution({ store, reads, document, resources: { workPage: 32, mintInputCapacity: 100 } });
   pipeline = new Pipeline({ pipelineDepth: 2, store, files, history: replayHistory, intake: runtime.intake, reads, committee, financial, settings: runtime.settings, outbox: new Outbox({ store, transport, retryMs: 0 }) }); closes.push(() => pipeline.close());
-  const http = await serve({ intake: runtime.intake, files, evidence: publisher }); closes.push(() => http.close());
+  const http = await serve({ intake: runtime.intake, files, evidence: publisher, ...(notary ? { mints: runtime.mints,
+    publicAPI: createPublicAPI({ views: new PublicViews({ store, history, reads: notary.reads, mints: runtime.mints, network }), files }) } : {}) }); closes.push(() => http.close());
   const drain = async () => { for (let i = 0; i < 1000; i++) { await pipeline.tick(); await runtime.refresh(); if (!store.count('observations') && !store.get('meta', 'namedReservedBatch') && !store.get('meta', 'draft') && !store.get('meta', 'ruleState').rounds.some(r => r.closed || r.closing)) return; } throw Error('backlog_did_not_drain'); };
   const observe = async () => { await runtime.intake.observe({ tip, hash: history.hashAt(tip), counted: tip, confirmed: tip }); await runtime.refresh(); };
   await observe();
@@ -238,7 +249,8 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     players.push({ agent, directory, proposal: { name: `dmwstack${i}`, pat: regexes[i], fld: 4, dt: 'n' } });
   }
   if (scenario) return scenario({ store, files, contract, document, network, secret, committeeSecret, rulesContext, stamp,
-    financial, drain, history, players, legacyRecord, runtime, reads, committee,
+    financial, drain, history, players, legacyRecord, runtime, reads, committee, pipeline, config, servers, notary, http,
+    async observeNext() { tip++; await contract.advance(1); await observe(); },
     async replayAccepted(n) {
       const row = store.get('batches', heightKey(n));
       const saved = store.get('evidenceContexts', String(n));

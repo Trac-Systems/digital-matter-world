@@ -27,13 +27,13 @@ export function feePrice(policy, kind, tier = 1) {
   if (typeof policy?.baseFee !== 'string' || !/^(0|[1-9]\d*)$/.test(policy.baseFee) ||
       !Array.isArray(settings?.tierMultipliers) || settings.tierMultipliers.length !== 5 ||
       ![...settings.tierMultipliers, settings.compoundMinimum, settings.link].every(n => Number.isSafeInteger(n) && n > 0) ||
-      !Number.isInteger(tier) || tier < 1 || tier > 5) return 'current price';
+      !Number.isInteger(tier) || tier < 1 || tier > 5) return 'current fee';
   let multiplier;
   if (kind === 'find') multiplier = settings.tierMultipliers[tier - 1];
   else if (kind === 'compound') multiplier = Math.max(settings.compoundMinimum, settings.tierMultipliers[tier - 1]);
   else if (kind === 'compound-minimum') multiplier = Math.max(settings.compoundMinimum, Math.min(...settings.tierMultipliers));
   else if (kind === 'link') multiplier = settings.link;
-  else return 'current price';
+  else return 'current fee';
   return tap((BigInt(policy.baseFee) * BigInt(multiplier)).toString(), policy.unit);
 }
 export function feePolicyTip(policy) {

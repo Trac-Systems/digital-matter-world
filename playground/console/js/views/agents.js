@@ -141,7 +141,7 @@ export function mount(root, params) {
         ],
       })), { flush: true, tip: 'The first maker earns 30 % of every mint fee for that compound type.' }),
       panel('Blocks made real', track(pagedTable({
-        path: `/results/mints?owner=${key}&state=minted`, key: 'mints', limit: 5, sorts: [['block:desc', 'Block'], ['price:desc', 'Highest price']],
+        path: `/results/mints?owner=${key}&state=minted`, key: 'mints', limit: 5, sorts: [['block:desc', 'Block'], ['price:desc', 'Highest fee']],
         empty: 'Nothing minted yet.',
         columns: [
           { key: 'asset', label: 'Matter', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },

@@ -1,3 +1,4 @@
+import { createLocalReads } from '../../../committee/signer/reads.mjs';
 import { bindingFixture } from '../bindings-fixture.mjs';
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +39,16 @@ test('independent link reads follow current Bitmap ownership and bind every actu
   bitmap = { bm: 1, ins: 'ef'.repeat(32) + 'i0', ownr: holder }; inscriptionOwner = bitmap.ownr;
   const endpoints = { bitcoind: 'http://127.0.0.1:18443', indexer: 'http://127.0.0.1:55888', trac: 'http://127.0.0.1:59000', ethereum: 'http://127.0.0.1:58545' };
   const config = { committee: fixture.config, data: store.directory, network, endpoints, local: { manifest: join(root, 'manifest.json'), registry: join(root, 'registry.json'), escrow: { chainId: '31337', address: '0x' + '11'.repeat(20), token: '0x' + '22'.repeat(20) } } };
-  const fetch = mock.method(globalThis, 'fetch', async (url, options) => new Response(JSON.stringify(String(url).includes('/content/') ? { redeem: { data: id } } : { result: JSON.parse(options.body).method === 'record' ? previous : { counted: 10, tip: { height: 15, hash: history.hashAt(15) } } })));
+  const document = rules.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '0', values: { ...rules.SETTINGS_PROFILE } });
+  const fetch = mock.method(globalThis, 'fetch', async (url, options) => {
+    if (String(url).includes('/content/')) return Response.json({ redeem: { data: id } });
+    const { method, args } = JSON.parse(options.body);
+    if (method === 'settingsByHash') {
+      assert.deepEqual(args, [rules.hashObject(document)], 'the real local Trac client must receive one hash argument');
+      return Response.json({ result: document });
+    }
+    return Response.json({ result: method === 'record' ? previous : { counted: 10, tip: { height: 15, hash: history.hashAt(15) } } });
+  });
   let reads;
   try {
     await writeFile(config.local.manifest, JSON.stringify({ bitcoin: { rpc: endpoints.bitcoind }, ord: { url: endpoints.indexer } }));
@@ -49,6 +59,20 @@ test('independent link reads follow current Bitmap ownership and bind every actu
     const feeAuthorization = await issuer.accept(q, 'link/' + id, id, request.until, 10);
     terms.feeAuthorization = feeAuthorization;
     await store.put('linkRequests', id, row); reads = await localReads(await withTapSource(config), store, { gateway });
+    assert.deepEqual(await reads.settingsByHash(rules.hashObject(document)), document);
+    const signerReads = createLocalReads({ records: reads });
+    for (const segment of [undefined, '0', '1']) {
+      const key = `15/${history.hashAt(15)}${segment === undefined ? '' : '/' + segment}`;
+      const observation = { seal: { segment: segment ?? 'legacy' }, receipts: [] }, certificate = { ...observation, attestations: [] };
+      await store.put('receiptObservations', key, observation);
+      await store.put('receiptCertificates', key, certificate);
+      assert.deepEqual(await reads.receiptObservation(15, history.hashAt(15), segment), observation);
+      assert.deepEqual(await reads.receiptCertificate(15, history.hashAt(15), segment), certificate);
+      assert.deepEqual(await signerReads.receiptObservation(15, history.hashAt(15), segment), observation);
+      assert.deepEqual(await signerReads.receiptCertificate(15, history.hashAt(15), segment), certificate);
+    }
+    await assert.rejects(signerReads.receiptObservation(15, history.hashAt(15), '2'), /receipt_observation_missing/);
+    assert.equal(await signerReads.receiptCertificate(15, history.hashAt(15), '2'), null);
     assert.deepEqual(await reads.bitmap(1), { agent: who.address, address: holder });
     bitmap.ownr = inscriptionOwner = nextHolder; assert.equal((await reads.bitmap(1)).agent, other.address);
     inscriptionOwner = 'different'; await assert.rejects(reads.bitmap(1), /bitmap_owner/); inscriptionOwner = bitmap.ownr;

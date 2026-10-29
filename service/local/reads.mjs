@@ -109,13 +109,13 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
     feeQuotes: new FeeQuotes({ network: config.network, gateway, registry }),
     validateFeeTerms: quotedTerms,
     preflight: async (batch, at) => preflightBatch(batch, at, { read: key => trac('read', [key, at]), deployment: await trac('deployment') }),
-    receiptObservation: async (tip, tipHash) => {
-      const r = store.get('receiptObservations', `${tip}/${tipHash}`); check(r, 'receipt_observation_missing');
+    receiptObservation: async (tip, tipHash, segment) => {
+      const r = store.get('receiptObservations', `${tip}/${tipHash}${segment === undefined ? '' : '/' + segment}`); check(r, 'receipt_observation_missing');
       if (!r.archive) return r;
       const bytes = await readFile(join(config.data, 'static', r.archive.path.slice(1))); check(hash(bytes) === r.archive.hash, 'receipt_archive_binding');
       return { seal: r.seal, receipts: rules.decodeBinary(bytes).receipts };
     },
-    receiptCertificate: async (tip, hash) => store.get('receiptCertificates', `${tip}/${hash}`),
+    receiptCertificate: async (tip, hash, segment) => store.get('receiptCertificates', `${tip}/${hash}${segment === undefined ? '' : '/' + segment}`),
     tip: async () => { const info = await client.tip(), tip = info.height; await views.view(tip, info.hash); return { tip, tipHash: info.hash, highestTip: Math.max(tip, store.get('meta', 'head')?.highestTip ?? 0) }; },
     mintCertificate: async id => store.get('ceremonies', 'mint/' + id)?.result.certificate,
     manifest, client, store, trac, views, tap, content, included, registry, ethRPC, escrow,
@@ -149,7 +149,7 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
     async retireContexts(accepted) {
       for await (const entry of await opendir(config.local.contexts)) if (entry.isFile() && /^[0-9]+\.json$/.test(entry.name) && Number(entry.name.slice(0, -5)) <= accepted - 8) await removeFile(join(config.local.contexts, entry.name));
     },
-    settings: () => trac('settings'), rulesContext: () => trac('rulesContext'), settingsByHash: hash => trac('settingsByHash', hash), batchHeaders: async () => [], batchStamp: () => trac('stamp'),
+    settings: () => trac('settings'), rulesContext: () => trac('rulesContext'), settingsByHash: hash => trac('settingsByHash', [hash]), batchHeaders: async () => [], batchStamp: () => trac('stamp'),
     async batchContext(sequence) {
       const context = JSON.parse(await readFile(join(config.local.contexts, sequence + '.json'), 'utf8'));
       check(context.last.n + 1 === sequence && same(context.last, await trac('batchLast')), 'batch_sequence');

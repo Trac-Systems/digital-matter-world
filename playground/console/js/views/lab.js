@@ -75,20 +75,20 @@ export function mount(root) {
 
   function worldPanel(s) {
     const baseFee = s.feePolicy?.baseFee ?? '', unit = s.feePolicy?.unit;
-    const fee = input({ class: 'mono', value: tapText(baseFee, unit), inputmode: 'decimal', 'aria-label': 'Base price in TAP', style: { width: '160px' } });
+    const fee = input({ class: 'mono', value: tapText(baseFee, unit), inputmode: 'decimal', 'aria-label': 'Base fee in TAP', style: { width: '160px' } });
     const count = input({ class: 'mono', value: String(s.bots?.count ?? 12), inputmode: 'numeric', 'aria-label': 'Bot count', style: { width: '80px' } });
     const speed = select(speedOptions(s.bots?.intervalMs), { value: String(s.bots?.intervalMs ?? 15000), 'aria-label': 'Bot speed' });
     return panel('Economy and bots', h('div.ctl', {},
-      h('div.field', {}, h('label', {}, 'Base price (TAP)'), h('form.row', { onsubmit: async e => {
+      h('div.field', {}, h('label', {}, 'Base fee (TAP)'), h('form.row', { onsubmit: async e => {
         e.preventDefault();
         // The decimal TAP text is what gets posted; atoms are only used for the preview below.
         const text = fee.value.trim(), atoms = tapAtoms(text, unit);
         if (!atoms || !BigInt(atoms)) { toast({ what: 'Enter a positive amount of TAP, e.g. 22.6', state: 'failed', ttl: 3500 }); return; }
         const proposed = { ...s.feePolicy, baseFee: atoms };
         const price = (kind, tier) => feePrice(proposed, kind, tier);
-        if (await confirmModal({ title: 'Change the base price?', lead: 'Effective immediately for new quotes. Quotes already signed keep their quoted price.', rows: [['Now', tap(baseFee, unit)], ['New', tap(atoms, unit)], ['Mint, tier 1 / tier 5', `${price('find', 1)} / ${price('find', 5)}`], ['Bitmap link', price('link')]], confirm: 'Change price' })) run('Change base fee', '/fee', { baseFee: text }).catch(() => {});
+        if (await confirmModal({ title: 'Change the base fee?', lead: 'Effective immediately for new quotes. Quotes already signed keep their quoted fee.', rows: [['Now', tap(baseFee, unit)], ['New', tap(atoms, unit)], ['Mint, tier 1 / tier 5', `${price('find', 1)} / ${price('find', 5)}`], ['Bitmap link', price('link')]], confirm: 'Change fee' })) run('Change base fee', '/fee', { baseFee: text }).catch(() => {});
       } }, fee, h('span.small.muted', {}, 'TAP'), h('button.btn.sm', { type: 'submit' }, 'Set')),
-        h('div.hint', {}, `Now ${tap(baseFee, unit)}. The operator sets prices in TAP; changes apply to new quotes.`)),
+        h('div.hint', {}, `Now ${tap(baseFee, unit)}. The operator sets fees in TAP; changes apply to new quotes.`)),
       h('div.field', {}, h('label', {}, 'Bots'), h('div.row', {},
         count, h('span.small.muted', {}, 'acting every'), h('div', { style: { width: '100px' } }, speed),
         h('button.btn.sm', { onclick: () => {

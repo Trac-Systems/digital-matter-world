@@ -3,5 +3,5 @@ history.replaceState(null, '', '/login');
 try {
   const response = await fetch('/login', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) });
   if (!response.ok) throw Error('This private link is invalid or already used. Restart the local dashboard for a new link.');
-  location.replace('/');
+  location.replace('/me');
 } catch (error) { document.getElementById('status').textContent = error.message; }

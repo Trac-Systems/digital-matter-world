@@ -89,7 +89,7 @@ export class Agent {
       }
     } else if (row.body.t) {
       if (row.body.v === 2) throw Object.assign(new Error('V2 accepted batch inclusion verifier required; saved packet retained'), { code: 'v2_batch_verifier_required' });
-      const proof = await this.service.inclusion(row.body, { receipt: row.result ?? undefined, hashAt: h => this.trac.hashAt(h) });
+      const proof = await this.receiptInclusion(row.body, { receipt: row.result ?? undefined });
       const state = proof.reportedOutcome === 'accepted' ? 'accepted' : 'rejected';
       const evidence = { source: 'witnessed_audit', reason: proof.reportedOutcome, publication: proof.publication, contractCommitted: proof.contractCommitted };
       if (!row.result) this.journal.mark(id, row.state, proof.receipt);
@@ -362,10 +362,15 @@ export class Agent {
       } });
     });
   }
+  receiptInclusion(move, options = {}) {
+    const renewal = Object.fromEntries(['batchRoot', 'settingsByHash', 'renewalSlice']
+      .filter(name => typeof this.trac[name] === 'function').map(name => [name, (...args) => this.trac[name](...args)]));
+    return this.service.inclusion(move, { ...options, hashAt: h => this.trac.hashAt(h), renewal });
+  }
   async claimInclusion({ window, publication, commitment }) {
     check(integer(window), 'Invalid claim window');
     const saved = this.journal.get(`claim/${window}`); check(saved, 'No saved claim');
-    return this.service.inclusion(saved.body, { publication, commitment, receipt: saved.result ?? undefined, hashAt: h => this.trac.hashAt(h) });
+    return this.receiptInclusion(saved.body, { publication, commitment, receipt: saved.result ?? undefined });
   }
   discoveryAnalysis(proposal, history, patterns, head) {
     const analysis = checkProposal({ proposal, history, tip: head.tip, existing: patterns, owner: this.owner });
@@ -413,7 +418,7 @@ export class Agent {
       if (!this.dryRun && old && ['received', 'accepted', 'rejected'].includes(old.state)) return { state: old.state, receipt: old.result, inclusion: old.state === 'received' ? 'unverified' : 'witnessed', phase: 'reveal', actionId, replayed: true };
       let certificate = saved.result;
       if (!certificate) {
-        certificate = await this.service.inclusion(committed.body, { publication, receipt: committed.result ?? undefined, hashAt: h => this.trac.hashAt(h) });
+        certificate = await this.receiptInclusion(committed.body, { publication, receipt: committed.result ?? undefined });
         check(certificate.reportedOutcome === 'accepted', 'Discovery commitment was not accepted in the observation');
         if (!this.dryRun) {
           this.journal.mark(`${id}/commit`, 'received', certificate.receipt);

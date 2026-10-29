@@ -20,6 +20,7 @@ import { Journal } from '../../committee/signer/journal.mjs';
 import { preflightBatch } from '../../committee/signer/preflight.mjs';
 import { ServiceClient } from '../../kit/lib/service-client.mjs';
 import { TracClient } from '../../kit/lib/trac.mjs';
+import { Agent } from '../../kit/lib/agent.mjs';
 import { verifyRenewedAudit } from '../../kit/lib/receipt-renewal.mjs';
 import { serve } from '../src/http.mjs';
 import { heightKey } from '../src/util.mjs';
@@ -425,6 +426,17 @@ test('gateway publishes durable renewal proofs that the kit fetches and independ
   const accepted = f.store.get('batches', heightKey('4')), publication = accepted.publications.find(p => p.tip === '2');
   const result = await client.inclusion(JSON.parse(f.packets[0]), { publication, receipt: f.receipts[0], hashAt: f.history.hashAt, renewal: independent });
   assert.equal(result.contractCommitted, true); assert.equal(result.reportedOutcome, 'accepted');
+  const calls = [], trac = new TracClient({ network: f.network, integerVersion: 2, api: {
+    dmwHashAt: height => f.history.hashAt(height),
+    dmwBatchRoot: n => { calls.push(['root', n]); return f.reads.batchRoot(n); },
+    dmwSettingsByHash: hash => { calls.push(['settings', hash]); return f.reads.settingsByHash(hash); },
+    dmwReceiptRenewalSlice: n => { calls.push(['slice', n]); return f.reads.renewalSlice(n); }
+  } });
+  const player = new Agent({ network: f.network, service: client, trac, wallet: { publicKey: Buffer.from(gateway, 'hex') },
+    journal: { get: key => { assert.equal(key, 'claim/2'); return { body: JSON.parse(f.packets[0]), result: f.receipts[0] }; } } });
+  const verified = await player.claimInclusion({ window: 2, publication });
+  assert.equal(verified.contractCommitted, true); assert.equal(verified.reportedOutcome, 'accepted');
+  assert.deepEqual(calls, [['root', '3'], ['root', '4'], ['root', '3'], ['settings', r.hashObject(f.document)], ['slice', '4']]);
   const proof = await client.renewalProof(id, publication.observation, independent);
   const bytes = await client.publication(publication.audit, { binary: true, limit: 1500000 }), forged = r.decodeBinary(bytes);
   forged.moves[0].reason = 'forged-outcome';

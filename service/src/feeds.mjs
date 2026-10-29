@@ -1,3 +1,4 @@
+import { patternCatalogId, patternMint } from './mint-assets.mjs';
 import { publicIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { collectFiles, recoverFeedVersions } from './retention.mjs';
 import { rules } from './rules.mjs';
@@ -47,10 +48,11 @@ export class Feeds {
     if (this.store.get('meta', 'ruleState')?.batchVersion === 2) {
       const height = rules.decimalV2(block), k = rules.uintKeyV2(height), size = this.settings.patternPageHeights ?? R3_RESOURCES.patternPageHeights;
       if (!asset) return this.store.put('feedLinkedBlocks2', k, { block: height, after: '' });
-      check(asset.startsWith('p2:'), 'projection_asset_version');
+      asset = patternCatalogId(asset);
+      check(asset, 'projection_asset_version');
       const old = this.store.get('claimed2/' + asset, k);
       return this.store.transact([v2Dirty(asset, height, size), ...(old ? [
-        { space: 'claimed2/' + asset, id: k, value: { ...old, minted: !!this.store.get('minted', `${asset}/${height}`) } },
+        { space: 'claimed2/' + asset, id: k, value: { ...old, minted: !!patternMint(this.store, asset, height) } },
         { space: 'claimedRevision', id: asset, value: rules.nextUint(rules.decimalV2(this.store.get('claimedRevision', asset) ?? '0')) }
       ] : [])]);
     }

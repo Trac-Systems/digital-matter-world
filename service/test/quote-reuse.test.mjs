@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { FinancialMints } from '../src/financial-mints.mjs';
 
 const mints = (delayMs, calls) => Object.assign(Object.create(FinancialMints.prototype), {
+  document: { revision: '0' },
   quoteOnce: async input => { calls.push(input); await new Promise(resolve => setTimeout(resolve, delayMs)); return { quoted: calls.length }; } });
 
 test('identical retries share a slow quote and receive its result after it finishes', async () => {

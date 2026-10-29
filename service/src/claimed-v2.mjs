@@ -1,3 +1,4 @@
+import { patternMint } from './mint-assets.mjs';
 import { findRankRecord } from './public-rankings.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
@@ -37,8 +38,8 @@ export function claimedPageV2(store, asset, params, settings = {}) {
   for (const row of rows.slice(0, limit)) {
     const value = JSON.parse(row.value), find = store.get('finds', rules.findIdV2(value.height, value.pattern));
     projectionReady(store, 'block/' + value.height);
-    const projected = { height: value.height, block: value.height, found: !!find, finder: find?.finder ?? null, minted: !!store.get('minted', `${asset}/${value.height}`), link: store.get('links', heightKey(value.height)), hash: value.hash, count: value.count, contribution: value.contribution,
-      find, mint: store.get('minted', `${asset}/${value.height}`), provenance: value.provenance };
+    const projected = { height: value.height, block: value.height, found: !!find, finder: find?.finder ?? null, minted: !!patternMint(store, asset, value.height), link: store.get('links', heightKey(value.height)), hash: value.hash, count: value.count, contribution: value.contribution,
+      find, mint: patternMint(store, asset, value.height), provenance: value.provenance };
     const nextCursor = Buffer.from(JSON.stringify({ asset, revision, order, filters, after: value.height })).toString('base64url');
     if (Buffer.byteLength(JSON.stringify(publicIdentities({ ...result, rows: [...result.rows, projected], nextCursor, next: nextCursor }))) > s.publicPageBytes) {
       check(result.rows.length, 'claimed_row_budget', 503); more = true; break;

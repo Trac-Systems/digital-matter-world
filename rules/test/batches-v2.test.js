@@ -156,3 +156,13 @@ test('whole-batch closure limits sum every chunk while allowing idle receipt seg
     }
   }
 });
+
+test('batch builder rejects absent or empty files before inspecting renewal boundaries', () => {
+  const previousRoot = r.hash('empty-predecessor');
+  const input = { network, epoch: 0, sequence: 1, lastTo: 100, executionHeight: 100, previousRoot, settings };
+  for (const files of [undefined, null, {}, [], [null]]) {
+    for (const renewal of [undefined, { cutoff: { settingsHash: undefined }, predecessor: { root: previousRoot } }]) {
+      assert.throws(() => r.buildBatchV2({ ...input, files, renewal }), { name: 'Error', message: 'batch_files' });
+    }
+  }
+});

@@ -15,6 +15,7 @@ import { readRegistry, KeyedRegistry } from '../src/registry.mjs';
 import { installMintPayments } from '../src/mint-payments.mjs';
 import { ethereumPayments } from '../src/ethereum.mjs';
 import { EvidenceStore } from './evidence.mjs';
+import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { collectMigrationEvidence } from './migration-export.mjs';
 import { verifyDeployment } from '../src/deployments.mjs';
 import { winningMint, admittedMint } from '../src/mint-evidence.mjs';
@@ -87,7 +88,12 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   lookups = new TapLookupIndex({ filename: join(config.prod.readerData, 'tap-lookups.sqlite'), indexer, settings: config.prod.lookupSettings });
   ethereum = await phase('reader.ethereum_open', () => createEthereum(config.prod.ethereum, config.prod.http, { filename: join(config.prod.readerData, 'ethereum-events.sqlite') }));
   const manifest = { bitcoin: client };
-  store = suppliedStore ?? await EvidenceStore.open({ config: config.prod.evidence, identity, gateway, clock: async () => { const tip = await client.tip(); return { tip: tip.height, tipHash: tip.hash }; }, stamp: () => trac('stamp') });
+  const snapshotLifetimeMs = config.v2 ? async () => {
+    const current = await trac('rulesContext');
+    check(current?.ready && current.settings?.network === config.network && rules.hashObject(current.settings) === current.settingsHash, 'evidence_settings');
+    return closureTimeouts(rules.validateSettingsDocument(current.settings), config.v2.resources)?.evidenceMs;
+  } : undefined;
+  store = suppliedStore ?? await EvidenceStore.open({ config: config.prod.evidence, identity, gateway, snapshotLifetimeMs, clock: async () => { const tip = await client.tip(); return { tip: tip.height, tipHash: tip.hash }; }, stamp: () => trac('stamp') });
   const clockGate = serial();
   views = new BitcoinViews(client, join(config.prod.readerData, 'bitcoin.sqlite'), { maxHeadersPerView: config.prod.maxHeadersPerView, settings: config.prod.lookupSettings, integerVersion: config.v2 ? 2 : 1 });
   if (config.prod.headerSeed) await phase('reader.header_seed', () => views.seedChunks(config.prod.headerSeed));
@@ -169,7 +175,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const reads = {
     bindings,
     refreshEvidence: store instanceof EvidenceStore ? () => store.refresh() : undefined,
-    feeQuotes: new FeeQuotes({ network: config.network, gateway, registry, settingsHistory: { get: hash => trac('settingsByHash', hash) } }),
+    feeQuotes: new FeeQuotes({ network: config.network, gateway, registry, settingsHistory: { get: hash => trac('settingsByHash', [hash]) } }),
     validateFeeTerms: quotedTerms,
     preflight: async (batch, at) => preflightBatch(batch, at, { read: key => trac('read', [key, at]), deployment: await trac('deployment') }),
     receiptCutoffPage: (settingsHash, index) => store.get('receiptCutoffPages', `${settingsHash}/${index}`),
@@ -208,8 +214,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     replayNodes: store instanceof EvidenceStore ? (...args) => store.replayNodes(...args) : undefined,
     claimNode: (id, ancestors) => store instanceof EvidenceStore ? store.claimNode(id, ancestors) : store.get('claimNodes', id),
     namedNode: (id, ancestors) => store instanceof EvidenceStore ? store.namedNode(id, ancestors) : store.get('namedNodes', id),
-    settingsByHash: hash => trac('settingsByHash', hash),
-    renewalSlice: n => trac('renewalSlice', n),
+    settingsByHash: hash => trac('settingsByHash', [hash]),
+    renewalSlice: n => trac('renewalSlice', [n]),
     authority: sharedAuthority, counted: async () => (await sharedHead()).counted, batchLast: () => trac('batchLast'), batchRoot: n => trac('root', [n]), committeeEpoch: async () => (await trac('authority')).epoch,
     balance: (owner, asset, at) => trac('balance', [owner, asset, at]), nonceUsed: (owner, nonce, at) => trac('nonceUsed', [owner, nonce, at]), pending: (id, at) => trac('pending', [id, at]),
     pendingAcceptance: id => trac('acceptance', [id]), mintExit: id => trac('exit', [id]), agentAddress: id => trac('agentAddress', [id]), blockHold: (asset, block, at) => trac('hold', [asset, block, at]),
@@ -378,7 +384,10 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   installMintPayments(reads, { settings: config.prod.lookupSettings, request, network: config.network, escrow: config.prod.ethereum, confirmations: config.prod.ethereum.confirmations });
   reads.paymentUsed = key => trac('paymentUsed', [key]);
   reads.bitcoinTransaction = id => client.transaction(id);
-  reads.publicMintHeader = async (height, at) => (await views.view(at?.tip ?? (await sharedStamp()).tip, at?.tipHash ?? (await sharedStamp()).tipHash)).get(height);
+  reads.publicMintHeader = async (height, at) => {
+    const snapshot = at ?? await reads.batchStamp();
+    return (await views.view(snapshot.tip, snapshot.tipHash)).get(height);
+  };
   reads.publicBitcoinHash = async (height, at) => {
     check(BigInt(height) <= BigInt(at.counted), 'public_scan_pending');
     const expected = (await views.view(at.tip, at.tipHash)).hashAt(height);

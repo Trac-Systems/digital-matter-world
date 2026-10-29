@@ -83,7 +83,7 @@ export function mount(root, params = {}) {
       { key: 'block', label: 'Block', num: true, render: r => r.block !== undefined && r.block !== null ? h('a.mono', { href: site.href('world', { b: r.block }) }, fmtInt(r.block)) : h('span.faint', {}, 'compound'), sort: r => r.block },
       { key: 'amount', label: 'Tokens', num: true },
       { key: 'kind', label: 'Paid with', render: r => r.kind === 'ethereum' ? 'Bridged TAP' : 'TAP' },
-      { key: 'price', label: 'Price', num: true, render: r => h('span.mono', {}, fee(r.price, r.kind, r.unit)) },
+      { key: 'price', label: 'Fee', num: true, render: r => h('span.mono', {}, fee(r.price, r.kind, r.unit)) },
       { key: 'state', label: 'State', render: r => STATE(r.state) },
       { key: 'inscription', label: 'Inscription', render: r => r.inscription ? h('span', {}, h('span.pill.minted', { style: { marginRight: '6px' } }, 'on-chain'), hashEl(r.inscription)) : h('span.faint', {}, '–'), sortable: false },
       { key: 'receiver', label: 'Owner', render: r => hashEl(r.receiver), sortable: false },
@@ -134,7 +134,7 @@ export function mount(root, params = {}) {
     links: 'No Bitmap links yet.',
   };
   const CONTROLS = {
-    mints: { sorts: [['id:desc', 'Newest'], ['block:desc', 'Block'], ['price:desc', 'Highest price'], ['asset:asc', 'Matter']], filters: [{ name: 'kind', label: 'Paid with', value: '', options: [['', 'Both'], ['tap', 'TAP'], ['ethereum', 'Bridged TAP']] }, { name: 'state', label: 'State', value: '', options: [['', 'All'], ['awaiting_payment', 'Awaiting payment'], ['partly_paid', 'Partly paid'], ['permit_issued', 'Permit ready'], ['minted', 'Minted'], ['expired', 'Expired']] }] },
+    mints: { sorts: [['id:desc', 'Newest'], ['block:desc', 'Block'], ['price:desc', 'Highest fee'], ['asset:asc', 'Matter']], filters: [{ name: 'kind', label: 'Paid with', value: '', options: [['', 'Both'], ['tap', 'TAP'], ['ethereum', 'Bridged TAP']] }, { name: 'state', label: 'State', value: '', options: [['', 'All'], ['awaiting_payment', 'Awaiting payment'], ['partly_paid', 'Partly paid'], ['permit_issued', 'Permit ready'], ['minted', 'Minted'], ['expired', 'Expired']] }] },
     payments: { sorts: [['block:desc', 'Newest'], ['total:desc', 'Largest']], filters: [{ name: 'action', label: 'Action', value: '', options: [['', 'All'], ['claim', 'Released'], ['refund', 'Refunded']] }] },
     ethereum: { sorts: [['id:desc', 'Newest'], ['amount:desc', 'Largest']], filters: [] },
     payouts: { sorts: [['owed:desc', 'Most owed'], ['accrued:desc', 'Most earned'], ['beneficiary:asc', 'Recipient']], filters: [] },

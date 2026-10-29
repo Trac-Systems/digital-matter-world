@@ -56,3 +56,18 @@ test('a new ceremony waits for the active batch and explicit busy refusals retai
     const result=await committee.signature(key,proposal);assert.equal(result.session,id);assert.equal(store.get('ceremonies',key).stage,'complete');
   } finally {for(const s of servers){s.closeAllConnections();await new Promise(resolve=>s.close(resolve));}await store.close();}
 });
+
+test('a batch with operations but no new observation files asks signers for readiness at its own height', async () => {
+  const store = await Store.open(await temp('committee-empty-files-')), servers = [], signers = [], asked = [];
+  try {
+    for (let i = 0; i < 5; i++) {
+      const server = createServer(async (req, res) => { let text = ''; for await (const chunk of req) text += chunk; asked.push(req.url); res.writeHead(503).end('{"error":"busy"}'); });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
+      signers.push({ id: 's' + i, url: 'http://127.0.0.1:' + server.address().port, token: 'local-test', peer: { id: 's' + i } });
+    }
+    const committee = new Committee({ store, network, signers });
+    const proposal = { kind: 'batch', network, batch: { n: '280', to: '973672', settingsHash: 'ab'.repeat(32) }, files: [] };
+    assert.equal(await committee.signature('batch/0/280', proposal), null, 'unready signers defer instead of crashing on empty files');
+    assert.ok(asked.length >= 5 && asked.every(url => url === '/batch-ready'));
+  } finally { for (const s of servers) { s.closeAllConnections(); await new Promise(resolve => s.close(resolve)); } await store.close(); }
+});

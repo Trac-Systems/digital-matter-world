@@ -1,13 +1,15 @@
 import { createServer } from 'node:http';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { DashboardState, dashboardCheck, dashboardError } from './dashboard-state.mjs';
 
 const hash = value => createHash('sha256').update(value).digest();
 const equal = (value, expected) => typeof value === 'string' && value.length <= 128 && timingSafeEqual(hash(value), expected);
 const cookiePrefix = 'dmw_dashboard_';
 const files = new Map([
-  ['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
+  ['/local/agent.js', ['agent.js', 'text/javascript']], ['/local/flag.js', ['flag.js', 'text/javascript']],
+  ['/minter', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
   ['/login.js', ['login.js', 'text/javascript']], ['/wallet.js', ['wallet.js', 'text/javascript']],
   ['/console.css', ['console.css', 'text/css']],
   ...['fraunces-latin-wght-normal', 'atkinson-hyperlegible-next-latin-wght-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal'].map(name =>
@@ -22,11 +24,32 @@ async function body(req) {
   return value;
 }
 
+async function proxy(req, res, url, upstream) {
+  const headers = { accept: req.headers.accept ?? '*/*' };
+  const init = { method: req.method, redirect: 'manual', headers, signal: AbortSignal.timeout(url.pathname.startsWith('/events') ? 3600000 : 30000) };
+  if (req.method === 'POST') { init.body = JSON.stringify(await body(req)); headers['content-type'] = 'application/json'; }
+  // /me is this dashboard's own page; the site's shell renders it.
+  const response = await fetch(new URL(url.pathname === '/me' ? '/' : url.pathname + url.search, upstream), init);
+  const type = response.headers.get('content-type') ?? 'application/octet-stream';
+  res.statusCode = response.status; res.setHeader('Content-Type', type);
+  const retry = response.headers.get('retry-after'); if (retry) res.setHeader('Retry-After', retry);
+  if (type.startsWith('text/html')) {
+    const html = (await response.text()).replace('<script type="module" src="/web/app.js"></script>', '<script src="/local/flag.js"></script><script type="module" src="/web/app.js"></script>');
+    res.end(html); return;
+  }
+  if (!response.body) { res.end(); return; }
+  const stream = Readable.fromWeb(response.body);
+  stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res);
+}
+
 export async function serveDashboard(context, { port = 0, state = new DashboardState(context) } = {}) {
   dashboardCheck(Number.isSafeInteger(port) && port >= 0 && port <= 65535, 'invalid_port');
-  const token = randomBytes(32).toString('base64url'), session = randomBytes(32).toString('base64url');
+  const token = randomBytes(32).toString('base64url');
+  const session = state.session ? state.session(() => randomBytes(32).toString('base64url')) : randomBytes(32).toString('base64url');
   let tokenHash = hash(token), origin, cookieName;
   const sessionHash = hash(session);
+  let upstream = null;
+  try { upstream = new URL(state.agent?.paymentOrigin); if (!['https:', 'http:'].includes(upstream.protocol)) upstream = null; } catch { upstream = null; }
   const server = createServer(async (req, res) => {
     // No access log: neither login credentials nor private browser recovery
     // records may be copied into a terminal or gateway log.
@@ -70,20 +93,29 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       if (req.method === 'GET' && path === '/api/requests') {
         keys(['offset', 'limit']); json(await state.requests({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
       }
+      if (req.method === 'GET' && path === '/api/links') {
+        keys(['offset', 'limit']); json(await state.links({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 10) })); return;
+      }
       const mint = /^\/api\/requests\/([0-9a-f]{64})(\/plan)?$/.exec(path);
       if (req.method === 'GET' && mint) { keys([]); json(await (mint[2] ? state.plan(mint[1]) : state.status(mint[1]))); return; }
       if (req.method === 'GET' && path === '/api/wallet') { keys(['key']); json({ value: state.walletGet(url.searchParams.get('key')) }); return; }
-      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/payment', '/api/wallet', '/api/wallet-lock'].includes(path)) {
+      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock'].includes(path)) {
         keys([]); const value = await body(req);
         if (path === '/api/mint') json(await state.mint(value));
+        if (path === '/api/link') json(await state.link(value));
         if (path === '/api/mint-all') { dashboardCheck(Object.keys(value).length === 0, 'invalid_request'); json(state.mintAll(), 202); }
         if (path === '/api/payment') json(await state.payment(value));
         if (path === '/api/wallet') json(state.walletPut(value));
         if (path === '/api/wallet-lock') json(state.walletLock(value));
         return;
       }
-      json({ error: 'not_found' }, 404);
+      dashboardCheck(upstream && !path.startsWith('/api/') && !path.startsWith('/local/'), 'not_found', 404);
+      // Every other address is the live site: its pages, reads, wallet connect
+      // and payment flow. Only the HTML shell gains the local "My agent" page.
+      await proxy(req, res, url, upstream); return;
     } catch (error) {
+      // Opt-in local diagnostics: the owner's terminal only, never the page.
+      if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`dashboard ${req.method} ${req.url.split('?')[0]}: ${String(error?.stack ?? error).slice(0, 2000)}\n`);
       if (!res.headersSent) json({ error: dashboardError(error) }, [400, 401, 403, 404, 409, 413, 415, 429, 502, 503].includes(error.status) ? error.status : 500);
       else res.end();
     }

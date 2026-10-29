@@ -5,7 +5,7 @@ import * as r from '../../rules/src/index.js';
 import { prepareTerminalImport } from '../../service/src/terminal-import.mjs';
 import { accountOperationsRoot } from '../../rules/src/account-batch.js';
 
-test('administrator amendments retain history, both activation clocks and original delay', async () => {
+test('administrator amendments retain history and both activation clocks without an admin delay', async () => {
   const old = harness(); await old.mint(['p0']);
   const head = await old.state().head(), imported = prepareTerminalImport({ records: old.db, height: head.counted, pageBytes: 2000 });
   const document = r.settingsRevision({ network: deployment.network, effectiveBatch: '2', effectiveBitcoinWindow: String(head.counted),
@@ -21,9 +21,7 @@ test('administrator amendments retain history, both activation clocks and origin
   assert.equal(await h.run('ad_settings', { document: { ...successor, values: { ...successor.values, batchBytes: 50000 } } }), 'settings_capacity_drain_required');
   assert.equal(await h.run('ad_settings', { document: successor }, bob.address), 'admin');
   assert.equal(await h.run('ad_settings', { document: successor }), null);
-  assert.equal(await h.run('ad_apply', { id: 'settings' }), 'admin_delay');
-  await h.advance(1); assert.equal(await h.run('ad_apply', { id: 'settings' }), 'admin_delay');
-  await h.advance(1); assert.equal(await h.run('ad_apply', { id: 'settings' }, bob.address), null);
+  await h.advance(2); assert.equal(await h.run('ad_apply', { id: 'settings' }, bob.address), null);
   const apply = async (policy, execution) => {
     execution = r.decimalV2(execution ?? (await h.state().head()).counted);
     const last = await h.state().batchLast(), ops = [{ op: 'kv', key: 'fixture/settings', value: r.hashObject(policy) }];

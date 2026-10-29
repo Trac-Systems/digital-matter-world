@@ -33,7 +33,9 @@ async function open(t, { provider = true } = {}) {
     await page.addInitScript(methods => { window.tapprotocol = Object.fromEntries(methods.map(name => [name, (...args) => window.walletFixture(name, args)])); }, Object.keys(wallet.provider));
   }
   await page.goto(dashboard.loginLink);
-  await page.waitForURL(dashboard.origin + '/');
+  await page.waitForURL(dashboard.origin + '/me');
+  // The standalone mint page remains at /minter; /me is served by the site shell.
+  await page.goto(dashboard.origin + '/minter');
   await page.getByRole('button', { name: 'Mint', exact: true }).first().waitFor();
   return { f, dashboard, browser, page, errors, wallet, signed: () => signs, pushed: () => pushes };
 }

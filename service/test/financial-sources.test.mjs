@@ -823,3 +823,35 @@ test('existing paid links keep their original reference capacity across an amend
   assert.deepEqual(f.store.get('financialLinks', p.id).request, row.request);
   assert.equal(f.store.get('accountRecords', 'fp/' + p.id).state, 'consumed');
 });
+
+
+test('independent link funding reads reject empty payment pages before reducing receipt heights', async t => {
+  const f = await setup(t, {}, '100'), p = await f.prepareLink('empty-page');
+  await f.links.request({ ...p.body, reserve: p.action }); await f.execute();
+  const payment = r.hash('empty-page-payment') + 'i0'; f.transfers.set(payment, []);
+  for (const type of ['fund', 'surplus']) {
+    for (const items of [[], undefined, null]) {
+      await assert.rejects(f.independent.financialEvidence({ type, id: p.id, items, references: [payment] }, await f.stamp()),
+        { name: 'Error', message: 'financial_payment_items' });
+    }
+  }
+});
+
+test('a slow cached mint quote follows a settings amendment while explicit historical quotes keep their terms', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = await setup(t), input = { asset: 'c1', amount: '3', kind: 'tap' };
+  const assetContext = f.reads.assetContext;
+  f.reads.assetContext = async (...args) => { const value = await assetContext(...args); t.mock.timers.tick(1600); return value; };
+  const old = await f.mints.quote(input);
+  assert.strictEqual(await f.mints.quote(input), old, 'a slow identical retry uses the completed quote');
+  const successor = r.settingsRevision({ network, previous: f.document, effectiveBatch: '2', effectiveBitcoinWindow: '100',
+    values: { ...f.document.values, pendingBlocks: 400, firstMakerShareBps: 1000, compoundBurnBps: 5000 } });
+  f.useSettings(successor);
+  const fresh = await f.mints.quote(input);
+  assert.equal(fresh.settingsHash, r.hashObject(successor));
+  assert.equal(fresh.payBy.untilBlock, 500);
+  assert.equal(fresh.split.firstMaker, '100');
+  const historical = await f.mints.quote({ ...input, feeQuote: old.feeQuote });
+  assert.equal(historical.settingsHash, old.settingsHash);
+  assert.deepEqual(historical.split, old.split);
+});

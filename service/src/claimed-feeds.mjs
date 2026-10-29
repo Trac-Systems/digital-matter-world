@@ -1,3 +1,4 @@
+import { patternMint } from './mint-assets.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
@@ -46,7 +47,7 @@ export async function claimedPatternPage({ store, files, pattern, page, settings
     : store.db.prepare('SELECT height,value FROM claimedBlocks WHERE asset=? AND height>=? AND height<? ORDER BY height').all(asset, from, from + size);
   const found = Buffer.alloc(Math.ceil(size / 8)), minted = Buffer.alloc(found.length), details = [], refs = [];
   for (const r of rows) {
-    const occurrence = JSON.parse(r.value), find = store.get('finds', v2 ? rules.findIdV2(r.height, asset.slice(3)) : rules.findId(r.height, pattern.number)), mint = store.get('minted', `${asset}/${r.height}`), i = Number(BigInt(r.height) - BigInt(from));
+    const occurrence = JSON.parse(r.value), find = store.get('finds', v2 ? rules.findIdV2(r.height, asset.slice(3)) : rules.findId(r.height, pattern.number)), mint = v2 ? patternMint(store, asset, r.height) : store.get('minted', `${asset}/${r.height}`), i = Number(BigInt(r.height) - BigInt(from));
     if (find) found[i >> 3] |= 1 << (i & 7); if (mint) minted[i >> 3] |= 1 << (i & 7);
     details.push(publicIdentities({ height: r.height, count: occurrence.count, hash: occurrence.hash, find, mint, link: store.get('links', heightKey(r.height)) }));
   }

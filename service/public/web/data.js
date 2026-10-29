@@ -1,4 +1,15 @@
+// Short-lived 503s while the gateway catches up after a batch; reads retry them.
+const PASSING = new Set(['public_projection_pending', 'request_pending', 'read_not_ready', 'read_snapshot_changed', 'service_busy']);
 export async function api(path, body, signal) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await apiOnce(path, body, signal); }
+    catch (error) {
+      if (body !== undefined || error.status !== 503 || !PASSING.has(error.message) || attempt >= 5 || signal?.aborted) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+    }
+  }
+}
+async function apiOnce(path, body, signal) {
   const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST', signal, credentials: 'same-origin',
     headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });

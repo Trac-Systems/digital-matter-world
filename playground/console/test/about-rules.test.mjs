@@ -33,7 +33,7 @@ test('live displayed prices match feeFor for every tier and operator setting', (
   assert.equal(feePrice(policies[0], 'link'), '22.6 TAP');
   for (const policy of [null, {}, { baseFee: '1' }, { ...policies[0], baseFee: '22.6' },
     { ...policies[0], feeSettings: { ...policies[0].feeSettings, link: undefined } }]) {
-    for (const kind of ['find', 'compound', 'compound-minimum', 'link']) assert.equal(feePrice(policy, kind), 'current price');
+    for (const kind of ['find', 'compound', 'compound-minimum', 'link']) assert.equal(feePrice(policy, kind), 'current fee');
   }
 });
 

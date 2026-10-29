@@ -3,7 +3,18 @@ export class ApiError extends Error {
   constructor(status, reason, body) { super(reason); this.status = status; this.body = body; }
 }
 
-export async function api(path, { method = 'GET', body, signal } = {}) {
+// Short-lived 503s while the gateway catches up after a batch; reads retry them.
+const PASSING = new Set(['public_projection_pending', 'request_pending', 'read_not_ready', 'read_snapshot_changed', 'service_busy']);
+export async function api(path, options = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await apiOnce(path, options); }
+    catch (error) {
+      if ((options.method ?? 'GET') !== 'GET' || error.status !== 503 || !PASSING.has(error.message) || attempt >= 5 || options.signal?.aborted) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+    }
+  }
+}
+async function apiOnce(path, { method = 'GET', body, signal } = {}) {
   const res = await fetch(`/api${path}`, {
     method, signal,
     credentials: 'same-origin',

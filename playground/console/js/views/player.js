@@ -79,11 +79,11 @@ export function mount(root, params) {
     return pagedPanel('Payments', {
       path: '/player/pendingPayments', key: 'pendingPayments', limit: 10,
       filters: [{ name: 'state', label: 'Show', value: '', options: [['', 'All'], ['awaiting_payment', 'Awaiting mint payment'], ['partly_paid', 'Partly paid'], ['permit_issued', 'Permit ready'], ['waiting_payment', 'Awaiting link payment']] }],
-      sorts: [['id:asc', 'Request'], ['price:desc', 'Highest price'], ['state:asc', 'State']],
+      sorts: [['id:asc', 'Request'], ['price:desc', 'Highest fee'], ['state:asc', 'State']],
       empty: 'No payments in flight. For a mint, pay first, wait for the permit, then inscribe from your wallet.',
       columns: [
         { key: 'what', label: 'For', render: r => { const t = requestTarget(r); return t.asset ? h('span', {}, h('span.swatch', { style: { background: mineral(t.asset) } }), `${assetName(t.asset)}${t.block !== null && t.block !== undefined ? ` · block ${fmtInt(t.block)}` : ''}`) : t.type; } },
-        { key: 'price', label: 'Price', num: true, render: r => h('span.mono', {}, fee(r.price, r.kind, r.unit)) },
+        { key: 'price', label: 'Fee', num: true, render: r => h('span.mono', {}, fee(r.price, r.kind, r.unit)) },
         { key: 'kind', label: 'Paid with', render: r => r.kind === 'ethereum' ? 'Bridged TAP' : r.kind === 'tap' ? 'TAP' : cell(r.kind) },
         { key: 'state', label: 'State', render: r => { const [l, k] = label(r.state); return pill(l, k, r.reason ? String(r.reason).replace(/_/g, ' ') : undefined); } },
         { key: 'inscription', label: 'Inscription', render: r => r.inscription ? hashEl(r.inscription) : h('span.faint', {}, '–') },
@@ -94,7 +94,7 @@ export function mount(root, params) {
   async function payPending(r) {
     const t = requestTarget(r), type = /link/i.test(t.type) ? 'link' : 'mint';
     if (type === 'mint') { mintFlow({ id: r.requestId ?? r.id }); return; }
-    if (await confirmModal({ title: 'Pay this request?', rows: [['For', t.asset ? `${assetName(t.asset)}${t.block !== null ? ` from block ${fmtInt(t.block)}` : ''}` : type], ['Price', fee(r.price, r.kind, r.unit)], ['Paid with', r.kind === 'ethereum' ? 'bridged TAP (escrow on Anvil)' : 'test TAP wallet (payment lock)']], confirm: 'Pay' })) payWhenReady(r.id, type).catch(() => {});
+    if (await confirmModal({ title: 'Pay this request?', rows: [['For', t.asset ? `${assetName(t.asset)}${t.block !== null ? ` from block ${fmtInt(t.block)}` : ''}` : type], ['Fee', fee(r.price, r.kind, r.unit)], ['Paid with', r.kind === 'ethereum' ? 'bridged TAP (escrow on Anvil)' : 'test TAP wallet (payment lock)']], confirm: 'Pay' })) payWhenReady(r.id, type).catch(() => {});
   }
   const HISTORY = { claim: 'Claim', header: 'Header', discovery: 'Discovery', craft: 'Craft', mint: 'Mint', link: 'Bitmap link', bitmap: 'Test Bitmap', tx: 'Transfer', pay: 'Payment' };
   function historyPanel() {
@@ -289,7 +289,7 @@ export function mount(root, params) {
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. After payment is final, your units are consumed and your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
       kv([['Who may mint a block', 'The finder alone for 1,008 blocks; then the Bitmap holder if the Bitmap was linked before the find; otherwise anyone.'],
-        ['Price', `By rarity tier: ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
+        ['Fee', `By rarity tier: ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
       savedMintIntents().length ? h('div', {}, h('h3', {}, 'Resume a quote'), ...savedMintIntents().map(intent => h('button.btn.sm', { onclick: () => mintFlow({ resumeIntent: intent }) }, `${assetName(intent.asset)} · ${intent.actionId}`))) : null,
       savedMintRequests().length ? h('div', {}, h('h3', {}, 'Resume a saved mint'), ...savedMintRequests().map(id => h('button.btn.sm', { onclick: () => mintFlow({ id }) }, short(id, 12, 6)))) : null,
@@ -300,7 +300,7 @@ export function mount(root, params) {
     const terms = feeTerms('link');
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Link a Bitmap you hold to its plot. Linked plots earn the Bitmap holder share of every mint fee, and blocks found after the link may only be minted by the holder once the finder window ends. Paid once; the link stays with the Bitmap.'),
-      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link price ${tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
+      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link fee ${tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
       h('div.section-label', { style: { padding: '6px 0 0' } }, 'Your Bitmaps'),
       formPaged({
         path: '/player/bitmaps', key: 'bitmaps', limit: 10,

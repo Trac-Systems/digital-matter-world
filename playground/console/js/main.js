@@ -86,7 +86,7 @@ function drawStrip(s) {
     cell('Counted', fmtInt(s.counted), 'Blocks the Trac contract has counted. Finder windows and refunds run on counted blocks.'),
     cell('Batch', s.batch ? `#${fmtInt(s.batch.n)} → ${fmtInt(s.batch.to)}` : '–', 'Last committee batch applied on Trac and the counted block it covers.'),
     cell('Mining', s.mining?.enabled ? `every ${secs(s.mining.intervalMs)}` : 'paused', 'Automatic block making. Change it in the Lab.'),
-    cell('Base price', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)),
+    cell('Base fee', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)),
     cell('Bots', s.bots ? `${fmtInt(s.bots.count)}${s.bots.paused ? ' · paused' : ` · every ${secs(s.bots.intervalMs)}`}` : '–', 'Bot agents playing alongside you.'),
     cell('Components', bad.length ? h('span', { style: { color: 'var(--bad)' } }, `${bad.length} not ready`) : `${(s.components ?? []).length} ready`, bad.length ? bad.map(c => `${c.name}: ${c.state}`).join('\n') : 'Every local service is answering.'),
     cell('You', s.player?.address ? hashEl(s.player.address, short(s.player.address, 6, 4)) : '–', 'Your player key on the local Trac network.'));

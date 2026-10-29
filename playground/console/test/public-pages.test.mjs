@@ -169,7 +169,7 @@ test('About prices and the existing status cell follow the live policy and unava
   await p.goto(server.url + '/about', { waitUntil: 'domcontentloaded' });
   const prices = p.locator('article.about [data-fee-kind]');
   await prices.first().waitFor();
-  const fallback = Array(13).fill('current price');
+  const fallback = Array(13).fill('current fee');
   assert.deepEqual(await prices.allTextContents(), fallback, 'placeholders render before status loads');
   assert.equal(await p.locator('article.about table').count(), 8);
   const firstArticle = await p.locator('article.about').elementHandle();
@@ -177,7 +177,7 @@ test('About prices and the existing status cell follow the live policy and unava
   await p.waitForFunction(() => document.querySelector('[data-fee-kind]')?.textContent === '2,260 TAP');
   assert.deepEqual(await prices.allTextContents(), ['2,260 TAP', '678 TAP', '226 TAP', '67.8 TAP', '22.6 TAP',
     '22.6 TAP', '67.8 TAP', '226 TAP', '678 TAP', '2,260 TAP', '22.6 TAP', '22.6 TAP', '22.6 TAP']);
-  const fee = p.locator('.strip .cell').filter({ hasText: 'Base price' });
+  const fee = p.locator('.strip .cell').filter({ hasText: 'Base fee' });
   assert.equal(await fee.locator('.v').innerText(), '22.6 TAP');
   assert.equal(await fee.getAttribute('data-tip'), 'Changes apply to new quotes. Link: 22.6 TAP; tiers: 22.6 TAP, 67.8 TAP, 226 TAP, 678 TAP, 2,260 TAP; compounds from: 22.6 TAP.');
   const refresh = () => p.evaluate(async () => {
@@ -216,12 +216,14 @@ const publicRows = [
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 async function publicMintPage(t, { list = route => json(route, { v: 3, rows: publicRows, next: null, nextCursor: null, total: null }), refunds, connected = false } = {}) {
   const p = await open(t), calls = [];
-  p.on('request', r => { const u = new URL(r.url()); if (u.pathname.startsWith('/public-mints') || u.pathname.startsWith('/mint-rights')) calls.push([r.method(), u.pathname + u.search, r.postDataJSON?.() ?? null]); });
+  p.on('request', r => { const u = new URL(r.url()); if (u.pathname.startsWith('/public-mints') || u.pathname.startsWith('/mint-rights') || u.pathname === '/patterns') calls.push([r.method(), u.pathname + u.search, r.postDataJSON?.() ?? null]); });
   await p.addInitScript(([address, connected]) => {
     if (connected) localStorage.setItem('dmw-web-v1/wallets', JSON.stringify({ tap: address }));
     globalThis.tapprotocol = { getNetwork: async () => 'regtest', switchNetwork: async () => {}, requestAccounts: async () => [address], getAccounts: async () => [address], on() {} };
   }, [tapAddress, connected]);
-  await p.route('**/patterns?*', route => json(route, { patterns: [{ ...pattern, asset: 'p2:0', number: '0', legacy: { asset: 'p0' } }], next: null }));
+  // The server's name search: q matches part of the name.
+  await p.route('**/patterns?*', route => { const q = new URL(route.request().url()).searchParams.get('q');
+    json(route, { patterns: !q || pattern.name.includes(q) ? [{ ...pattern, asset: 'p2:0', number: '0', legacy: { asset: 'p0' } }] : [], next: null }); });
   await p.route('**/web-api/target', route => json(route, { network: 'dmw-regtest', bitcoinNetwork: 'regtest', ethereum: { chainId: '0x7a69' } }));
   await p.route('https://mempool.space/**', route => json(route, { halfHourFee: 3 }));
   await p.route(/\/public-mints\?/, list);
@@ -244,9 +246,21 @@ test('the Mint page lists only the public blocks the API returns, with one Mint 
   assert.ok(!calls.some(([, path]) => path.startsWith('/mint-rights')), 'no agent mint rights are read');
   assert.equal(await p.getByRole('heading', { name: 'What you can mint', exact: true }).count(), 0);
   assert.doesNotMatch(await p.locator('main').innerText(), /ask your agent to mint|Mint On-Chain/i);
-  await list.locator('.pager-bar button').filter({ hasText: /^Digit$/ }).click();
+  // A pattern is picked by a server-side name search; thousands of patterns never render as controls.
+  const search = p.locator('#mint input[type="search"]');
+  await search.fill('Digit'); await search.dispatchEvent('change');
   await p.waitForFunction(() => document.querySelectorAll('#mint tbody tr').length === 3 && !document.querySelector('#mint .paged[aria-busy="true"]'));
   assert.equal(new URL(calls.filter(([, path]) => path.startsWith('/public-mints?')).at(-1)[1], 'http://x').searchParams.get('asset'), 'p2:0');
+  // Part of a name finds its pattern; text that names no pattern is never sent as a pattern id.
+  const asked = () => calls.filter(([, path]) => path.startsWith('/public-mints?')).map(([, path]) => new URL(path, 'http://x').searchParams.get('asset'));
+  await search.fill('zzz'); await search.dispatchEvent('change');
+  await p.getByText('No pattern named “zzz”.').waitFor();
+  await search.fill('dig'); await search.dispatchEvent('change');
+  await p.waitForFunction(() => document.querySelector('#mint input[type="search"]').value === 'Digit');
+  assert.ok(!asked().includes('zzz') && !asked().includes('dig'));
+  const searched = calls.map(([, path]) => new URL(path, 'http://x')).filter(u => u.pathname === '/patterns' && u.searchParams.get('q') === 'dig');
+  assert.ok(searched.length && searched.every(u => u.searchParams.get('limit') === '10'), 'suggestions come from the server, ten at most');
+  assert.ok(await p.locator('#public-pattern-names option').count() <= 10);
 });
 
 test('a block opened from elsewhere shows its point-read state and mints only when public', async t => {
@@ -353,7 +367,7 @@ for (const endpoint of ['quote', 'start']) for (const state of ['deployment_need
   });
 }
 
-test('public mint pagination follows an empty page with a continuation and always sends the selected pattern', async t => {
+test('the public list reads past an empty page of a bounded scan and always sends the selected pattern', async t => {
   const cursors = [];
   const { p, calls } = await publicMintPage(t, { list: route => {
     const params = new URL(route.request().url()).searchParams; cursors.push(params.get('cursor'));
@@ -362,9 +376,9 @@ test('public mint pagination follows an empty page with a continuation and alway
   } });
   await p.goto(server.url + '/mint');
   const list = panel(p, 'Public blocks');
-  await list.getByRole('button', { name: 'Next page' }).click();
   await list.locator('tbody tr').nth(2).waitFor();
   assert.deepEqual(cursors, [null, 'opaque:next']);
+  assert.equal(await list.getByRole('button', { name: 'Next page' }).isDisabled(), true);
   assert.ok(calls.every(([, path]) => !path.startsWith('/public-mints?') || new URL(path, 'http://local').searchParams.has('asset')));
 });
 

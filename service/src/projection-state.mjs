@@ -1,3 +1,4 @@
+import { patternCatalogId } from './mint-assets.mjs';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 
@@ -57,7 +58,7 @@ export function projectRevision(store, op) {
     db.prepare('DELETE FROM projectionPending WHERE event=?').run(event);
     for (const { scope } of old) bump(scope);
     if (op.value) {
-      const scopes = ['world', 'block/' + rules.decimalV2(op.value.block), ...(op.value.asset ? ['claimed2/' + op.value.asset] : ['links'])];
+      const scopes = ['world', 'block/' + rules.decimalV2(op.value.block), ...(op.value.asset ? ['claimed2/' + (patternCatalogId(op.value.asset) ?? op.value.asset)] : ['links'])];
       for (const scope of scopes) { db.prepare('INSERT OR IGNORE INTO projectionPending VALUES(?,?)').run(scope, event); bump(scope); }
     }
   }

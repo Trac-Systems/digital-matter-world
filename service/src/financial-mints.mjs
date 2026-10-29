@@ -57,7 +57,7 @@ export class FinancialMints extends Mints {
   quote(input) {
     if (input.request) return this.request(input);
     this.quotes ??= new Map();
-    const key = rules.stableJSON(input), now = Date.now();
+    const key = rules.stableJSON([rules.hashObject(this.document), input]), now = Date.now();
     for (const [k, q] of this.quotes) if (q.settled && now - q.settled > QUOTE_REUSE_MS) this.quotes.delete(k);
     const known = this.quotes.get(key);
     if (known) return known.promise;
@@ -104,10 +104,13 @@ export class FinancialMints extends Mints {
         'fi/deployment/' + external.deployment, ...(external.block === null ? [] : [plotKey(external.asset, external.block)])] : [])]);
     return { ...publicMint(row), financialVersion: 2, state: row.state,
       payable: !blocked && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
+      // The reported, not yet confirmed mint inscription: every page hides a second inscribe.
+      ...(row.mintInscription && row.state !== 'minted' ? { sentInscription: row.mintInscription } : {}),
       reservation: obligation?.state ?? 'pending', funding: funding ? { state: funding.state, paid: funding.paid, sequence: funding.sequence, root: funding.root } : null,
       ...(row.work ? { transition: { id: row.work, state: this.store.get('financialAccepted', row.work)?.state ?? 'queued',
         reason: this.store.get('financialDeferred', row.work)?.reason ?? null } } : {}) };
   }
+  // Background ticks advance the same request; the player's (identical) request waits for them.
   request(body) { return this.mintWork.run(financialMintId(this.network, body.request), async () => {
     const r = body.request, counted = await this.reads.counted();
     check(verifyFinancialMintRequest(this.network, r, body.signature, r?.until) && verifyPayer(this.network, body) &&
@@ -157,7 +160,7 @@ export class FinancialMints extends Mints {
     const admitted = await this.financial.admit(transition, await this.reads.batchStamp());
     await this.store.put('mints', id, { ...row, state: 'reserving', work: admitted.id });
     return this.public(id);
-  }); }
+  }, { after: true }); }
   async queue(row, transition) {
     const admitted = await this.financial.submit(transition);
     await this.store.put('mints', row.id, { ...row, work: admitted.id });
@@ -234,6 +237,15 @@ export class FinancialMints extends Mints {
         this.financialCursors[space] = page.length === this.resources.workPage ? page.at(-1).id : '';
         await parallelPage(page, async ({ id }) => {
           if (this.mintWork.pending.has(id)) return;
+          // A request waiting for its owner's signed reservation has nothing to
+          // advance; check only its expiry, once a minute, so the owner's next
+          // step is not refused while the key is held.
+          const waiting = this.store.get('mints', id);
+          if (waiting?.state === 'authorizing' && !waiting.work) {
+            this.authorizingChecks ??= new Map();
+            if (Date.now() - (this.authorizingChecks.get(id) ?? 0) < 60000) return;
+            this.authorizingChecks.set(id, Date.now());
+          }
           return this.mintWork.run(id, async () => {
           try { await this.advance(this.store.get('mints', id)); }
           catch (error) { const row = this.store.get('mints', id); await this.store.put('mints', id, { ...row, lastError: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' }); }

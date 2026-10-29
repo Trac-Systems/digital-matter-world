@@ -6,9 +6,9 @@ import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 // One computational worker isolates regex/history scans and batch signature
 // verification from HTTP.
 export class Replay {
-  constructor({ headerPageSize = 1024, headerCachePages = 8, cacheKiB = 4096, timeoutMs = 120000 } = {}) {
+  constructor({ headerPageSize = 1024, headerCachePages = 8, cacheKiB = 4096, timeoutMs = 120000, resources } = {}) {
     check(Number.isSafeInteger(headerPageSize) && headerPageSize > 0, 'replay_header_page_size');
-    Object.assign(this, { headerPageSize, headerCachePages, cacheKiB, timeoutMs });
+    Object.assign(this, { headerPageSize, headerCachePages, cacheKiB, timeoutMs, resources });
     this.worker = new Worker(new URL('./replay-worker.mjs', import.meta.url)); this.id = '0';
   }
   async run(input, history, claims) {

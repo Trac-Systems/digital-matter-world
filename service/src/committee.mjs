@@ -143,7 +143,7 @@ export class Committee {
     for (const id of this.activeSigning) if (!['prepared', 'running'].includes(this.store.get('ceremonies', id)?.stage)) this.activeSigning.delete(id);
     if (session?.stage !== 'complete' && [...this.activeSigning].some(id => id !== key)) return null;
     if (!session) {
-      const at = proposal.kind === 'batch' ? { counted: proposal.batch.to, tip: proposal.files.map(f => rules.decodeBinary(Buffer.from(f, 'hex')).tip).reduce((a, b) => rules.ordinalCodec(!!proposal.batch.settingsHash).max(a, b)) } : undefined;
+      const at = proposal.kind === 'batch' ? { counted: proposal.batch.to, tip: proposal.files.map(f => rules.decodeBinary(Buffer.from(f, 'hex')).tip).reduce((a, b) => rules.ordinalCodec(!!proposal.batch.settingsHash).max(a, b), proposal.batch.to) } : undefined;
       const quorum = (await this.healthy(at)).slice(0, 3);
       if (at && quorum.length < 3) return null;
       check(quorum.length === 3, 'committee_quorum_unavailable', 503);

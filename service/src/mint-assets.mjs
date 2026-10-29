@@ -14,6 +14,14 @@ export function patternCatalogId(asset) {
   return 'p2:' + number;
 }
 
+// Public catalog rows use p2 ids; imported mint records retain the original
+// ledger id. Resolve that alias at read time without duplicating mint counts.
+export function patternMint(store, asset, block) {
+  const catalog = patternCatalogId(asset), pattern = catalog && store.get('patternsByAsset', catalog);
+  const ledger = pattern?.legacy?.asset ?? asset;
+  return store.get('minted', `${ledger}/${block}`) ?? (catalog && store.get('minted', `${catalog}/${block}`)) ?? null;
+}
+
 export async function mintAssetDefinition(store, requestedAsset) {
   check(deploymentAssetId(requestedAsset), 'deployment_asset');
   const catalogAsset = patternCatalogId(requestedAsset);

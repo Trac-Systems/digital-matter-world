@@ -1,3 +1,4 @@
+import { patternCatalogId } from './mint-assets.mjs';
 import { rules } from './rules.mjs';
 import { heightKey } from './util.mjs';
 import { bumpProjection } from './projection-state.mjs';
@@ -93,7 +94,7 @@ export function projectPublicRecord(store, op, previous) {
     }
   }
   if (op.space === 'minted' && patternLedgerAsset(id.split('/')[0])) {
-    const [asset, height] = id.split('/');
+    const [ledger, height] = id.split('/'), asset = patternCatalogId(ledger);
     block(height, 'mints', Number(!!row) - Number(!!previous));
     db.prepare('UPDATE claimedBlocksV2 SET minted=? WHERE asset=? AND heightKey=?').run(Number(!!row), asset, rules.uintKeyV2(height));
     bumpProjection(store, 'mintedAsset/' + asset);

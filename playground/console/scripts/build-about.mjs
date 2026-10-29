@@ -10,7 +10,7 @@ function inline(text) {
     html += escape(text.slice(at, match.index));
     if (match[5] !== undefined) {
       const [kind, tier = '1'] = match[5].split(':');
-      html += `<span data-fee-kind="${kind}" data-fee-tier="${tier}">current price</span>`;
+      html += `<span data-fee-kind="${kind}" data-fee-tier="${tier}">current fee</span>`;
     } else if (match[3] !== undefined) html += `<a href="${escape(match[4])}" target="_blank" rel="noopener">${escape(match[3])}</a>`;
     else html += match[1] === undefined ? `<code>${escape(match[2])}</code>` : `<strong>${inline(match[1])}</strong>`;
     at = match.index + match[0].length;

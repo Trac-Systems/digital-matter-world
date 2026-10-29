@@ -37,11 +37,12 @@ export function verifyEvidence(value, signature, key) {
 function keyCheck(space, id, settings) {
   check(exportableSpace(space) && typeof id === 'string' && Buffer.byteLength(id) <= settings.maxIdBytes, 'evidence_key');
 }
+// v2 audit and summary files live under blocks/v2/.
 function filePath(root, path) {
-  check(typeof path === 'string' && /^(blocks\/[a-zA-Z0-9._-]+\.bin|[0-9a-f]{64}\.json)$/.test(path), 'evidence_path');
+  check(typeof path === 'string' && /^(blocks\/(?:v2\/)?[a-zA-Z0-9._-]+\.bin|[0-9a-f]{64}\.json)$/.test(path), 'evidence_path');
   const filename = resolve(root, path); check(filename.startsWith(resolve(root) + '/'), 'evidence_path'); return filename;
 }
-export function evidencePublisher({ config, store, reads, secret, now = Date.now }) {
+export function evidencePublisher({ config, store, reads, secret, now = Date.now, snapshotLifetimeMs }) {
   const settings = evidenceSettings(config.prod?.evidenceSettings), gate = serial(), used = new Map(), sessions = new Map();
   const { retries, backoffMs } = evidenceSnapshotPolicy(config.prod?.evidenceSnapshot);
   const drop = id => { const s = sessions.get(id); if (s) { clearTimeout(s.timer); s.db.exec('ROLLBACK'); s.db.close(); sessions.delete(id); } };
@@ -71,6 +72,8 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
     let result;
     if (q.op === 'open' || q.op === 'migration-open') {
       check(Object.keys(q).join(',') === 'op' && store.evidenceReady, 'evidence_index_required');
+      const lifetimeMs = await snapshotLifetimeMs?.() ?? settings.maxAgeMs;
+      check(Number.isSafeInteger(lifetimeMs) && lifetimeMs > 0 && lifetimeMs <= 2147483647, 'evidence_lifetime');
       for (const [id, s] of sessions) if (s.member === member.id) drop(id);
       check(sessions.size < settings.maxSnapshots, 'evidence_capacity');
       for (let attempt = 0; ; attempt++) {
@@ -84,7 +87,7 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
         const revision = config.v2 ? rules.decimalV2(savedRevision) : savedRevision, root = index.root();
         check(text(stamp) === text(await reads.trac('stamp')), 'evidence_snapshot_changed');
         const id = randomBytes(32).toString('hex'), observedAt = now();
-        result = { id, root, revision, stamp, observedAt, expiresAt: observedAt + settings.maxAgeMs };
+        result = { id, root, revision, stamp, observedAt, expiresAt: observedAt + lifetimeMs };
         if (q.op === 'migration-open') {
           // Explicit offline migration only: normal requests keep using the
           // bounded projection index. This root commits EVERY logical row.
@@ -203,16 +206,18 @@ export class EvidenceStore {
   }
   refresh() { return this.gate(async () => {
     this.payload = null; this.cache.clear(); this.nodeHints.clear();
+    const lifetimeMs = await this.snapshotLifetimeMs?.() ?? this.settings.maxAgeMs;
+    check(Number.isSafeInteger(lifetimeMs) && lifetimeMs > 0 && lifetimeMs <= 2147483647, 'evidence_lifetime');
     const snapshot = await this.exchange({ op: 'open' }), now = this.now();
     check(snapshot && /^[0-9a-f]{64}$/.test(snapshot.id) && /^[0-9a-f]{64}$/.test(snapshot.root) && (Number.isSafeInteger(snapshot.revision) || typeof snapshot.revision === 'string' && /^(0|[1-9][0-9]*)$/.test(snapshot.revision)) &&
-      Number.isSafeInteger(snapshot.observedAt) && snapshot.observedAt <= now + this.settings.clockSkewMs && now - snapshot.observedAt < this.settings.maxAgeMs && snapshot.expiresAt > now, 'evidence_stale');
+      Number.isSafeInteger(snapshot.observedAt) && snapshot.observedAt <= now + this.settings.clockSkewMs && now - snapshot.observedAt < lifetimeMs && snapshot.expiresAt > now, 'evidence_stale');
     const clock = await this.clock(), stamp = await this.stamp();
     check(String(clock.tip) === String(snapshot.stamp.tip) && clock.tipHash === snapshot.stamp.tipHash && text(stamp) === text(snapshot.stamp), 'evidence_reorg');
     // A checkpoint is an audit trail and restart hint, never authority to reuse
     // mutable records without a new independently checked chain snapshot.
-    await atomicWrite(join(this.config.directory, 'evidence-checkpoint.json'), JSON.stringify(this.openEnvelope)); this.payload = snapshot;
+    await atomicWrite(join(this.config.directory, 'evidence-checkpoint.json'), JSON.stringify(this.openEnvelope)); this.payload = snapshot; this.snapshotMaxAgeMs = lifetimeMs;
   }); }
-  ready() { check(this.payload && this.now() < this.payload.expiresAt && this.now() - this.payload.observedAt < this.settings.maxAgeMs, 'evidence_missing_or_stale'); }
+  ready() { check(this.payload && this.now() < this.payload.expiresAt && this.now() - this.payload.observedAt < (this.snapshotMaxAgeMs ?? this.settings.maxAgeMs), 'evidence_missing_or_stale'); }
   async records(q) {
     this.ready(); const snapshot = this.payload, key = text(q);
     if (this.cache.has(key)) return structuredClone(this.cache.get(key));

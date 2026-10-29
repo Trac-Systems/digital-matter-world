@@ -124,6 +124,8 @@ export async function createTrac({ runtime, config, deployment, store, network }
     status: async job => { await peer.base.update(); const result = await transport.status(job); if (job.transaction) { const confirmed = await bus.getConfirmedTxInfo(job.transaction.tx); return { ...result, msb: confirmed === null ? 'pending' : 'confirmed' }; } return result; }
   };
   const call = async (method, args = []) => {
+    // A bare string would be spread into characters and silently miss.
+    check(Array.isArray(args), 'trac_arguments');
     signal?.throwIfAborted(); check(Object.hasOwn(methods, method), 'trac_method');
     return abortable(methods[method](...args), signal);
   };

@@ -221,6 +221,11 @@ export function toast({ what, detail, state = 'queued', ttl = 0, onInspect }) {
   return { set, el };
 }
 
+// Step indicator for a multi-step flow: `at` is the current step (labels.length when all are done); `failed` marks it stopped.
+export function stepper(labels, at, { failed = false } = {}) {
+  return h('ol.stepper', { 'aria-label': 'Progress' }, labels.map((label, i) => h(`li.${i < at ? 'done' : i > at ? 'todo' : failed ? 'bad' : 'on'}`, i === at ? { 'aria-current': 'step' } : {},
+    h('span.n', { 'aria-hidden': 'true' }, i < at ? '✓' : i === at && failed ? '!' : String(i + 1)), h('span.l', {}, label))));
+}
 export function panel(title, body, { actions, tip, flush = false, id } = {}) {
   return h('section.panel', id ? { id } : {},
     h('header', {}, h('h2', {}, title), tip ? tipIcon(tip) : null, h('div.grow'), actions ?? null),

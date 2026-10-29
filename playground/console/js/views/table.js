@@ -97,7 +97,7 @@ export function mount(root, params = {}) {
         ['Rule', h('code', {}, p.pat), 'TAP\'s regular-expression form, matched against one header field. Each match is one unit.'],
         ['Field', fieldName(p)],
         ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (p.countMeaning === 'verified_submitted_blocks' ? 'Verified submitted blocks; more matches may exist.' : site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
-        ['Tier', `${p.tier} of 5 · price ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
+        ['Tier', `${p.tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
         ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],

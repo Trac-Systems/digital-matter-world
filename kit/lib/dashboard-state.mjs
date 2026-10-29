@@ -204,6 +204,28 @@ export class DashboardState {
     dashboardCheck((plan.requestId ?? plan.id) === id && wireIdentities(plan).owner === this.agent.owner, 'not_your_request', 403);
     return plan;
   }
+  // Bitmap link requests this agent signed, newest first, with their live state.
+  async links({ offset = 0, limit = 10 } = {}) {
+    dashboardCheck(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
+    const saved = this.journal.db.prepare("SELECT id FROM actions WHERE scope=? AND id LIKE 'link/%' AND id NOT LIKE 'link/%/%' ORDER BY rowid DESC")
+      .all(this.journal.scope).map(({ id }) => this.journal.get(id)).filter(row => /^[0-9a-f]{64}$/.test(row?.result?.request?.id ?? row?.result?.next?.[0]?.arguments?.id ?? ''));
+    const links = [];
+    for (const row of saved.slice(offset, offset + limit)) {
+      const id = row.result.request?.id ?? row.result.next[0].arguments.id;
+      let status; try { status = await this.service.linkStatus(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
+      links.push({ requestId: id, block: status.block ?? row.body?.request?.block ?? row.body?.request?.height ?? null, state: status.state,
+        payable: status.state === 'awaiting_payment', error: status.error ?? null, paymentLink: '/link/' + id });
+    }
+    return { links, next: offset + limit < saved.length ? offset + limit : null };
+  }
+  async link(value) {
+    dashboardCheck(value && Object.keys(value).every(k => ['height', 'payer'].includes(k)) && integer(value.height) && (value.payer === undefined || typeof value.payer === 'string' && value.payer.length <= 128), 'invalid_link');
+    // The TAP Wallet holding the Bitmap pays; default to the bound payout wallet.
+    const payer = value.payer ?? await this.payout();
+    const result = await this.agent.linkBitmap({ actionId: 'dashboard-link-' + value.height + '-' + payer.slice(-8), height: Number.isSafeInteger(Number(value.height)) ? Number(value.height) : value.height, payer });
+    dashboardCheck(typeof result?.paymentLink === 'string', result?.state ? 'link_' + result.state : 'link_unavailable', 409);
+    return { paymentLink: result.paymentLink, state: result.state ?? null };
+  }
   async payment(value) {
     dashboardCheck(value && Object.keys(value).every(k => ['id', 'paymentId', 'inscription'].includes(k)) && requestId(value.id) &&
       ['paymentId', 'inscription'].filter(k => value[k] !== undefined).length === 1 &&
@@ -317,6 +339,16 @@ export class DashboardState {
   walletKey(key) {
     dashboardCheck(typeof key === 'string' && key.length <= 300 && key.startsWith(this.agent.bitcoinNetwork + '/') && /^[a-zA-Z0-9/:-]+$/.test(key), 'invalid_wallet_key');
     return key;
+  }
+  // The browser session survives dashboard restarts: it is kept with the
+  // player's private journal, never in a terminal or log.
+  session(create) {
+    const db = this.journal.db, key = '\u0000dashboard-session';
+    const row = db.prepare('SELECT value FROM dashboard_wallet WHERE scope=? AND key=?').get(this.journal.scope, key);
+    if (row && /^[A-Za-z0-9_-]{43}$/.test(row.value)) return row.value;
+    const value = create();
+    db.prepare('INSERT OR REPLACE INTO dashboard_wallet(scope,key,value) VALUES(?,?,?)').run(this.journal.scope, key, value);
+    return value;
   }
   walletGet(key) {
     const row = this.journal.db.prepare('SELECT value FROM dashboard_wallet WHERE scope=? AND key=?').get(this.journal.scope, this.walletKey(key));

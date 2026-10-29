@@ -9,6 +9,8 @@ import { accountOperationsRoot } from '../../rules/src/account-batch.js';
 import { Store } from '../src/store.mjs';
 import { History } from '../src/history.mjs';
 import { Replay } from '../src/replay.mjs';
+import { runtimeResources } from '../src/r3-settings.mjs';
+import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { heightKey } from '../src/util.mjs';
 import { Files } from '../src/files.mjs';
 import { harness, deployment, signedBatch } from '../../contract/tests/helpers/harness.mjs';
@@ -48,7 +50,9 @@ for (const boundary of ['9007199254740992', '9223372036854775808', '1' + '0'.rep
       ruleset: 'dmw-v2', settingsRevision: '0', settingsHash: r.hashObject(document) }, who);
     const settings = r.activatedBatchSettings({ manifest, manifestHash: r.hashObject(manifest), document, receiptSigners });
     const directory = await mkdtemp(join(tmpdir(), 'dmw-g4b-int-'));
-    let store = await Store.open(directory); const replay = new Replay();
+    const resources = r.resourceRevision({ operator: 'fixture', values: { ...r.RESOURCE_PROFILE } });
+    const startupDocument = { ...document, values: { ...document.values, closureWorkBudget: document.values.closureWorkBudget / 2 } };
+    let store = await Store.open(directory); const replay = new Replay(runtimeResources(resources, startupDocument).replay);
     t.after(async () => { await replay.close(); await store.close(); });
     const persistence = new r.NamedStorage({ get: () => null, cacheSize: 16 }), saved = persistence.save(named);
     let state = { batchVersion: 2, counted: base, lastTip: base, highestTip: base, observation: base, namedSequence: base,
@@ -68,7 +72,11 @@ for (const boundary of ['9007199254740992', '9223372036854775808', '1' + '0'.rep
     let history = new History(store); await history.append(next, secondRaw);
     const input = { height: next, blockHash: second.hash, tip: next, tipHash: second.hash, network, gateway, settings, state, patterns: [],
       entries: [{ move, receipt }], receiptRoot: seal, rootAttestations: attest(seal), batchSequence: next, namedEvidence: { nodes: [] } };
-    const output = await replay.run(input, history, { store, staged: new Map() });
+    const deadlines = [], timer = globalThis.setTimeout;
+    const clock = t.mock.method(globalThis, 'setTimeout', (work, ms, ...args) => { deadlines.push(ms); return timer(work, ms, ...args); });
+    let output;
+    try { output = await replay.run(input, history, { store, staged: new Map() }); } finally { clock.mock.restore(); }
+    assert.deepEqual(deadlines, [closureTimeouts(document, resources).replayMs], 'replay uses the batch policy after its startup policy changes');
     input.claimEvidence = output.claimEvidence;
     const published = await new Files(join(directory, 'public')).publish(output, { id: heightKey(next) });
     assert.match(published.receipts.path, /^\/receipts\/v2\/[a-f0-9]{64}\.json$/);

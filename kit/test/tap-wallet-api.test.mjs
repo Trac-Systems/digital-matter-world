@@ -79,10 +79,25 @@ test('No authority found clears only the definite preflight failure; generic 400
   await assert.rejects(f.wallet.pay(f.id), /No payment was sent/);
   assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
   f.state.transferError = { code: 4001, message: 'User rejected the request.' };
-  await assert.rejects(f.wallet.pay(f.id), /may have been sent/);
+  await assert.rejects(f.wallet.pay(f.id), /reports the payment was cancelled/);
   const resumed = new TapWalletMint(f.options); await resumed.connect();
-  assert.equal((await resumed.pay(f.id)).localState, 'payment_pending');
+  const pending = await resumed.pay(f.id);
+  assert.equal(pending.localState, 'payment_pending'); assert.equal(pending.retryable, true);
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 2);
+  f.state.transferError = null;
+  const chain = { mempool: [{ txid: 'aa' }], chain: [] }, seen = [];
+  resumed.fetchImpl = async url => { seen.push(url); return { ok: true, json: async () => url.endsWith('/txs/mempool') ? chain.mempool : chain.chain }; };
+  await assert.rejects(resumed.pay(f.id, { retry: true }), /still unconfirmed/);
+  chain.mempool = []; chain.chain = [{ txid: 'bb', status: { confirmed: true, block_time: Math.floor(Date.now() / 1000) } }];
+  await assert.rejects(resumed.pay(f.id, { retry: true }), /sent a Bitcoin transaction after/);
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 2, 'Bitcoin activity never allows a second payment');
+  chain.chain = [{ txid: 'cc', status: { confirmed: true, block_time: Math.floor(Date.now() / 1000) - 86400 } }];
+  assert.ok(seen.every(url => url.startsWith('https://mempool.space/api/address/' + resumed.address + '/txs/')));
+  assert.equal((await resumed.pay(f.id, { retry: true })).localState, 'payment_submitted');
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 3);
+  const after = await resumed.pay(f.id, { retry: true });
+  assert.equal(after.localState, 'payment_pending'); assert.equal(after.retryable, false);
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 3);
 });
 test('pending authority lookup failure and popup closure preserve authority recovery without marking Mint sending', async () => {
   const f = fixture(); await f.wallet.connect(); f.state.pendingOrder = true; f.state.orderError = true;
@@ -187,4 +202,18 @@ test('public deployment uses only its receiving TAP wallet while agent and compo
   const owner = 'agent';
   await assert.rejects(f.wallet.inscribeDeployment(job, { owner, binding: { request: { agent: 'other', address: f.wallet.address } } }), /bound TAP Wallet/);
   assert.equal((await f.wallet.inscribeDeployment(job, { owner, binding: { request: { agent: owner, address: f.wallet.address } } })).state, 'broadcast');
+});
+
+test('a submitted payment resolves its redeem inscription from Bitcoin for reporting', async () => {
+  const f = fixture(true); await f.wallet.connect(); await f.wallet.pay(f.id);
+  const funding = f.records.get(f.wallet.key(f.id)).payment.result.txid, reveal = 'ab'.repeat(32), urls = [];
+  const replies = { [funding]: { vin: [{ witness: ['sig'] }] }, [funding + '/outspend/0']: { spent: false } };
+  f.wallet.fetchImpl = async url => { urls.push(url); const key = url.split('/api/tx/')[1]; return { ok: key in replies, json: async () => replies[key] }; };
+  assert.equal(await f.wallet.paymentInscription(f.id), null, 'not revealed yet');
+  replies[funding + '/outspend/0'] = { spent: true, txid: reveal };
+  assert.equal(await f.wallet.paymentInscription(f.id), reveal + 'i0');
+  replies[funding] = { vin: [{ witness: ['sig', 'script', 'control'] }] };
+  assert.equal(await f.wallet.paymentInscription(f.id), funding + 'i0', 'a receipt naming the reveal is used directly');
+  assert.equal(await f.wallet.paymentInscription('34'.repeat(32)), null, 'no saved receipt, nothing to report');
+  assert.ok(urls.every(url => url.startsWith('https://mempool.space/api/tx/')));
 });

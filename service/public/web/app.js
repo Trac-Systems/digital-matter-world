@@ -19,6 +19,8 @@ const VIEWS = {
   records: { label: 'Records', href: '/records', load: () => import('./records.js') },
   money: { label: 'Mint', title: 'Mint & wallets', href: '/mint', sep: true, load: async () => ({ mount: moneyPage }) },
 };
+// An agent owner's local dashboard (kit `dmw dashboard`) serves these pages and adds its own page.
+if (globalThis.DMW_LOCAL_AGENT === true) VIEWS.mine = { label: 'My agent', title: 'My agent', href: '/me', load: () => import('/local/agent.js') };
 const app = document.getElementById('app');
 let cleanup = null, current = null, mainEl, navEl, stripEl, connEl;
 let routeSequence = 0;
@@ -29,6 +31,7 @@ boot();
 // Each page address names one view and what it shows.
 function resolve(path) {
   if (path.replace(/\/$/, '') === '/about') return { id: 'about', params: {} };
+  if (VIEWS.mine && path.replace(/\/$/, '') === '/me') return { id: 'mine', params: {} };
   const page = route(path);
   switch (page.kind) {
     case 'home': return { id: 'world', params: {} };
@@ -66,7 +69,7 @@ async function boot() {
   bus.on('status', drawStrip);
   stream.start();
   const ready = Promise.allSettled([store.refreshStatus(), store.refreshPatterns()]);
-  // About can show its current-price placeholders while the live reads load.
+  // About can show its current-fee placeholders while the live reads load.
   if (resolve(pageAddress(new URL(location.href)).pathname).id !== 'about') await ready;
   document.addEventListener('click', follow);
   addEventListener('popstate', show);
@@ -92,7 +95,7 @@ function drawStrip(s) {
     cell('Tip', fmtInt(s.tip), 'Newest Bitcoin block the gateway has seen.'),
     cell('Counted', fmtInt(s.counted), 'Blocks the Trac contract has counted. Finder windows and refunds run on counted blocks.'),
     cell('Batch', s.batch ? `#${fmtInt(s.batch.n)} → ${fmtInt(s.batch.to)}` : '–', 'Last committee batch applied on Trac and the counted block it covers.'),
-    cell('Base price', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)));
+    cell('Base fee', tap(s.feePolicy?.baseFee, s.feePolicy?.unit), feePolicyTip(s.feePolicy)));
 }
 
 // Links between pages stay in this page: the address changes and the matching view opens.

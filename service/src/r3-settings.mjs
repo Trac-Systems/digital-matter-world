@@ -24,7 +24,7 @@ export function runtimeResources(document, consensus) {
     committee: { timeoutMs: timing?.sessionMs ?? v.signerSessionMs, prepareMs: timing?.prepareMs ?? v.signerPrepareMs,
       ...(document.version >= 4 ? { healthMs: v.committeeHealthMs, readyMs: v.committeeReadyMs, requestMs: v.committeeRequestMs,
         responseBytes: v.committeeResponseBytes, pollMs: v.committeePollMs, historyPage: v.committeeHistoryPage } : {}) },
-    replay: { headerPageSize: v.headerPageSize, headerCachePages: v.headerCachePages, cacheKiB: v.sqliteCacheKiB, timeoutMs: timing?.replayMs ?? v.replayTimeoutMs },
+    replay: { resources: document, headerPageSize: v.headerPageSize, headerCachePages: v.headerCachePages, cacheKiB: v.sqliteCacheKiB, timeoutMs: timing?.replayMs ?? v.replayTimeoutMs },
     history: { branchCache: v.branchCacheViews, appendRows: v.headerAppendRows },
     archiveWritePage: v.archiveWritePage,
     ...(document.version >= 3 ? {

@@ -80,7 +80,10 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
       await connect();
       if (!await confirmModal({ title: 'Pay these missing fee items?', lead: 'Your TAP Wallet pays each recipient now. Payment happens before your mint permit is issued.',
         rows: missing.map(i => [i.role, tap(i.amount)]), confirm: 'Pay from my wallet' })) return;
-      const result = await wallet.pay(id); await refresh(); clear(note, result.message ?? 'Payment requested. Waiting for the indexed block.');
+      let result = await wallet.pay(id);
+      if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this request.',
+        rows: missing.map(i => [i.role, tap(i.amount)]), confirm: 'Retry payment' })) result = await wallet.pay(id, { retry: true });
+      await refresh(); clear(note, result.message ?? 'Payment requested. Waiting for the indexed block.');
     }));
     if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payable && status.payBy?.rail === 'ethereum') actions.push(button('Pay with Ethereum wallet', async () => {
       const plan = await get(`/gateway/web-api/mint/${id}`); await ethereum.connect(plan.payer);

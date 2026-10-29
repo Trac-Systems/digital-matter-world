@@ -40,6 +40,26 @@ test('50 frozen observations and 100 offline blocks recover without overwriting 
   } finally { await pipeline.close(); await store.close(); }
 });
 
+test('a preparation every member left unreserved is retired once the execution snapshot moves', async () => {
+  const directory = await temp('draft-unprepared-'), store = await Store.open(directory);
+  let counted = 10;
+  const pipeline = new Pipeline({ store, reads: { batchLast: async () => ({ n: 0, to: 0 }), committeeEpoch: async () => 0, counted: async () => counted, batchRoot: async () => null } });
+  try {
+    const draft = { version: 3, execution: 10, proposal: { kind: 'batch', batch: { epoch: 0, n: 1, deadline: 16 } } };
+    const blocked = { proposal: draft.proposal, stage: 'blocked', reason: 'prepare_incomplete', id: 'ef'.repeat(32), retry: 'same-batch', retryPrepare: true,
+      peers: ['operator1', 'operator2', 'operator3'], unreserved: ['operator1', 'operator2'], failures: ['committee_batch_snapshot', 'committee_batch_snapshot'] };
+    await store.put('ceremonies', 'batch/0/1', blocked); await pipeline.saveDraft(draft);
+    counted = 11;
+    assert.deepEqual(await pipeline.reconcileDraft(await pipeline.loadDraft()), { draft, accepted: false }, 'one member may still hold a reservation');
+    await store.put('ceremonies', 'batch/0/1', { ...blocked, unreserved: blocked.peers });
+    counted = 10;
+    assert.deepEqual(await pipeline.reconcileDraft(await pipeline.loadDraft()), { draft, accepted: false }, 'an unchanged snapshot keeps retrying');
+    counted = 11;
+    assert.deepEqual(await pipeline.reconcileDraft(await pipeline.loadDraft()), { draft: null, accepted: false });
+    assert.equal(store.get('meta', 'draft'), null); assert.equal(store.get('ceremonies', 'batch/0/1'), null);
+    assert.equal(store.list('supersededDrafts')[0].value.proof.reason, 'execution_snapshot_changed');
+  } finally { await pipeline.close(); await store.close(); }
+});
 test('drafts use one checksummed external representation and retain signing reservations after restart', async () => {
   const directory = await temp('draft-'); let store = await Store.open(directory), pipeline = new Pipeline({ store });
   try {

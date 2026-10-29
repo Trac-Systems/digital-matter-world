@@ -39,10 +39,13 @@ export class PublicMints {
       refunds: '/public-mints/refunds?asset=' + encodeURIComponent(catalogAsset) + '&block=' + block };
   }
   list(params) {
-    this.active();
     for (const key of params.keys()) check(['asset', 'limit', 'cursor'].includes(key), 'public_mint_query');
-    const asset = params.get('asset'), limit = Number(params.get('limit') ?? this.document.values.publicMintPageSize);
-    check(/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') && Number.isSafeInteger(limit) && limit > 0 && limit <= this.document.values.publicMintPageSize, 'public_mint_query');
+    const asset = params.get('asset'), pageSize = this.document.values.publicMintPageSize ?? rules.PUBLIC_MINT_SETTINGS.publicMintPageSize,
+      limit = Number(params.get('limit') ?? pageSize);
+    check(/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') && Number.isSafeInteger(limit) && limit > 0 && limit <= pageSize, 'public_mint_query');
+    const height = rules.decimalV2(this.store.get('meta', 'ruleState')?.counted ?? '0');
+    if (!rules.publicMintActive(this.document, height)) return { v: 3, asset, state: 'inactive',
+      activationHeight: this.document.values.publicMintActivationHeight ?? null, rows: [], mintRights: [], total: 0, next: null, nextCursor: null };
     const query = new URLSearchParams({ limit: String(limit), found: 'false', minted: 'false' });
     if (params.has('cursor')) query.set('cursor', params.get('cursor'));
     const page = claimedPage(this.store, asset, query, { patternDetailRows: this.document.values.publicMintPageSize });

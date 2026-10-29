@@ -1,3 +1,4 @@
+import { rules } from '../../../service/src/rules.mjs';
 import { bindingFixture } from '../../../service/test/bindings-fixture.mjs';
 import { agent } from '../../../service/test/helpers.mjs';
 import { edPublic } from '../../../service/src/util.mjs';
@@ -18,6 +19,7 @@ test('production readers compose independent fixtures and preserve monotone obse
   config.prod.evidence = { network:config.network,epoch:1,member:config.committee[0].id,directory:config.data,endpoint:{urlFile:await file('evidence-url','https://evidence.invalid')} };
   const holder = (await fixture.bind(agent(81), 'tap')).request.address;
   config.prod.http = { requestsPerSecond: 100 };
+  config.prod.warmReads = false; config.prod.readCacheMs = 0;
   const registry = { feePolicy: createFeePolicy('100'), assets: {}, link: { treasury: 'fixture-treasury' } };
   config.prod.registry = await file('registry-read', registry);
   await migrateRegistry(config.prod.registry);
@@ -48,6 +50,10 @@ test('production readers compose independent fixtures and preserve monotone obse
   const manager = { connectedValidators: () => ['a', 'b', 'c'], pickRandomValidator: values => values[0], pickRandomConnectedValidator: () => 'a' };
   const bus = { config: { bootstrap: Buffer.from(config.prod.trac.msbBootstrap, 'hex'), networkId: 918 }, network: { validatorConnectionManager: manager, validatorMessageOrchestrator: { send: async () => true } } };
   const api = { dmwAuthority: async () => ({ network: config.network, epoch: 1, committee: deployment.committee }), dmwHead: async () => ({ counted: 0, tip: { height: 0, hash: GENESIS.hash } }), dmwBatchLast: async () => ({ n: 0, to: 0 }) };
+  const document = rules.settingsRevision({ network: config.network, effectiveBatch: '1', effectiveBitcoinWindow: '0', values: { ...rules.SETTINGS_PROFILE } });
+  const settingsHash = rules.hashObject(document), renewalBatch = '9007199254740993', slice = rules.hash('renewal-slice'), historyCalls = [];
+  api.dmwSettingsByHash = async (...args) => { historyCalls.push(['settings', ...args]); assert.deepEqual(args, [settingsHash]); return document; };
+  api.dmwReceiptRenewalSlice = async (...args) => { historyCalls.push(['slice', ...args]); assert.deepEqual(args, [renewalBatch]); return slice; };
   const peer = { config: { dmw: deployment }, base: { key: Buffer.from(config.prod.trac.bootstrap, 'hex'), update: async () => {}, view: { version: 0 } }, protocol: { instance: { api } } };
   const reads = await productionReads(config, store, { gateway, committee: true, runtime: { peer, bus, close: async () => { state.closed = true; } } });
   try {
@@ -67,7 +73,15 @@ test('production readers compose independent fixtures and preserve monotone obse
       await assert.rejects(reads.validateFeeTerms(kind, { ...row, terms: { ...row.terms, baseFee: '1' } }), /_policy/);
       await assert.rejects(reads.validateFeeTerms(kind, { ...row, request: { until: 101 } }), /fee_quote_binding/);
     }
+    assert.deepEqual(await reads.settingsByHash(settingsHash), document);
+    assert.deepEqual(await reads.feeQuotes.settingsHistory.get(settingsHash), document);
+    assert.equal(await reads.renewalSlice(renewalBatch), slice);
+    await assert.rejects(reads.trac('settingsByHash', settingsHash), /trac_arguments/);
+    await assert.rejects(reads.trac('renewalSlice', renewalBatch), /trac_arguments/);
+    assert.deepEqual(historyCalls, [['settings', settingsHash], ['settings', settingsHash], ['slice', renewalBatch]]);
     assert.equal((await reads.authority()).network, config.network); assert.equal((await reads.batchStamp()).tap.hash, GENESIS.hash);
+    assert.equal((await reads.publicMintHeader(0)).hash, GENESIS.hash);
+    assert.equal((await reads.publicMintHeader(0, { tip: 0, tipHash: GENESIS.hash })).hash, GENESIS.hash);
     assert.deepEqual(await reads.bitmap(0, { tip: 0, tipHash: GENESIS.hash }), { agent: identity, address: holder });
     state.bitmapOwner = 'another-holder'; await assert.rejects(reads.bitmap(0), /bitmap_owner/); state.bitmapOwner = holder;
     assert.equal((await reads.tapPayment(inscription + ':0', { requestId: 'request', payer: 'payer' })).consumed, false);

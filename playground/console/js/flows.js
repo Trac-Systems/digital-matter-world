@@ -97,7 +97,7 @@ export function feeTerms(kind) {
 export async function linkFlow(height) {
   const terms = feeTerms('link');
   if (!await confirmModal({ title: `Link Bitmap ${fmtInt(height)}?`, lead: 'Paid once; the link stays with the Bitmap. Its holder earns the Bitmap holder share of mint fees here.',
-    rows: [['Plot', fmtInt(height)], ['Price', terms ? tap(terms.total) : 'Read the current quote'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: 'Link and pay' })) return false;
+    rows: [['Plot', fmtInt(height)], ['Fee', terms ? tap(terms.total) : 'Read the current quote'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: 'Link and pay' })) return false;
   try { const req = await run('Bitmap link', '/player/link', { height }); await payWhenReady(requestId(req), 'link'); return true; }
   catch { return false; }
 }

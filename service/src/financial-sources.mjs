@@ -197,6 +197,7 @@ export function installFinancialSources(reads, options) {
     if (t.type === 'reserve') return reads.financialReservation(await signedRequest(t.id), at);
     const { row, funding, source } = await accepted(t.id, at), base = { requestId: t.id, owner: funding.owner, terms: funding.terms };
     if (['fund', 'surplus'].includes(t.type)) {
+      check(Array.isArray(t.items) && t.items.length > 0, 'financial_payment_items');
       const receipts = await reads.financialReceipts(t.id, t.references, at), byKey = new Map(receipts.map(r => [r.key, r]));
       for (const item of t.items) {
         const receipt = byKey.get(item.key);

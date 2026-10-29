@@ -9,7 +9,7 @@ export const publicMintMessages = {
   public_scan_pending: 'Recent Bitcoin payments for this block are still being checked. Try again in a few minutes.',
   payment_unconfirmed: 'The payment is waiting for a Bitcoin confirmation. Keep this request and check again; do not pay again.',
   public_payment_incomplete: 'The payment did not cover every quoted fee. Check this request and its refund record before sending another payment.',
-  quote_expired: 'The price changed. Press Mint again for a new quote.',
+  quote_expired: 'The fee changed. Press Mint again for a new quote.',
 };
 const messages = {
   ...publicMintMessages,

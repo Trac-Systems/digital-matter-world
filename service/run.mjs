@@ -1,6 +1,7 @@
 import { supportedNode } from '../node-version.mjs';
 import { rules } from './src/rules.mjs';
 import { evidencePublisher } from './prod/evidence.mjs';
+import { closureTimeouts } from '../rules/src/closure-timeouts.js';
 import { createOperator } from './src/operator.mjs';
 import { createWeb } from './src/web.mjs';
 import { WebCheckout } from './src/web-checkout.mjs';
@@ -124,7 +125,8 @@ async function startGateway(config, controller) {
     const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);
-    evidence = config.mode === 'prod' ? evidencePublisher({ config, store, reads: adapters.reads, secret }) : undefined;
+    evidence = config.mode === 'prod' ? evidencePublisher({ config, store, reads: adapters.reads, secret,
+      snapshotLifetimeMs: () => closureTimeouts(v2?.settings.document, config.v2?.resources)?.evidenceMs }) : undefined;
     const headers = new HeaderFiles({ history, files, network: config.mode === 'prod' ? 'mainnet' : 'regtest', chunkSettings: config.headerChunkSettings, secret, signingEpoch: config.headerSigningEpoch });
     controller.signal.throwIfAborted();
     await serve({ listener: http, evidence, web, operator, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });

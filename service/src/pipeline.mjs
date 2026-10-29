@@ -69,7 +69,12 @@ export class Pipeline {
     }
     const expired = counted !== undefined && clock.valid(batch.deadline) && clock.compare(counted, batch.deadline) > 0;
     const superseded = clock.compare(epoch, batch.epoch) > 0;
-    const unreserved = !draft.signature && !this.store.get('ceremonies', key) && !this.store.get('outbox', key) && !this.store.get('sent', key);
+    // A blocked preparation in which every member answered that it holds no
+    // reservation for this proposal can never be signed; treat it as unreserved.
+    const ceremony = this.store.get('ceremonies', key);
+    const unprepared = ceremony?.stage === 'blocked' && ceremony.retryPrepare === true && Array.isArray(ceremony.peers) && ceremony.peers.length > 0
+      && ceremony.peers.every(id => ceremony.unreserved?.includes(id));
+    const unreserved = !draft.signature && (!ceremony || unprepared) && !this.store.get('outbox', key) && !this.store.get('sent', key);
     const activation = this.settings.batchVersion === 2 && this.settings.activation;
     const anchoredDraft = activation && clock.compare(batch.n, activation.sequence) === 0 && clock.compare(draft.execution, activation.height) === 0;
     if (superseded || expired || unreserved && !anchoredDraft && counted !== undefined && clock.compare(draft.execution, counted) !== 0) {

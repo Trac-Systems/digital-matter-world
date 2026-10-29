@@ -32,6 +32,8 @@ export class BrowserMintJournal {
   }
 }
 
+const userCancelled = error => error?.message === 'User rejected the request.';
+
 export class TapWalletMint {
   constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
     Object.assign(this, { provider, readStatus, readPaymentPlan, network, journal, notify });
@@ -58,7 +60,7 @@ export class TapWalletMint {
     return status;
   }
   key(id) { return `${this.network}/${this.address}/${id}`; }
-  async pay(id) {
+  async pay(id, { retry = false } = {}) {
     await this.checkAccount();
     return this.journal.lock(this.key(id), async () => {
       const status = await this.status(id);
@@ -72,7 +74,11 @@ export class TapWalletMint {
       const key = this.key(id), saved = await this.journal.get(key) ?? {};
       // The extension builds its own redeem. If its reply is lost, we cannot
       // reconstruct that transaction; never create a second payment blindly.
-      if (saved.payment) return { ...status, localState: 'payment_pending', payment: saved.payment, message: 'A payment was already requested. Wait for its indexed items; inspect the wallet if the result is uncertain.' };
+      // A 'sending' record without a receipt may be retried only on the
+      // player's explicit word that the wallet shows no sent payment.
+      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at);
+      if (saved.payment && !(retry && saved.payment.state === 'sending')) return { ...status, localState: 'payment_pending', payment: saved.payment, retryable: saved.payment.state === 'sending',
+        message: saved.payment.state === 'sending' ? 'TAP Wallet returned no receipt for the last payment attempt. If your wallet shows no sent payment for this request, retry the payment.' : 'A payment was already requested. Wait for its indexed items; inspect the wallet if the result is uncertain.' };
       // Share authority recovery between requests for this account. A fresh
       // payment cannot be marked as sending until setup and identity checks pass.
       const authorityKey = `${this.network}/${this.address}/authority`;
@@ -99,7 +105,7 @@ export class TapWalletMint {
         ['awaiting_payment', 'partly_paid'].includes(latest.state) && latest.payable !== false &&
         JSON.stringify(transferItems(latest, this.network)) === JSON.stringify(items), 'Payment changed during authority setup. Refresh the request before continuing.');
       await this.checkAccount();
-      await this.journal.put(key, { ...saved, payment: { state: 'sending', items } });
+      await this.journal.put(key, { ...saved, payment: { state: 'sending', items, at: Date.now() } });
       let result;
       try { result = await this.provider.singleTxTransfer(items); }
       catch (error) {
@@ -109,11 +115,57 @@ export class TapWalletMint {
           await this.journal.put(key, saved);
           throw Error('TAP Wallet found no active authority. No payment was sent. Resume to check authority setup again.');
         }
+        // Reject also arrives when the popup closes mid-broadcast, so a
+        // cancel stays a retryable 'sending' record, never a silent reset.
+        if (userCancelled(error)) throw Error('TAP Wallet reports the payment was cancelled. If you did not confirm it in the wallet, press Pay missing items again and confirm the retry.');
         throw Error('TAP Wallet did not return a payment receipt. The payment may have been sent. Keep this request and inspect the wallet; another payment will not be sent automatically.');
       }
       await this.journal.put(key, { ...saved, payment: { state: 'submitted', items, result } });
       return { ...await this.status(id), localState: 'payment_submitted' };
     });
+  }
+  // A retry without a wallet receipt is allowed only when Bitcoin shows that
+  // this wallet sent nothing since the attempt: no unconfirmed transaction and
+  // no confirmed one newer than the attempt (or the last six hours, if older
+  // records lack a time). Unrelated wallet activity also waits, never pays twice.
+  async checkNothingSent(at) {
+    if (this.network === 'regtest') return;
+    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/address/' + this.address;
+    const read = async path => {
+      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      ensure(response.ok, 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
+      const txs = await response.json(); ensure(Array.isArray(txs), 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
+      return txs;
+    };
+    ensure(!(await read('/txs/mempool')).length, 'A transaction from this wallet is still unconfirmed. Wait until it confirms; if it was this payment, the request will update by itself.');
+    const since = Math.floor((Number.isSafeInteger(at) ? at : Date.now() - 6 * 3600_000) / 1000) - 600;
+    ensure(!(await read('/txs/chain')).some(tx => !tx.status?.block_time || tx.status.block_time >= since),
+      'This wallet sent a Bitcoin transaction after the earlier payment attempt. Wait for the request to update before paying again.');
+  }
+  // TAP Wallet's receipt names the funding transaction of its redeem order; the
+  // payment the service verifies is the redeem inscription revealed from it.
+  // Resolve that from Bitcoin so the page can report it. Null until revealed.
+  async paymentInscription(id, address = this.address) {
+    if (!address || this.network === 'regtest') return null;
+    const saved = await this.journal.get(`${this.network}/${address}/${id}`);
+    const txid = saved?.payment?.state === 'submitted' ? saved.payment.result?.txid : null;
+    if (!/^[0-9a-f]{64}$/.test(txid ?? '')) return null;
+    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/tx/';
+    const read = async path => {
+      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      return response.ok ? response.json() : null;
+    };
+    // A script-path spend is itself the reveal; otherwise follow output 0.
+    if ((await read(txid))?.vin?.[0]?.witness?.length >= 3) return txid + 'i0';
+    const spend = await read(txid + '/outspend/0');
+    return spend?.spent && /^[0-9a-f]{64}$/.test(spend.txid ?? '') ? spend.txid + 'i0' : null;
+  }
+  // A mint inscription this browser already broadcast, so the page shows it
+  // instead of offering a second inscription while Bitcoin confirms it.
+  async sentInscription(id, address = this.address, field = 'mint') {
+    if (!address) return null;
+    const plan = (await this.journal.get(`${this.network}/${address}/${id}`))?.[field];
+    return plan?.broadcast ? { inscriptionId: plan.inscriptionId, commitTxid: plan.commitTxid, revealTxid: plan.revealTxid } : null;
   }
   async fees() {
     const response = await this.fetchImpl('https://mempool.space/api/v1/fees/recommended', { redirect: 'error', signal: AbortSignal.timeout(10000) });

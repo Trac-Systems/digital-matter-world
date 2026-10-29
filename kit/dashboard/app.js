@@ -92,9 +92,19 @@ async function refreshRequests() {
   if (requestOffset) requests.append(button('Newest requests', async () => { requestOffset = 0; await refreshRequests(); }));
   if (data.next !== null) requests.append(button('More requests', async () => { requestOffset = data.next; await refreshRequests(); }));
 }
+const reportedPayments = new Set();
 async function refreshPayment() {
   if (!activeId) return;
   const status = await wallet.status(activeId);
+  // A wallet payment is reported by its redeem inscription, found on Bitcoin.
+  if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payBy?.rail === 'tap' && !reportedPayments.has(activeId)) {
+    const id = activeId, paymentId = await wallet.paymentInscription(id, status.payer ?? status.receiver).catch(() => null);
+    if (paymentId) {
+      try { await api('/api/payment', { id, paymentId }); reportedPayments.add(id); }
+      catch (error) { if (/financial_transition_pending/.test(error.message)) reportedPayments.add(id); }
+      if (reportedPayments.has(id)) note.textContent = 'Your payment was found on Bitcoin and reported. The permit follows with the next batch.';
+    }
+  }
   payment.replaceChildren(el('h2', 'Mint payment'), el('p', activeId, 'mono'), el('p', 'State: ' + status.state.replaceAll('_', ' ')), el('p', 'Receiver: ' + status.receiver, 'mono'));
   for (const item of status.missing) payment.append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → ${item.to}`));
   if (!globalThis.tapprotocol) {
@@ -104,7 +114,9 @@ async function refreshPayment() {
   if (globalThis.tapprotocol && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state)) payment.append(button('Pay missing items', async () => {
     if (!confirm('Pay the remaining quoted fees from your bound TAP wallet?\n' + status.missing.map(item => `${item.role}: ${formatTap(item.amount)} TAP`).join('\n'))) return;
     wallet.provider = globalThis.tapprotocol; await wallet.connect();
-    const result = await wallet.pay(activeId); note.textContent = result.message ?? 'Payment submitted. Waiting for confirmation.'; await refreshPayment();
+    let result = await wallet.pay(activeId);
+    if (result.retryable && confirm('TAP Wallet returned no receipt for the last attempt.\nRetry only if your wallet shows no sent payment for this request.')) result = await wallet.pay(activeId, { retry: true });
+    note.textContent = result.message ?? 'Payment submitted. Waiting for confirmation.'; await refreshPayment();
   }));
   if (globalThis.tapprotocol && status.state === 'permit_issued') payment.append(button('Inscribe mint', async () => {
     wallet.provider = globalThis.tapprotocol; await wallet.connect();

@@ -252,6 +252,7 @@ export function buildBatchV2(input) {
   const { network, previousRoot, files, activation, headers = [] } = input;
   const s = batchSettings(input.settings ?? input), clock = ordinalCodec(!!s.document);
   const epoch = clock.value(input.epoch), sequence = clock.value(input.sequence), lastTo = clock.value(input.lastTo), executionHeight = clock.value(input.executionHeight);
+  assert(Array.isArray(files) && files.length > 0 && files.length <= s.maxObservations && files.every(f => f?.v === 5), 'batch_files');
   if (input.renewal) {
     assert(s.settingsHash === input.renewal.cutoff.settingsHash && previousRoot === input.renewal.predecessor.root &&
       files.every(f => f.renewal === input.renewal.id && !f.financialOperations?.length) &&
@@ -261,7 +262,6 @@ export function buildBatchV2(input) {
   } else assert(files.every(f => !f.renewal), 'renewal_binding');
   const deadline = clock.value(input.deadline ?? clock.add(executionHeight, s.batchDeadlineBlocks));
   assert(clock.valid(epoch) && clock.valid(sequence) && clock.compare(sequence, 0) > 0 && hex(previousRoot, 32) && clock.valid(lastTo), 'batch_input');
-  assert(files.length > 0 && files.length <= s.maxObservations && files.every(f => f.v === 5), 'batch_files');
   // Renewals may carry several certified segments with no closure work.
   // Bound their actual combined closure cost, including every window chunk,
   // rather than treating each empty receipt continuation as a full budget.

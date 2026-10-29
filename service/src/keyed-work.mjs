@@ -8,10 +8,12 @@ export class KeyedWork {
     check(concurrency > 0 && capacity >= concurrency, 'work_capacity');
     Object.assign(this, { concurrency, capacity }); this.active = 0; this.waiting = [];
   }
-  run(key, task, { join = false } = {}) {
+  run(key, task, { join = false, after = false } = {}) {
     const active = this.pending.get(key);
     if (active) {
       if (join) return active;
+      // A caller's own request may follow background work on the same key.
+      if (after) return active.then(() => {}, () => {}).then(() => this.run(key, task, { after: true }));
       return Promise.reject(Object.assign(Error('resource_busy'), { status: 503, retryAfterMs: 1000 }));
     }
     if (this.pending.size >= this.capacity) return Promise.reject(Object.assign(Error('resource_busy'), { status: 503, retryAfterMs: 1000 }));
