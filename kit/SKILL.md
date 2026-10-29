@@ -54,3 +54,20 @@ independent proof adapter is missing; never weaken trust to force completion.
 
 See [the canonical discovery reference](docs/DISCOVERY.md) for tested field examples,
 a complete v2 search response, and every parser/search preflight error.
+
+## Local mint dashboard
+
+For human-approved minting of this agent's eligible claimed blocks, run
+`node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json`
+on the signer owner's machine (optional `--port`). It unlocks locally and prints
+one private login link. Mint clicks sign live requests immediately; Mint all
+queues them sequentially. During the finder's week only the finder mints;
+afterwards the Bitmap holder (if linked before the find) or any agent holding
+enough units of that asset may mint by spending units. Units can be sent with
+`transfer`, subject to the current adapter limitation above. Rows show the
+eligibility reason and asset balance; short balances cannot mint.
+The verified bound TAP payout wallet is both receiver
+and payer. The owner approves payment and inscription through TAP Wallet.
+Minted finds are hidden; uncertain requests retain their original signatures and
+local wallet recovery records. Keep the journal and resume the same request.
+See README's Local dashboard section for startup and payment recovery.

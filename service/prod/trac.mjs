@@ -9,6 +9,7 @@ import { MAINNET_PARAMS } from '../../contract/beacon/bitcoin.js';
 import { installValidatorFanout } from './runtime.mjs';
 import { msbIdentity } from './mainnet.mjs';
 import { isApplicationNotaryKey } from '../../contract/runtime/notary-records.js';
+import { lifecycleSignal, abortable } from '../src/lifecycle.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 export const tracBinding = (config, deployment) => hash(rules.stableJSON({ config: {
   bootstrap: config.bootstrap, msbBootstrap: config.msbBootstrap, networkId: config.networkId }, deployment }));
@@ -19,19 +20,21 @@ export async function openRuntime(config) {
   return module.openRuntime({ configFile: config.runtimeConfig });
 }
 export async function createTrac({ runtime, config, deployment, store, network }) {
+  const signal = lifecycleSignal();
   const { peer, bus } = runtime, api = peer?.protocol?.instance?.api;
   check(api && peer.config.dmw.network === network && same(peer.config.dmw, deployment) && same(deployment.beacon.params, MAINNET_PARAMS), 'trac_deployment');
   check(peer.base.key.toString('hex') === config.bootstrap && msbIdentity(bus).bootstrapHex === config.msbBootstrap && String(msbIdentity(bus).networkId) === String(config.networkId), 'trac_network');
-  check((await api.dmwAuthority()).network === network, 'trac_authority');
+  check((await abortable(api.dmwAuthority(), signal)).network === network, 'trac_authority');
   let progressSpace = 'prodTrac';
   if (deployment.v2) {
-    const manifest = rules.activationManifest(deployment.v2.manifest, deployment.v2.manifestHash), active = await api.dmwRulesContext();
+    const manifest = rules.activationManifest(deployment.v2.manifest, deployment.v2.manifestHash), active = await abortable(api.dmwRulesContext(), signal);
     check(manifest.network === network && manifest.route === 'terminal-import' && active?.ready && active.manifestHash === deployment.v2.manifestHash, 'trac_activation_binding');
     // A new notary has a new view revision and deployment binding. Preserve
     // the legacy checkpoint; never reuse its cursor against the imported log.
     progressSpace = 'prodTracV2/' + deployment.v2.manifestHash;
   }
   const binding = tracBinding(config, deployment);
+  signal?.throwIfAborted();
   check(!store.get(progressSpace, 'binding') || store.get(progressSpace, 'binding') === binding, 'trac_store_binding');
   await store.put(progressSpace, 'binding', binding);
   const gate = serial(), raw = async key => (await peer.base.view.get(key))?.value ?? null;
@@ -47,11 +50,13 @@ export async function createTrac({ runtime, config, deployment, store, network }
   const pinned = async (at, read) => { const before = await stamp(); if (at) check(clock.compare(before.counted, rules.decimalV2(at.counted)) >= 0 && same(before.last, at.last), 'trac_snapshot_changed');
     const result = await read(); check(same(batchClock(before), batchClock(await stamp())), 'trac_snapshot_changed'); return result; };
   const sync = () => gate(async () => {
-    await peer.base.update(); const end = sourceVersion(), cursor = clock.value(rules.decimalV2(store.get(progressSpace, 'cursor') ?? 0));
+    await abortable(peer.base.update(), signal); signal?.throwIfAborted();
+    const end = sourceVersion(), cursor = clock.value(rules.decimalV2(store.get(progressSpace, 'cursor') ?? 0));
     check(clock.compare(end, cursor) >= 0, 'trac_history_rewound');
     let counted = store.get(progressSpace, 'counted') ?? deployment.beacon.checkpoint.height, next = cursor, changes = [];
     const original = new Map();
     for await (const r of peer.base.view.createHistoryStream({ gte: sourceSeek(cursor), lt: sourceSeek(end) })) {
+      signal?.throwIfAborted();
       if (r.key === 'b/cnt' && r.type !== 'del') counted = r.value;
       if (/^m\/[0-9a-f]{64}$/.test(r.key)) {
         const id = r.key.slice(2), old = original.has(id) ? original.get(id) : store.get('prodOriginalPending', id);
@@ -72,6 +77,7 @@ export async function createTrac({ runtime, config, deployment, store, network }
       next = clock.add(r.seq);
       if (changes.length >= 512) { await store.transact([...changes, { space: progressSpace, id: 'counted', value: counted }, { space: progressSpace, id: 'cursor', value: next }]); changes = []; original.clear(); }
     }
+    signal?.throwIfAborted();
     await store.transact([...changes, { space: progressSpace, id: 'counted', value: counted }, { space: progressSpace, id: 'cursor', value: end }]);
   });
   installValidatorFanout(bus.network);
@@ -117,7 +123,10 @@ export async function createTrac({ runtime, config, deployment, store, network }
     sendTransaction: async prepared => { enoughValidators(); return transport.sendTransaction(prepared); },
     status: async job => { await peer.base.update(); const result = await transport.status(job); if (job.transaction) { const confirmed = await bus.getConfirmedTxInfo(job.transaction.tx); return { ...result, msb: confirmed === null ? 'pending' : 'confirmed' }; } return result; }
   };
-  const call = async (method, args = []) => { check(Object.hasOwn(methods, method), 'trac_method'); return methods[method](...args); };
+  const call = async (method, args = []) => {
+    signal?.throwIfAborted(); check(Object.hasOwn(methods, method), 'trac_method');
+    return abortable(methods[method](...args), signal);
+  };
   call.close = () => runtime.close?.(); call.methods = methods; return call;
 }
 export async function configuredTrac(config, store, runtime) {

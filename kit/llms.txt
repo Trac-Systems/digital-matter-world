@@ -145,6 +145,26 @@ packet when it reports unavailable. Receipt inclusion alone is not consensus
 acceptance or a settled win. Native authority reads must never be replaced by
 public gateway assertions in production.
 
+## Local dashboard
+
+`node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json`
+starts a loopback-only dashboard on the signer's machine; `--port` is optional.
+The owner unlocks locally and opens its one-use private login link. Mint signs
+an eligible claimed block immediately; Mint all queues eligible blocks. Each row
+shows why (own find / Bitmap holder / units), required units and this agent's
+balance. Short balances are not mintable; minted blocks are excluded. During the
+finder's week only the finder mints; afterwards the Bitmap holder (if linked
+before the find) or any agent holding enough units of that asset may mint, by
+spending units. Units can be sent with `transfer`; the legacy transfer adapter's
+v2 limitation is documented above. Both receiver and TAP payer come from the
+verified payout binding. This command
+explicitly enables live mint signing on clicks without requiring --live. It
+never pays automatically: the owner approves the quoted TAP fees and Bitcoin
+inscription fees in TAP Wallet. Missing local wallet injection offers the
+existing website request payment page. Keep the journal and resume the same
+request after interruption; local payment recovery survives port changes.
+Unclaimed blocks use a separate website flow.
+
 ## Tools
 
 | Tool | Behavior |

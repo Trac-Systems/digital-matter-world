@@ -1,3 +1,4 @@
+import { phase, lifecycleSignal } from '../src/lifecycle.mjs';
 import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
 import { patternCatalogId } from '../src/mint-assets.mjs';
 import { lookupMaintenance } from './lookup-maintenance.mjs';
@@ -45,6 +46,7 @@ import { installPublicSummarySources } from './public-summary-sources.mjs';
 import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms, mintOwnershipMatches } from '../src/fees.mjs';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
+const INDEXER_MIN_RPS = 100;
 export async function batchReadStamp(trac, indexer) {
   const before = await trac('stamp'), tap = await indexer.stamp();
   // ord returns safe numeric heights; activated notaries return exact decimal
@@ -70,24 +72,27 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   await registry();
 
   const state = suppliedStore ?? await Store.open(config.prod.readerData, config.storeSettings);
-  let trac, views, store, ethereum, lookups, maintenance, closed = false;
+  let trac, views, store, ethereum, lookups, maintenance, warmTimer, closed = false;
   try {
   // Bitcoin and TAP reads share one paced queue to our own indexer. The HTTP default (2/s) made a
   // first-mint deployment check wait behind routine refreshes for minutes; installs without an
-  // explicit rate use 25/s for this queue only.
-  const indexerHttp = config.prod.http ?? { requestsPerSecond: 100 };
-  const client = await createBitcoin(config.prod.bitcoin, indexerHttp);
-  trac = await configuredTrac(config, state, runtime);
-  const indexer = await createTap(config.prod.tap, client, indexerHttp, config.prod.lookupSettings);
+  // explicit rate use 100/s for this queue only (the indexer answers in about 1 ms).
+  // The v2 settings document still carries the launch source rate (2/s), which made every first-mint and quote
+  // check wait seconds per read on our own indexer (it answers in about 1 ms). Reads from it run at least 100/s
+  // until the settings amendment raises sourceRps; a higher configured rate still wins.
+  const indexerHttp = { ...config.prod.http, requestsPerSecond: Math.max(config.prod.http?.requestsPerSecond ?? 0, INDEXER_MIN_RPS) };
+  const client = await phase('reader.bitcoin_open', () => createBitcoin(config.prod.bitcoin, indexerHttp));
+  trac = await phase('reader.trac_open', () => configuredTrac(config, state, runtime));
+  const indexer = await phase('reader.tap_open', () => createTap(config.prod.tap, client, indexerHttp, config.prod.lookupSettings));
   lookups = new TapLookupIndex({ filename: join(config.prod.readerData, 'tap-lookups.sqlite'), indexer, settings: config.prod.lookupSettings });
-  ethereum = await createEthereum(config.prod.ethereum, config.prod.http, { filename: join(config.prod.readerData, 'ethereum-events.sqlite') });
+  ethereum = await phase('reader.ethereum_open', () => createEthereum(config.prod.ethereum, config.prod.http, { filename: join(config.prod.readerData, 'ethereum-events.sqlite') }));
   const manifest = { bitcoin: client };
   store = suppliedStore ?? await EvidenceStore.open({ config: config.prod.evidence, identity, gateway, clock: async () => { const tip = await client.tip(); return { tip: tip.height, tipHash: tip.hash }; }, stamp: () => trac('stamp') });
   const clockGate = serial();
   views = new BitcoinViews(client, join(config.prod.readerData, 'bitcoin.sqlite'), { maxHeadersPerView: config.prod.maxHeadersPerView, settings: config.prod.lookupSettings, integerVersion: config.v2 ? 2 : 1 });
-  if (config.prod.headerSeed) await views.seedChunks(config.prod.headerSeed);
-  else if (config.prod.headersFile) await views.seed(config.prod.headersFile);
-  const headerBootstrap = await initializeHeaderReader({ client, indexer, views });
+  if (config.prod.headerSeed) await phase('reader.header_seed', () => views.seedChunks(config.prod.headerSeed));
+  else if (config.prod.headersFile) await phase('reader.header_seed', () => views.seed(config.prod.headersFile));
+  const headerBootstrap = await phase('reader.header_bootstrap', () => initializeHeaderReader({ client, indexer, views }));
   const ethRPC = ethereum.rpc, escrow = ethereum.escrow;
   const quotedTerms = (kind, row) => validateQuotedTerms(reads, kind, row);
   const tap = path => indexer.tap(path);
@@ -156,7 +161,10 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     const fresh = () => flight ??= Promise.resolve().then(fn).then(v => { value = v; at = Date.now(); return v; }).finally(() => { flight = null; });
     const read = () => at > -Infinity && (Date.now() - at < cacheMs || flight) ? Promise.resolve(value) : fresh();
     read.fresh = fresh; warm.push(fresh); return read; };
-  if (config.prod.warmReads !== false) setInterval(() => { for (const fresh of warm) fresh().catch(() => {}); }, Math.max(250, Math.floor(cacheMs / 2))).unref();
+  if (config.prod.warmReads !== false) {
+    warmTimer = setInterval(() => { if (!closed && !lifecycleSignal()?.aborted) for (const fresh of warm) fresh().catch(() => {}); }, Math.max(250, Math.floor(cacheMs / 2)));
+    warmTimer.unref();
+  }
   const sharedHead = shared(() => trac('head')), sharedAuthority = shared(() => trac('authority')), sharedRules = shared(() => trac('rulesContext'));
   const reads = {
     bindings,
@@ -333,7 +341,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     },
     escrowRotation: (...args) => escrow.rotation(...args),
     committeeRotation: async () => { const policy = config.prod.committeeRotation; return policy ? await readPrivateJSON(policy) : null; },
-    async close() { if (closed) return; closed = true; try { await maintenance?.close(); views.close(); ethereum.close?.(); lookups.close(); } finally { try { if (!suppliedStore) { await store.close(); await state.close(); } } finally { await trac.close(); } } }
+    async close() { if (closed) return; closed = true; clearInterval(warmTimer); try { await maintenance?.close(); views.close(); ethereum.close?.(); lookups.close(); } finally { try { if (!suppliedStore) { await store.close(); await state.close({ checkpoint: true }); } } finally { await trac.close(); } } }
   };
   // REST exposes current ownership and lock state. Historical financial reads
   // fail closed unless the indexed snapshot is precisely the requested branch.
@@ -397,7 +405,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     notarySnapshot: () => trac('migrationSnapshot'), historyFor: at => views.view(at.tip, at.tipHash) });
   if (store instanceof EvidenceStore) reads.migrationHistory = anchor => views.view(Number(anchor.height), anchor.hash);
   return reads;
-  } catch (error) { views?.close(); ethereum?.close?.(); lookups?.close(); if (!suppliedStore) { await store?.close(); await state.close(); } await trac?.close(); throw error; }
+  } catch (error) { clearInterval(warmTimer); views?.close(); ethereum?.close?.(); lookups?.close(); if (!suppliedStore) { await store?.close(); await state.close({ checkpoint: true }); } await trac?.close(); throw error; }
 }
 export async function createReads({ config: filename, readerId, gateway, identity }) {
   const config = await loadConfig(filename, { committee: true });

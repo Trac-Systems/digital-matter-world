@@ -17,9 +17,9 @@ test('idle provisioning does not rewrite an unchanged cursor', async t => {
 
 test('a job waiting for the player is not rewritten on every pass', async t => {
   const f = await provisioningFixture(t); f.funds(0n);
-  const waiting = await f.operator.request('p2', f.pattern), before = f.store.sequence;
+  const waiting = await f.operator.advanceAsset('p2', f.pattern), before = f.store.sequence;
   assert.equal(waiting.state, 'awaiting_player_deploy');
-  await f.operator.request('p2', f.pattern); await f.operator.request('p2', f.pattern); await f.operator.tick();
+  await f.operator.advanceAsset('p2', f.pattern); await f.operator.advanceAsset('p2', f.pattern); await f.operator.tick();
   assert.equal(f.store.sequence, before);
   assert.deepEqual(f.store.get('provisioning', 'p2'), waiting);
 });
@@ -37,7 +37,7 @@ test('name and ticker races, repeated salted fallbacks, crash recovery and concu
     if (typeof text === 'string' && !elementRace) { elementRace = true; f.index('dmwexample.999.4.element'); }
     if (typeof text === 'object' && !tickerRace) { tickerRace = true; f.index({ ...text, prv: 'outsider' }); }
   });
-  await Promise.all([f.operator.request('p2', f.pattern), f.operator.request('p2', f.pattern)]);
+  await Promise.all([f.operator.advanceAsset('p2', f.pattern), f.operator.advanceAsset('p2', f.pattern)]);
   const saved = f.store.get('provisioning', 'p2'), fallback = candidate(saved, 'element', 1);
   f.index(`${fallback}.888.4.element`); f.mine();
   const recovered = new Provisioner(f), job = await f.complete('p2', f.pattern, recovered);
@@ -48,7 +48,7 @@ test('name and ticker races, repeated salted fallbacks, crash recovery and concu
 });
 test('pair race adopts indexed winner; the service never needs Bitcoin funds', async t => {
   const f = await provisioningFixture(t); f.funds(0n);
-  assert.equal((await f.operator.request('p2', f.pattern)).state, 'awaiting_player_deploy'); assert.equal(f.packages.size, 0);
+  assert.equal((await f.operator.advanceAsset('p2', f.pattern)).state, 'awaiting_player_deploy'); assert.equal(f.packages.size, 0);
   f.funds(1000000000n); let winner;
   f.hook(async p => { if (typeof p.entries[0].text === 'string') winner ??= f.index('outsider.123.4.element'); });
   const job = await f.complete(); assert.equal(job.entry.elementId, winner); assert.equal(job.reused, true);
@@ -100,21 +100,21 @@ test('authority verification uses a named lookup and rejects an explicitly cance
 
 test('an indexed player deployment is recovered before POST without allocating a second ticker', async t => {
   const f = await provisioningFixture(t);
-  let job = await f.operator.request('p2', f.pattern);
+  let job = await f.operator.advanceAsset('p2', f.pattern);
   const element = f.index(job.content); f.mine();
-  job = await f.operator.request('p2', f.pattern);
+  job = await f.operator.advanceAsset('p2', f.pattern);
   assert.equal(job.phase, 'deployment'); assert.equal(job.elementId, element);
   const id = f.index(job.content); f.canonical.set(id, f.canonical.get(id) + 1);
-  job = await f.operator.request('p2', f.pattern);
+  job = await f.operator.advanceAsset('p2', f.pattern);
   assert.equal(job.reason, 'deployment_confirmations'); assert.equal(job.tickerAttempt, 0);
-  f.mine(); job = await f.operator.request('p2', f.pattern);
+  f.mine(); job = await f.operator.advanceAsset('p2', f.pattern);
   assert.equal(job.state, 'registered'); assert.equal(job.entry.id, id); assert.equal(job.entry.receiver, 'maker');
   assert.equal(job.tickerAttempt, 0); assert.equal(job.attempts.length, 2);
 });
 
 test('element registration binds the deploying wallet and independent verification checks indexed names', async t => {
   const f = await provisioningFixture(t);
-  let job = await f.operator.request('p2', f.pattern);
+  let job = await f.operator.advanceAsset('p2', f.pattern);
   const element = f.index(job.content); f.mine();
   job = await f.operator.submit('p2', { phase: 'element', inscription: element });
   const id = f.index(job.content); f.mine();
@@ -139,19 +139,42 @@ test('first pattern quote says deployment needed without payment, reservation or
   const quote = await mints.quote({ asset: 'p2', block: 123, amount: '1' });
   assert.equal(quote.state, 'deployment_needed'); assert.equal(quote.requestId, null); assert.equal(quote.reservation, 'none');
   assert.equal(quote.payable, false); assert.deepEqual(quote.fees, []);
-  assert.equal(quote.deployment.inscriptionText, 'dmwexample.123.4.element');
+  assert.equal(quote.deployment.state, 'queued');
+  await f.operator.work.drain();
+  assert.equal((await f.operator.state('p2')).inscriptionText, 'dmwexample.123.4.element');
   assert.equal(touched, 0); assert.equal(f.store.count('mints'), 0); assert.equal(f.store.count('holds'), 0);
 });
 
 test('a copied deploy sent to a different wallet allocates a replacement ticker', async t => {
   const f = await provisioningFixture(t);
-  const first = await f.operator.request('p2', f.pattern), element = f.index(first.content); f.mine();
+  const first = await f.operator.advanceAsset('p2', f.pattern), element = f.index(first.content); f.mine();
   const deploy = await f.operator.submit('p2', { phase: 'element', inscription: element });
   const occupied = f.index(deploy.content); f.mine();
   f.reads.inscription = async id => ({ address: id === occupied ? 'other-wallet' : 'maker' });
-  assert.equal((await f.operator.request('p2', f.pattern)).reason, 'ticker_occupied');
-  const replacement = await f.operator.request('p2', f.pattern);
+  assert.equal((await f.operator.advanceAsset('p2', f.pattern)).reason, 'ticker_occupied');
+  const replacement = await f.operator.advanceAsset('p2', f.pattern);
   assert.equal(replacement.state, 'awaiting_player_deploy'); assert.equal(replacement.phase, 'deployment');
   assert.notEqual(replacement.content.tick, deploy.content.tick);
   assert.equal(replacement.elementId, element); assert.equal(replacement.receiver, 'maker');
+});
+
+test('a registered token interrupted by a busy recheck still quotes as registered until its registry entry is suspended', async t => {
+  const f = await provisioningFixture(t), job = await f.complete();
+  assert.equal(job.state, 'registered');
+  await f.store.put('provisioning', 'p2', { ...f.store.get('provisioning', 'p2'), state: 'confirming', reason: 'tap_lookup_index_catching_up', nextRetry: Date.now() + 60000 });
+  const quoted = await f.operator.request('p2', f.pattern, { registeredAsIs: true });
+  assert.equal(quoted.state, 'registered'); assert.equal(quoted.entry.id, job.entry.id);
+  const { updateRegistryAsset } = await import('../src/registry.mjs');
+  await updateRegistryAsset(f.registryPath, 'p2', latest => ({ ...latest, suspended: true }));
+  assert.notEqual((await f.operator.request('p2', f.pattern, { registeredAsIs: true })).state, 'registered');
+});
+
+test('a recheck cut off by shutdown never suspends a registered token', async t => {
+  const f = await provisioningFixture(t), job = await f.complete();
+  const content = f.reads.content;
+  f.reads.content = async () => { throw new Error('gateway_stopping'); };
+  await assert.rejects(f.operator.advance({ ...f.store.get('provisioning', 'p2') }), /gateway_stopping/);
+  f.reads.content = content;
+  const entry = (await f.reads.registry()).assets.p2;
+  assert.equal(entry.suspended, false); assert.equal(entry.id, job.entry.id);
 });

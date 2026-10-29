@@ -20,6 +20,7 @@ import { gameTools } from '../../kit/lib/tools.mjs';
 import { createPublicAPI } from '../src/public-api.mjs';
 import { mintContent, buildInscription, signCommit, fundingAddress } from '../../kit/lib/inscription-core.mjs';
 import { provisioningFixture } from './provisioning-fixture.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 // Real settled catalog/find roots, account balances, financial batches and
 // notary from v2-stack. Only the Bitcoin index and payment receipt are fixtures.
@@ -71,7 +72,7 @@ export async function firstMintStack(t, { store, contract, document, network, se
   const http = await serve({ intake: { store }, files: { serve: async () => false }, mints, operator: { provisioner },
     publicAPI: createPublicAPI({ views: { store, mints } }), ...httpOptions({ reads, mints, f }) }); t.after(() => http.close());
   const service = new ServiceClient({ origin: http.url, network, ...clientOptions });
-  return { f, reads, independent, policies, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic, http, makeReads };
+  return { f, reads, independent, policies, provisioner, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic, http, makeReads };
 }
 
 export async function firstMintFixture(t, options) {
@@ -79,17 +80,33 @@ export async function firstMintFixture(t, options) {
   const provenance = await acceptedAssetProvenance({ store, reads: { rulesContext }, asset: catalogAsset, block });
   const asset = provenance.find.asset, amount = String(provenance.find.count);
   assert.equal(provenance.find.finder, agent.owner);
-  const { f, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic } = await firstMintStack(t, options);
+  const { f, reads, provisioner, mints, service, receiver, transfers, bitcoinSecret, bitcoinPublic } = await firstMintStack(t, options);
   const originalService = agent.service; agent.service = service;
   t.after(() => { agent.service = originalService; });
   const intent = { asset: catalogAsset, amount, block, receiver, payer: receiver, kind: 'tap', compound: false };
   const tool = gameTools({ agent, candidates: async (asset, { block }) => (await service.mintRights(agent.address, { asset, block })).mintRights }).mint_on_chain;
   const args = tool.schema.parse({ ...intent, actionId: 'first-deploy-' + catalogAsset.replace(':', '-') });
   const make = () => tool.run(args);
-  const first = await make(); assert.equal(first.state, 'deployment_needed'); assert.equal(first.signed, false);
+  const lookup = reads.elementByDefinition;
+  const catalog = store.list('patternsByAsset', { limit: 4096 }), position = catalog.findIndex(r => r.id === catalogAsset);
+  assert.ok(position >= 0);
+  await store.put('meta', 'provisioningCursor', { pattern: 0, type: '', named: position ? catalog[position - 1].id : '' });
+  let entered; const started = new Promise(resolve => { entered = resolve; });
+  reads.elementByDefinition = async (...args) => {
+    if (args[0] === provenance.pattern.pat) { entered(); await delay(2000); }
+    return lookup(...args);
+  };
+  const provisioning = provisioner.tick();
+  await Promise.race([started, provisioning.then(() => { throw Error('slow_lookup_not_entered'); })]);
+  const quoteStart = performance.now(), first = await make(), quoteMs = performance.now() - quoteStart;
+  assert.ok(quoteMs < 1500, `quote waited for provisioning: ${quoteMs} ms`);
+  assert.equal(first.state, 'deployment_needed'); assert.equal(first.signed, false);
+  await provisioning; reads.elementByDefinition = lookup;
+  t.diagnostic(JSON.stringify({ firstMintAsset: asset, indexerDelayMs: 2000, quoteDuringProvisioningMs: quoteMs }));
   assert.equal(first.asset, asset); assert.equal(first.requestId, null); assert.equal(first.payable, false);
   assert.equal(first.next[0].tool, 'inscribe_deployment');
-  let job = await service.deployment(catalogAsset);
+  await service.deployment(catalogAsset); await provisioner.work.drain();
+  let job = await provisioner.state(catalogAsset);
   assert.equal(job.phase, 'element');
   const element = f.index(job.content, r.hash('first-element-' + asset) + 'i0');
   f.canonical.delete(element);
@@ -104,6 +121,7 @@ export async function firstMintFixture(t, options) {
   f.canonical.set(deployment, 100);
   assert.equal((await service.submitDeployment({ asset: catalogAsset, phase: 'deployment', inscription: deployment })).state, 'registered');
   assert.equal((await make()).state, 'deployment_pending');
+  await mints.deploymentTick();
   await drain(); assert.ok(contract.db.get('fd/asset/' + asset));
   const quoted = await service.mintQuote({ asset: catalogAsset, amount, block }); assert.equal(quoted.asset, asset); assert.equal(quoted.jobState, 'registered');
   const requested = await make(), id = requested.request.requestId;

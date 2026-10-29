@@ -75,7 +75,8 @@ export function mount(root, { id }) {
       catch (error) { if (notYet(error)) throw Error('Not in a Bitcoin block yet. This page keeps checking; nothing else to do.'); throw error; }
       await refresh();
     }));
-    if (!registered && job.state !== 'awaiting_player_deploy') next.push(button('Start', async () => {
+    if (job.state === 'queued') next.push(h('span.small.muted', {}, 'Preparing the inscription. This page updates by itself in a few seconds.'));
+    else if (!registered && job.state !== 'awaiting_player_deploy') next.push(button('Start', async () => {
       await api('/mint/deployment', { asset: job.asset }); await refresh();
     }));
     if (job.state === 'awaiting_player_deploy' && !receipt) next.push(button(phase === 'element' ? 'Inscribe pattern' : 'Deploy token', async () => {

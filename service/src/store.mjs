@@ -315,9 +315,14 @@ export class Store {
     await atomicWrite(this.path, Buffer.alloc(0)); this.fd = await open(this.path, 'a+', 0o600); this.journalBytes = 0;
   }
   async bytes() { return (await stat(this.path)).size; }
-  async close() {
+  async close({ checkpoint = false } = {}) {
     if (this.closed) return; this.closed = true; clearTimeout(this.timer);
-    await this.flush(); await this.fd?.close(); this.db?.close();
+    await this.flush();
+    // A clean service stop can retain the committed SQLite snapshot and leave
+    // only a future crash tail to verify on reopen. Never truncate before the
+    // WAL checkpoint has completed durably.
+    if (checkpoint && this.fd) await this.checkpoint();
+    await this.fd?.close(); this.db?.close();
     if (this.lock) { await this.lock.close(); const owned = JSON.parse(await readFile(this.lockPath, 'utf8')); check(owned.token === this.lockIdentity?.token, 'store_lock_changed'); await unlink(this.lockPath); }
   }
 }

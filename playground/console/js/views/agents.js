@@ -3,7 +3,7 @@ import { get, bus, store, site } from '../api.js';
 import { pagedTable } from '../paged.js';
 import { mineral, assetName, title, isMe, describe, fieldName } from '../words.js';
 import { tap } from '../money.js';
-import { groupFinds, groupText, inspectGroup } from './feed.js';
+import { groupKey, groupFinds, groupText, inspectGroup } from './feed.js';
 
 // What each bot strategy goes after, in plain words.
 const HUNTS = { prospector: 'Claims finds across history and mints what it wins.', discoverer: 'Searches history for new pattern types and proposes them.', crafter: 'Combines pattern units into compounds.' };
@@ -120,6 +120,7 @@ export function mount(root, params) {
         path: `/agents/${key}/history`, key: 'history', limit: 50,
         // Same grouping as the feed: one row per finder, matter and settlement.
         group: rows => groupFinds(rows).map(r => r.events?.length === 1 ? r.events[0] : r),
+        joins: (a, b) => !!groupKey(a) && groupKey(a) === groupKey(b),
         sorts: [['sequence:desc', 'Newest first'], ['sequence:asc', 'Oldest first']],
         filters: [{ name: 'category', label: 'Show', value: '', options: [['', 'All'], ['chain', 'Chain'], ['money', 'Money']] }],
         empty: 'No public actions yet.',

@@ -71,3 +71,23 @@ test('a signed preview cannot silently change Bitmap ownership before reservatio
   f.data.bitmap={agent:f.body.request.owner,address:'new-holder'};
   await assert.rejects(f.mints.quote({asset:'p0',block:10,kind:'tap',feeQuote:quote.feeQuote}),/quote_recipient_changed/);
 });
+
+test('a stalled mint worker excludes only its owner and leaves status and other owners responsive', async t => {
+  const f = await setup(); t.after(() => f.store.close()); await f.start();
+  const other = hash('other-mint'), row = f.store.get('mints', f.id);
+  await f.store.put('mints', other, { ...row, id: other, request: { ...row.request, owner: hash('other-owner') }, permit: { fixture: true } });
+  const sibling = hash('same-owner-mint'), visited = [];
+  await f.store.put('mints', sibling, { ...row, id: sibling });
+  await f.store.put('activeMints', sibling, true);
+  let release, entered; const blocked = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  f.mints.advance = async row => { visited.push(row.id); entered(); await blocked; };
+  const tick = f.mints.tick(); await started;
+  try {
+    const at = performance.now();
+    await assert.rejects(f.mints.request(f.body), { message: 'resource_busy', status: 503 });
+    assert.equal(f.mints.public(f.id).id, f.id);
+    assert.equal((await f.mints.payment({ id: other, inscription: hash('inscription') + 'i0' })).id, other);
+    assert.ok(performance.now() - at < 200);
+  } finally { release(); await tick; }
+  assert.deepEqual(new Set(visited), new Set([f.id, sibling]), 'same-owner jobs progress in order without starvation');
+});

@@ -60,35 +60,49 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
 
 export class FinancialExecution {
   constructor({ store, reads, document, resources }) {
-    Object.assign(this, { store, reads, document }); this.resources = assetResources(resources); this.gate = serial();
+    Object.assign(this, { store, reads, document }); this.resources = assetResources(resources);
+    const commit = serial(); this.revision = 0;
+    this.gate = task => commit(async () => { const result = await task(); this.revision++; return result; });
     this.linkReconciler = new FinancialLinkReconciler({ store, reads, financial: this, resources });
   }
-  submit(transition) { return this.gate(async () => {
+  existing(id) { return this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null); }
+  async submit(transition) {
     check(transition && rules.hex(transition.id, 32), 'financial_identity');
     check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery'].includes(transition.type) &&
       Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
     const key = rules.hashObject(['dmw-financial-transition-v2', transition]);
-    const accepted = this.store.get('financialAccepted', key); if (accepted) return accepted;
-    const old = this.store.get('financialQueue', key); if (old) return { id: key, state: 'queued' };
+    const old = this.existing(key); if (old) return old;
+    const document = this.document;
     check(!this.admissionReady || await this.admissionReady(), 'financial_admission_fenced', 503);
+    return this.gate(async () => {
+    const existing = this.existing(key); if (existing) return existing;
+    check(document === this.document, 'financial_snapshot_changed', 503);
     check(this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     // Submission is a durable intent, not a claim of payment or acceptance.
     await this.store.put('financialQueue', key, transition); return { id: key, state: 'queued' };
   }); }
-  admit(transition, at) { return this.gate(async () => {
+  async admit(transition, at) {
     const id = rules.hashObject(['dmw-financial-transition-v2', transition]);
-    const old = this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null);
+    const old = this.existing(id);
     if (old) return old;
     check(!this.admissionReady || await this.admissionReady(), 'financial_admission_fenced', 503);
     check(transition.type === 'reserve' && this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     check(Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
-    const result = await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document: this.document, height: at.counted, at });
+    const revision = this.revision, document = this.document;
+    const result = await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document, height: at.counted, at });
     const owner = transition.action.owner, capacity = result.inputs[0].evidence.capacity;
+    const imported = capacity ? BigInt(await this.reads.financialRecord('fi/deployment/' + capacity.deployment, at) ?? '0') : 0n;
+    return this.gate(async () => {
+    const existing = this.existing(id); if (existing) return existing;
+    // The pipeline commits accepted roots under this same short gate. Source
+    // verification can overlap other work, but cannot commit across a change.
+    check(revision === this.revision && document === this.document, 'financial_snapshot_changed', 503);
+    check(this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     check(!this.store.get('financialAdmissionOwner', owner), 'financial_account_reserved', 409);
     const writes = [{ space: 'financialAdmissionOwner', id: owner, value: id }];
     if (capacity) {
       const key = capacityKey(capacity.deployment), pending = BigInt(this.store.get('financialAdmissionCapacity', key) ?? '0');
-      const accepted = BigInt(this.store.get('accountRecords', key) ?? '0') + BigInt(await this.reads.financialRecord('fi/deployment/' + capacity.deployment, at) ?? '0');
+      const accepted = BigInt(this.store.get('accountRecords', key) ?? '0') + imported;
       check(pending + accepted + BigInt(capacity.amount) <= BigInt(capacity.remaining), 'financial_capacity_reserved', 409);
       const plot = capacity.block === null ? null : plotKey(capacity.asset, capacity.block);
       check(!plot || !this.store.get('financialAdmissionPlot', plot), 'financial_plot_reserved', 409);
@@ -98,12 +112,17 @@ export class FinancialExecution {
     await this.store.transact([...writes, { space: 'financialAdmission', id, value: { owner, capacity: capacity ?? null } }, { space: 'financialQueue', id, value: transition }]);
     return { id, state: 'queued' };
   }); }
-  admitLink(transition, at) { return this.gate(async () => {
+  async admitLink(transition, at) {
     const id = rules.hashObject(['dmw-financial-transition-v2', transition]);
     if (this.store.get('financialAccepted', id) || this.store.get('financialQueue', id)) return { id, state: 'queued' };
     check(!this.admissionReady || await this.admissionReady(), 'financial_admission_fenced', 503);
     check(transition.type === 'lifecycle' && transition.action.type === 'link-reserve' && this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity');
-    await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document: this.document, height: at.counted, at });
+    const revision = this.revision, document = this.document;
+    await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document, height: at.counted, at });
+    return this.gate(async () => {
+    if (this.existing(id)) return { id, state: 'queued' };
+    check(revision === this.revision && document === this.document, 'financial_snapshot_changed', 503);
+    check(this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     const block = transition.action.block;
     check(!this.store.get('financialAdmissionLink', block), 'financial_link_reserved', 409);
     await this.store.transact([{ space: 'financialAdmissionLink', id: block, value: id },
@@ -111,15 +130,19 @@ export class FinancialExecution {
     return { id, state: 'queued' };
   }); }
   pending() { return this.store.count('financialQueue') > 0; }
-  expire(id, at) { return this.gate(async () => {
+  async expire(id, at) {
     const transition = this.store.get('financialQueue', id);
     if (!transition) return !this.store.get('financialAccepted', id);
     if (transition.type === 'refund') return false;
+    const revision = this.revision;
     if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
     else {
       const exit = await this.reads.financialEvidence({ type: 'refund', id: transition.id, reason: 'credit' }, at);
       check(exit.state === 'credit' && rules.compareOrdinal(at.counted, exit.expiry) > 0, 'financial_exit_live');
     }
+    return this.gate(async () => {
+    if (!this.store.get('financialQueue', id)) return !this.store.get('financialAccepted', id);
+    check(revision === this.revision, 'financial_snapshot_changed', 503);
     // Preserve anything already signed or sent. Pipeline resolves that exact
     // draft before local admission counters can be released.
     const draft = this.store.get('meta', 'draft');

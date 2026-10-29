@@ -4,6 +4,7 @@ import { chmod, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { setImmediate as turn } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { HttpSource, jsonRpc } from '../http.mjs';
 import { productionURL, readSecret, validateConfig, loadConfig } from '../config.mjs';
 import { mockServer, configFixture, json, body } from './helpers.mjs';
@@ -34,6 +35,46 @@ test('HTTP body cap handles chunked streams and errors never expose a provider b
 test('HTTP deadlines include a stalled response body', async t => {
   const url = await mockServer(t, (_, res) => { res.writeHead(200); res.write('{'); });
   await assert.rejects(new HttpSource({ url, timeoutMs: 30, retries: 0 }).request(), /http_timeout/);
+});
+test('a stalled indexer body does not delay other reads and pool concurrency stays bounded', async t => {
+  let active = 0, maximum = 0, started;
+  const entered = new Promise(resolve => { started = resolve; });
+  const url = await mockServer(t, async (req, res) => {
+    active++; maximum = Math.max(maximum, active); res.once('close', () => { active--; });
+    if (req.url === '/hang') { started(); res.write('{'); return; }
+    await delay(20); json(res, { ok: true });
+  });
+  const source = new HttpSource({ url, maxConcurrent: 3, requestsPerSecond: 100, timeoutMs: 2000, retries: 0 });
+  const hanging = assert.rejects(source.request('/hang'), /http_timeout/); await entered;
+  const at = performance.now();
+  const replies = await Promise.all(Array.from({ length: 6 }, () => source.request('/fast')));
+  const elapsed = performance.now() - at;
+  assert.ok(replies.every(r => r.ok)); assert.ok(elapsed < 500, `fast reads took ${elapsed} ms`);
+  assert.ok(maximum <= 3); assert.ok(maximum > 1);
+  await hanging;
+  assert.deepEqual(await source.request('/after'), { ok: true });
+  t.diagnostic(`2 s stalled body: six reads ${elapsed.toFixed(1)} ms; peak connections ${maximum}`);
+});
+test('pool wait has a deadline and an expired queued request is never dispatched', async t => {
+  const paths = [];
+  const url = await mockServer(t, (req, res) => { paths.push(req.url); if (req.url === '/hang') res.write('{'); else json(res, {}); });
+  const source = new HttpSource({ url, maxConcurrent: 1, requestsPerSecond: 1000, retries: 0, timeoutMs: 100 });
+  const hanging = assert.rejects(source.request('/hang'), /http_timeout/);
+  await assert.rejects(source.request('/expired', { timeoutMs: 30 }), /http_timeout/);
+  await hanging; await source.request('/after');
+  assert.deepEqual(paths, ['/hang', '/after']);
+});
+test('parallel calls and retries share one rate budget', async t => {
+  const dispatches = [], attempts = new Map();
+  const url = await mockServer(t, (req, res) => {
+    dispatches.push(Date.now()); const count = (attempts.get(req.url) ?? 0) + 1; attempts.set(req.url, count);
+    if (count === 1) { res.writeHead(503); res.end(); } else json(res, {});
+  });
+  const source = new HttpSource({ url, maxConcurrent: 8, requestsPerSecond: 25, backoffMs: 1 });
+  await Promise.all(['/a', '/b', '/c', '/d'].map(path => source.request(path)));
+  assert.equal(dispatches.length, 8);
+  assert.ok(dispatches.at(-1) - dispatches[0] >= 260, JSON.stringify(dispatches));
+  for (let i = 1; i < dispatches.length; i++) assert.ok(dispatches[i] - dispatches[i - 1] >= 30, JSON.stringify(dispatches));
 });
 test('HTTP denies redirects, malformed JSON and unbounded queueing', async t => {
   const url = await mockServer(t, (req, res) => { if (req.url === '/bad') res.end('secret=fixture'); else { res.writeHead(302, { location: '/bad' }); res.end(); } });

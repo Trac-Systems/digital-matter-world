@@ -11,7 +11,7 @@ const MONEY = /^(mint_request|mint_permit|mint_complete|transfer|link|payment|fi
 const KIND = { claim: ['Claim', ''], find: ['Find', 'good'], header_find: ['Header find', 'good'], craft: ['Craft', 'info'], mint_request: ['Mint', 'warn'], mint_permit: ['Mint permit', 'good'], mint_complete: ['Minted', 'minted'], link: ['Link', 'info'], transfer: ['Transfer', ''], block: ['Block', 'ink'], job: ['Lab', ''], player: ['You', 'info'], bot: ['Bot', ''], payment: ['Mint', 'good'], draw: ['Draw', 'info'], discovery: ['Discovery', 'good'], receipts: ['Gateway', ''], component: ['System', ''], error: ['Problem', 'bad'] };
 
 // Finds one agent settled for one pattern in the same counted block collapse into one row.
-const groupKey = e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null;
+export const groupKey = e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null;
 export function groupFinds(events) {
   const out = [];
   for (const e of events) {
@@ -46,6 +46,7 @@ export function mount(root) {
     history = pagedTable({
       path: () => `/feed${query()}`, key: 'events', limit: 50,
       group: rows => groupFinds(rows).map(r => r.events?.length === 1 ? r.events[0] : r),
+      joins: (a, b) => !!groupKey(a) && groupKey(a) === groupKey(b),
       sorts: [['sequence:desc', 'Newest first'], ['sequence:asc', 'Oldest first']],
       empty: 'No retained events in this view.',
       columns: [

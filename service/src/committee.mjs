@@ -6,8 +6,10 @@ import { rules } from './rules.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
 import { jsonRequest } from './http-client.mjs';
 import { verifyBindingAttestation } from '../../rules/src/payout-bindings.mjs';
-export async function post(signer, path, value, timeout = 15000, maxBytes = 4000000) {
-  const { ok, value: result } = await jsonRequest(localURL(signer.url) + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${signer.token}` }, body: JSON.stringify(value), timeout, maxBytes, limitCode: 'committee_response_limit' });
+import { lifecycleSignal } from './lifecycle.mjs';
+export async function post(signer, path, value, timeout = 15000, maxBytes = 4000000, signal = lifecycleSignal()) {
+  signal?.throwIfAborted();
+  const { ok, value: result } = await jsonRequest(localURL(signer.url) + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${signer.token}` }, body: JSON.stringify(value), timeout, maxBytes, signal, limitCode: 'committee_response_limit' });
   if (!ok) {
     const error = Object.assign(Error(/^[a-z][a-z0-9_]{0,70}$/.test(result.error) ? 'committee_' + result.error : 'committee_refused'), { status: 503 });
     if (path === '/prepare' && result.unreserved?.id === value.ceremony.id && result.unreserved.proposalHash === hash(JSON.stringify(value.proposal))) error.unreserved = true;
@@ -17,12 +19,16 @@ export async function post(signer, path, value, timeout = 15000, maxBytes = 4000
 }
 const validClock = n => Number.isSafeInteger(n) && n >= 0 || typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n);
 export class Committee {
-  constructor({ store, network, signers, epoch = 1, timeoutMs = 180000, prepareMs = 60000, healthMs = 1000, readyMs = 15000, requestMs = 15000, responseBytes = 4000000, pollMs = 0, historyPage = 256, assetRecoveryVersion = 1 }) {
+  constructor({ store, network, signers, epoch = 1, timeoutMs = 180000, prepareMs = 60000, healthMs = 1000, readyMs = 15000, requestMs = 15000, responseBytes = 4000000, pollMs = 0, historyPage = 256, batchRetryMs = 5000, assetRecoveryVersion = 1 }) {
     check(signers.length === 5 && new Set(signers.map(s => s.id)).size === 5, 'committee_members');
     check([timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, historyPage].every(n => Number.isSafeInteger(n) && n > 0) && Number.isSafeInteger(pollMs) && pollMs >= 0, 'committee_resources');
-    Object.assign(this, { store, network, signers, epoch, timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, pollMs, historyPage, assetRecoveryVersion }); this.signatureGate = serial();
+    check(Number.isSafeInteger(batchRetryMs) && batchRetryMs > 0 && batchRetryMs <= 600000, 'committee_resources');
+    Object.assign(this, { store, network, signers, epoch, timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, pollMs, historyPage, batchRetryMs, assetRecoveryVersion }); this.signatureGate = serial();
+    this.controller = new AbortController();
+    this.signal = lifecycleSignal() ? AbortSignal.any([this.controller.signal, lifecycleSignal()]) : this.controller.signal;
   }
-  request(signer, path, value, timeout = this.requestMs) { return post(signer, path, value, timeout, this.responseBytes); }
+  close() { this.controller.abort(Error('committee_closed')); }
+  request(signer, path, value, timeout = this.requestMs) { return post(signer, path, value, timeout, this.responseBytes, this.signal); }
   async healthy(at) {
     const replies = await Promise.allSettled(this.signers.map(s => this.request(s, at ? '/batch-ready' : '/health', at?.settingsHash ? { settingsHash: at.settingsHash } : {}, at ? this.readyMs : this.healthMs)));
     return this.signers.filter((s, i) => replies[i].status === 'fulfilled' && replies[i].value.id === s.id && replies[i].value.network === this.network && validClock(replies[i].value.epoch) && rules.compareOrdinal(replies[i].value.epoch, this.epoch) === 0
@@ -78,7 +84,7 @@ export class Committee {
   retireUnprepared(key) { return this.signatureGate(async () => {
     const session = this.store.get('ceremonies', key);
     if (session?.stage !== 'blocked' || session.reason !== 'prepare_incomplete') return null;
-    if (session.retryPrepare || session.retryBusy || session.unreserved?.length || session.failures?.every(e => e === 'committee_signer_busy')) return null;
+    if (session.resetting || session.retry === 'same-batch' || session.retryPrepare || session.retryBusy || session.unreserved?.length || session.failures?.every(e => e === 'committee_signer_busy')) return null;
     const selected = this.signers.filter(s => session.peers.includes(s.id));
     check(selected.length === 3, 'ceremony_members', 503);
     const states = await Promise.allSettled(selected.map(s => this.request(s, '/status', { id: session.id })));
@@ -100,6 +106,30 @@ export class Committee {
     await this.store.put('ceremonies', key, { ...session, retryPrepare: true, unreserved: selected.map(s => s.id) });
     return { session: session.id, status: 'retry-original-preparation' };
   }); }
+  async renewBatchAttempt(key, session, proposal) {
+    if (Date.now() - (session.lastReset ?? session.started ?? 0) < this.batchRetryMs) return null;
+    const selected = this.signers.filter(s => session.peers.includes(s.id));
+    check(selected.length === 3, 'ceremony_members', 503);
+    session = { ...session, resetting: true, lastReset: Date.now() };
+    await this.store.put('ceremonies', key, session);
+    const batchHash = hash(JSON.stringify(proposal.batch));
+    const replies = await Promise.allSettled(selected.map(s => this.request(s, '/retire-batch-attempt', {
+      network: this.network, id: session.id, batch: proposal.batch
+    })));
+    if (!replies.every(r => r.status === 'fulfilled' && r.value.id === session.id && r.value.status === 'batch-attempt-retired' && r.value.batchHash === batchHash)) return null;
+    const digests = [...replies.flatMap(r => r.value.digest ? [r.value.digest] : []), ...(session.digest ? [session.digest] : [])];
+    if (!digests.every(d => /^[0-9a-f]{64}$/.test(d)) || new Set(digests).size > 1) {
+      await this.store.put('ceremonies', key, { ...session, resetting: false, reason: 'signature_disagreement', retryPrepare: false, retryBusy: false });
+      throw Object.assign(Error('signature_disagreement'), { status: 503 });
+    }
+    // Never discard/rebuild the draft or release a signing slot. All original
+    // peers fence the old session while retaining its permanent digest lock.
+    const renewed = { id: randomBytes(32).toString('hex'), proposal, peers: session.peers, stage: 'blocked', reason: 'prepare_incomplete',
+      retry: 'same-batch', retryOf: session.id, retryPrepare: true, fresh: true, unreserved: session.peers, started: Date.now(),
+      ...(digests.length ? { digest: digests[0] } : {}) };
+    await this.store.transact([{ space: 'batchCeremonyAttempts', id: key + '/' + session.id, value: session }, { space: 'ceremonies', id: key, value: renewed }]);
+    this.activeSigning?.delete(key); return null;
+  }
   async sign(key, proposal) {
     let session = this.store.get('ceremonies', key);
     if (!this.activeSigning) {
@@ -139,12 +169,18 @@ export class Committee {
     check(session.proposalHash ? session.proposalHash === hash(JSON.stringify(proposal)) : JSON.stringify(session.proposal) === JSON.stringify(proposal), 'ceremony_proposal_changed', 409);
     if (session.stage === 'complete') return session.result;
     check(session.reason !== 'signature_disagreement', 'signature_disagreement', 503);
+    if (session.resetting) return this.renewBatchAttempt(key, session, proposal);
     const selected = this.signers.filter(s => session.peers.includes(s.id));
     // Status retrieval is safe even if the gateway died after signing completed.
     const readStates = () => Promise.allSettled(selected.map(s => this.request(s, '/status', { id: session.resultSources?.[s.id] ?? session.id })));
     if (session.stage === 'running' && this.lastPoll?.id === session.id && Date.now() - this.lastPoll.at < this.pollMs) return null;
     this.lastPoll = { id: session.id, at: Date.now() };
     let states = await readStates();
+    if (session.stage === 'blocked' && session.reason === 'prepare_incomplete' && session.fresh !== true && proposal.kind === 'batch' &&
+      validClock(proposal.batch?.epoch) && /^[0-9a-f]{64}$/.test(proposal.batch?.root) &&
+      Date.now() - (session.started ?? 0) >= this.batchRetryMs &&
+      states.some(s => s.status === 'rejected' || !['prepared', 'running', 'complete'].includes(s.value.status)))
+      return this.renewBatchAttempt(key, session, proposal);
     // Retry only missing members with a bound no-reservation refusal (or the
     // legacy busy refusal). Existing reservations remain untouched.
     const retry = session.stage === 'blocked' && session.reason === 'prepare_incomplete' &&
@@ -154,6 +190,7 @@ export class Committee {
       // absent-session reply is needed as well as the earlier refusal proof.
       if (states.some((s, i) => s.status === 'rejected' && (s.reason.message !== 'committee_ceremony_id'
         || !(session.unreserved?.includes(selected[i].id) || session.retryBusy || session.failures?.every(e => e === 'committee_signer_busy'))))) return null;
+      if (session.fresh) { session = { ...session, fresh: false }; await this.store.put('ceremonies', key, session); }
       const responses = await Promise.allSettled(selected.map((s, i) => states[i].status === 'fulfilled' ? null :
         this.request(s, '/prepare', { proposal, ceremony: { id: session.id, epoch: this.epoch, peers: selected.map(s => s.peer), ...(session.retry ? { retry: session.retry } : {}) } }, this.prepareMs)));
       const failures = responses.filter(r => r.status === 'rejected').map(r => r.reason.message);

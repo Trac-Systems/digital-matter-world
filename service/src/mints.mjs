@@ -11,6 +11,7 @@ import { activeOwnerSpace, reservingSpace, releaseAdmission, migrateMintAdmissio
 import { financialMintId, financialAsset } from '../../rules/src/financial-mint.js';
 import { financialSplit } from '../../rules/src/financial-fees.js';
 import { mintAssetDefinition } from './mint-assets.mjs';
+import { KeyedWork, parallelPage } from './keyed-work.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 
 export function publicMint(r) {
@@ -43,6 +44,7 @@ export function paymentTerms(row) { const { confirmations, ...terms } = row; ret
 export class Mints {
   constructor({ store, network, reads, bitcoinNetwork = reads.bindings?.bitcoinNetwork ?? 'mainnet', committee, operations, payments, pendingBlocks = 432, resources = {}, capacity = assetResources(resources).activeMints }) {
     Object.assign(this, { store, network, reads, bitcoinNetwork, committee, operations, payments, pendingBlocks, capacity }); this.gate = serial();
+    this.mintWork = new KeyedWork();
     this.resources = assetResources(resources);
   }
   async quote(input) {
@@ -94,7 +96,7 @@ export class Mints {
       deployment: { ...deployment, catalogAsset: resolved.catalogAsset }, deploymentPath: '/mint/deployment/' + resolved.asset,
       deploymentPage: '/mint/' + resolved.catalogAsset };
   }
-  request(body) { return this.gate(async () => {
+  request(body) { return this.mintWork.run(body.request?.owner, async () => {
     const { request, signature, receiver, payer, kind } = body, counted = await this.reads.counted();
     check(typeof receiver === 'string' && receiver.length > 0 && receiver.length <= 128 && hash(receiver) === request?.receive, 'receiver_binding');
     check(typeof payer === 'string' && payer.length > 0 && payer.length <= 128 && verifyPayer(this.network, body), 'payer_authorization');
@@ -115,12 +117,16 @@ export class Mints {
     const context = await this.reads.assetContext(request.asset, request.block, kind, quote.feeQuote), compound = context.deployment.kind === 'compound';
     check(compound || context.find?.finder, 'mint_no_find');
     const holder = context.link ? await this.reads.bitmap(request.block) : null, key = compound ? null : `${request.asset}/${request.block}`;
+    const minted = compound ? false : await this.reads.isMinted(context.deployment.id, context.deployment.tick, request.block);
+    const balance = BigInt(await this.reads.balance(request.owner, request.asset));
+    return this.gate(async () => {
+    check(this.store.countUint('activeMints') < this.capacity, 'mint_capacity', 503);
+    check(this.store.countUint(activeOwnerSpace(request.owner)) < this.resources.mintsPerAgent, 'mint_sender_capacity', 429);
     const hold = key ? this.store.get('holds', key) : null;
     check(!hold || counted > hold.expiry && hold.safeToReplace === true, 'block_pending', 409);
     const reserved = reservedFor(this.store, { request }, this.resources.workPage);
     const accepted = rules.acceptMintRequest({ request, sig: signature, network: this.network, counted, compound, find: context.find, link: context.link,
-      currentHolder: holder?.agent, minted: compound ? false : await this.reads.isMinted(context.deployment.id, context.deployment.tick, request.block),
-      balance: (BigInt(await this.reads.balance(request.owner, request.asset)) - reserved).toString(), settings: { pendingBlocks: this.pendingBlocks } });
+      currentHolder: holder?.agent, minted, balance: (balance - reserved).toString(), settings: { pendingBlocks: this.pendingBlocks } });
     const creditIds = await selectCredits(this.store, { owner: request.owner, payer, rail: kind, fees: quote.fees }, this.resources);
     const row = { id, request, signature, receiver, payer, kind, authorization: body.authorization, requestedFeeQuote: body.feeQuote ?? null,
       quote, context, feeAuthorization, key, state: 'reserving', acceptedAt: counted, deadline: request.until, op: accepted.op, paymentIds: [], creditIds };
@@ -129,8 +135,9 @@ export class Mints {
       ...creditIds.map(sourceId => ({ space: 'creditClaims', id: sourceId, value: id })),
       ...(key ? [{ space: 'holds', id: key, value: { id, expiry: request.expires, safeToReplace: false } }] : [])]);
     return publicMint(row);
+    });
   }); }
-  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.gate(async () => {
+  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.mintWork.run(this.store.get('mints', id ?? requestId)?.request.owner ?? id ?? requestId, async () => {
     id ??= requestId;
     const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     if (inscription) {
@@ -163,10 +170,21 @@ export class Mints {
         this.cursors[space] = page.length === this.resources.workPage ? page.at(-1).id : '';
         for (const row of page) ids.add(row.id);
       }
+      const owners = new Map();
       for (const id of ids) {
-        try { await this.gate(() => this.advance(this.store.get('mints', id), counted)); }
-        catch (e) { const r = this.store.get('mints', id); await this.save({ ...r, lastError: /^[a-z][a-z0-9_]{0,80}$/.test(e.message) ? e.message : 'dependency_unavailable', checkedAt: counted }); }
+        const owner = this.store.get('mints', id)?.request.owner ?? id;
+        if (!owners.has(owner)) owners.set(owner, []);
+        owners.get(owner).push(id);
       }
+      await parallelPage([...owners], async ([owner, requests]) => {
+        if (this.mintWork.pending.has(owner)) return;
+        await this.mintWork.run(owner, async () => {
+          for (const id of requests) {
+            try { await this.advance(this.store.get('mints', id), counted); }
+            catch (e) { const r = this.store.get('mints', id); await this.save({ ...r, lastError: /^[a-z][a-z0-9_]{0,80}$/.test(e.message) ? e.message : 'dependency_unavailable', checkedAt: counted }); }
+          }
+        });
+      });
     } finally { this.running = false; }
   }
   async expire(row, counted, receipts = []) {

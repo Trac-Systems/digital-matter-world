@@ -302,6 +302,29 @@ test('admission reserves account revision and deployment capacity before acknowl
   await assert.rejects(f.mints.request({ ...b.body, reserve: b.action }), /account_signature/);
 });
 
+test('slow admission verification does not hold durable submissions and cannot commit across their revision', async t => {
+  const f = await setup(t), p = await f.prepare('overlap');
+  const scope = f.reads.financialScope;
+  let release, started;
+  const blocked = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { started = resolve; });
+  f.reads.financialScope = options => {
+    const reads = scope(options), evidence = reads.financialEvidence;
+    reads.financialEvidence = async (...args) => { started(); await blocked; return evidence(...args); };
+    return reads;
+  };
+  const admission = f.mints.request({ ...p.body, reserve: p.action }); await entered;
+  const transition = { type: 'lifecycle', id: r.hash('unrelated'), action: { type: 'fixture' } };
+  const submission = await f.financial.submit(transition);
+  assert.equal(submission.state, 'queued');
+  release(); await assert.rejects(admission, /financial_snapshot_changed/);
+  assert.equal(f.store.count('financialAdmissionOwner'), 0);
+  assert.equal(f.store.count('financialAdmissionCapacity'), 0);
+  f.reads.financialScope = scope;
+  await f.mints.request({ ...p.body, reserve: p.action });
+  assert.equal(f.store.count('financialAdmissionOwner'), 1);
+  assert.equal(f.store.count('financialQueue'), 2);
+});
+
 test('Ethereum exits require the exact configured escrow, payer, canonical refund and named transaction', async t => {
   const f = await setup(t), p = await f.prepare('ethereum', 'ethereum');
   await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();

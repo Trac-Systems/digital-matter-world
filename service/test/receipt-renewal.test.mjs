@@ -27,7 +27,7 @@ import { chain } from '../../contract/tests/helpers/chain.mjs';
 import { temp, secret, gateway, fixtureHistory, agent } from './helpers.mjs';
 
 async function setup(t, { manualFence = true, receiptCount = 2, deferBoundaryRefresh = false, beforeBoundary,
-  receiptProtocol = 1, documentValues = {}, successorValues = {}, separateReceipts = false, withFinancial = false, pipelineDepth = 1 } = {}) {
+  receiptProtocol = 1, documentValues = {}, successorValues = {}, separateReceipts = false, withFinancial = false, pipelineDepth = 1, deferRecovery = false } = {}) {
   const directory = await temp('receipt-renewal-'), network = deployment.network, originalHistory = fixtureHistory(40);
   const replacement = new Map();
   const history = { ...originalHistory, raw: h => replacement.get(String(h)) ?? originalHistory.raw(h),
@@ -121,7 +121,7 @@ async function setup(t, { manualFence = true, receiptCount = 2, deferBoundaryRef
     sendMessage: async ({ op, value }) => assert.equal(await contract.run(op, value), null),
     status: async job => ({ state: contract.db.get('bt/' + job.value.n) === job.value.root ? 'accepted' : 'pending' }) };
   async function openRuntime() {
-    runtime = await createV2Runtime({ config, store, secret, history, reads, committee });
+    runtime = await createV2Runtime({ config, store, secret, history, reads, committee, deferRecovery });
     pipeline = new Pipeline({ pipelineDepth, store, files, history, intake: runtime.intake, reads, committee, settings: runtime.settings,
       outbox: new Outbox({ store, transport, retryMs: 0 }) });
   }
@@ -177,6 +177,30 @@ async function setup(t, { manualFence = true, receiptCount = 2, deferBoundaryRef
     async reopen() { await pipeline.close(); await store.close(); store = await Store.open(join(directory, 'gateway')); await reopenSigners(); await openRuntime(); }
   };
 }
+
+test('background receipt certification preserves the same renewal across restart without holding refresh', { timeout: 30000 }, async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), blocked = new Promise(resolve => { release = resolve; });
+  const f = await setup(t, { manualFence: false, deferRecovery: true, beforeBoundary: ({ committee }) => {
+    const fence = committee.fenceReceipts.bind(committee);
+    committee.fenceReceipts = async (...args) => { entered(); await blocked; return fence(...args); };
+  } });
+  assert.equal(f.runtime.intake.rulesContext().ready, false);
+  const recovering = f.runtime.recoverReceipts();
+  await Promise.race([started, recovering.then(() => { throw Error('receipt_recovery_not_started'); })]);
+  try {
+    const at = performance.now(); await f.runtime.refresh();
+    assert.ok(performance.now() - at < 200);
+    assert.equal(f.runtime.intake.namedAdmission.context().ready, false);
+  } finally { release(); await recovering; }
+  assert.equal(f.fence.phase, 'certified');
+  await f.tick(); assert.equal((await f.reads.batchLast()).n, '3');
+  await f.reopen(); await f.runtime.recoverReceipts(); await f.tick();
+  assert.equal((await f.reads.batchLast()).n, '4');
+  assert.equal((await f.reads.rulesContext()).receiptRenewal, null);
+  assert.equal(f.runtime.settings.settingsHash, r.hashObject(f.successor));
+  for (let i = 0; i < f.packets.length; i++) assert.deepEqual(await f.runtime.intake.namedAdmission.accept(f.packets[i]), f.receipts[i]);
+});
 
 test('certified renewal advances once, executes original receipts/terms, and admits successor work after restart', async t => {
   const f = await setup(t), before = await f.reads.rulesContext();

@@ -12,6 +12,7 @@ export class Replay {
     this.worker = new Worker(new URL('./replay-worker.mjs', import.meta.url)); this.id = '0';
   }
   async run(input, history, claims) {
+    check(!this.closed, 'replay_closed', 503);
     check(!this.busy, 'replay_busy', 503); this.busy = true;
     try {
       const decimal = !!input.settings?.document, clock = rules.ordinalCodec(decimal);
@@ -69,5 +70,5 @@ export class Replay {
       });
     } finally { this.busy = false; }
   }
-  async close() { await this.worker.terminate(); }
+  close() { this.closed = true; return this.closing ??= this.worker.terminate(); }
 }

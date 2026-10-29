@@ -11,6 +11,8 @@ import { ReadStream, WriteStream } from 'node:tty';
 import { init, unlock, wipeWallet, publicAddress, publicKey, defaultDirectory, Agent, ServiceClient, Journal, loadHistory, historyProof, headerSource, regtestSource, downloadHeaders, backtest } from '../lib/index.mjs';
 import { check } from '../lib/check.mjs';
 import { serveMcp } from '../lib/mcp.mjs';
+import { serveDashboard } from '../lib/dashboard.mjs';
+import { dashboardJournal } from '../lib/dashboard-state.mjs';
 import { runTool } from '../lib/tools.mjs';
 import { explainError } from '../lib/errors.mjs';
 import { setup } from '../lib/setup.mjs';
@@ -26,7 +28,7 @@ const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, 
   network: { type: 'string' }, 'network-file': { type: 'string' }, import: { type: 'boolean' }, 'skip-addresses': { type: 'boolean' },
   headers: { type: 'string' }, source: { type: 'string' }, independent: { type: 'string' }, output: { type: 'string' },
   start: { type: 'string' }, end: { type: 'string' }, patterns: { type: 'string' }, strategy: { type: 'string' }, help: { type: 'boolean' },
-  cursor: { type: 'string' }, limit: { type: 'string' }
+  cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }
 } });
 const print = value => process.stdout.write(JSON.stringify(publicIdentities(value)) + '\n');
 async function secret(name, prompt) {
@@ -55,8 +57,10 @@ async function ask(prompt) {
 async function main() {
   check(supportedNode(), 'Use Node 24.22.1 or newer 24.x');
   const command = args[0] ?? 'help';
+  const live = opts.live || command === 'dashboard';
+  if (command === 'dashboard') check(opts.port === undefined || /^(0|[1-9][0-9]{0,4})$/.test(opts.port) && Number(opts.port) <= 65535, 'Invalid dashboard port');
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
@@ -108,12 +112,12 @@ async function main() {
     // Keep that unbounded/untrusted feed out of CLI output and MCP's streams.
     if (production) console.log = console.info = console.debug = () => {};
     const adapterModule=production?await import('../lib/mainnet-adapter.mjs'):await import(pathToFileURL(config.adapter));
-    adapter=await adapterModule.create({wallet,network:config.network,localOnly:!production,config,service,dryRun:!opts.live});
+    adapter=await adapterModule.create({wallet,network:config.network,localOnly:!production,config,service,dryRun:!live});
     journal = await Journal.open(directory, `${config.network}/${publicKey(wallet)}`);
     const bitcoinNetwork = config.bitcoinNetwork ?? (config.powLimitBits === 0x207fffff ? 'regtest' : 'mainnet');
     bitcoinWallet = localBitcoinWallet({ wallet, network: bitcoinNetwork, authority: config.bitcoin?.authority,
       source: adapter.bitcoinSource ?? (bitcoinNetwork === 'mainnet' || config.bitcoin?.origin ? mempoolBitcoinSource({ network: bitcoinNetwork, ...config.bitcoin }) : undefined) });
-    const agent = new Agent({ wallet, network: config.network, service, trac: adapter.trac, journal, bitcoinWallet, dryRun: !opts.live, puzzleBits: config.puzzleBits ?? 12,
+    const agent = new Agent({ wallet, network: config.network, service, trac: adapter.trac, journal: command === 'dashboard' ? dashboardJournal(journal) : journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
       powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork });
     let name, input = {};
     if (command === 'read' || command === 'action') {
@@ -144,7 +148,11 @@ async function main() {
     }
     if (command === 'status') print(await agent.status());
     else if (command === 'once') print(await agent.runOnce({ history, source, strategy: strategies.chooseClaims }));
-    else if (command === 'mcp') {
+    else if (command === 'dashboard') {
+      server = await serveDashboard(context, { port: Number(opts.port ?? 0) });
+      process.stdout.write(server.loginLink + '\n');
+      await new Promise(resolve => { process.once('SIGTERM', resolve); process.once('SIGINT', resolve); });
+    } else if (command === 'mcp') {
       server = await serveMcp(context);
       await new Promise(resolve => { const end = () => resolve(); process.once('SIGTERM', end); process.once('SIGINT', end); process.stdin.once('end', end); server.server.onclose = end; });
     } else throw new Error('Unknown command; run dmw --help');

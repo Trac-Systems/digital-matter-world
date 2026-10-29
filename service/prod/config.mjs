@@ -110,6 +110,7 @@ export async function validateConfig(config, { committee = false } = {}) {
   requireValue(deployment.network === config.network && rules.stableJSON(deployment.beacon?.params) === rules.stableJSON(MAINNET_PARAMS) && BigInt(deployment.beacon.checkpoint.height) % 2016n === 0n, 'config_deployment');
   if (p.http) {
     const h = p.http;
+    requireValue(h.maxConcurrent === undefined || integer(h.maxConcurrent, 1, 64), 'http_policy');
     requireValue((h.requestsPerSecond === undefined || Number.isFinite(h.requestsPerSecond) && h.requestsPerSecond > 0) && (h.timeoutMs === undefined || integer(h.timeoutMs, 1, 0x7fffffff)) && (h.retries === undefined || integer(h.retries, 0, Number.MAX_SAFE_INTEGER)) && (h.backoffMs === undefined || integer(h.backoffMs, 0, Number.MAX_SAFE_INTEGER)) && (h.maxQueue === undefined || integer(h.maxQueue, 1, Number.MAX_SAFE_INTEGER)) && (h.maxBytes === undefined || integer(h.maxBytes, 1, Number.MAX_SAFE_INTEGER)) && (h.maxBackoffMs === undefined || integer(h.maxBackoffMs, 0, 0x7fffffff)), 'http_policy');
   }
   requireValue(p.bitcoin?.kind === 'ord' && !p.bitcoin.authFile && !p.bitcoin.tokenFile, 'bitcoin_source');

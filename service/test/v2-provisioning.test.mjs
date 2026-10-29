@@ -58,7 +58,9 @@ test('deployment-state reads are local and never enqueue or advance; p2 prepare 
   assert.equal((await get('/mint/deployment-state/p2%3A0')).asset, 'p0');
   assert.equal(f.store.sequence, sequence);
   f.reads.tap = tap; f.reads.registry = registry;
-  const job = await get('/mint/deployment/p2:1');
+  await get('/mint/deployment/p2:1');
+  await f.operator.work.drain();
+  const job = await get('/mint/deployment-state/p2:1');
   assert.equal(job.phase, 'element');
   const element = f.index(job.content);
   const deploy = await post({ asset: 'p2:1', phase: 'element', inscription: element });
@@ -95,5 +97,7 @@ test('a registered v2 compound keeps its existing financial registration path', 
   mints.provisioner = { request: () => assert.fail('v2 compound must not use pattern provisioning') };
   const quote = await mints.quote({ asset, amount: '1' });
   assert.equal(quote.state, 'deployment_pending'); assert.equal(quote.payable, false);
+  assert.deepEqual(submitted, []);
+  await mints.deploymentTick();
   assert.deepEqual(submitted, [{ type: 'lifecycle', ...generation }]);
 });

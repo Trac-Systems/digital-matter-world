@@ -79,7 +79,7 @@ test('local v2 Bitmap linking, mint rights and holder payouts end to end', { tim
         reconciler = new FinancialLinkReconciler({ store, reads, financial: s.financial });
         return { intake: s.runtime.intake, files, publicAPI: createPublicAPI({ views: { store, mints }, files }), links, bindings: bf.bindings, submittedBitmaps, rateBurst: 1000, ratePerSecond: 1000 };
       } });
-    const { service, f, mints, transfers } = mint;
+    const { service, f, mints, provisioner, transfers } = mint;
     for (const { agent } of players) { agent.service = service; agent.bitcoinNetwork = 'regtest'; }
     const bind = async i => {
       const who = { address: players[i].agent.owner, secret: Buffer.from(r.hashBytes('isolated-kit-player-' + i)) };
@@ -168,15 +168,18 @@ test('local v2 Bitmap linking, mint rights and holder payouts end to end', { tim
     await s.advance(1014); await s.runtime.intake.seal(); await drain(); await project();
     const deploy = async p => {
       const a = asset(p), first = await service.mintQuote({ asset: a, amount: '1', block: H }); assert.equal(first.state, 'deployment_needed');
-      let job = await service.deployment(a);
+      // Deployment content is prepared in the background; read the job once its worker is done.
+      const ready = async () => { await provisioner.work.drain(); return provisioner.state(a); };
+      await service.deployment(a); let job = await ready();
       for (let i = 0; i < 3 && job.state !== 'registered'; i++) {
         const inscription = f.index(job.content, r.hash('bitmap-deploy-' + a + '-' + job.phase) + 'i0');
         if (job.phase === 'deployment') f.deployments.get('dmt-' + job.content.tick).max = '1000000';
         job = await service.submitDeployment({ asset: a, phase: job.phase, inscription });
+        if (job.state !== 'registered' && !job.content) job = await ready();
       }
       assert.equal(job.state, 'registered');
       assert.equal((await service.mintQuote({ asset: a, amount: '1', block: H })).state, 'deployment_pending');
-      await drain(); await project();
+      await mints.deploymentTick(); await drain(); await project();
     };
     await deploy(before); await deploy(publicBefore);
     await s.advance(1015); await project();

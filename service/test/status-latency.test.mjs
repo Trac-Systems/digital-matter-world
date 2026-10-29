@@ -90,7 +90,10 @@ test('status and catalog HTTP reads stay bounded with one million stored headers
     assert.equal(response.status, 200, JSON.stringify(value));
     return { value, ms: performance.now() - start };
   };
-  const before = [await timed('/status'), await timed('/status')];
+  // The uncached oracle deliberately takes several seconds at one source
+  // request per second. Measure it directly: HTTP now has a 2 s response budget.
+  const uncached = async () => { const start = performance.now(); return { value: await api.read('/status'), ms: performance.now() - start }; };
+  const before = [await uncached(), await uncached()];
   assert.equal(sourceCalls, 12, 'six source reads on every uncached status');
   assert.deepEqual(before[0].value, before[1].value);
   const cache = cachePublicReads(views, { records: async () => ({}) });

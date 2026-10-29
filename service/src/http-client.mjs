@@ -1,5 +1,6 @@
 import { localURL } from './config.mjs';
 import { check } from './util.mjs';
+import { lifecycleSignal } from './lifecycle.mjs';
 
 const guarded = Symbol.for('dmw.localFetch');
 function deadline(signal, timeout) {
@@ -34,7 +35,7 @@ export function installLocalFetch() {
   fetch[guarded] = upstream; globalThis.fetch = fetch;
 }
 
-export async function jsonRequest(url, { maxBytes = 4_000_000, timeout = 30000, limitCode = 'response_limit', signal, publicQuery = false, ...options } = {}) {
+export async function jsonRequest(url, { maxBytes = 4_000_000, timeout = 30000, limitCode = 'response_limit', signal = lifecycleSignal(), publicQuery = false, ...options } = {}) {
   if (publicQuery) {
     const parsed = new URL(url); localURL(parsed.origin);
     check(!parsed.username && !parsed.password && !parsed.hash, 'endpoint_must_be_loopback');

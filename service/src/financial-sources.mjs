@@ -47,7 +47,10 @@ export function installFinancialSources(reads, options) {
   };
   const originalSettingsHistory = reads.feeQuotes.settingsHistory;
   reads.financialSettings = async hash => {
-    const selected = await (reads.settingsByHash ? reads.settingsByHash(hash) : originalSettingsHistory ? originalSettingsHistory.get(hash) : rules.hashObject(document) === hash ? document : null);
+    let selected = await (reads.settingsByHash ? reads.settingsByHash(hash) : originalSettingsHistory ? originalSettingsHistory.get(hash) : rules.hashObject(document) === hash ? document : null);
+    // Live Trac state has the current document but no history entry for the activation document; accept the
+    // current document from Trac when its hash is exactly the one asked for.
+    if (!selected && reads.rulesContext) { const current = (await reads.rulesContext())?.settings; if (current && rules.hashObject(current) === hash) selected = current; }
     check(selected && rules.hashObject(selected) === hash && selected.network === network, 'financial_settings_history');
     return rules.validateSettingsDocument(selected);
   };
@@ -226,7 +229,7 @@ export function installFinancialSources(reads, options) {
   };
   // Normalize the execution anchor once and fence every independent read with
   // the same accepted notary revision and Bitcoin/TAP source snapshot.
-  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialLinkReservation', 'financialLinkQuote']) {
+  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote']) {
     const original = reads[name], index = ['financialReceipts', 'financialEscrow'].includes(name) ? 2 : 1;
     reads[name] = async (...args) => {
       const before = await reads.batchStamp(), at = args[index];

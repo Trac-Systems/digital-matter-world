@@ -6,15 +6,20 @@ import { capacityKey } from '../../contract/financial-capacity.js';
 export const financialGenerationId = (network, asset, deployment) => rules.hashObject(['dmw-financial-generation-v2', network, asset, deployment]);
 
 export function installCapacitySources(reads, { network, accepted }) {
-  reads.financialDeployment = async (asset, at) => {
+  reads.financialDeploymentState = async (asset, at) => {
     await reads.ensureRegistryAsset?.(asset);
     const registry = await reads.registry(), entry = registry.assets[asset];
     check(entry?.id, 'financial_deployment_missing');
     const id = financialGenerationId(network, asset, entry.id), existing = await reads.financialRecord('fd/' + id, at);
     if (existing) {
       check(existing.asset === asset && existing.deployment === entry.id && await reads.financialRecord('fd/asset/' + asset, at) === id, 'financial_deployment_generation');
-      return { id, existing };
+      return { id, existing, entry };
     }
+    return { id, entry };
+  };
+  reads.financialDeployment = async (asset, at) => {
+    const { id, existing, entry } = await reads.financialDeploymentState(asset, at);
+    if (existing) return { id, existing };
     const verified = await verifyDeployment(reads, entry, { view: at }), d = verified.deployment;
     check(verified.authorityKey === (await reads.authority()).committee, 'financial_deployment_authority');
     const maximum = d.max, remaining = await reads.tap('getMintTokensLeft/' + (entry.indexTick ?? entry.tick));

@@ -11,6 +11,8 @@ import { rules } from '../src/rules.mjs';
 import { TRAC_MAINNET, msbIdentity } from './mainnet.mjs';
 import { fanOutValidatorSends } from '../../contract/runtime/fanout.js';
 import { installTerminalBarrier } from '../../contract/runtime/terminal-barrier.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import { lifecycleSignal, abortable, boundedClose, phase } from '../src/lifecycle.mjs';
 const patched = new WeakSet();
 export function installValidatorFanout(network) {
   if (patched.has(network)) return;
@@ -40,20 +42,49 @@ export async function installPeerKey(source, target) {
   catch (error) { if (error.code !== 'EEXIST') throw error; check(await readSecret(target) === key, 'trac_peer_key_mismatch'); }
   finally { await fd?.close(); }
 }
-export async function waitForValidators(bus, c, { timeoutMs = 120000, intervalMs = 250, now = Date.now, pause = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export async function waitForValidators(bus, c, { timeoutMs = 120000, intervalMs = 250, now = Date.now, signal = lifecycleSignal(), pause = ms => delay(ms, undefined, { signal }) } = {}) {
+  signal?.throwIfAborted();
   validateValidators(c);
   check(msbIdentity(bus).bootstrapHex === c.msbBootstrap, 'trac_msb_binding');
   if (c.validators === 'auto') check(Number(msbIdentity(bus).networkId) === TRAC_MAINNET.networkId, 'trac_mainnet_binding');
-  else await Promise.all(c.validators.map(key => bus.network.tryConnect(key, 'validator')));
+  else await abortable(Promise.all(c.validators.map(key => bus.network.tryConnect(key, 'validator'))), signal);
   // The MSB observer derives candidates from its replicated mainnet state, just
   // as RESET does. Startup waits; an empty/partial pool never enables writes.
   const end = now() + timeoutMs;
   do {
+    signal?.throwIfAborted();
     const validators = [...new Set(bus.network.validatorConnectionManager.connectedValidators())];
     if (validators.length >= 3) return validators;
     await pause(intervalMs);
   } while (now() < end);
   throw Error('trac_three_validators_required');
+}
+
+// Disconnect immediately so pending reads fail and pollers can drain before
+// application stores close. Trac's graceful network close includes a fixed
+// five-second sleep; only its transport/cache teardown gets a deadline.
+export function stopRuntimeNetwork({ peer, bus, barrier }) {
+  const work = [], attempt = fn => { try { work.push(fn()); } catch (error) { work.push(Promise.reject(error)); } };
+  attempt(() => barrier?.close()); attempt(() => peer?.txObserverTask?.stop()); attempt(() => peer?.updaterTask?.stop());
+  attempt(() => bus?.network?.transactionPoolService?.stopPool(false));
+  attempt(() => bus?.network?.validatorObserverService?.stopValidatorObserver(false));
+  for (const swarm of [peer?.swarm, bus?.network?.swarm]) {
+    for (const connection of swarm?.connections ?? []) attempt(() => connection.destroy());
+    if (swarm) attempt(() => swarm.destroy());
+  }
+  return Promise.allSettled(work);
+}
+export async function closeRuntime({ peer, bus, barrier }, { timeoutMs = 2000 } = {}) {
+  return boundedClose(async () => {
+    const network = stopRuntimeNetwork({ peer, bus, barrier });
+    const results = await Promise.allSettled([
+      (async () => { try { await peer?.close(); } finally { await peer?.store?.close(); } })(),
+      bus?.close(), network
+    ]);
+    const failed = results.find(r => r.status === 'rejected');
+    if (failed) throw failed.reason;
+    return true;
+  }, timeoutMs);
 }
 const require = createRequire(new URL('../../contract/package.json', import.meta.url));
 const dependency = name => import(pathToFileURL(require.resolve(name)).href);
@@ -127,20 +158,34 @@ export async function connectRuntime(c, { create = false } = {}) {
   const [{ Peer, Wallet, createConfig, ENV, ensureTextCodecs }, { MainSettlementBus }, { createConfig: msbConfig, ENV: MSB_ENV }, { default: PeerWallet }, { default: Contract }, { default: Protocol }] = await Promise.all([
     dependency('trac-peer'), dependency('trac-msb/src/index.js'), dependency('trac-msb/src/config/env.js'), dependency('trac-wallet'), import('../../contract/contract.js'), import('../../contract/protocol.js')
   ]);
-  await ensureTextCodecs(); let peer, bus, barrier, closed = false;
-  const close = async () => { if (closed) return; closed = true; barrier?.close(); try { await peer?.close(); } finally { try { await peer?.store.close(); } finally { await bus?.close(); } } };
+  await ensureTextCodecs(); let peer, bus, barrier, closing;
+  const signal = lifecycleSignal(), stop = () => { void stopRuntimeNetwork({ peer, bus, barrier }); };
+  const close = () => closing ??= (async () => {
+    signal?.removeEventListener('abort', stop);
+    // The gateway/signer lifetime opts into bounded reader shutdown. Explicit
+    // operator phases and the authoritative Trac host retain graceful close.
+    if (signal) return phase('trac.close', () => closeRuntime({ peer, bus, barrier }));
+    barrier?.close();
+    try { await peer?.close(); }
+    finally { try { await peer?.store.close(); } finally { await bus?.close(); } }
+  })();
+  signal?.addEventListener('abort', stop, { once: true });
   const wallet = async (Class, file) => { const w = new Class(); await w.ready; w.importFromFile(file, Buffer.alloc(0)); return w; };
   try {
+    signal?.throwIfAborted();
     const mc = msbConfig(MSB_ENV.MAINNET, { bootstrap: c.msbBootstrap, channel: c.msbChannel, dhtBootstrap: c.dhtBootstrap, storesDirectory: c.directory, storeName: 'msb', enableInteractiveMode: false, enableWallet: true, enableValidatorObserver: true, enableRoleRequester: false, enableTxApplyLogs: false, enableErrorApplyLogs: false, debug: false });
     const retainedMSB = await wallet(PeerWallet, c.msbWallet);
     const transportMSB = c.dmw.v2 ? await msbTransportWallet(retainedMSB, c.directory) : retainedMSB;
-    bus = new MainSettlementBus(mc, transportMSB); await bus.ready();
-    await waitForValidators(bus, c);
+    signal?.throwIfAborted();
+    bus = new MainSettlementBus(mc, transportMSB); await phase('trac.msb_open', () => abortable(bus.ready(), signal));
+    await phase('trac.validators', () => waitForValidators(bus, c, { signal }));
     installValidatorFanout(bus.network);
     const pc = createConfig(ENV.MAINNET, { bootstrap: create ? null : c.subnetBootstrap, channel: c.peerChannel, dhtBootstrap: c.dhtBootstrap, storesDirectory: c.directory, storeName: 'peer', txContentHash: 'utf8-strict', enableInteractiveMode: false, enableTxlogs: false, replicate: true, enableUpdater: true, enableBackgroundTasks: true, apiMsgExposed: true, apiTxExposed: true, maxTxDelay: 21600, txPoolMaxSize: 10000 });
     pc.dmw = c.dmw;
     await installPeerKey(c.peerWallet, pc.keyPairPath);
-    peer = new Peer({ config: pc, msb: bus, wallet: await wallet(Wallet, c.peerWallet), protocol: Protocol, contract: Contract }); await peer.ready();
+    const peerWallet = await wallet(Wallet, c.peerWallet); signal?.throwIfAborted();
+    peer = new Peer({ config: pc, msb: bus, wallet: peerWallet, protocol: Protocol, contract: Contract });
+    await phase('trac.peer_open', () => abortable(peer.ready(), signal));
     if (c.dmw.v2) barrier = installTerminalBarrier(peer);
     return { peer, bus, barrier, close };
   } catch { await close(); throw Error('trac_runtime_unavailable'); }

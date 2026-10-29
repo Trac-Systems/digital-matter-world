@@ -19,6 +19,8 @@ import { pendingArtifactInventory } from './pending-artifacts.mjs';
 import { pendingInventory, requireSupportedInventory } from './pending-inventory.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { requireProductionRelease } from './production-release.mjs';
+import { phase } from './lifecycle.mjs';
+import { KeyedWork } from './keyed-work.mjs';
 
 // Explicit offline step on a reconciled copy, before starting the new gateway.
 // Pending work is reconciled before the manifest/import roots are pinned.
@@ -71,7 +73,7 @@ export async function installGatewayActivation({ store, manifest, manifestHash, 
   await store.transactIterable(writes());
 }
 
-export async function createV2Runtime({ config, store, secret, history, reads, committee }) {
+export async function createV2Runtime({ config, store, secret, history, reads, committee, deferRecovery = false }) {
   await requireProductionRelease({ config, store, reads });
   const pin = config.v2; check(pin?.manifest && pin.document && pin.resources, 'activation_config');
   const settings = rules.activatedBatchSettings({ ...pin,
@@ -80,7 +82,21 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   check(store.get('meta', 'v2Activation') === pin.manifestHash, 'activation_gateway_import_required');
   const historySettings = new StoredSettingsHistory(store);
   if (reads.feeQuotes) { reads.feeQuotes.settings = () => settings.document; reads.feeQuotes.settingsHistory = historySettings; }
-  let accepted, ready = false, intake, financial, mints, links, readyCheck = null;
+  let accepted, ready = false, intake, financial, mints, links, readyCheck = null, receiptRecovery = null;
+  const receiptWork = new KeyedWork();
+  const fenceReceipts = current => intake.fence({ document: current.settings, successor: current.scheduledSettings, predecessor: {
+    n: rules.decimalV2(current.last.n), root: current.predecessorRoot,
+    claims: current.claimsRoot, catalog: current.catalogRoot
+  } });
+  const recoverReceipts = async () => {
+    const current = receiptRecovery;
+    if (!current) return;
+    return receiptWork.run(current.settingsHash, async () => {
+      const predecessorRoot = BigInt(current.last.n) ? await reads.batchRoot(current.last.n) : current.manifest.previousBatchRoot;
+      await fenceReceipts({ ...current, predecessorRoot });
+      await refresh();
+    }, { join: true });
+  };
   const context = () => {
     const state = store.get('meta', 'ruleState'), storage = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: pin.resources.values.namedNodeCache });
     return { ruleset: 'dmw-v2', ready: ready && !accepted.receiptRenewal && !store.get('meta', 'financialRecoveryActive') && !!intake?.head && state.catalogRoot === accepted.catalogRoot && state.claimRoot === accepted.claimsRoot,
@@ -92,7 +108,7 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   // only a failed or incapable refresh closes admission.
   const refreshOnce = async () => { try { return await refreshChecked(); } catch (error) { ready = false; throw error; } };
   const refreshChecked = async () => {
-    const current = await reads.rulesContext();
+    const current = await phase('v2.notary', () => reads.rulesContext());
     check(current?.ready && current.manifestHash === pin.manifestHash && rules.hashObject(current.manifest) === pin.manifestHash &&
       current.settings.network === config.network && rules.hashObject(current.settings) === current.settingsHash, 'activation_notary_mismatch');
     if (current.receiptProtocol === 1 || pin.receiptProtocol === 1) check(current.receiptProtocol === 1 && pin.receiptProtocol === 1 &&
@@ -102,14 +118,17 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
     const selected = historySettings.at(rules.nextUint(rules.decimalV2(current.last.n)),
       String(intake?.head?.counted ?? store.get('meta', 'head')?.counted ?? pin.manifest.bitcoinAnchor.height));
     const boundary = rules.hashObject(selected) !== current.settingsHash;
+    receiptRecovery = null;
     // The accepted amendment authorizes the boundary, but never moves an
     // acknowledged receipt by itself. Finish an uncertain draft first, then
     // certify the complete predecessor checkpoint under the admission lock.
     if (!current.receiptRenewal && (pendingFence || boundary) && intake?.head && !store.get('meta', 'draft')) {
-      await intake.fence({ document: current.settings, successor: current.scheduledSettings, predecessor: {
-        n: rules.decimalV2(current.last.n), root: BigInt(current.last.n) ? await reads.batchRoot(current.last.n) : current.manifest.previousBatchRoot,
-        claims: current.claimsRoot, catalog: current.catalogRoot
-      } });
+      // Certification has its own worker. Observation/readiness refreshes do
+      // not wait for peer recovery; admission remains closed until it ends.
+      if (deferRecovery) {
+        if (pendingFence?.phase !== 'certified') { receiptRecovery = current; accepted = current; ready = false; return false; }
+      } else await fenceReceipts({ ...current,
+        predecessorRoot: BigInt(current.last.n) ? await reads.batchRoot(current.last.n) : current.manifest.previousBatchRoot });
     }
     const document = current.receiptRenewal ? historySettings.get(current.receiptRenewal.cutoff.settingsHash) : current.settings;
     settings.receiptRenewal = current.receiptRenewal ?? null;
@@ -134,7 +153,7 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
     // pass kept all signer queues full, so receipt acknowledgements (agent moves) waited behind it.
     // A capable answer for the same clock and policy is reused for readyMs; a new tip asks again.
     const key = rules.stableJSON(at);
-    const capable = readyCheck?.key === key && Date.now() - readyCheck.at < committee.readyMs ? readyCheck.capable : await committee.healthy(at);
+    const capable = readyCheck?.key === key && Date.now() - readyCheck.at < committee.readyMs ? readyCheck.capable : await phase('v2.committee', () => committee.healthy(at));
     readyCheck = capable.length >= 3 ? (readyCheck?.key === key && readyCheck.capable === capable ? readyCheck : { key, at: Date.now(), capable }) : null;
     accepted = current; ready = capable.length >= 3; return ready;
   };
@@ -168,5 +187,5 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   // On reopen the persisted head may already be at the amendment boundary.
   // Resume its fence before making fresh admission available.
   await refresh();
-  return { intake, settings, refresh, financial, mints, links, financialActions, custody, recovery };
+  return { intake, settings, refresh, recoverReceipts, financial, mints, links, financialActions, custody, recovery };
 }

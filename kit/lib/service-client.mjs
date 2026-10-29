@@ -8,21 +8,22 @@ import { financialAsset } from '../../rules/src/financial-mint.js';
 import { verifyRenewedAudit } from './receipt-renewal.mjs';
 import { KIT_UPGRADE_CODE } from '../../rules/src/kit-release.js';
 import { readInteger, nextCursor } from './api-values.mjs';
+const GATEWAY_BUSY = new Set(['request_pending', 'service_busy', 'http_capacity']);
 const moveId = move => move.v === 2 ? moveIdV2(move) : legacyMoveId(move);
 const deploymentAsset = asset => typeof asset === 'string' && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(asset);
 
 // All gateway HTTP routes live here. No private key or wallet enters this client.
 export class ServiceClient {
-  constructor({ origin = 'http://127.0.0.1:5570', mode = 'regtest', network, gateway, receiptSigners, fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+  constructor({ origin = 'http://127.0.0.1:5570', mode = 'regtest', network, gateway, receiptSigners, fetchImpl = fetch, timeoutMs = 10000, busyRetries = 30 } = {}) {
     check(['regtest', 'mainnet'].includes(mode), 'Client network mode');
-    this.origin = gatewayOrigin(origin, mode); Object.assign(this, { network, mode, gateway, fetchImpl, timeoutMs });
+    this.origin = gatewayOrigin(origin, mode); Object.assign(this, { network, mode, gateway, fetchImpl, timeoutMs, busyRetries });
     if (receiptSigners !== undefined) {
       check(Array.isArray(receiptSigners) && receiptSigners.length === 5 && receiptSigners.every(m => typeof m.id === 'string' && m.id.length > 0 && hex32(m.identity)) &&
         new Set(receiptSigners.map(m => m.id)).size === 5 && new Set(receiptSigners.map(m => m.identity)).size === 5, 'Pin five distinct receipt signers');
     }
     Object.defineProperty(this, 'receiptSigners', { value: receiptSigners && Object.freeze(receiptSigners.map(m => Object.freeze({ id: m.id, identity: m.identity }))) });
   }
-  async request(path, { value, limit = 60000, binary = false, query } = {}) {
+  async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0 } = {}) {
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
@@ -59,6 +60,12 @@ export class ServiceClient {
       const refusedBeforeAcceptance = method === 'POST' && path === '/moves' && isMoveRefusal(response.status, code);
       const hint = response.headers.get('retry-after'), seconds = /^\d+$/.test(hint ?? '') ? Number(hint) : NaN;
       const retryAfterMs = Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 2147483 ? seconds * 1000 : undefined;
+      // The gateway answers within seconds and says "busy, retry the identical request" while background work it
+      // started (or a cold source) is still running. The same signed body is safe to send again.
+      if (response.status === 503 && GATEWAY_BUSY.has(code) && busyRetries < this.busyRetries) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterMs ?? 2000, 10000)));
+        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1 });
+      }
       throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
         { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });
     }

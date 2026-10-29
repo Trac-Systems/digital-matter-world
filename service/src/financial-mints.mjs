@@ -2,7 +2,7 @@ import { Mints, publicMint, verifyPayer } from './mints.mjs';
 import { rules } from './rules.mjs';
 import { check, hash } from './util.mjs';
 import { mintFeeScope } from './fees.mjs';
-import { financialMintId, verifyFinancialMintRequest } from '../../rules/src/financial-mint.js';
+import { financialAsset, financialMintId, verifyFinancialMintRequest } from '../../rules/src/financial-mint.js';
 import { financialFees } from './financial-sources.mjs';
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey, EMPTY_ACCOUNT_ROOT } from '../../contract/account-tree.js';
@@ -12,6 +12,7 @@ import { financialBlock } from './financial-status.mjs';
 import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { surplusCreditId } from '../../contract/payment-pages.js';
 import { deploymentAssetId, mintAssetDefinition } from './mint-assets.mjs';
+import { KeyedWork, parallelPage } from './keyed-work.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const ownerSpace = owner => 'financialMintOwner/' + owner;
@@ -19,20 +20,69 @@ const ownerSpace = owner => 'financialMintOwner/' + owner;
 // Ordinary mint HTTP methods use this implementation after v2 activation.
 // The player separately signs the exact account reservation returned by the
 // first request. Every retry retains the original request and fee quote.
+const QUOTE_REUSE_MS = 30000, QUOTE_REUSE_LIMIT = 256, QUOTE_SLOW_MS = 1500;
 export class FinancialMints extends Mints {
-  constructor(options) { super(options); this.financial = options.financial; this.document = options.document; this.pendingBlocks = this.document.values.pendingBlocks; }
-  async quote(input) {
+  constructor(options) { super(options); this.financial = options.financial; this.document = options.document; this.pendingBlocks = this.document.values.pendingBlocks;
+    this.mintWork = new KeyedWork(); this.deploymentWork = new KeyedWork(); }
+  async deploymentTick() {
+    if (this.deploymentRunning || !this.reads.financialDeployment) return;
+    this.deploymentRunning = true;
+    try {
+      // Warm registered deployments even before the first quote. Durable jobs
+      // also cover assets requested between catalog passes.
+      const registry = await this.reads.registry?.(), after = this.deploymentCursor ?? '';
+      const page = registry?.page ? registry.page('assets', { after, limit: 8 }) :
+        Object.entries(registry?.assets ?? {}).filter(([id]) => id > after).sort(([a], [b]) => a.localeCompare(b)).slice(0, 8).map(([id, value]) => ({ id, value }));
+      this.deploymentCursor = page.length === 8 ? page.at(-1).id : '';
+      const jobs = this.store.list('financialDeploymentJobs', { after: this.deploymentJobCursor ?? '', limit: 8 });
+      this.deploymentJobCursor = jobs.length === 8 ? jobs.at(-1).id : '';
+      const assets = new Set([...page.filter(r => !r.value.suspended).map(r => r.id), ...jobs.map(r => r.id)]);
+      await parallelPage([...assets], asset => this.deploymentWork.run(asset, async () => {
+        const job = this.store.get('financialDeploymentJobs', asset);
+        if ((job?.nextRetry ?? 0) > Date.now()) return;
+        try {
+          const generation = await this.reads.financialDeployment(asset, await this.reads.batchStamp());
+          if (!generation.existing) await this.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
+          await this.store.put('financialDeploymentJobs', asset, { nextRetry: Date.now() + 30000 });
+        } catch (error) {
+          await this.store.put('financialDeploymentJobs', asset, { nextRetry: Date.now() + 30000,
+            reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_deployment_unavailable' });
+        }
+      }, { join: true }));
+    } finally { this.deploymentRunning = false; }
+  }
+  // A read quote can outlast the HTTP response budget. Identical retries share the running quote and, for a short
+  // time, its result, so a client retrying within the budget receives the answer instead of starting over.
+  quote(input) {
     if (input.request) return this.request(input);
+    this.quotes ??= new Map();
+    const key = rules.stableJSON(input), now = Date.now();
+    for (const [k, q] of this.quotes) if (q.settled && now - q.settled > QUOTE_REUSE_MS) this.quotes.delete(k);
+    const known = this.quotes.get(key);
+    if (known) return known.promise;
+    const entry = { settled: 0 }, started = now;
+    // Only a quote that outlived the response budget left its caller waiting for a retry; others are never reused.
+    entry.promise = this.quoteOnce(input).finally(() => {
+      entry.settled = Date.now();
+      if (entry.settled - started < QUOTE_SLOW_MS && this.quotes.get(key) === entry) this.quotes.delete(key);
+    });
+    entry.promise.catch(() => this.quotes.get(key) === entry && this.quotes.delete(key));
+    this.quotes.set(key, entry);
+    if (this.quotes.size > QUOTE_REUSE_LIMIT) this.quotes.delete(this.quotes.keys().next().value);
+    return entry.promise;
+  }
+  async quoteOnce(input) {
     if (!input.feeQuote) check(!this.financial.admissionReady || await this.financial.admissionReady(), 'financial_admission_fenced', 503);
+    check(financialAsset(input.asset), 'quote_input');
     const provisionable = deploymentAssetId(input.asset);
     const needed = provisionable && await super.deploymentNeeded(input.asset, { block: input.block, amount: input.amount, kind: input.kind ?? 'tap', receiver: input.receiver });
     if (needed) return { ...needed, financialVersion: 2 };
     const resolved = this.provisioner && provisionable ? await mintAssetDefinition(this.store, input.asset) : null;
     if (resolved) input = { ...input, asset: resolved.asset };
     if (this.reads.financialDeployment) {
-      const generation = await this.reads.financialDeployment(input.asset, await this.reads.batchStamp());
-      if (!generation.existing) {
-        await this.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
+      const generation = await this.reads.financialDeploymentState?.(input.asset, await this.reads.batchStamp());
+      if (!generation?.existing) {
+        if (!this.store.get('financialDeploymentJobs', input.asset)) await this.store.put('financialDeploymentJobs', input.asset, { nextRetry: 0 });
         return { requestId: null, asset: input.asset, state: 'deployment_pending', financialVersion: 2, payable: false,
           reservation: 'none', fees: [], missing: [], blocked: ['financial_deployment_pending'],
           message: 'The Bitcoin deployment is registered. Wait for its financial registration, then quote again.' };
@@ -56,7 +106,7 @@ export class FinancialMints extends Mints {
       ...(row.work ? { transition: { id: row.work, state: this.store.get('financialAccepted', row.work)?.state ?? 'queued',
         reason: this.store.get('financialDeferred', row.work)?.reason ?? null } } : {}) };
   }
-  request(body) { return this.gate(async () => {
+  request(body) { return this.mintWork.run(financialMintId(this.network, body.request), async () => {
     const r = body.request, counted = await this.reads.counted();
     check(verifyFinancialMintRequest(this.network, r, body.signature, r?.until) && verifyPayer(this.network, body) &&
       typeof body.receiver === 'string' && hash(body.receiver) === r.receive, 'financial_request_signature');
@@ -93,7 +143,10 @@ export class FinancialMints extends Mints {
       row.reservationEvidence = evidence;
       row.reservationAction = { type: 'reserve', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: rules.hashObject(evidence),
         revision: account?.revision ?? '0', nonce: r.nonce, until: r.until };
-      await this.store.transact([{ space: 'mints', id, value: row }, { space: 'financialActiveMints', id, value: true }, { space: ownerSpace(r.owner), id, value: true }]);
+      await this.gate(() => {
+        check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
+        return this.store.transact([{ space: 'mints', id, value: row }, { space: 'financialActiveMints', id, value: true }, { space: ownerSpace(r.owner), id, value: true }]);
+      });
     }
     if (!body.reserve) return { ...this.public(id), reservationAction: row.reservationAction, reservationEvidence: row.reservationEvidence };
     const { sig, ...unsigned } = body.reserve;
@@ -136,7 +189,7 @@ export class FinancialMints extends Mints {
     }
     check(allowEmpty || receipts.length > 0, 'payment_unconfirmed'); return null;
   }
-  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.gate(async () => {
+  payment({ id, requestId, paymentId, paymentIds = [], inscription }) { return this.mintWork.run(id ?? requestId, async () => {
     id ??= requestId; const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(inscription), 'mint_inscription');
@@ -163,7 +216,7 @@ export class FinancialMints extends Mints {
     }
     await this.paymentPage(row, references, at); return this.public(id);
   }); }
-  refund({ id, requestId, references = [], reason = 'credit' }) { return this.gate(async () => {
+  refund({ id, requestId, references = [], reason = 'credit' }) { return this.mintWork.run(id ?? requestId, async () => {
     id ??= requestId; const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     const transition = { type: 'refund', id, reason, ...(references.length ? { references } : {}) };
     await this.reads.financialEvidence(transition, await this.reads.batchStamp());
@@ -175,16 +228,22 @@ export class FinancialMints extends Mints {
       for (const space of ['financialActiveMints', 'financialIssuedMints']) {
         this.financialCursors ??= {}; const page = this.store.list(space, { after: this.financialCursors[space] ?? '', limit: this.resources.workPage });
         this.financialCursors[space] = page.length === this.resources.workPage ? page.at(-1).id : '';
-        for (const { id } of page) await this.gate(async () => {
+        await parallelPage(page, async ({ id }) => {
+          if (this.mintWork.pending.has(id)) return;
+          return this.mintWork.run(id, async () => {
           try { await this.advance(this.store.get('mints', id)); }
           catch (error) { const row = this.store.get('mints', id); await this.store.put('mints', id, { ...row, lastError: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' }); }
+          });
         });
       }
       const credits = this.store.list('financialLegacyCredits', { after: this.legacyCreditCursor ?? '', limit: this.resources.workPage });
       this.legacyCreditCursor = credits.length === this.resources.workPage ? credits.at(-1).id : '';
-      for (const { id } of credits) await this.gate(async () => {
+      await parallelPage(credits, async ({ id }) => {
+        if (this.mintWork.pending.has(id)) return;
+        return this.mintWork.run(id, async () => {
         try { await this.advanceLegacyCredit(id); }
         catch (error) { await this.store.put('financialLegacyCreditFailures', id, { reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' }); }
+        });
       });
     } finally { this.running = false; }
   }

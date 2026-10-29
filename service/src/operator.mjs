@@ -33,7 +33,6 @@ export async function createOperator({ config, store, files, reads, committee })
       nextCursor: entries.length === limit ? entries.at(-1).id : null, ...(collection === 'assets' ? { assets: Object.fromEntries(entries.map(r => [r.id, r.value])) } : {}) };
   };
   return { status, deployments, provisioner, async tick() {
-    await provisioner?.tick();
     for (const file of (await readdir(inbox)).filter(f => /^[0-9a-f-]{36}\.json$/.test(f)).slice(0, 16)) {
       const path = join(inbox, file), stat = await lstat(path);
       check(stat.isFile() && !stat.isSymbolicLink() && stat.uid === process.getuid() && (stat.mode & 0o077) === 0 && stat.size <= 4096, 'operator_command_file');

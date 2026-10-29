@@ -84,3 +84,17 @@ test('batch audit has no reservation and prepare rechecks live policy before res
   assert.equal((await f.signer.handle('/preparation-state', { id: f.body.ceremony.id })).reserved, false);
   await assert.rejects(f.signer.handle('/audit-batch', { kind: 'mint' }), /audit_batch_only/);
 });
+
+test('health and readiness reads bypass a blocked preparation without bypassing its journal queue', async t => {
+  const f = await setup(t); let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  f.reads.refreshEvidence = async () => { entered(); await blocked; };
+  const preparation = f.signer.handle('/prepare', f.body); await started;
+  try {
+    const at = performance.now();
+    assert.equal((await f.signer.handle('/health', {})).id, 's0');
+    assert.equal((await f.signer.handle('/batch-ready', {})).counted, f.b.context.counted);
+    assert.ok(performance.now() - at < 100);
+    assert.equal(f.prepares(), 0);
+  } finally { release(); await preparation; }
+});

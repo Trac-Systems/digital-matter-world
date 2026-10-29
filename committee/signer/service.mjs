@@ -1,7 +1,6 @@
 import { AuditedReplay } from './replay-cache.mjs';
 import { writeOperatorResponse } from '../../deploy/rehearsal/operator-pages.mjs';
 import { rotationBody, attestRotation } from '../rosters.mjs';
-import { createServer } from 'node:http';
 import { mkdir, readFile, open, unlink, lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,8 +21,16 @@ import { pendingInventory } from '../../service/src/pending-inventory.mjs';
 import { createPrivateKey, sign } from 'node:crypto';
 import { ReceiptFences } from './receipt-fences.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
+import { lifecycleSignal, withLifecycle, bindLifecycle, phase, abortable } from '../../service/src/lifecycle.mjs';
+import { startupListener } from '../../service/src/startup-listener.mjs';
+import { KeyedWork } from '../../service/src/keyed-work.mjs';
 
 export async function createSigner(config, secrets, reads) {
+  const controller = new AbortController(), parent = lifecycleSignal();
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  return withLifecycle({ signal }, () => initializeSigner(config, secrets, reads, controller));
+}
+async function initializeSigner(config, secrets, reads, controller) {
   await mkdir(config.directory, { recursive: true, mode: 0o700 });
   const lockPath = resolve(config.directory, 'signer.lock');
   let lock;
@@ -38,17 +45,17 @@ export async function createSigner(config, secrets, reads) {
   await lock.write(String(process.pid)); await lock.sync();
   let journal, replay;
   try {
-    journal = await new Journal(resolve(config.directory, 'signed.log'), secrets.journalKey, config.network, config.id, { decimalIndex: !!config.v2 }).load();
-    const status = await rpc(config.sidecar, secrets.sidecarToken, '/status');
+    journal = await phase('signer.journal', () => new Journal(resolve(config.directory, 'signed.log'), secrets.journalKey, config.network, config.id, { decimalIndex: !!config.v2 }).load());
+    const status = await phase('signer.sidecar', () => rpc(config.sidecar, secrets.sidecarToken, '/status'));
     check(status.public && !status.retired && rules.compareOrdinal(status.epoch, config.tssEpoch ?? config.epoch) === 0, 'sidecar_not_active');
     check(!config.publicKey || status.public === config.publicKey, 'target_committee_key');
-    if (status.session && journal.records.some(r => r.type === 'retired-batch' && r.session === status.session.id)) {
+    if (status.session && journal.records.some(r => ['retired-batch', 'retired-preparation'].includes(r.type) && r.session === status.session.id)) {
       await rpc(config.sidecar, secrets.sidecarToken, '/abort');
     }
     reads.verifyPayoutSnapshot = (snapshot, payouts) => verifyPayoutSnapshot(snapshot, payouts, { bindings: reads.bindings, journal });
     const resources = (config.v2?.resources ?? config.resources)?.values;
     replay = new BatchReplay({ timeoutMs: resources?.replayTimeoutMs ?? config.replayTimeoutMs,
-      nodeCacheEntries: resources?.namedNodeCache ?? config.replayNodeCacheEntries, resources }); await replay.ready;
+      nodeCacheEntries: resources?.namedNodeCache ?? config.replayNodeCacheEntries, resources }); await phase('signer.replay_open', () => abortable(replay.ready));
     const receiptFences = new ReceiptFences({ journal, reads, members: config.v2?.receiptSigners ?? config.members, network: config.network, gateway: config.gateway,
       signer: config.id, secret: secrets.identity === undefined ? undefined : Buffer.from(secrets.identity, 'hex') });
     const auditedReplay = new AuditedReplay((...args) => replay.run(...args));
@@ -69,6 +76,7 @@ export async function createSigner(config, secrets, reads) {
       return details;
     };
     let active = null, queue = Promise.resolve(), closed = false;
+    const readiness = new KeyedWork({ concurrency: 4, capacity: 16 });
     const uncertainPreparations = new Set();
     const perform = async (path, body) => {
       check(!closed, 'signer_closed');
@@ -91,7 +99,7 @@ export async function createSigner(config, secrets, reads) {
         const reserved = uncertainPreparations.has(body.id) || journal.records.some(r => r.type === 'reserve' && r.session === body.id);
         return { id: body.id, reserved, retired: journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id) };
       }
-      if (!['/health', '/status', '/relay', '/round', '/abort', '/finish'].includes(path)) await reads.refreshEvidence?.();
+      if (!['/health', '/status', '/relay', '/round', '/abort', '/finish', '/retire-batch-attempt'].includes(path)) await reads.refreshEvidence?.();
       if (path === '/attest-deployment') return operatorAttestation(config, secrets.identity, status.public, body.challenge);
       if (path === '/migration-export') {
         check(Object.keys(body).sort().join(',') === 'document,legacySettings' && reads.migrationEvidence, 'pending_export_request');
@@ -169,6 +177,21 @@ export async function createSigner(config, secrets, reads) {
           await journal.append('retired-preparation', { session: body.id });
         return { id: body.id, status: 'retired-unprepared' };
       }
+      if (path === '/retire-batch-attempt') {
+        check(body.network === config.network && isHex(body.id) && body.batch && isHex(body.batch.root), 'ceremony_id');
+        check(!uncertainPreparations.has(body.id), 'ceremony_reserved');
+        const reservation = journal.records.findLast(r => r.type === 'reserve' && r.session === body.id);
+        if (reservation) check(reservation.slots.includes(`batch/${body.batch.epoch}/${body.batch.n}`) &&
+          canonicalJSON(reservation.details.batch) === canonicalJSON(body.batch), 'slot_conflict');
+        // Fence late prepare/go before touching the sidecar. The original
+        // batch and receipt-renewal slots remain reserved for this digest.
+        if (!journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id))
+          await journal.append('retired-preparation', { session: body.id });
+        const running = (await rpc(config.sidecar, secrets.sidecarToken, '/status')).session;
+        if (running?.id === body.id || active?.id === body.id) await rpc(config.sidecar, secrets.sidecarToken, '/abort');
+        if (active?.id === body.id) active = null;
+        return { id: body.id, status: 'batch-attempt-retired', batchHash: sha256(JSON.stringify(body.batch)), digest: reservation?.digest ?? null };
+      }
       if (path === '/audit-batch') {
         check(body?.kind === 'batch', 'audit_batch_only');
         return auditedReplay.audit(() => policy.approve(body));
@@ -230,7 +253,7 @@ export async function createSigner(config, secrets, reads) {
         active = { id: ceremony.id, approval, completed: false };
         return { id: active.id, digest: approval.digest };
       }
-      if (path === '/go') { check(active?.id === body.id, 'ceremony_id'); await rpc(config.sidecar, secrets.sidecarToken, '/go'); return { ok: true }; }
+      if (path === '/go') { check(!journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id), 'ceremony_retired'); check(active?.id === body.id, 'ceremony_id'); await rpc(config.sidecar, secrets.sidecarToken, '/go'); return { ok: true }; }
       if (path === '/status') {
         check(isHex(body.id), 'ceremony_id');
         const prior = journal.records.find(r => r.type === 'signed' && r.session === body.id);
@@ -271,6 +294,8 @@ export async function createSigner(config, secrets, reads) {
       throw Error('route');
     };
     const handle = (path, body) => {
+      if (path === '/health') return Promise.resolve().then(() => perform(path, body));
+      if (path === '/batch-ready') return readiness.run(body.settingsHash ?? '', () => perform(path, body), { join: true });
       const result = queue.then(async () => {
         try {
           const result = await perform(path, body);
@@ -293,11 +318,30 @@ export async function createSigner(config, secrets, reads) {
       });
       queue = result.catch(() => {}); return result;
     };
-    return { handle, replayStats: () => ({ hits: auditedReplay.hits ?? 0 }), async close() { closed = true; await queue; if (active) await rpc(config.sidecar, secrets.sidecarToken, '/abort').catch(() => {}); await replay.close(); await journal.close(); await lock.close(); await unlink(lockPath); } };
+    let closing;
+    return { handle: bindLifecycle(handle), replayStats: () => ({ hits: auditedReplay.hits ?? 0 }),
+      close: bindLifecycle(() => closing ??= (async () => {
+        closed = true; controller.abort(Error('signer_closed'));
+        // Interrupt CPU replay as well as network waits before draining the
+        // queue. Durable reservations remain authoritative on restart.
+        await replay.close(); await queue; await readiness.drain();
+        if (active) await rpc(config.sidecar, secrets.sidecarToken, '/abort', {}, 1000, null).catch(() => {});
+        await journal.close(); await lock.close(); await unlink(lockPath);
+      })()) };
   } catch (error) { await replay?.close(); await journal?.close(); await lock.close(); await unlink(lockPath); throw error; }
 }
 
-export async function serveSigner(configPath) {
+export async function serveSigner(configPath, { background = false, onPhase } = {}) {
+  const controller = new AbortController();
+  return withLifecycle({ signal: controller.signal, onPhase }, async () => {
+    const service = await startSigner(configPath, controller);
+    if (!background) {
+      try { await service.ready; } catch (error) { await service.close(); throw error; }
+    }
+    return service;
+  });
+}
+async function startSigner(configPath, controller) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const resources = config.v2?.resources ?? config.resources;
   if (resources) rules.validateResourceDocument(resources);
@@ -305,35 +349,46 @@ export async function serveSigner(configPath) {
   check(/^127\.0\.0\.1:[0-9]+$/.test(config.listen), 'signer_loopback');
   const st = await lstat(config.secrets); check(st.isFile() && (st.mode & 0o777) === 0o600, 'credentials_mode');
   const secrets = JSON.parse(await readFile(config.secrets, 'utf8'));
-  const adapter = await import(pathToFileURL(config.readModule).href);
-  const reads = await adapter.createReads({ ...config.readOptions, gateway: config.gateway, identity: Buffer.from(secrets.identity, 'hex') });
-  const signer = await createSigner(config, secrets, reads);
-  const server = createServer(async (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    try {
-      check(req.method === 'POST' && safeEqual(req.headers.authorization, `Bearer ${secrets.apiToken}`), 'authentication');
-      let length = 0; const chunks = [];
-      for await (const chunk of req) { length += chunk.length; check(length <= (local?.signerRequestBytes ?? 4 << 20), 'body_limit'); chunks.push(chunk); }
-      const body = JSON.parse(Buffer.concat(chunks).toString());
-      const result = await signer.handle(req.url, body);
-      if (req.url === '/migration-export') await writeOperatorResponse(res, result); else res.end(JSON.stringify(result));
-    } catch (error) { if (res.headersSent) { res.destroy(); return; } res.statusCode = error.message === 'authentication' ? 403 : 409; res.end(JSON.stringify(signerError(error))); }
-  });
-  server.requestTimeout = local?.requestTimeoutMs ?? 30000; server.headersTimeout = Math.min(local?.httpHeaderTimeoutMs ?? 5000, server.requestTimeout);
-  server.maxConnections = local?.httpConnections ?? 32;
-  if (local) { server.timeout = local.httpSocketTimeoutMs; server.keepAliveTimeout = local.httpKeepAliveMs; }
   const [host, port] = config.listen.split(':');
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(port), host, resolve); });
-  let closing;
-  const shutdown = () => close().catch(() => {}).finally(() => process.exit());
-  const close = () => closing ??= (async () => {
+  const http = await phase('signer.listen', () => startupListener({ host, port: Number(port) }));
+  const { server } = http;
+  let reads, signer, closing;
+  const service = { ...http };
+  const shutdown = () => service.close().catch(() => {}).finally(() => process.exit());
+  service.close = bindLifecycle(() => closing ??= (async () => {
     process.removeListener('SIGTERM', shutdown); process.removeListener('SIGINT', shutdown);
-    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    try { await signer.close(); } finally { await reads.close?.(); }
+    controller.abort(Error('signer_stopping'));
+    const stopped = http.close();
+    await service.ready.catch(() => {});
+    try { await signer?.close(); await stopped; } finally { await reads?.close?.(); }
+  })());
+  process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
+  service.ready = (async () => {
+    const adapter = await import(pathToFileURL(config.readModule).href);
+    controller.signal.throwIfAborted();
+    reads = await phase('signer.reads', () => adapter.createReads({ ...config.readOptions, gateway: config.gateway, identity: Buffer.from(secrets.identity, 'hex') }));
+    controller.signal.throwIfAborted();
+    signer = await createSigner(config, secrets, reads);
+    controller.signal.throwIfAborted();
+    service.signer = signer;
+    http.install(async (req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      try {
+        check(req.method === 'POST' && safeEqual(req.headers.authorization, `Bearer ${secrets.apiToken}`), 'authentication');
+        let length = 0; const chunks = [];
+        for await (const chunk of req) { length += chunk.length; check(length <= (local?.signerRequestBytes ?? 4 << 20), 'body_limit'); chunks.push(chunk); }
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        const result = await signer.handle(req.url, body);
+        if (req.url === '/migration-export') await writeOperatorResponse(res, result); else res.end(JSON.stringify(result));
+      } catch (error) { if (res.headersSent) { res.destroy(); return; } res.statusCode = error.message === 'authentication' ? 403 : 409; res.end(JSON.stringify(signerError(error))); }
+    });
+    server.requestTimeout = local?.requestTimeoutMs ?? 30000; server.headersTimeout = Math.min(local?.httpHeaderTimeoutMs ?? 5000, server.requestTimeout);
+    server.maxConnections = local?.httpConnections ?? 32;
+    if (local) { server.timeout = local.httpSocketTimeoutMs; server.keepAliveTimeout = local.httpKeepAliveMs; }
+    return service;
   })();
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
-  return { server, signer, close };
+  service.ready.catch(() => { void service.close().catch(() => {}); });
+  return service;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   serveSigner(resolve(process.argv[2])).catch(error => { console.error('signer startup failed:', error.message); process.exitCode = 1; });

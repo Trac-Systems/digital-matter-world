@@ -1,24 +1,28 @@
 import { randomBytes } from 'node:crypto';
-import { check, hash, serial, atomicWrite } from './util.mjs';
+import { check, hash } from './util.mjs';
+import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { rules } from './rules.mjs';
 import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementByDefinition, elementByName } from './deployments.mjs';
 import { updateRegistryAsset } from './registry.mjs';
 import { mintAssetDefinition } from './mint-assets.mjs';
+import { lifecycleSignal } from './lifecycle.mjs';
 
 // Background pacing: a failed step retries after RETRY_MS; a registered deployment is re-verified
-// every RECHECK_MS. Each pass holds the provisioning gate, which player requests share.
+// every RECHECK_MS. Source verification runs independently for each asset.
 const RETRY_MS = 30000, RECHECK_MS = 600000;
+const stopping = error => error?.name === 'AbortError' || /^[a-z_]+_stopping$/.test(error?.message ?? '') || lifecycleSignal()?.aborted === true;
 const TRANSIENT = new Set(['tap_snapshot_changed', 'tap_quorum_unavailable', 'tap_lookup_index_catching_up', 'http_timeout', 'http_unavailable', 'http_capacity']);
 export class Provisioner {
-  constructor({ store, reads, network, registryPath, policy }) {
-    Object.assign(this, { store, reads, network, registryPath, policy }); this.gate = serial();
+  constructor({ store, reads, network, registryPath, policy, concurrency = 4 }) {
+    Object.assign(this, { store, reads, network, registryPath, policy, concurrency });
+    this.work = new KeyedWork({ concurrency, capacity: Math.max(concurrency, 64) }); this.enqueues = new KeyedWork();
     check(Number.isSafeInteger(policy.confirmations) && policy.confirmations === 1, 'provisioning_confirmation_policy');
   }
   async save(job, patch = {}) {
     const row = { ...job, ...patch, updatedAt: Date.now() };
     await this.store.put('provisioning', job.asset, row); return row;
   }
-  async enqueue(asset, definition) {
+  enqueue(asset, definition) { return this.enqueues.run(asset, async () => {
     let job = this.store.get('provisioning', asset);
     if (job) { check(same(job.definition, definition), 'provisioning_definition_changed'); return job; }
     const entry = (await this.reads.registry()).assets[asset];
@@ -27,7 +31,7 @@ export class Provisioner {
       privilege: this.policy.privilege, authorityKey: this.policy.authorityKey,
       attempts: [], spentSats: '0', state: entry ? 'confirming' : 'queued', ...(entry ? { entry } : {}) };
     return this.save(job);
-  }
+  }, { join: true }); }
   async state(asset) {
     const resolved = await mintAssetDefinition(this.store, asset);
     const job = this.store.get('provisioning', resolved.asset);
@@ -40,10 +44,23 @@ export class Provisioner {
     // Mint quotes take a registered deployment as is; the background tick re-verifies it.
     const known = registeredAsIs && this.store.get('provisioning', resolved.asset);
     if (known?.state === 'registered' && same(known.definition, resolved.definition)) return shown(known);
-    return this.gate(async () => shown(await this.advance(await this.enqueue(resolved.asset, resolved.definition))));
+    // A live registry entry stays usable while a background recheck retries a busy source.
+    if (known?.entry && same(known.definition, resolved.definition)) {
+      const live = (await this.reads.registry()).assets?.[resolved.asset];
+      if (live && !live.suspended && live.id === known.entry.id && known.registeredAt) return shown({ ...known, state: 'registered', entry: live });
+    }
+    const job = await this.enqueue(resolved.asset, resolved.definition);
+    check(same(job.definition, resolved.definition), 'provisioning_definition_changed');
+    if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) {
+      this.advanceAsset(resolved.asset, resolved.definition).catch(() => {});
+    }
+    return shown(job);
   }
+  advanceAsset(asset, definition) { return this.work.run(asset, async () => this.advance(await this.enqueue(asset, definition)), { join: true }); }
+  async close() { await this.enqueues.drain(); await this.work.drain(); }
   async tick() {
-    return this.gate(async () => {
+    if (this.ticking) return this.ticking;
+    this.ticking = (async () => {
       const settings = (await this.reads.registry()).operator?.provisioning;
       if (settings) this.policy = { ...this.policy, ...settings };
       const patterns = this.store.get('meta', 'patterns') ?? [], cursor = this.store.get('meta', 'provisioningCursor') ?? { pattern: 0, type: '' };
@@ -53,15 +70,16 @@ export class Provisioner {
       if (v2) for (const row of named) { const r = await mintAssetDefinition(this.store, row.id); definitions.push([r.asset, r.definition]); }
       else for (let i = 0; i < Math.min(8, patterns.length); i++) { const p = patterns[(cursor.pattern + i) % patterns.length]; definitions.push([rules.patternAsset(p), p]); }
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
-      for (const [asset, definition] of definitions) {
+      await parallelPage(definitions, async ([asset, definition]) => {
         const job = await this.enqueue(asset, definition);
         // A job waiting for the player's inscription advances when the player submits it.
-        if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) await this.advance(job);
-      }
+        if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
+      }, this.concurrency);
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
         ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '' } : {}) };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
-    });
+    })().finally(() => { this.ticking = null; });
+    return this.ticking;
   }
   async package(job, phase, text) {
     const attempt = phase === 'element' ? job.elementAttempt : job.tickerAttempt;
@@ -82,8 +100,8 @@ export class Provisioner {
     return { job, item };
   }
   async submit(asset, { phase, inscription }) {
-    return this.gate(async () => {
-      if (!this.store.get('provisioning', asset)) asset = (await mintAssetDefinition(this.store, asset)).asset;
+    if (!this.store.get('provisioning', asset)) asset = (await mintAssetDefinition(this.store, asset)).asset;
+    return this.work.run(asset, async () => {
       let job = this.store.get('provisioning', asset);
       check(job && ['element', 'deployment'].includes(phase) && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(inscription), 'deployment_submission');
       const attempt = phase === 'element' ? job.elementAttempt : job.tickerAttempt;
@@ -120,6 +138,8 @@ export class Provisioner {
         } catch (error) {
           // A moving tip or a busy indexer is not evidence against the deployment: retry, keep it live.
           if (TRANSIENT.has(error.message)) return this.save(job, { nextRetry: Date.now() + RETRY_MS });
+          // A read cut off because this process is stopping says nothing about the deployment.
+          if (stopping(error)) throw error;
           await this.suspend(job, error.message);
           const winner = await this.reads.tap('getDeployment/' + encodeURIComponent(job.entry.indexTick ?? job.entry.tick));
           if (winner && winner.ins !== job.entry.id) return this.save(job, { entry: null, tickerAttempt: job.tickerAttempt + 1, state: 'retrying-collision', reason: 'deployment_race', nextRetry: 0 });
@@ -184,6 +204,7 @@ export class Provisioner {
       await verifyDeployment(this.reads, entry, { confirmations: this.policy.confirmations });
       return this.register(job);
     } catch (error) {
+      if (stopping(error)) throw error;
       return this.save(this.store.get('provisioning', job.asset) ?? job, { state: /fund|budget|cost|fee_rate/.test(error.message) ? 'waiting-for-funds' : 'confirming',
         reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'provisioning_dependency', nextRetry: Date.now() + RETRY_MS });
     }

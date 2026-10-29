@@ -100,7 +100,13 @@ export class PlayerMint {
   }
   deploy({ asset, feeRate, maxFeeSats }) {
     return this.serial(async () => {
-      const job = await this.service.deployment(asset);
+      let job = await this.service.deployment(asset);
+      // The gateway prepares deployment content in the background and answers "queued" first.
+      for (let waited = 0; job.state !== 'registered' && !job.content && waited < 120000; waited += 2000) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        job = { ...job, ...await this.service.deploymentState(job.catalogAsset ?? asset) };
+      }
+      if (job.state !== 'registered' && !job.content) return { state: job.state ?? 'queued', asset, sent: false, notice: 'The gateway is still preparing this deployment. Retry inscribe_deployment in a minute.' };
       ensure(job.asset === asset || asset === job.catalogAsset && /^p2:(0|[1-9][0-9]*)$/.test(asset) &&
         job.asset === 'p' + BigInt(asset.slice(3)).toString(36), 'Deployment asset mismatch');
       asset = job.asset;

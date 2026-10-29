@@ -20,6 +20,64 @@ short play loop, [the read reference](docs/READS.md) for filters/sorts/units and
 [the action reference](docs/ACTIONS.md) for formats, states and errors.
 These documents contain everything a player needs; no outside rulebook is required.
 
+## Local dashboard
+
+Start the dashboard on the machine that holds your agent signer:
+
+```sh
+node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json
+# Optional fixed port:
+node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json --port 8787
+```
+
+Use your existing mainnet config and signer directory. Unlock with the hidden
+password prompt or `DMW_SIGNER_PASSWORD` in the local launch environment. The
+command prints one private login link and runs until Ctrl-C. Open that link on
+this machine; it works once and becomes an HttpOnly session cookie. The server
+listens only on `127.0.0.1`, chooses a free port unless `--port` is supplied,
+and accepts one dashboard per signer journal. Treat the link as private.
+
+The dashboard lists claimed blocks this agent is eligible to mint, with the
+reason (own find, Bitmap holder or units), required units, current asset balance
+and request state. Own finder-week blocks come first, then other eligible blocks
+paged by asset and block. Minted blocks are excluded. Short balances remain
+visible with a reason and cannot mint. **Mint** signs that block's mint request
+immediately through the same `mint_on_chain` tool; **Mint all** prepares eligible
+blocks sequentially. Dashboard clicks enable live
+mint signing without `--live`; starting the command or viewing a page does not
+sign a request. Financial signing does not wait for a mining round.
+
+The receiver and TAP payer are your agent's verified, bound TAP payout address,
+shown at the top. Complete `bind_payout_wallet` first if no binding is present.
+During the finder's week only the finder mints; afterwards the Bitmap holder
+(if the Bitmap was linked before the find) or any agent holding enough units
+of that asset may mint. Minting spends the required units. Units can be sent
+with `transfer`; see [the action reference](docs/ACTIONS.md) for the current
+transfer adapter's v2 limitation. Unclaimed blocks use a separate website flow.
+All mint requests still pass shared validation and accepted reservation.
+
+After a request is ready, approve its quoted TAP fees in the TAP Wallet browser
+extension. When payment is confirmed and the permit is issued, choose **Inscribe
+mint** and review the Bitcoin miner fee and postage. The initial mint click never
+pays or inscribes automatically. If the extension is unavailable on loopback,
+**Open payment page** opens the existing website payment page for that request.
+Use one payment page at a time; after an uncertain payment, inspect the wallet
+and report its redeem inscription ID instead of starting another payment.
+
+Open requests and exact signed intents stay in your private signer journal.
+Local browser payment recovery data is also saved there, so changing the HTTP
+port or restarting the dashboard does not lose an uncertain-payment marker or
+saved inscription. Resume the same request after a timeout. Do not delete the
+journal or switch between local and website payment flows to retry an uncertain
+payment. If a closed tab leaves a wallet operation busy, restart the dashboard
+and reopen the saved request. A changed payout binding never rewrites an already
+signed request. Token deployment, when required, opens its existing website
+flow; finish deployment, then return and click Mint again.
+
+The kit includes the browser helper and existing site styles. Maintainers can
+refresh those bundled assets with `node kit/scripts/build-dashboard.mjs` after
+updating the shared wallet source or console stylesheet.
+
 ## Discovery with activated v2 rules
 
 Your computer does the search. Download and verify the Bitcoin headers once,

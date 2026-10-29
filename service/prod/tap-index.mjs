@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { lookupSettings } from './lookup-settings.mjs';
-import { check, serial } from '../src/util.mjs';
+import { check } from '../src/util.mjs';
+import { KeyedWork, parallelPage } from '../src/keyed-work.mjs';
 import { rules } from '../src/rules.mjs';
 
 const segment = value => encodeURIComponent(value);
@@ -41,7 +42,7 @@ function keys(kind, row) {
 // request never implicitly enumerates a global element/authority catalog.
 export class TapLookupIndex {
   constructor({ filename = ':memory:', indexer, settings }) {
-    this.indexer = indexer; this.settings = lookupSettings(settings); this.gate = serial();
+    this.indexer = indexer; this.settings = lookupSettings(settings); this.work = new KeyedWork();
     this.db = new DatabaseSync(filename); this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS lookup_streams(id TEXT PRIMARY KEY,kind TEXT,args TEXT,offset INTEGER,height INTEGER,hash TEXT,turn INTEGER DEFAULT 0);
       CREATE INDEX IF NOT EXISTS lookup_due ON lookup_streams(turn,id);
@@ -63,7 +64,7 @@ export class TapLookupIndex {
     try { return await this.indexer.bitcoin.blockHash(row.height) === row.hash; }
     catch (e) { if (e.status === 404) return false; throw e; }
   }
-  async advance(id, budget = this.settings.pagesPerTick) { return this.gate(async () => {
+  async advance(id, budget = this.settings.pagesPerTick) { return this.work.run(id, async () => {
     let row = this.stream(id);
     for (let step = 0; step < budget; step++) {
       if (!await this.canonical(row)) {
@@ -102,15 +103,16 @@ export class TapLookupIndex {
       if (row.offset === total) return true;
     }
     return false;
-  }); }
+  }, { join: true }); }
   async tick({ submittedBitmapsOnly = false } = {}) {
     let failure;
-    for (let n = 0; n < this.settings.pagesPerTick; n++) {
-      const row = this.db.prepare(`SELECT id FROM lookup_streams ${submittedBitmapsOnly ? "WHERE kind<>'bitmap'" : ''} ORDER BY turn,id LIMIT 1`).get();
-      if (!row) break;
-      try { await this.advance(row.id, 1); } catch (error) { failure ??= error; }
+    const rows = this.db.prepare(`SELECT id FROM lookup_streams ${submittedBitmapsOnly ? "WHERE kind<>'bitmap'" : ''} ORDER BY turn,id LIMIT ?`).all(this.settings.pagesPerTick);
+    for (const row of rows) {
       this.db.prepare('UPDATE lookup_streams SET turn=(SELECT coalesce(max(turn),0)+1 FROM lookup_streams) WHERE id=?').run(row.id);
     }
+    await parallelPage(rows, async row => {
+      try { await this.advance(row.id, Math.max(1, Math.floor(this.settings.pagesPerTick / rows.length))); } catch (error) { failure ??= error; }
+    });
     if (failure) throw failure;
   }
   async complete(id) {

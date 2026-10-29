@@ -5,6 +5,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { provisionOperator } from './provision.mjs';
+import { lifecycleSignal } from '../service/src/lifecycle.mjs';
 
 export const root = dirname(fileURLToPath(import.meta.url));
 export const buildRoot = resolve(process.env.DMW_BUILD_ROOT || resolve(root, '../../build'), 'target/committee');
@@ -16,12 +17,14 @@ export async function privateJSON(path, value) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
 }
-export async function rpc(url, token, path, body = {}, timeout = 30000) {
+export async function rpc(url, token, path, body = {}, timeout = 30000, signal = lifecycleSignal()) {
+  signal?.throwIfAborted();
   const u = new URL(url);
   const local = u.protocol === 'http:' && u.hostname === '127.0.0.1';
   const remote = u.protocol === 'https:' && /^[a-zA-Z0-9.-]+\.[a-zA-Z]+$/.test(u.hostname) && !/localhost|\.local$/.test(u.hostname);
   if ((!local && !remote) || u.username || u.password || u.search || u.hash || u.pathname !== '/') throw Error('authenticated_transport_required');
-  const response = await fetch(new URL(path, u), { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
+  const deadline = AbortSignal.timeout(timeout);
+  const response = await fetch(new URL(path, u), { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, deadline]) : deadline });
   const result = await response.json();
   if (!response.ok) throw Error(result.error ?? `http_${response.status}`);
   return result;

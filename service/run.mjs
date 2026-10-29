@@ -32,6 +32,8 @@ import { WorkerStatus } from './src/worker-status.mjs';
 import { AssetScheduler } from './src/asset-scheduler.mjs';
 import { createV2Runtime } from './src/v2-runtime.mjs';
 import { runtimeResources, configuredResources } from './src/r3-settings.mjs';
+import { startupListener } from './src/startup-listener.mjs';
+import { phase, withLifecycle, bindLifecycle } from './src/lifecycle.mjs';
 
 // Let the scheduler record observation failures and clear them only after success.
 export async function observeOnce({ checkDisk = diskCheck, v2, adapters, outbox, intake, files, committee, workerStatus, chain }) {
@@ -54,20 +56,56 @@ export async function observeOnce({ checkDisk = diskCheck, v2, adapters, outbox,
   await v2?.refresh();
 }
 
-export async function start(config) {
-  check(supportedNode(), 'node_version'); await diskCheck();
+export async function start(config, { background = false } = {}) {
+  const controller = new AbortController();
+  return withLifecycle({ signal: controller.signal, onPhase: config.onPhase }, async () => {
+    const service = await startGateway(config, controller);
+    if (!background) {
+      try { await service.ready; } catch (error) { await service.close(); throw error; }
+    }
+    return service;
+  });
+}
+async function startGateway(config, controller) {
+  check(supportedNode(), 'node_version');
   const resources = config.v2 ? runtimeResources(config.v2.resources, config.v2.document) : null;
   config = configuredResources(config);
-  const store = await Store.open(config.data, resources?.store ?? config.storeSettings), history = new History(store, resources?.history), files = new Files(join(config.data, 'static'));
-  let pipeline, http, adapters, scheduler, evidence, closed = false;
-  const close = async () => { if (closed) return; closed = true; await scheduler?.close(); await http?.close(); await pipeline?.close(); await adapters?.close?.(); evidence?.close(); await store.close(); };
-  try {
+  const http = await phase('gateway.listen', () => startupListener(config.listen));
+  let store, pipeline, adapters, scheduler, evidence, committee, operator, closed = false, closing;
+  const service = { ...http };
+  const close = () => closing ??= (async () => {
+    closed = true; scheduler?.stop();
+    controller.abort(Error('gateway_stopping')); committee?.close();
+    const replayStopped = pipeline?.replay.close();
+    const stoppedHTTP = http.close();
+    await service.ready.catch(() => {});
+    try {
+      await phase('gateway.pollers_close', () => scheduler?.close());
+      await stoppedHTTP;
+      await operator?.provisioner?.close();
+      await replayStopped;
+      await phase('gateway.pipeline_close', () => pipeline?.close());
+    } finally {
+      evidence?.close();
+      try { await phase('gateway.adapters_close', () => adapters?.close?.()); }
+      finally { await phase('gateway.store_close', () => store?.close({ checkpoint: true })); }
+    }
+  })();
+  service.close = bindLifecycle(close);
+  const initialize = async () => {
+    await diskCheck(); controller.signal.throwIfAborted();
+    store = await phase('gateway.store_open', () => Store.open(config.data, resources?.store ?? config.storeSettings));
+    service.store = store;
+    controller.signal.throwIfAborted();
+    const history = new History(store, resources?.history), files = new Files(join(config.data, 'static'));
     const secret = Buffer.from((await readFile(config.gatewayKey, 'utf8')).trim(), 'hex'); check(secret.length === 32, 'gateway_key');
     const module = await import(pathToFileURL(config.adapter).href);
-    adapters = await module.createAdapters({ config, store, history, files });
-    const committee = new Committee({ store, network: config.network, signers: config.committee, epoch: config.epoch ?? 1, assetRecoveryVersion: config.assetRecoveryVersion, ...resources?.committee });
+    adapters = await phase('gateway.adapters', () => module.createAdapters({ config, store, history, files }));
+    controller.signal.throwIfAborted();
+    committee = new Committee({ store, network: config.network, signers: config.committee, epoch: config.epoch ?? 1, assetRecoveryVersion: config.assetRecoveryVersion, batchRetryMs: config.batchRetryMs, ...resources?.committee });
     check(config.v2 || (await adapters.reads.settings?.())?.ruleset !== 'dmw-v2', 'activation_config_required');
-    const v2 = config.v2 ? await createV2Runtime({ config, store, secret, history, reads: adapters.reads, committee }) : null;
+    const v2 = config.v2 ? await phase('gateway.v2', () => createV2Runtime({ config, store, secret, history, reads: adapters.reads, committee, deferRecovery: true })) : null;
+    controller.signal.throwIfAborted();
     const intake = v2?.intake ?? new Intake({ store, network: config.network, secret, hashAt: history.hashAt, puzzleBits: config.puzzleBits ?? 12 });
     const outbox = new Outbox({ store, transport: adapters.transport, resources: config.assetResources, ...resources?.outbox });
     const feeds = new Feeds({ store, files, history, reads: adapters.reads, settings: resources?.feeds, pagesPerTick: resources?.feeds.feedPagesPerTick });
@@ -81,31 +119,38 @@ export async function start(config) {
     const publicViews = new PublicViews({ store, history, reads: adapters.reads, mints, network: config.network, claimsPerWindow: config.claimsPerWindow });
     const publicAPI = createPublicAPI({ views: publicViews, files, settings: resources?.feeds });
     const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', rosterHistory: config.rosterHistory, members: config.committee.map(s => s.peer), committee });
-    const operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
+    operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
     if (mints) mints.provisioner = operator.provisioner;
     const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);
     evidence = config.mode === 'prod' ? evidencePublisher({ config, store, reads: adapters.reads, secret }) : undefined;
     const headers = new HeaderFiles({ history, files, network: config.mode === 'prod' ? 'mainnet' : 'regtest', chunkSettings: config.headerChunkSettings, secret, signingEpoch: config.headerSigningEpoch });
-    // Pay for the first verified status before accepting browser requests.
-    // A failed source remains an error and is retried by the ordinary poll.
-    await publicCache.status.refresh().catch(() => {});
-    http = await serve({ evidence, web, operator, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
+    controller.signal.throwIfAborted();
+    await serve({ listener: http, evidence, web, operator, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
     await atomicWrite(join(config.data, 'process.json'), JSON.stringify({ pid: process.pid }));
+    controller.signal.throwIfAborted();
     const workerStatus = new WorkerStatus(store), recordError = (e, worker) => workerStatus.failed(e, worker);
     const publicRegistry = v2 && adapters.reads.registry ? new PublicRegistry({ store, registry: adapters.reads.registry, rows: resources?.feeds.feedEventRows }) : null;
     const publicSummaries = v2 ? new PublicSummaries({ store, reads: adapters.reads, rows: resources?.feeds.ownerRefreshRows, refreshMs: resources?.feeds.ownerRefreshMs }) : null;
-    const publicTasks = [['public_registry', () => publicRegistry?.tick()], ['public_summaries', () => publicSummaries?.tick()], ['public_status', () => publicCache.status.refresh()], ['public_catalog', () => publicCache.catalog.refresh()],
+    const publicTasks = [['public_registry', () => publicRegistry?.tick()], ['public_summaries', () => publicSummaries?.tick()], ['public_status', () => phase('gateway.public_status', () => publicCache.status.refresh())], ['public_catalog', () => publicCache.catalog.refresh()],
       ['public_records', () => publicCache.records.refresh()], ['public_pages', () => publicViews.readIndex?.sync()]];
     const poll = () => closed ? undefined : observeOnce({ v2, adapters, outbox, intake, files, committee, workerStatus, chain: config.mode === 'prod' ? 'main' : 'regtest' });
     scheduler = new AssetScheduler({ intervalMs: config.pollMs ?? 1000, onError: recordError, onSuccess: name => workerStatus.succeeded(name) });
     scheduler.add('observations', poll);
     scheduler.add('header_chunks', () => headers.tick());
+    scheduler.add('provisioning', () => operator?.provisioner?.tick());
+    scheduler.add('financial_deployments', () => mints?.deploymentTick?.());
+    scheduler.add('receipt_recovery', () => v2?.recoverReceipts());
     for (const [name, task] of [['pipeline', () => pipeline.tick()], ['recovery', () => v2?.recovery?.tick()], ['outbox', () => outbox.tick()], ['mints', () => mints?.tick()], ['links', () => links?.tick?.()], ['custody', () => v2?.custody?.tick()],
       ['feeds', () => feeds.tick()], ['public_reads', () => v2 ? undefined : publicIndex.tick()], ['operator', () => operator?.tick()], ['bindings', () => bindings.tick()], ...publicTasks]) scheduler.add(name, task);
-    return { ...http, close, intake, pipeline, mints, recovery: v2?.recovery, adapters, store, operator };
-  } catch (e) { await close(); throw e; }
+    Object.assign(service, { intake, pipeline, mints, recovery: v2?.recovery, adapters, store, operator });
+    return service;
+  };
+  service.ready = initialize();
+  // A failed initialization never leaves a partial application listening.
+  service.ready.catch(() => { void close().catch(() => {}); });
+  return service;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let service;
@@ -116,8 +161,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const { renderTargetRuntime } = await import('../deploy/runtime.mjs');
       config = await renderTargetRuntime(await loadTarget(process.argv[3]));
     } else config = await loadConfig(process.argv[2]);
-    service = await start(config);
-    process.once('SIGTERM', () => void service.close()); process.once('SIGINT', () => void service.close());
-    console.log('Gateway ready. PID:', process.pid);
+    service = await start(config, { background: true });
+    const shutdown = () => { void service.close().then(() => process.exit(0), () => process.exit(1)); };
+    process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
+    await service.ready;
+    console.log('Gateway initialized. PID:', process.pid);
   } catch (error) { await service?.close(); console.error(error.message === 'feePolicy is required in the operator registry' ? error.message : 'Gateway startup failed; verify the private target, configuration and adapter.'); process.exitCode = 1; }
 }

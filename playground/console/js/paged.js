@@ -51,6 +51,16 @@ export function pagedTable(opts) {
     }
     if (seq !== state.seq) return;
     const rows = pageRows(r, opts.key);
+    // A group (one settlement of finds) can spill over the server's page cap: keep reading while it continues.
+    for (let pages = 0; opts.joins && r.next && rows.length && pages < 30; pages++) {
+      const more = new URLSearchParams(params); more.set('cursor', r.next);
+      let n;
+      try { n = await get(`${base}${base.includes('?') ? '&' : '?'}${more}`); } catch { break; }
+      if (seq !== state.seq) return;
+      const next = pageRows(n, opts.key);
+      if (!next.length || !opts.joins(rows.at(-1), next[0])) break;
+      rows.push(...next); r = n;
+    }
     state.loading = false;
     state.at = at;
     state.count = rows.length;

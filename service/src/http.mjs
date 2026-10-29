@@ -11,6 +11,7 @@ import { AccountAvailability } from './account-availability.mjs';
 import { accountKey } from '../../contract/account-tree.js';
 import { financialAsset } from '../../rules/src/financial-mint.js';
 import { deploymentAssetId } from './mint-assets.mjs';
+import { responseBudget } from './response-budget.mjs';
 async function body(req, maxBytes) {
   check(!req.headers['content-length'] || Number(req.headers['content-length']) <= maxBytes, 'body_limit', 413);
   check((req.headers['content-type'] ?? '').split(';')[0] === 'application/json', 'content_type', 415);
@@ -18,13 +19,18 @@ async function body(req, maxBytes) {
   for await (const chunk of req) { size += chunk.length; check(size <= maxBytes, 'body_limit', 413); chunks.push(chunk); }
   return Buffer.concat(chunks).toString('utf8');
 }
-export async function serve({ intake, files, headers, mints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, web = createWeb(), host = '127.0.0.1', port = 0, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
+export async function serve({ listener, intake, files, headers, mints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
+  check(Number.isSafeInteger(responseTimeoutMs) && responseTimeoutMs > 0 && responseTimeoutMs <= 2000, 'response_timeout');
   check(Number.isSafeInteger(bitmapSubmitBytes) && bitmapSubmitBytes > 0, 'bitmap_submit_bytes');
   check(host === '127.0.0.1', 'local_listener_required'); let inFlight = 0;
   const unauthenticated = new Limiter({ capacity: rateCapacity, burst: rateBurst, perSecond: ratePerSecond });
-  const server = createServer(async (req, res) => {
+  const handler = async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (inFlight >= maxInFlight) { res.writeHead(503, { 'Retry-After': '1' }); res.end(); return; } inFlight++;
+    if (inFlight >= maxInFlight) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '1' });
+      res.end(JSON.stringify({ error: 'service_busy', retryable: true })); return;
+    } inFlight++;
+    const finishBudget = ['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/') ? responseBudget(req, res, responseTimeoutMs) : () => {};
     try {
       if (req.method === 'POST') check(unauthenticated.take(req.socket.remoteAddress), 'request_rate', 429);
       if (evidence && req.method === 'POST' && req.url === '/operator-evidence') {
@@ -103,7 +109,7 @@ export async function serve({ intake, files, headers, mints, links, financialAct
       }
       if (['GET', 'HEAD'].includes(req.method) && await files.serve(req, res)) return;
       res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-      if (req.method === 'GET' && req.url === '/health') { res.end(JSON.stringify({ ok: !intake.store.failed, unit: rules.TAP_UNIT, tip: intake.head?.tip ?? null, pending: intake.store.get('meta', 'ruleState')?.batchVersion === 2 ? intake.store.countUint('dedupe') : intake.store.count('dedupe'), observations: intake.store.get('meta', 'ruleState')?.batchVersion === 2 ? intake.store.countUint('observations') : intake.store.count('observations'), latest: intake.store.get('meta', 'latest'), worker: intake.store.get('meta', 'workerStatus') })); return; }
+      if (req.method === 'GET' && req.url === '/health') { res.end(JSON.stringify({ ok: !intake.store.failed, ready: !intake.store.failed && (intake.rulesContext?.()?.ready ?? !!intake.head), unit: rules.TAP_UNIT, tip: intake.head?.tip ?? null, pending: intake.store.get('meta', 'ruleState')?.batchVersion === 2 ? intake.store.countUint('dedupe') : intake.store.count('dedupe'), observations: intake.store.get('meta', 'ruleState')?.batchVersion === 2 ? intake.store.countUint('observations') : intake.store.count('observations'), latest: intake.store.get('meta', 'latest'), worker: intake.store.get('meta', 'workerStatus') })); return; }
       let result;
       if (req.method === 'POST' && req.url === '/moves') result = await intake.accept(await body(req, intake.rulesContext?.()?.settings ? rules.SETTINGS_CAPABILITIES.moveBytes : rules.MOVE_DEFAULTS.maxBytes));
       else if (submittedBitmaps && req.method === 'POST' && req.url === '/bitmaps/submit') result = await submittedBitmaps.submit(JSON.parse(await body(req, bitmapSubmitBytes)));
@@ -140,20 +146,23 @@ export async function serve({ intake, files, headers, mints, links, financialAct
       else { res.statusCode = 404; res.end('{"error":"not_found"}'); return; }
       res.end(JSON.stringify(req.url === '/moves' ? result : publicIdentities(result)));
     } catch (error) {
+      if (res.writableEnded) return;
       if (!res.headersSent) {
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-        res.statusCode = error.status ?? 400;
+        res.statusCode = error.retryable === true ? 503 : error.status ?? 400;
         if (res.statusCode === 429 || res.statusCode === 503) res.setHeader('Retry-After', String(Math.max(1, Math.ceil((error.retryAfterMs ?? 1000) / 1000))));
         // Arbitrary upstream error strings may contain private endpoint details.
         const code = error.code === 'trac_address_required' ? TRAC_ADDRESS_ERROR : /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'request_failed';
         if (code === 'request_failed') console.error('http_request_failed', JSON.stringify(redactedError(error)));
-        res.end(JSON.stringify({ error: code, ...(code === 'upgrade_required' ? {
+        res.end(JSON.stringify({ error: code, ...([429, 503].includes(res.statusCode) ? { retryable: true } : {}), ...(code === 'upgrade_required' ? {
           code: KIT_UPGRADE_CODE, message: KIT_UPGRADE_MESSAGE, upgrade: { version: KIT_VERSION, url: KIT_DOWNLOAD_URL }
         } : error.code === 'trac_address_required' ? { code: error.code } : {}) }));
       } else res.destroy();
-    } finally { inFlight--; }
-  });
+    } finally { finishBudget(); inFlight--; }
+  };
+  const server = listener?.server ?? createServer(handler);
   server.headersTimeout = Math.min(headerTimeoutMs, requestTimeoutMs); server.requestTimeout = requestTimeoutMs; server.timeout = socketTimeoutMs; server.maxConnections = maxConnections; server.keepAliveTimeout = keepAliveMs;
+  if (listener) { listener.install(handler); return listener; }
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
-  return { server, url: `http://127.0.0.1:${server.address().port}`, async close() { server.closeIdleConnections(); await new Promise(resolve => server.close(resolve)); } };
+  return { server, url: `http://127.0.0.1:${server.address().port}`, async close() { const stopped = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await stopped; } };
 }
