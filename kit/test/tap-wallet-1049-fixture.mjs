@@ -2,10 +2,13 @@
 // singleTxTransfer(items, { extraOutputs }) adding at most one Bitcoin output
 // to the same payment transaction. No chain sends.
 import { tapWallet1048 } from './tap-wallet-1048-fixture.mjs';
+import { cardinalFixture } from './wallet-funds-fixture.mjs';
 
 export function tapWallet1049(options = {}) {
   const f = tapWallet1048(options), { calls } = f.state;
   f.state.version = options.version ?? '1.0.49';
+  f.state.coins = [cardinalFixture()];
+  f.provider.getBitcoinUtxos = async () => f.state.coins;
   const transfer = f.provider.singleTxTransfer;
   f.provider.getCapabilities = async () => ({ version: f.state.version, singleTxTransferExtraOutputs: true });
   f.provider.singleTxTransfer = async (items, extra) => {

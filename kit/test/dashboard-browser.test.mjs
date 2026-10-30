@@ -8,6 +8,7 @@ import { dashboardFixture } from './fixtures/dashboard-service.mjs';
 import { tapWallet1049 } from './tap-wallet-1049-fixture.mjs';
 import { cleanup } from './helpers.mjs';
 import { hex, unhex } from '../lib/inscription-core.mjs';
+import { walletFundsReply } from './wallet-funds-fixture.mjs';
 
 async function open(t, { provider = true } = {}) {
   const f = await dashboardFixture(t, { http: true }), dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
@@ -16,6 +17,7 @@ async function open(t, { provider = true } = {}) {
   // Test traffic is strictly loopback except the intercepted public fee estimate.
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/web-api/tap-reader/')) return route.fulfill({ json: walletFundsReply(url.href) });
     if (url.origin === dashboard.origin) return route.continue();
     if (url.href === 'https://mempool.space/api/v1/fees/recommended') return route.fulfill({ json: { halfHourFee: 2 } });
     return route.abort();

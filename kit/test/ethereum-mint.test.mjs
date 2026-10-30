@@ -21,6 +21,10 @@ function fixture() {
     if (['eth_accounts','eth_requestAccounts'].includes(method)) return [payer];
     if (method === 'eth_chainId') return chainId;
     if (method === 'eth_getTransactionReceipt') return { status: '0x1' };
+    if (method === 'eth_getBalance') return '0xde0b6b3a7640000';
+    if (method === 'eth_estimateGas') return '0x186a0';
+    if (method === 'eth_gasPrice') return '0x3b9aca00';
+    if (method === 'eth_call') return params[0].data === '0x313ce567' ? '0x12' : '0xde0b6b3a7640000';
     if (method === 'eth_sendTransaction') { sent.push(params[0]); if (loseDeposit && sent.length === 2) throw Error('reply lost'); return '0x' + String(sent.length).repeat(64); }
     throw Error(method);
   } };

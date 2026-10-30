@@ -7,6 +7,7 @@ const { chromium } = await import('playwright');
 import { secp256k1 } from '../../../kit/node_modules/@noble/curves/secp256k1.js';
 import { fundingAddress } from '../../../kit/lib/inscription-core.mjs';
 import { tapWallet1049 } from '../../../kit/test/tap-wallet-1049-fixture.mjs';
+import { walletFundsReply } from '../../../kit/test/wallet-funds-fixture.mjs';
 const owner = encodeTracAddress('11'.repeat(32));
 const pattern = { asset: 'p0', number: 0, name: 'dmwdigit', pat: '[0-9]', fld: 4, tier: 1, rarity: 1, supply: '10' };
 const events = [3, 2, 1].map(sequence => ({ sequence, id: `event${sequence}`, at: 1, type: 'block', data: { height: sequence, tip: sequence } }));
@@ -573,7 +574,7 @@ const walletPublicKey = Buffer.from(secp256k1.getPublicKey(walletKey)).toString(
 const setAsideAddress = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(42))).toString('hex'), 'regtest');
 const shots = process.env.DMW_SHOTS;
 async function shot(p, name) { if (shots) await p.screenshot({ path: `${shots}/${name}.png`, fullPage: true }); }
-async function requestPage(t, status, { version = '1.0.49' } = {}) {
+async function requestPage(t, status, { version = '1.0.49', balances = {} } = {}) {
   const p = await open(t), posts = [], wallet = tapWallet1049({ address: payer, publicKey: walletPublicKey, network: 'regtest', version });
   if (version === null) delete wallet.provider.getCapabilities;
   const seen = [];
@@ -582,6 +583,7 @@ async function requestPage(t, status, { version = '1.0.49' } = {}) {
   p.on('request', r => { if (r.method() !== 'GET') posts.push(new URL(r.url()).pathname); });
   await p.route('**/web-api/target', route => json(route, { network: 'dmw-regtest', bitcoinNetwork: 'regtest', ethereum: { chainId: '0x7a69' } }));
   await p.route('https://mempool.space/**', route => json(route, { halfHourFee: 3 }));
+  await p.route('**/web-api/tap-reader/**', route => balances.unavailable ? route.fulfill({ status: 503, json: { error: 'offline' } }) : json(route, walletFundsReply(route.request().url(), balances)));
   await p.route('**/mint/deployment-state/*', route => json(route, { asset: 'p0', state: 'registered' }));
   await p.route(u => new URL(u).pathname === '/mint/' + requestId, route => route.request().resourceType() === 'fetch' ? json(route, status) : route.continue());
   await p.goto(server.url + '/mint/' + requestId);
@@ -590,6 +592,32 @@ async function requestPage(t, status, { version = '1.0.49' } = {}) {
 const fee = { role: 'treasury', to: payer, ticker: 'tap', amount: atomic(226), tt: 'a' };
 const awaiting = () => ({ requestId, receiver: payer, payer, asset: 'p0', amount: '3', publicMint: true, fees: [fee], missing: [fee], state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' },
   mintFunding: { address: setAsideAddress, satoshis: 4200, feeRate: 3, label: 'your mint inscription' } });
+
+test('Pay and mint explains held TAP, a failed read and insufficient Bitcoin in the existing message without opening approval', async t => {
+  const status = awaiting(), payment = { ...fee, amount: '440700000000000000000' };
+  status.fees = status.missing = [payment];
+  const balances = { overall: '103180000000000000000', held: '102500000000000000000' };
+  const { p, wallet } = await requestPage(t, status, { balances });
+  const pay = async () => {
+    await p.getByRole('button', { name: 'Pay and mint', exact: true }).click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Pay and mint', exact: true }).click();
+  };
+  await pay();
+  const message = p.getByText(/Not enough TAP: this payment needs 440\.7 TAP, your wallet can spend 0\.68 TAP/);
+  await message.waitFor(); assert.match(await message.innerText(), /102\.5 TAP is held in transfer inscriptions/);
+  assert.ok((await message.innerText()).includes(payer));
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 0);
+  balances.unavailable = true; await pay();
+  await p.getByText(/Could not check your TAP balance.*HTTP 503.*Nothing was sent/).waitFor();
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 0);
+  balances.unavailable = false; balances.overall = '1000000000000000000000'; balances.held = '0';
+  wallet.state.coins[0].satoshi = 4100; await pay();
+  await p.getByText(/Not enough Bitcoin for fees:.*4,100 sats spendable/).waitFor();
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 0);
+  wallet.state.coins[0].satoshi = 1000000; await pay();
+  await p.getByText('Paid. Your mint goes out automatically when the permit arrives. You can close this page.', { exact: true }).first().waitFor();
+  assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
+});
 
 test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside, then the server-sent mint is followed in plain words', async t => {
   const status = awaiting(), { p, wallet } = await requestPage(t, status);

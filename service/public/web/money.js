@@ -8,7 +8,7 @@ import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
 import { assetName, mineral, title } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
-import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, wait, hex, sha256, unhex, fail } from './wallets.js';
+import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, wait, hex, sha256, unhex, fail } from './wallets.js';
 import { wallet, walletSummary, connectButtons } from './connect.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted', 'credited', 'refunded']);
@@ -157,7 +157,8 @@ async function request(app, type, id, target, progress) {
       const auth = await authority(tap, address, journal, notify, checkAccount);
       await tapAccount(target, plan.payer);
       notify('Approve the TAP payment lock in your wallet.');
-      const order = await journal.step('lock', () => tap.redeemTapActions({ ...plan.redeem, auth }, { label: `Digital Matter World ${type}` }));
+      const order = await tapPaymentStep(journal, 'lock', { provider: tap, address, network: target.bitcoinNetwork,
+        message: { ...plan.redeem, auth }, options: { label: `Digital Matter World ${type}` } });
       journal.data.paymentId = await orderResult(tap, order) + ':0'; journal.save();
       if (type === 'link') {
         notify('Waiting for the payment lock to be confirmed and accepted before releasing the fee.');
@@ -170,8 +171,8 @@ async function request(app, type, id, target, progress) {
         if (!verified?.ready && !verified?.consumed) fail('Payment lock is not verified yet. Resume to check again; the saved payment will not be repeated.');
         if (!verified.consumed) {
           await tapAccount(target, plan.payer); notify('Approve release of the Bitmap link fee to the displayed split.');
-          const released = await journal.step('link-release', () => tap.redeemTapActions({ auth, items: [], data: id,
-            actions: [{ op: 'claim', lock: journal.data.paymentId, preimage: journal.data.linkSecret }] }, { label: 'Release Bitmap link fee' }));
+          const released = await tapPaymentStep(journal, 'link-release', { provider: tap, address, network: target.bitcoinNetwork,
+            message: { auth, items: [], data: id, actions: [{ op: 'claim', lock: journal.data.paymentId, preimage: journal.data.linkSecret }] }, options: { label: 'Release Bitmap link fee' } });
           await orderResult(tap, released);
         }
       }
@@ -181,7 +182,8 @@ async function request(app, type, id, target, progress) {
       if (!journal.data.ethereumPlan) { journal.data.ethereumPlan = plan.transactions; journal.save(); }
       for (const [i, name] of (plan.ethereumDepositStatus ? [] : ['approval', 'deposit']).entries()) {
         await ethAccount(target, plan.payer); notify(`Approve the ${name === 'approval' ? 'exact TAP allowance' : 'TAP escrow deposit'} in MetaMask.`);
-        const tx = await journal.step(name, () => eth.request({ method: 'eth_sendTransaction', params: [journal.data.ethereumPlan[i]] }));
+        const tx = await ethereumPaymentStep(journal, name, { provider: eth, transaction: journal.data.ethereumPlan[i], chainId: target.ethereum.chainId,
+          token: escrowPaymentToken(journal.data.ethereumPlan[0], target.ethereum, i === 1) });
         await receipt(eth, tx);
       }
       journal.data.paymentId = id; journal.save();
@@ -207,20 +209,22 @@ async function request(app, type, id, target, progress) {
       if (typeof tap.singleTxTransfer !== 'function') fail('This wallet does not support direct TAP fee items.');
       await authority(tap, address, journal, notify, () => tapAccount(target, plan.payer));
       const batch = await sha256(new TextEncoder().encode(JSON.stringify(plan.missing)));
-      const result = await journal.step('fees/' + batch, () => tap.singleTxTransfer(plan.redeem.items), { definitelyNotSent: e => e?.message === 'No authority found' });
+      const result = await tapPaymentStep(journal, 'fees/' + batch, { provider: tap, address, network: target.bitcoinNetwork, message: plan.redeem, transfer: true });
       const paymentId = typeof result === 'string' ? result : result.inscriptionId;
       if (/^[0-9a-f]{64}i[0-9]+$/.test(paymentId ?? '')) await api(plan.submit, { id, paymentId });
     } else {
       const { eth, address } = await ethAccount(target, plan.ethereumRelease ? undefined : plan.payer);
       if (plan.ethereumRelease) {
         if (BigInt(plan.ethereumRelease.chainId) !== BigInt(target.ethereum.chainId) || plan.ethereumRelease.to.toLowerCase() !== target.ethereum.escrow.toLowerCase()) fail('Release contract does not match this payment.');
-        const tx = await journal.step('mint-release', () => eth.request({method:'eth_sendTransaction',params:[{from:address,to:plan.ethereumRelease.to,data:plan.ethereumRelease.data}]}));
+        const tx = await ethereumPaymentStep(journal, 'mint-release', { provider: eth, chainId: target.ethereum.chainId,
+          transaction: { from: address, to: plan.ethereumRelease.to, data: plan.ethereumRelease.data } });
         await receipt(eth,tx);
       } else {
         if (!journal.data.ethereumPlan) { journal.data.ethereumPlan = plan.transactions; journal.save(); }
         for (const [i,tx] of journal.data.ethereumPlan.entries()) {
           await ethAccount(target,plan.payer);
-          const sent = await journal.step(i===0?'approval':'deposit',()=>eth.request({method:'eth_sendTransaction',params:[tx]}));
+          const sent = await ethereumPaymentStep(journal, i === 0 ? 'approval' : 'deposit', { provider: eth, transaction: tx, chainId: target.ethereum.chainId,
+            token: escrowPaymentToken(journal.data.ethereumPlan[0], target.ethereum, i === 1) });
           await receipt(eth,sent);
         }
       }
@@ -234,12 +238,13 @@ async function request(app, type, id, target, progress) {
     if (plan.kind === 'ethereum') {
       if (!plan.ethereumRefundEligible) fail('The Ethereum escrow has not reached its refund time, or was already spent.');
       const { eth } = await ethAccount(target, plan.payer);
-      const tx = await journal.step('refund', () => eth.request({ method: 'eth_sendTransaction', params: [plan.refundTransaction] }));
+      const tx = await ethereumPaymentStep(journal, 'refund', { provider: eth, transaction: plan.refundTransaction, chainId: target.ethereum.chainId });
       await receipt(eth, tx);
     } else {
       if (plan.counted < plan.refundAfter) fail('The refund height has not been reached.');
       const { tap, address } = await tapAccount(target, plan.payer), auth = await authority(tap, address, journal, notify, () => tapAccount(target, plan.payer));
-      const result = await journal.step('refund', () => tap.redeemTapActions({ auth, items: [], data: id, actions: [{ op: 'refund', lock: plan.payment ?? journal.data.paymentId }] }, { label: 'Refund Digital Matter World payment' }));
+      const result = await tapPaymentStep(journal, 'refund', { provider: tap, address, network: target.bitcoinNetwork,
+        message: { auth, items: [], data: id, actions: [{ op: 'refund', lock: plan.payment ?? journal.data.paymentId }] }, options: { label: 'Refund Digital Matter World payment' } });
       await orderResult(tap, result);
     }
     notify(plan.kind === 'tap' ? 'Refund inscription submitted; waiting for verification.' : 'Refund transaction confirmed. Refresh for the gateway result.', 'info');

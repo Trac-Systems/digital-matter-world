@@ -1,5 +1,6 @@
 import { ensure, missingItems, digest } from './inscription-core.mjs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
+import { checkEthereumFunds } from './wallet-funds.mjs';
 
 const selector = text => Array.from(keccak_256(new TextEncoder().encode(text)).slice(0, 4), b => b.toString(16).padStart(2, '0')).join('');
 const DEPOSIT = selector('deposit(bytes32,uint256,(address,uint256,address,uint256,address,uint256,address,uint256,uint256),uint256)');
@@ -28,12 +29,14 @@ export class EthereumMint {
       BigInt(await this.provider.request({ method: 'eth_chainId' })) === BigInt(this.target.ethereum.chainId), 'Ethereum account or network changed; select the expected wallet and chain');
   }
   key(id) { return `ethereum/${this.target.ethereum.chainId}/${this.address}/${id}`; }
-  async step(key, name, transaction) {
+  async step(key, name, transaction, token) {
     const saved = await this.journal.get(key) ?? {}, old = saved[name], fingerprint = digest(JSON.stringify(transaction));
     if (old) {
       ensure(old.fingerprint === fingerprint, 'Escrow transaction changed since preparation');
       ensure(old.txid, 'An Ethereum wallet reply was interrupted. Inspect that wallet before any new send.'); return old.txid;
     }
+    await this.checkAccount();
+    await checkEthereumFunds({ provider: this.provider, transaction, token });
     await this.checkAccount();
     await this.journal.put(key, { ...saved, [name]: { fingerprint, transaction, state: 'sending' } });
     const txid = await this.provider.request({ method: 'eth_sendTransaction', params: [transaction] });
@@ -78,11 +81,12 @@ export class EthereumMint {
       } else await this.journal.put(key, { ...saved, terms: { approve, deposit, amount } });
       // Pass only public wallet fields; never accept gas overrides or another value.
       const tx = value => ({ from: this.address, to: value.to, data: value.data, value: '0x0' });
-      const approval = await this.step(key, 'approval', tx(approve)); await this.receipt(approval);
+      const token = { address: eth.token, amount, spender: eth.escrow, symbol: 'bridged TAP (ERC-20)' };
+      const approval = await this.step(key, 'approval', tx(approve), token); await this.receipt(approval);
       const fresh = await this.plan(id);
       if (fresh.ethereumDepositStatus !== 0) return { state: 'payment_pending', requestId: id, sent: false };
       ensure(fresh.payable && fresh.transactions?.[1]?.data.slice(0, -64) === deposit.data.slice(0, -64) && fresh.payableAmount === amount, 'Escrow quote changed; review the current request');
-      const payment = await this.step(key, 'deposit', tx(deposit));
+      const payment = await this.step(key, 'deposit', tx(deposit), { ...token, requireAllowance: true });
       return { state: 'payment_submitted', requestId: id, transaction: payment };
     });
   }

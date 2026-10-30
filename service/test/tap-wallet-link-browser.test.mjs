@@ -10,6 +10,12 @@ import { testPayoutAddress } from './payout-wallets.mjs';
 import { signTapWalletMessage } from '../../rules/test/tap-wallet-signing.mjs';
 import { tapWallet1049 } from '../../kit/test/tap-wallet-1049-fixture.mjs';
 import { rules } from '../src/rules.mjs';
+import { walletFundsReply } from '../../kit/test/wallet-funds-fixture.mjs';
+
+async function fundsRoutes(page) {
+  for (const origin of ['https://reader.tapscope.io/**', 'https://mempool.space/**'])
+    await page.route(origin, route => route.fulfill({ json: walletFundsReply(route.request().url()) }));
+}
 
 // Source-contract browser test, no installed extension or chain transactions.
 // Run while holding the shared browser lock, like the binding browser test.
@@ -47,6 +53,7 @@ test('fresh Link prepares, preserves its secret on cancellation, asks for 1-TX T
   t.after(() => server.close());
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage(), errors = [], prepareBodies = [];
+  await fundsRoutes(page);
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', req => { if (req.url().endsWith('/prepare')) prepareBodies.push(req.postDataJSON()); });
   wallet.provider.signMessage = async message => {
@@ -121,6 +128,7 @@ test('activated Link waits for reservation and retries direct fee notification w
   const server = await serve({ intake: { store }, files: { serve: async () => false }, links, web: createWeb(checkout) }); t.after(() => server.close());
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
+  await fundsRoutes(page);
   wallet.provider.singleTxTransfer = async items => { sends++; assert.deepEqual(items, rules.walletFeeItems(fees)); return paymentId; };
   wallet.provider.redeemTapActions = () => assert.fail('activated link used a legacy payment lock');
   await page.exposeFunction('walletCall', async (method, args) => ({ value: await wallet.provider[method](...args) }));

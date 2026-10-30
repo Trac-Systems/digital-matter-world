@@ -31,7 +31,7 @@ export function savedMintRequests() {
 export function playerMintFlow({ asset, block, amount, id, compound = false, resumeIntent } = {}) {
   const s = sheet('Mint from your wallet', 'Pay the fee items, wait for your permit, then inscribe to your Bitcoin address. You pay your own Bitcoin fees.');
   const network = site.public ? 'mainnet' : 'regtest';
-  const wallet = new TapWalletMint({ readStatus, network, readPaymentPlan: id => get(`/gateway/web-api/mint/${id}`), notify: text => clear(note, text) });
+  const wallet = new TapWalletMint({ readStatus, network, readerPath: '/api/gateway/web-api/tap-reader', readPaymentPlan: id => get(`/gateway/web-api/mint/${id}`), notify: text => clear(note, text) });
   const ethereum = new EthereumMint({ readStatus, network, journal: new BrowserMintJournal(),
     readTarget: () => get('/gateway/web-api/target'), readPlan: id => get(`/gateway/web-api/mint/${id}`) });
   const intent = resumeIntent ?? { asset, block, amount, compound, actionId: `web-${crypto.randomUUID()}` };

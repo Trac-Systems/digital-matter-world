@@ -7,6 +7,7 @@ import { tapBurnAddress } from '../../rules/src/tap-burn.js';
 
 import { tapWallet1048 } from './tap-wallet-1048-fixture.mjs';
 import { tapWallet1049 } from './tap-wallet-1049-fixture.mjs';
+import { cardinalFixture, walletFundsFetch, walletFundsReply } from './wallet-funds-fixture.mjs';
 import { ensureTapAuthority } from '../lib/tap-wallet-actions.mjs';
 // TAP Wallet 1.0.48 transfer result is funding, not a redeem inscription.
 test('Mint uses the public provider transfer API and preserves its funding receipt', async () => {
@@ -18,7 +19,7 @@ test('Mint uses the public provider transfer API and preserves its funding recei
   ];
   const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
   const provider = { ...tapWallet1049({ address, publicKey }).provider, requestAccounts: async () => [address], getAccounts: async () => [address], getNetwork: async () => 'mainnet',
-    getPublicKey: async () => publicKey, getBitcoinUtxos: async () => [],
+    getPublicKey: async () => publicKey, getBitcoinUtxos: async () => [cardinalFixture()],
     signPsbt: async () => assert.fail('no inscription signing for a transfer'), pushPsbt: async () => assert.fail('no pushPsbt'), pushTx: async () => assert.fail('no pushTx'),
     singleTxTransfer: async items => {
       for (const item of items) {
@@ -29,7 +30,7 @@ test('Mint uses the public provider transfer API and preserves its funding recei
       received.push(items); return { txid: fundingTxid };
     } };
   const journal = { get: async k => records.get(k), put: async (k, v) => records.set(k, v), lock: async (_, fn) => fn() };
-  const wallet = new TapWalletMint({ provider, readStatus: async () => status, network: 'mainnet', journal });
+  const wallet = new TapWalletMint({ provider, readStatus: async () => status, network: 'mainnet', journal, fetchImpl: walletFundsFetch });
   await wallet.connect(); assert.equal((await wallet.pay(id)).localState, 'payment_submitted');
   assert.equal((await wallet.pay(id)).localState, 'payment_pending'); assert.equal(received.length, 1);
   assert.deepEqual(records.get(wallet.key(id)).payment.result, { txid: fundingTxid });
@@ -43,7 +44,7 @@ function fixture(active = false) {
   const fees = [{ role: 'treasury', to: address, ticker: 'tap', amount: '1000000000000000000', tt: 'a' }];
   const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
   const journal = { get: async k => structuredClone(records.get(k)), put: async (k, v) => records.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
-  const notices = [], options = { provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, notify: text => notices.push(text) };
+  const notices = [], options = { provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, fetchImpl: walletFundsFetch, notify: text => notices.push(text) };
   return { ...f, records, id, status, journal, notices, options, wallet: new TapWalletMint(options) };
 }
 test('Mint without 1-TX Transfers explains how to turn them on and sends nothing; with them on it pays once', async () => {
@@ -83,7 +84,7 @@ test('No authority found clears only the definite preflight failure; generic 400
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 2);
   f.state.transferError = null;
   const chain = { mempool: [{ txid: 'aa' }], chain: [] }, seen = [];
-  resumed.fetchImpl = async url => { seen.push(url); return { ok: true, json: async () => url.endsWith('/txs/mempool') ? chain.mempool : chain.chain }; };
+  resumed.fetchImpl = async url => { if (walletFundsReply(url)) return walletFundsFetch(url); seen.push(url); return { ok: true, json: async () => url.endsWith('/txs/mempool') ? chain.mempool : chain.chain }; };
   await assert.rejects(resumed.pay(f.id, { retry: true }), /still unconfirmed/);
   chain.mempool = []; chain.chain = [{ txid: 'bb', status: { confirmed: true, block_time: Math.floor(Date.now() / 1000) } }];
   await assert.rejects(resumed.pay(f.id, { retry: true }), /sent a Bitcoin transaction after/);

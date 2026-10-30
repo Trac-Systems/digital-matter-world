@@ -1,6 +1,7 @@
 import * as btc from '@scure/btc-signer';
 import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent, networkFor } from './inscription-core.mjs';
 import { ensureTapAuthority, noAuthority, GLOBAL_AUTHORITY_NOTICE, tapWalletCapabilities } from './tap-wallet-actions.mjs';
+import { checkTapFunds, checkBitcoinFunds, cardinalCoins, bitcoinFeeRate, readFunds, displayAmount } from './wallet-funds.mjs';
 export { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, GLOBAL_AUTHORITY_NOTICE, noAuthority, TAP_WALLET_MIN_VERSION, TAP_WALLET_TOO_OLD, versionAtLeast, tapWalletCapabilities } from './tap-wallet-actions.mjs';
 
 // The Bitcoin a TAP payment sets aside so the server can send the mint
@@ -57,8 +58,8 @@ const refusedBeforeSigning = error => typeof error?.message === 'string' && (err
   || ['Invalid items', 'Error processing items', 'Error checking token balances'].includes(error.message));
 
 export class TapWalletMint {
-  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
-    Object.assign(this, { provider, readStatus, readPaymentPlan, network, journal, notify });
+  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, readerPath, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
+    Object.assign(this, { provider, readStatus, readPaymentPlan, network, readerPath, journal, notify });
     this.fetchImpl = (...args) => fetchImpl(...args);
   }
   async connect() {
@@ -117,6 +118,9 @@ export class TapWalletMint {
         ['awaiting_payment', 'partly_paid'].includes(latest.state) && latest.payable !== false &&
         JSON.stringify(transferItems(latest, this.network)) === JSON.stringify(items) &&
         JSON.stringify(setAside(latest)) === JSON.stringify(extra), 'Payment changed while checking the wallet. Refresh the request before continuing.');
+      await this.checkAccount();
+      await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
+        items, extraOutputs: extra ? [extra] : [], fetchImpl: this.fetchImpl });
       await this.checkAccount();
       await this.journal.put(key, { ...saved, payment: { state: 'sending', items, ...(extra ? { extraOutputs: [extra] } : {}), at: Date.now() } });
       let result;
@@ -188,11 +192,7 @@ export class TapWalletMint {
     return plan?.broadcast ? { inscriptionId: plan.inscriptionId, commitTxid: plan.commitTxid, revealTxid: plan.revealTxid } : null;
   }
   async fees() {
-    const response = await this.fetchImpl('https://mempool.space/api/v1/fees/recommended', { redirect: 'error', signal: AbortSignal.timeout(10000) });
-    ensure(response.ok, 'Public Bitcoin fee estimate is unavailable');
-    const fees = await response.json();
-    ensure(Number.isFinite(fees.halfHourFee) && fees.halfHourFee >= 1 && fees.halfHourFee <= 1000, 'Invalid public Bitcoin fee estimate');
-    return fees.halfHourFee;
+    return readFunds('Bitcoin fee estimate', this.address, signal => bitcoinFeeRate(this.fetchImpl, signal));
   }
   async inscribe(id, options = {}) {
     await this.checkAccount();
@@ -219,14 +219,14 @@ export class TapWalletMint {
       const key = this.key(id);
       let saved = await this.journal.get(key) ?? {}, plan = saved[field];
       if (!plan) {
-        const coins = await this.provider.getBitcoinUtxos();
-        ensure(Array.isArray(coins), 'Invalid TAP Wallet funding coins');
-        const utxos = coins.filter(c => !c.isUserSpendable && !c.isSpent && Array.isArray(c.inscriptions) && c.inscriptions.length === 0 && c.height > 0).map(c => {
-          ensure(Number.isSafeInteger(c.satoshi) && c.satoshi > 0, 'Invalid wallet coin amount');
-          return { txid: c.txid, vout: c.vout, value: String(c.satoshi), script: c.scriptPk, confirmed: true, cardinal: true };
-        });
+        const coins = await cardinalCoins(this.provider, this.address);
+        const utxos = coins.map(c => ({ txid: c.txid, vout: c.vout, value: String(c.satoshi), script: c.scriptPk, confirmed: true, cardinal: true }));
         feeRate ??= await this.fees();
-        plan = buildInscription({ text, receiver: this.address, publicKey: this.publicKey, network: this.network, utxos, feeRate, maxFeeSats });
+        try { plan = buildInscription({ text, receiver: this.address, publicKey: this.publicKey, network: this.network, utxos, feeRate, maxFeeSats }); }
+        catch (error) {
+          if (error.requiredSats !== undefined) throw Error(`Not enough Bitcoin for fees: this inscription needs about ${displayAmount(error.requiredSats)} sats including postage and change, your wallet can fund ${displayAmount(error.availableSats)} sats from up to 16 spendable coins. Wallet: ${this.address}. Nothing was sent. Miner fees are an estimate.`);
+          throw error;
+        }
         // Saving the pre-signed reveal first makes closing the tab during the
         // wallet's commit approval recoverable without an ephemeral key file.
         await this.journal.put(key, { ...saved, [field]: plan });
@@ -237,6 +237,16 @@ export class TapWalletMint {
       if (!await confirm({ requestId: id, receiver: plan.receiver, feeRate: plan.feeRate, feeSats: plan.feeSats, postage: plan.postage, resume: !!plan.signedCommitPsbt })) return { state: 'cancelled_locally', requestId: id };
       await this.checkAccount();
       if (!plan.signedCommitPsbt) {
+        try {
+          await checkBitcoinFunds({ provider: this.provider, address: this.address,
+            requiredSats: BigInt(plan.feeSats) + BigInt(plan.postage), inputs: plan.inputs });
+        } catch (error) {
+          // No wallet signature exists: a new click may safely rebuild from
+          // fresh coins. Never discard a signed commit or an uncertain send.
+          const next = { ...saved }; delete next[field]; await this.journal.put(key, next);
+          throw error;
+        }
+        await this.checkAccount();
         const signed = await this.provider.signPsbt(plan.commitPsbt, { autoFinalized: true, inputForSigns: plan.inputs.map((_, index) => ({ index, address: this.address })) });
         plan = acceptSignedCommit(plan, signed);
         await this.journal.put(key, { ...saved, [field]: plan });

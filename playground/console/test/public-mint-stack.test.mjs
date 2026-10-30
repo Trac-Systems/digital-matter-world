@@ -11,6 +11,7 @@ import { createPublicAPI } from '../../../service/src/public-api.mjs';
 import { createWeb } from '../../../service/src/web.mjs';
 import { buildInscription, signCommit } from '../../../kit/lib/inscription-core.mjs';
 import { tapWallet1049 } from '../../../kit/test/tap-wallet-1049-fixture.mjs';
+import { walletFundsReply } from '../../../kit/test/wallet-funds-fixture.mjs';
 
 // The gateway, five HTTP signer policies, financial batches and notary are real
 // local fixtures. Only the wallet extension and Bitcoin/TAP indexing are mocked.
@@ -43,6 +44,7 @@ for (const opaque of [false, true]) test(`a TAP-only browser deploys and mints a
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.postDataJSON(), requester: !!request.headers()['x-mint-requester-secret'] }));
     await page.route('https://mempool.space/**', route => route.fulfill({ contentType: 'application/json', body: '{"halfHourFee":2}' }));
+    await page.route('**/web-api/tap-reader/**', route => route.fulfill({ json: walletFundsReply(route.request().url()) }));
     // No request can leave the local fixture, including accidental API redirects.
     await page.route('**/*', route => new URL(route.request().url()).origin === f.http.url || route.request().url().startsWith('https://mempool.space/')
       ? route.fallback() : route.abort());

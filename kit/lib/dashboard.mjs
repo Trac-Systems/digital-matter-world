@@ -59,7 +59,7 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
     // records may be copied into a terminal or gateway log.
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' chrome-extension: moz-extension:; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://mempool.space; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' chrome-extension: moz-extension:; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://mempool.space https://reader.tapscope.io; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     const json = (value, status = 200) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)); };
     try {
       dashboardCheck(req.headers.host === new URL(origin).host && req.socket.remoteAddress === '127.0.0.1', 'local_only', 403);

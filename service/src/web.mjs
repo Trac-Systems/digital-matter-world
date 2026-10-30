@@ -8,6 +8,7 @@ assets.set('/web/amount-format.js', new URL('js/amount-format.js', consoleRoot))
 assets.set('/web/trac-address.js', tracAddress);
 assets.set('/playground/console/js/requester-storage.js', new URL('js/requester-storage.js', consoleRoot));
 assets.set('/kit/lib/tap-wallet-actions.mjs', new URL('../../kit/lib/tap-wallet-actions.mjs', import.meta.url));
+assets.set('/kit/lib/wallet-funds.mjs', new URL('../../kit/lib/wallet-funds.mjs', import.meta.url));
 // The pages are the playground console's own CSS, components and views. Only its data module (api.js)
 // and its wallet flows (flows.js) are replaced by the public read adapter and the wallet-page links.
 for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'wallet-errors', 'requester-storage', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
@@ -29,13 +30,19 @@ export function createWeb(checkout) {
     if (['GET', 'HEAD'].includes(req.method) && styles.has(path)) { const [type, file] = styles.get(path); send(type, await readFile(file)); return true; }
     if (['GET', 'HEAD'].includes(req.method) && (path === '/' || pages.test(path)) && (path === '/' || req.headers.accept?.includes('text/html'))) {
       res.setHeader('Vary', 'Accept'); res.setHeader('Referrer-Policy', 'no-referrer');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self' https://mempool.space; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self' https://mempool.space https://reader.tapscope.io; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       send('text/html; charset=utf-8', await readFile(new URL('index.html', root))); return true;
     }
     if (!path.startsWith('/web-api/') && path !== '/records/highlights') return false;
     check(checkout, 'web_checkout_unavailable', 503);
     let result;
-    if (['GET', 'HEAD'].includes(req.method) && path === '/records/highlights') result = await checkout.records();
+    // Local rehearsals read their own indexer, never a mainnet wallet balance.
+    const tapRead = /^\/web-api\/tap-reader\/(getDeployment\/[^/]+|(?:getBalance|getTransferable|getLockedBalance)\/[^/]+\/[^/]+|getObligationLockedBalance\/a\/[^/]+\/[^/]+)$/.exec(path);
+    if (req.method === 'GET' && tapRead) {
+      check(checkout.target.bitcoinNetwork === 'regtest' && !u.search && typeof checkout.reads?.tap === 'function', 'tap_balance_reader_unavailable', 503);
+      result = { result: await checkout.reads.tap(tapRead[1]) };
+    }
+    else if (['GET', 'HEAD'].includes(req.method) && path === '/records/highlights') result = await checkout.records();
     else if (['GET', 'HEAD'].includes(req.method) && path === '/web-api/target') result = checkout.target;
     else {
       const m = /^\/web-api\/(mint|link)\/([0-9a-f]{64})(\/(?:prepare|lock))?$/.exec(path);

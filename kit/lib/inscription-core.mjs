@@ -72,7 +72,13 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
     change = total - commitValue - commitFee;
     if (change >= BigInt(dustSats) || allowNoChange && change >= 0n) break;
   }
-  ensure(selected.length > 0 && (change >= BigInt(dustSats) || allowNoChange && change >= 0n), 'Fund this wallet with confirmed cardinal BTC (up to 16 inputs)', allowUnconfirmed || allowNoChange ? 'bitcoin_funding_insufficient' : 'player_mint_invalid');
+  if (!(selected.length > 0 && (change >= BigInt(dustSats) || allowNoChange && change >= 0n))) {
+    const required = commitValue + BigInt(Math.ceil((12 + Math.max(1, selected.length) * 58 + 2 * 43) * feeRate)) + (allowNoChange ? 0n : BigInt(dustSats));
+    throw Object.assign(Error('Fund this wallet with confirmed cardinal BTC (up to 16 inputs)'), {
+      code: allowUnconfirmed || allowNoChange ? 'bitcoin_funding_insufficient' : 'player_mint_invalid',
+      requiredSats: String(required), availableSats: String(total),
+    });
+  }
   if (allowNoChange && change < BigInt(dustSats)) { commitFee += change; change = 0n; }
   ensure(commitFee + revealFee <= BigInt(maxFeeSats), 'Bitcoin fee exceeds the approved maximum', 'bitcoin_fee_limit');
   const commit = new btc.Transaction();

@@ -1,4 +1,5 @@
 import { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, tapWalletCapabilities } from '../../../kit/lib/tap-wallet-actions.mjs';
+import { checkTapFunds, checkEthereumFunds } from '../../../kit/lib/wallet-funds.mjs';
 export { TAP_WALLET_MIN_VERSION, TAP_WALLET_TOO_OLD } from '../../../kit/lib/tap-wallet-actions.mjs';
 export const wait = ms => new Promise(r => setTimeout(r, ms));
 export const hex = bytes => Array.from(bytes, n => n.toString(16).padStart(2, '0')).join('');
@@ -73,14 +74,40 @@ export class WalletJournal {
   constructor(key) { this.key = 'dmw-web-v1/' + key; this.data = JSON.parse(localStorage.getItem(this.key) ?? '{}'); this.save(); }
   save() { localStorage.setItem(this.key, JSON.stringify(this.data)); }
   getStep(name) { return this.data[name]; }
-  async step(name, action, { definitelyNotSent = () => false } = {}) {
+  async step(name, action, { definitelyNotSent = () => false, beforeSend = async () => {} } = {}) {
     const old = this.data[name];
     if (old?.state === 'done') return old.result;
     if (old?.state === 'sending') fail('Wallet response was interrupted. Inspect the wallet transaction before any new payment.');
+    await beforeSend();
     this.data[name] = { state: 'sending' }; this.save();
     try { const result = await action(); this.data[name] = { state: 'done', result }; this.save(); return result; }
     catch (e) { if (definitelyNotSent(e)) { delete this.data[name]; this.save(); } throw e; }
   }
+}
+// Run checks only for a new send, before recording an uncertain wallet attempt.
+// Saved receipts can still be resumed when the wallet balance has since changed.
+export function tapPaymentStep(journal, name, { provider, address, network, message, options, transfer = false, fetchImpl = fetch }) {
+  return journal.step(name, () => transfer ? provider.singleTxTransfer(message.items) : provider.redeemTapActions(message, options), {
+    beforeSend: async () => {
+      await checkTapFunds({ provider, address, network, message, items: message.items, actions: message.actions, fetchImpl });
+      if ((await provider.getAccounts())?.[0] !== address || await provider.getNetwork() !== network) fail('TAP Wallet account or network changed; reconnect before continuing.');
+    },
+    definitelyNotSent: error => transfer && error?.message === 'No authority found',
+  });
+}
+export function ethereumPaymentStep(journal, name, { provider, transaction, chainId, token }) {
+  return journal.step(name, () => provider.request({ method: 'eth_sendTransaction', params: [transaction] }), {
+    beforeSend: async () => {
+      await checkEthereumFunds({ provider, transaction, token });
+      if ((await provider.request({ method: 'eth_accounts' }))?.[0]?.toLowerCase() !== transaction.from?.toLowerCase()
+        || BigInt(await provider.request({ method: 'eth_chainId' })) !== BigInt(chainId)) fail('Ethereum account or network changed; reconnect before continuing.');
+    },
+  });
+}
+export function escrowPaymentToken(approval, ethereum, requireAllowance = false) {
+  if (approval?.to?.toLowerCase() !== ethereum.token?.toLowerCase() || !/^0x095ea7b3[0-9a-f]{128}$/i.test(approval?.data ?? '')
+    || approval.data.slice(10, 74).toLowerCase() !== ethereum.escrow.slice(2).toLowerCase().padStart(64, '0')) fail('Invalid escrow token approval; refresh this payment.');
+  return { address: ethereum.token, amount: BigInt('0x' + approval.data.slice(74)), spender: ethereum.escrow, requireAllowance, symbol: 'bridged TAP (ERC-20)' };
 }
 // Checked before a mint or link starts, so nobody reserves what their wallet cannot pay.
 export async function oneTxReady(address) {
