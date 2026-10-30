@@ -134,9 +134,11 @@ export class NamedAdmission {
           // Reserve every named pattern as a positive occurrence. Execution
           // checks headers and eligibility independently; refusals need no
           // speculative occurrence-tree reads or writes.
+          const maximumHeight = BigInt(tip) > BigInt(counted) ? BigInt(tip) : BigInt(counted);
+          const unitsPerPair = rules.fieldValueMode(record) ? record.fld === 4 ? maximumHeight : 0xffffffffn : fieldWidth;
           const upper = { ...record, anchor: { height: String(counted), hash: this.hashAt(String(counted)) },
             knownMatchCount: String(BigInt(record.knownMatchCount) + pairs),
-            knownOccurrenceTotal: String(BigInt(record.knownOccurrenceTotal) + pairs * fieldWidth),
+            knownOccurrenceTotal: String(BigInt(record.knownOccurrenceTotal) + pairs * unitsPerPair),
             catalogRevision: String(BigInt(result.state.catalogRevision) + pairs + BigInt(s.receiptSegmentEntries)) };
           work.bytes += Math.ceil(count / s.occurrencePageSize) * (Buffer.byteLength(rules.stableJSON({ record: upper, move: receipt.move })) + 1);
         }

@@ -207,7 +207,7 @@ export class Provisioner {
           const name = job.elementAttempt === 0 ? job.displayLabel.toLowerCase() : packagedName(job, 'element', job.elementAttempt) ??
             candidate(job, 'element', job.elementAttempt, job.displayLabel.toLowerCase());
           if (await elementByName(this.reads, name)) return this.save(job, { elementAttempt: job.elementAttempt + 1, state: 'retrying-collision', reason: 'element_name_occupied', nextRetry: 0 });
-          const sent = await this.package(job, 'element', `${name}.${job.definition.pat}.${job.definition.fld}.element`);
+          const sent = await this.package(job, 'element', rules.tapElementText(name, job.definition));
           if (!sent) return this.store.get('provisioning', job.asset);
           const inclusion = await this.reads.included(sent.item.inscription).catch(() => null);
           if (inclusion?.confirmations >= this.policy.confirmations) return this.save(sent.job, { elementAttempt: job.elementAttempt + 1, state: 'retrying-collision', reason: 'element_ignored', nextRetry: 0 });

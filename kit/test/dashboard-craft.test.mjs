@@ -226,7 +226,7 @@ test('dashboard distinguishes adding units to an authenticated existing compound
   const { body } = await call('/api/craft-preview', { recipe: 'fusion', inputs: [['p2:1', '2'], ['p2:2', '2']] });
   assert.equal(body.result.existing, true); assert.equal(body.result.amount, '2');
   const source = await readFile(new URL('../dashboard/agent.js', import.meta.url), 'utf8');
-  assert.match(source, /Adds \$\{r.amount\} units to/);
+  assert.match(source, /Adds \$\{fmtInt\(r.amount\)\} units to/);
   assert.doesNotMatch(source, /Imported.*can’t be crafted|craft_legacy/);
 });
 

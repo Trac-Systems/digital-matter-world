@@ -33,7 +33,8 @@ export function deploymentPayload(entry) {
 }
 export function generationDigest(entry) {
   const keys = ['network', 'asset', 'generation', 'id', 'privilege', 'authorityKey', 'elementId', 'elementName', 'receiver', 'dt', 'kind', 'tick', 'indexTick', 'options'];
-  return hash(rules.stableJSON(Object.fromEntries([...keys, ...(entry.prov === undefined ? [] : ['prov'])].map(k => [k, entry[k] ?? null]))));
+  return hash(rules.stableJSON({ ...Object.fromEntries([...keys, ...(entry.prov === undefined ? [] : ['prov'])].map(k => [k, entry[k] ?? null])),
+    ...(rules.fieldValueMode(entry.pattern ?? {}) ? { amountMode: 'field-value' } : {}) }));
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
 // well as the exact inscription. Sharing an authority is not an approval.
@@ -53,11 +54,12 @@ async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view }
     check(d.elem === elementId && d.dt === dt, 'deployment_definition');
     check(typeof reads.element === 'function', 'tap_element_lookup_required');
     const element = await reads.element(elementId);
-    check(element?.ins === elementId && element.pat === entry.pattern.pat && Number(element.fld) === entry.pattern.fld, 'element_binding');
+    const pat = rules.tapElementPattern(entry.pattern);
+    check(element?.ins === elementId && (element.pat ?? null) === pat && Number(element.fld) === entry.pattern.fld, 'element_binding');
     check(typeof element.tick === 'string' && (!entry.elementName || element.tick === entry.elementName), 'element_name');
     const text = await reads.content(elementId), parts = typeof text === 'string' ? text.trim().split('.') : [];
-    check(parts.length >= 4 && parts[0].toLowerCase() === element.tick && parts.at(-1) === 'element' &&
-      parts.at(-2) === String(element.fld) && parts.slice(1, -2).join('.') === element.pat, 'element_content');
+    check((pat === null ? parts.length === 3 : parts.length >= 4) && parts[0].toLowerCase() === element.tick && parts.at(-1) === 'element' &&
+      parts.at(-2) === String(element.fld) && (pat === null || parts.slice(1, -2).join('.') === element.pat), 'element_content');
     check((await reads.included(elementId, view))?.confirmations >= confirmations, 'element_confirmations');
   } else check(d.max === normalized.options.max && (d.lim ?? '0') === (normalized.options.lim ?? '0'), 'deployment_supply');
   check(typeof reads.privilegeAuthority === 'function', 'tap_authority_lookup_required');
@@ -81,8 +83,8 @@ async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view }
 // search hidden in deployment verification or provisioning.
 export async function elementByDefinition(reads, pattern) {
   check(typeof reads.elementByDefinition === 'function', 'tap_element_lookup_required');
-  const row = await reads.elementByDefinition(pattern.pat, pattern.fld);
-  check(!row || row.pat === pattern.pat && Number(row.fld) === pattern.fld, 'element_binding'); return row;
+  const pat = rules.tapElementPattern(pattern), row = await reads.elementByDefinition(pat, pattern.fld);
+  check(!row || (row.pat ?? null) === pat && Number(row.fld) === pattern.fld, 'element_binding'); return row;
 }
 export async function elementByName(reads, name) {
   check(typeof reads.elementByName === 'function', 'tap_element_lookup_required');

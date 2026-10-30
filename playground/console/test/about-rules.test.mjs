@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { splitFee, feeFor } from '../../../rules/src/fees.js';
-import { feePrice } from '../js/money.js';
+import { feePrice, feePolicyTip } from '../js/money.js';
 import { formatTap } from '../js/amount-format.js';
 import { MINT_DEFAULTS } from '../../../rules/src/mint-rights.js';
 import { PATTERN_LIMITS, TIER_THRESHOLDS, tierFor } from '../../../rules/src/patterns.js';
 import { compound as makeCompound } from '../../../rules/src/compounds.js';
 
 const markdown = await readFile(new URL('../content/about.md', import.meta.url), 'utf8');
+const flat = JSON.parse(await readFile(new URL('../../../service/test/fixtures/flat-fees.json', import.meta.url)));
 const numbers = text => [...text.matchAll(/\b\d[\d,]*\b/g)].map(m => Number(m[0].replaceAll(',', '')));
 
 test('live displayed prices match feeFor for every tier and operator setting', () => {
@@ -16,6 +17,7 @@ test('live displayed prices match feeFor for every tier and operator setting', (
     { baseFee: '22600000000000000000', feeSettings: { tierMultipliers: [1, 3, 10, 30, 100], compoundMinimum: 1, link: 1 } },
     { baseFee: '1234567890123456789', feeSettings: { tierMultipliers: [2, 4, 7, 11, 17], compoundMinimum: 9, link: 6 } },
     { baseFee: '90071992547409931234567890', feeSettings: { tierMultipliers: [8, 2, 5, 3, 9], compoundMinimum: 1, link: 4 } },
+    { baseFee: flat.changes.baseFee, feeSettings: { tierMultipliers: flat.changes.tierMultipliers, compoundMinimum: flat.changes.compoundMinimum, link: flat.changes.link } },
   ];
   for (const policy of policies) {
     policy.unit = { currency: 'TAP', denomination: 'atomic', decimals: 18 };
@@ -31,6 +33,8 @@ test('live displayed prices match feeFor for every tier and operator setting', (
   assert.equal(feePrice(policies[0], 'find', 2), '67.8 TAP');
   assert.equal(feePrice(policies[0], 'compound-minimum'), '22.6 TAP');
   assert.equal(feePrice(policies[0], 'link'), '22.6 TAP');
+  assert.match(feePolicyTip(policies.at(-1)), /Every pattern and compound mint: 11\.14230957 TAP; Bitmap link: 11\.14230957 TAP/);
+  assert.match(feePolicyTip(policies[0]), /tiers: 22\.6 TAP, 67\.8 TAP/);
   for (const policy of [null, {}, { baseFee: '1' }, { ...policies[0], baseFee: '22.6' },
     { ...policies[0], feeSettings: { ...policies[0].feeSettings, link: undefined } }]) {
     for (const kind of ['find', 'compound', 'compound-minimum', 'link']) assert.equal(feePrice(policy, kind), 'current fee');
@@ -49,6 +53,8 @@ test('every rules number in About agrees with the rules library', () => {
     for (const actual of read(re, count)) assert.deepEqual(actual, expected, `About disagrees with the rules: ${re}`);
   }
   const tiers = [tierFor(Number.MAX_SAFE_INTEGER), tierFor(0)];
+  // Operator reference target, separate from consensus prices and live rates.
+  check(/reference target is US \$0\.50/, numbers(flat.targetUsd));
   check(/\| Make a found pattern real \|[^\n]+/, [1, 2, 3, 4, 5, ...tiers]);
   check(/\| Make a compound real \|[^\n]+/, []);
   check(/\| Link a Bitmap \|[^\n]+/, []);

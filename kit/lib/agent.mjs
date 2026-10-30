@@ -3,7 +3,7 @@ import { assertClaimOpen } from '../../rules/src/public-mint.js';
 import { submitFinancialCredit } from './financial-credit.mjs';
 import { claimFinancialCustody } from './financial-custody.mjs';
 import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
-import { stableJSON, validatePayload, patternCount, compound, patternProperties, patternAsset, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
+import { stableJSON, validatePayload, patternAmount, compound, patternProperties, patternAsset, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
 import { financialMintId as pendingId } from '../../rules/src/financial-mint.js';
 import { makeFinancialMint } from './financial-mint.mjs';
 import { craftNamed, refineCompoundNamed } from './craft-v2.mjs';
@@ -72,7 +72,8 @@ export class Agent {
       const reveal = this.journal.get(id + '/reveal');
       if (!reveal) return;
       const commitment = discoveryCommitment(row.body.proposal, row.body.salt, this.owner);
-      const matches = p => ['name', 'pat', 'fld', 'dt'].every(k => p[k] === row.body.proposal[k]);
+      const matches = p => ['name', 'pat', 'fld', 'dt'].every(k => p[k] === row.body.proposal[k]) &&
+        (p.amountMode ?? 'count') === (row.body.proposal.amountMode ?? 'count');
       const found = (await this.catalog()).find(p => p.discoverer === this.address && matches(p));
       let cursor; const seen = new Set();
       do {
@@ -362,7 +363,7 @@ export class Agent {
           const h = checkedHeader(history.raw(q.block), q.block, history.get(q.block).hash, { powLimitBits: this.powLimitBits });
           await assertHeaderChain({ history, height: q.block, hash: h.hash, trac: this.trac, head });
           for (const n of q.patterns) {
-            const p = patterns.find(p => String(p.number) === String(n)); check(p && patternCount(p, h) > 0, 'Claimed pattern does not match');
+            const p = patterns.find(p => String(p.number) === String(n)); check(p && patternAmount(p, h) !== '0', 'Claimed pattern does not match');
             assertClaimOpen({ pattern: p, block: q.block, height: head.tip.height, settings });
           }
         }

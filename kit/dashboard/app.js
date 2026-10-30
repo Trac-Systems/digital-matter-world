@@ -1,4 +1,5 @@
 import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
+const formatUnits = n => String(n ?? '–').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 // One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
@@ -87,13 +88,13 @@ async function refreshClaims() {
   rows.replaceChildren(); next = data.next;
   for (const row of data.claims) {
     const tr = el('tr'), action = el('td');
-    const reason = row.reason === 'insufficient_balance' ? `Not mintable: insufficient units (need ${row.count}, balance ${row.balance})` : mintReason(row.reason);
+    const reason = row.reason === 'insufficient_balance' ? `Not mintable: insufficient units (need ${formatUnits(row.count)}, balance ${formatUnits(row.balance)})` : mintReason(row.reason);
     const state = el('td', [row.eligibility, mintState(row.state), reason].filter(Boolean).join(' · '));
     state.title = [row.findHeight != null ? 'Found at ' + row.findHeight : null, row.finderUntil != null ? 'Finder week ends at counted height ' + row.finderUntil : null].filter(Boolean).join(' · ');
     if (row.canMint) { const mintButton = button('Mint', () => mint(row)); disabled(mintButton, !info.payoutAddress); action.append(mintButton); }
     else if (!row.minted && row.requestId) action.append(button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }));
     else if (row.deploymentLink) action.append(externalLink('Deploy pattern', row.deploymentLink));
-    append(tr, el('td', row.name), el('td', row.block, 'num'), el('td', `${row.count} / ${row.balance}${row.balanceCurrent ? '' : ' (unverified)'}`, 'num'), state, action); rows.append(tr);
+    append(tr, el('td', row.name), el('td', row.block, 'num'), el('td', `${formatUnits(row.count)} / ${formatUnits(row.balance)}${row.balanceCurrent ? '' : ' (unverified)'}`, 'num'), state, action); rows.append(tr);
   }
   if (!data.claims.length) { const td = el('td', data.next ? 'No eligible claimed blocks on this page. Continue to the next page.' : 'No eligible claimed blocks on this page.'); td.colSpan = 5; rows.append(append(el('tr'), td)); }
   disabled(more, !next); disabled(first, !cursor);

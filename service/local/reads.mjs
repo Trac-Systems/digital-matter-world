@@ -162,7 +162,8 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
       const registrations = await registry(), current = registrations.assets[asset];
       const registered = payoutSnapshot?.deploymentId ? current?.id === payoutSnapshot.deploymentId ? current : typeof registrations.asset === 'function' ? registrations.asset(asset, payoutSnapshot.deploymentId) : (registrations.generations?.[asset] ?? []).find(e => e?.id === payoutSnapshot.deploymentId) : current; check(registered, 'asset_unregistered');
       const provenance = /^(p2:|c2:)/.test(asset) ? await acceptedAssetProvenance({ store, reads, asset, block }) : null;
-      if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]), 'asset_provenance_deployment');
+      if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]) &&
+        (registered.pattern?.amountMode ?? 'count') === (provenance.pattern.amountMode ?? 'count'), 'asset_provenance_deployment');
       if (provenance?.compound) check(registered.kind === 'compound', 'asset_provenance_deployment');
       const indexTick = registered.indexTick ?? registered.tick;
       const { deployment, authority } = await verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });

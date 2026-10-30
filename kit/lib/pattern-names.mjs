@@ -3,7 +3,7 @@ const roots = ['null', 'sol', 'gem', 'tri', 'tetr', 'pent', 'hex', 'sept', 'oct'
 const modifiers = ['amber', 'blue', 'cedar', 'dawn', 'ember', 'frost', 'gold', 'jade',
   'lunar', 'mist', 'opal', 'pearl', 'rose', 'silver', 'snow', 'sun', 'verdant', 'violet'];
 const endings = { 4: ['ite', 'ith', 'stone', 'spar'], 10: ['ine', 'alis', 'arine', 'oria'] };
-const identity = p => `${p.fld}:${p.dt}:${p.pat}`;
+const identity = p => `${p.fld}:${p.dt}:${p.pat}${p.amountMode === 'field-value' ? ':field-value' : ''}`;
 
 function wordFor({ pat, fld, dt }) {
   const run = /^([0-9])(?:\{([1-4])\})?$/.exec(pat);

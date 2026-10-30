@@ -12,6 +12,7 @@ import { FinancialLinks } from '../src/financial-links.mjs';
 import { financialLinkDigest } from '../../rules/src/financial-link.js';
 import { lifecycleDigest } from '../../contract/financial-lifecycle.js';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { ed25519 } from '../../contract/node_modules/@noble/curves/ed25519.js';
 import { secp256k1 } from '../../contract/node_modules/@noble/curves/secp256k1.js';
@@ -34,11 +35,14 @@ import { capacityKey } from '../../contract/financial-capacity.js';
 import { escrowSplitForItems } from '../../committee/signer/escrow.mjs';
 import { temp, network, secret, agent } from './helpers.mjs';
 
+const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url))).changes;
+const flatSettings = { tierMultipliers: flat.tierMultipliers, compoundMinimum: flat.compoundMinimum, link: flat.link };
+
 async function setup(t, values = {}, initialCounted = 100, options = {}) {
   let store = await Store.open(await temp('g3b-sources-')); t.after(() => store.close());
   const owner = agent(100), signerSecret = new Uint8Array(32).fill(2), publicKey = Buffer.from(secp256k1.getPublicKey(signerSecret)).toString('hex');
-  const feePolicy = createFeePolicy('100');
-  let document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: { ...r.SETTINGS_PROFILE, feePolicyRevision: feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link, ...values } });
+  const feePolicy = createFeePolicy(options.baseFee ?? '100', 0, options.feeSettings);
+  let document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: { ...r.SETTINGS_PROFILE, feePolicyRevision: feePolicy.current, linkMultiplier: options.feeSettings?.link ?? r.FEE_DEFAULTS.link, ...values } });
   const d = { id: r.hash('deploy') + 'i0', tick: 'dmwcompound', kind: 'compound', active: true, privilegePublicKey: publicKey, decimals: 0, remaining: '100', limit: '0' };
   const context = { deployment: d, find: null, link: null, tier: 1, treasury: 'regtest-treasury', firstMakerAddress: options.custody ? null : 'regtest-maker',
     beneficiaries: { firstMaker: owner.address }, payouts: { firstMaker: null } };
@@ -261,8 +265,8 @@ test('independent readers reconstruct pinned mint terms and canonical named TAP 
   assert.deepEqual(await f.reads.financialRecord('fp/' + p.id, await f.stamp()), f.store.get('accountRecords', 'fp/' + p.id));
 });
 
-test('accepted funding consumes once and a restarted mint delivers the permanent permit once', async t => {
-  const f = await setup(t), p = await f.prepare();
+for (const flatFees of [false, true]) test(`accepted funding consumes once and a restarted mint delivers the permanent permit once (flat=${flatFees})`, async t => {
+  const f = await setup(t, {}, '100', flatFees ? { baseFee: flat.baseFee, feeSettings: flatSettings } : {}), p = await f.prepare();
   await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
   const payment = r.hash('paid') + 'i0', row = f.store.get('mints', p.id);
   f.transfers.set(payment, row.quote.fees.map(fee => ({ ins: payment, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
@@ -325,8 +329,8 @@ test('slow admission verification does not hold durable submissions and cannot c
   assert.equal(f.store.count('financialQueue'), 2);
 });
 
-test('Ethereum exits require the exact configured escrow, payer, canonical refund and named transaction', async t => {
-  const f = await setup(t), p = await f.prepare('ethereum', 'ethereum');
+for (const flatFees of [false, true]) test(`Ethereum exits require the exact configured escrow, payer, canonical refund and named transaction (flat=${flatFees})`, async t => {
+  const f = await setup(t, {}, '100', flatFees ? { baseFee: flat.baseFee, feeSettings: flatSettings } : {}), p = await f.prepare('ethereum', 'ethereum');
   await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
   const row = f.store.get('mints', p.id), references = ['0x' + r.hash('refund')];
   f.ethereum.snapshot = { ...f.escrow, confirmations: 1, requestId: p.id, payer: row.payer,
@@ -447,8 +451,8 @@ test('a native canonical mint finishes both capacity ledgers only through accept
 });
 
 
-test('native paid link reserves before payment and completes after deadline and holder transfer', async t => {
-  const f = await setup(t, {}, '100'), p = await f.prepareLink(), competitor = await f.prepareLink('competitor');
+for (const flatFees of [false, true]) test(`native paid link reserves before payment and completes after deadline and holder transfer (flat=${flatFees})`, async t => {
+  const f = await setup(t, {}, '100', flatFees ? { baseFee: flat.baseFee, feeSettings: flatSettings } : {}), p = await f.prepareLink(), competitor = await f.prepareLink('competitor');
   assert.equal((await f.links.public(p.id)).payable, false);
   await f.links.request({ ...p.body, reserve: p.action });
   await assert.rejects(f.links.request({ ...competitor.body, reserve: competitor.action }), /financial_link_reserved/);
@@ -469,8 +473,8 @@ test('native paid link reserves before payment and completes after deadline and 
   await f.links.tick(); assert.equal(f.store.count('financialPendingLinks'), 0);
 });
 
-test('native expired link credits only canonical partial funding and retains original identity', async t => {
-  const f = await setup(t, {}, '100'), p = await f.prepareLink();
+for (const flatFees of [false, true]) test(`native expired link credits only canonical partial funding and retains original identity (flat=${flatFees})`, async t => {
+  const f = await setup(t, {}, '100', flatFees ? { baseFee: flat.baseFee, feeSettings: flatSettings } : {}), p = await f.prepareLink();
   await f.links.request({ ...p.body, reserve: p.action }); await f.execute();
   const row = f.store.get('financialLinks', p.id), payment = r.hash('link-partial') + 'i0', fee = row.quote.fees[0];
   f.transfers.set(payment, [{ ins: payment, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: '1', dta: fee.dta }]);
@@ -854,4 +858,19 @@ test('a slow cached mint quote follows a settings amendment while explicit histo
   const historical = await f.mints.quote({ ...input, feeQuote: old.feeQuote });
   assert.equal(historical.settingsHash, old.settingsHash);
   assert.deepEqual(historical.split, old.split);
+});
+
+for (const rail of ['tap', 'ethereum']) for (let tier = 1; tier <= 5; tier++) test(`native ${rail} compound tier ${tier} uses flat settings through reservation and signer evidence`, async t => {
+  const f = await setup(t, {}, '100', { baseFee: flat.baseFee, feeSettings: flatSettings });
+  f.context.tier = tier;
+  const p = await f.prepare('flat', rail), row = f.store.get('mints', p.id);
+  assert.equal(row.quote.price, flat.baseFee);
+  assert.equal((await f.mints.quote({ asset: 'c1', amount: '9', kind: rail })).price, flat.baseFee);
+  assert.equal(row.quote.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), flat.baseFee);
+  const link = await f.links.quote({ block: '42', payer: 'regtest-payer' });
+  assert.equal(link.price, flat.baseFee);
+  await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
+  assert.deepEqual(f.store.get('accountRecords', 'fp/' + p.id).fees.map(fee => fee.amount), row.quote.fees.map(fee => fee.amount));
+  const evidence = await f.independent.financialEvidence({ type: 'reserve', id: p.id, action: p.action, fees: [] }, await f.stamp());
+  assert.deepEqual(evidence.feeItems.map(fee => fee.amount), row.quote.fees.map(fee => fee.amount));
 });

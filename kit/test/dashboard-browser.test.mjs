@@ -86,6 +86,18 @@ test('browser without injected TAP Wallet offers the configured request payment 
   assert.deepEqual(errors, []);
 });
 
+test('dashboard formats large block units and balances without rounding or changing the quoted value', async t => {
+  const { page, f, errors } = await open(t, { provider: false });
+  f.claims[0].count = '3789512813';
+  f.balances.set('p2:1', { amount: '9007199254740993', current: true });
+  await page.reload();
+  await page.getByText('3,789,512,813 / 9,007,199,254,740,993', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Open payment page' }).waitFor();
+  assert.equal([...f.records.values()][0].amount, '3789512813');
+  assert.deepEqual(errors, []);
+});
+
 test('browser shows the units role and balance, mints a non-finder block, and explains a short balance', async t => {
   const { page, f, errors } = await open(t);
   f.clock.counted = '1027'; f.claims[0].finder = 'ff'.repeat(32);

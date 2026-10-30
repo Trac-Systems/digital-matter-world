@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -222,4 +222,18 @@ test('source rollback behind an already confirmed refund cannot overestimate the
   f.coins.push({ ...f.coins[0], txid: '66'.repeat(32) });
   await f.tick(); const row = f.sender.journal.refund(next.refundId);
   assert.equal(row.plan, undefined); assert.ok(f.logs.some(r => r.code === 'mint_refund_tap_behind'));
+});
+
+test('flat-fee refund float sends the original full paid amount without repricing', async t => {
+  const f = await fixture(t);
+  const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url)));
+  const amount = BigInt(flat.changes.baseFee), burn = amount * 35n / 100n;
+  f.record.fees = [{ ticker: 'tap', role: 'treasury', amount: String(amount - burn) }, { ticker: 'tap', role: 'burn', amount: String(burn) }];
+  await f.tick();
+  assert.equal(f.row.state, 'refund_sent');
+  assert.equal(f.row.amounts.tap, flat.changes.baseFee);
+  assert.equal(f.row.payload.redeem.items[0].amt, flat.baseFeeTap);
+  const saved = structuredClone(f.row.plan);
+  await f.restart(); await f.tick();
+  assert.deepEqual(f.row.plan, saved);
 });

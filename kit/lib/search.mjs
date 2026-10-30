@@ -1,11 +1,12 @@
 import { publicIdentities, decodeTracAddress } from '../../rules/src/trac-address.js';
-import { evaluateDiscovery, canonicalDefinition, countWith, definitionKey } from '../../rules/src/index.js';
+import { evaluateDiscovery, canonicalDefinition, amountWith, definitionKey } from '../../rules/src/index.js';
 import { assertHistoryTip } from './headers.mjs';
 import { check } from './check.mjs';
 import { searchPatterns } from '../strategies/default.mjs';
 import { searchMatchPage } from './search-matches.mjs';
 
 export function checkProposal({ proposal, history, tip, existing, owner, limits }) {
+  check(proposal.amountMode === undefined, 'Pattern amount modes require v2 rules');
   assertHistoryTip(history, tip);
   return evaluateDiscovery({ proposal, discoverer: owner, history, existing, limits,
     number: existing.reduce((n, p) => Math.max(n, p.number + 1), 0) });
@@ -30,7 +31,7 @@ export async function findPatterns({ history, tip, existing, owner, limits, sett
         check(!known.has(key), 'pattern_duplicate');
         const re = new RegExp(proposal.pat, 'g'); let count = 0n, total = 0n;
         for (let h = 0; h <= tip.height; h++) {
-          const n = countWith(re, history.field(h, proposal.fld, proposal.dt)); if (n) { count++; total += BigInt(n); }
+          const n = amountWith(proposal, re, history.field(h, proposal.fld, proposal.dt)); if (n !== '0') { count++; total += BigInt(n); }
           if (h % 4096 === 0) { signal?.throwIfAborted(); await new Promise(resolve => setImmediate(resolve)); }
         }
         check(count >= BigInt(settings.values.minMatchingBlocks), 'pattern_too_rare');

@@ -53,3 +53,4 @@ export * from './receipt-cutoff-pages.js';
 export * from './compound-identity-v4.js';
 export * from './compound-merge-manifest.js';
 export * from './compound-merge-v4.js';
+export * from './pattern-amount.js';

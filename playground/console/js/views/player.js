@@ -175,7 +175,8 @@ export function mount(root, params) {
   function discoverForm() {
     const name = input({ class: 'mono', placeholder: 'mypattern', 'aria-label': 'Name after dmw', maxlength: 29 });
     const pat = input({ class: 'mono', placeholder: 'e.g. 7{3}', 'aria-label': 'Rule' });
-    const fld = select([['4:n', 'Height'], ['10:n', 'Nonce'], ['11:n', 'Difficulty bits (decimal)'], ['11:h', 'Difficulty bits (hex)']]);
+    const fld = select([['4:n', 'Height · match count'], ['10:n', 'Nonce · match count'], ['11:n', 'Bits (decimal) · match count'], ['11:h', 'Bits (hex) · match count'],
+      ['4:n:field-value', 'Height · field value'], ['10:n:field-value', 'Nonce · field value'], ['11:n:field-value', 'Bits (decimal) · field value'], ['11:h:field-value', 'Bits (hex) · field value']]);
     const check = h('div.small.muted', {}, 'Allowed: digits, a–f, [ranges], {n,m}, ?, ^, $ and | (up to 4 branches, 64 characters, 6 literal digits).');
     const validate = () => {
       const v = pat.value.trim(), n = name.value.trim(), problems = [];
@@ -195,9 +196,9 @@ export function mount(root, params) {
       field('Rule', pat), check,
       h('div.row.end', {}, h('button.btn.primary', { onclick: async () => {
         if (!validate()) return;
-        const [f, dt] = fld.value.split(':'), proposal = { name: `dmw${name.value.trim()}`, pat: pat.value.trim(), fld: Number(f), dt };
+        const [f, dt, amountMode] = fld.value.split(':'), proposal = { name: `dmw${name.value.trim()}`, pat: pat.value.trim(), fld: Number(f), dt, ...(amountMode ? { amountMode } : {}) };
         const actionId = `${proposal.name}-${Date.now().toString(36)}`;
-        if (!await confirmModal({ title: 'Commit this discovery?', rows: [['Name', title(proposal.name)], ['Rule', h('code', {}, proposal.pat)], ['Field', FIELDS[proposal.fld] + (proposal.fld === 11 ? (dt === 'h' ? ' (hex)' : ' (decimal)') : '')]], lead: 'Only a fingerprint is published now. If accepted, your name goes on the periodic table and you earn 5 % of every mint fee for it.', confirm: 'Commit' })) return;
+        if (!await confirmModal({ title: 'Commit this discovery?', rows: [['Name', title(proposal.name)], ['Rule', h('code', {}, proposal.pat)], ['Field', FIELDS[proposal.fld] + (proposal.fld === 11 ? (dt === 'h' ? ' (hex)' : ' (decimal)') : '') + (amountMode === 'field-value' ? ' · field value' : ' · match count')]], lead: 'Only a fingerprint is published now. If accepted, your name goes on the periodic table and you earn 5 % of every mint fee for it.', confirm: 'Commit' })) return;
         try { await run('Discovery commit', '/player/discovery/commit', { actionId, proposal }); await store.refreshPlayer(); }
         catch { /* shown in the toast */ }
       } }, 'Commit')),
@@ -289,7 +290,7 @@ export function mount(root, params) {
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. After payment is final, your units are consumed and your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
       kv([['Who may mint a block', 'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.'],
-        ['Fee', `By rarity tier: ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
+        ['Fee', `Tiers 1–5 (equal under flat fees): ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
       savedMintIntents().length ? h('div', {}, h('h3', {}, 'Resume a quote'), ...savedMintIntents().map(intent => h('button.btn.sm', { onclick: () => mintFlow({ resumeIntent: intent }) }, `${assetName(intent.asset)} · ${intent.actionId}`))) : null,
       savedMintRequests().length ? h('div', {}, h('h3', {}, 'Resume a saved mint'), ...savedMintRequests().map(id => h('button.btn.sm', { onclick: () => mintFlow({ id }) }, short(id, 12, 6)))) : null,

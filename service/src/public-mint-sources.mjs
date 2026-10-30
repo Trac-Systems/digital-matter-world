@@ -70,7 +70,8 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     // Scanning must continue after an agent takes the block so confirmed payments can be refunded.
     check(scanning && !legacy || right.state === 'public', settled && !legacy && right.state === 'claimed' ? 'claimed_first' : right.state, 409);
     check(!legacy || !context.publicClaims.unsettled, 'public_scan_pending', 503);
-    const amount = String(rules.patternCount(context.pattern, await reads.publicMintHeader(block, at)));
+    check(!rules.fieldValueMode(context.pattern) || rules.fieldValueAmountActive(height), 'pattern_amount_inactive');
+    const amount = rules.patternAmount(context.pattern, await reads.publicMintHeader(block, at));
     check(BigInt(amount) > 0n, 'mint_no_match');
     return { context, document, height, amount, ...right };
   };

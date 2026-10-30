@@ -119,7 +119,15 @@ The operator registry must contain one global `feePolicy` with `current` and
 `{id, baseFee, activeFrom, retiredAt, feeSettings?}`.
 `feeSettings` contains `link`, five `tierMultipliers`, and `compoundMinimum`;
 all must be integers in 1..10000, and every resulting price must fit TAP amounts.
-Launch settings select link 3 (67.8 TAP at a base price of 22.6 TAP), tiers 1/3/10/30/100 and
+For the flat mint and Bitmap link fee proposal, use
+the operator's settings procedure.
+All-one multipliers make every mint and link cost the operator's base amount.
+The reference target is US $0.50, fixed in TAP until the next settings revision.
+`--dry-run --at TIME` previews the exact fee hash without changing the registry.
+An activated v2 change also requires the notary settings successor to pin that
+hash. Existing requests keep their original quotes.
+
+Historical launch settings select link 3 (67.8 TAP at a base price of 22.6 TAP), tiers 1/3/10/30/100 and
 compound minimum 10. The unconfigured legacy fallback keeps link 20; never
 change it to reprice existing requests. Asset and link configuration
 contains destinations and asset metadata only. Retain every revision when

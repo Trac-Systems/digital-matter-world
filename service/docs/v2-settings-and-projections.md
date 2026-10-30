@@ -7,8 +7,8 @@ still refuses with `v2_release_incomplete`.
 
 The existing notary administrator proposes a complete successor document with
 `ad_settings {document}`. The document must extend the current revision hash,
-advance its batch boundary and preserve the network. Its Bitcoin boundary must
-allow the current document's administrator delay. Anyone can apply the matured
+advance its batch boundary and preserve the network. Settings amendments use their own batch and Bitcoin boundaries, without the
+generic administrator delay. Anyone can apply the accepted
 proposal with `ad_apply {id:"settings"}`. Application authorizes the successor;
 the first batch satisfying **both** boundaries installs it. Until then, batches
 continue under the current document. Ordinary `ad_set` cannot bypass the v2
@@ -27,7 +27,9 @@ Commitments retain their original reveal rules. Quotes may record `settingsHash`
 their original time and height limits remain valid after later revisions. New
 v2 quotes require `feePolicyRevision` to equal the actual fee-policy hash and
 require the link multiplier to agree. Fixture revision `"0"` cannot issue a v2
-quote.
+quote. Fee-only amendments use the existing `feePolicyRevision` and
+`linkMultiplier` fields through the operator's settings procedure.
+No arithmetic change or new activation constant is needed for all-one multipliers.
 
 Round policies, archived draw policies and recorded find deadlines are included
 in the accepted claim snapshot/root. Continuation reads retain authenticated

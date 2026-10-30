@@ -6,6 +6,7 @@ import { merkleRoot } from './merkle.js';
 import { batchSettings } from './batch-settings.js';
 import { findIdV2, ordinalCodec, compareOrdinal } from './integers-v2.js';
 import { patternCount } from './patterns.js';
+import { patternAmount, fieldValueMode, fieldValueAmountActive } from './pattern-amount.js';
 import { assertClaimOpen, publicMintActive, claimsNeverCloseActive } from './public-mint.js';
 import { patternLedgerAsset, publicTaken } from './public-claims.js';
 
@@ -22,7 +23,7 @@ export function claimRound(window, hash, claimableHeight, catalog) {
 }
 // Each acknowledged segment becomes an immutable input page. Counters contain
 // only this agent's distinct selections; no catalog or other-agent scan.
-export function enterClaims({ state, event, agent, plots, patterns, history, settings = {}, height = event.window }) {
+export function enterClaims({ state, event, agent, plots, patterns, history, settings = {}, height = event.window, executionHeight = height }) {
   const s = batchSettings(settings), key = `${event.window}/${agent}`;
   const findId = (block, number) => claimSlotId(s, block, number);
   const prior = recordGet(state.claimAgents, key) ?? { pairs: [], exceeded: false };
@@ -51,7 +52,8 @@ export function enterClaims({ state, event, agent, plots, patterns, history, set
     if (missing.length) {
       const row = history.get(plot.block);
       slots.push(...(s.document ? missing.flatMap(p => {
-        const count = patternCount(p, row); return count > 0 ? [{ id: findId(plot.block, p.number), block: plot.block,
+        assert(!fieldValueMode(p) || fieldValueAmountActive(executionHeight), 'pattern_amount_inactive');
+        const count = fieldValueMode(p) ? patternAmount(p, row) : patternCount(p, row); return BigInt(count) > 0n ? [{ id: findId(plot.block, p.number), block: plot.block,
           pattern: p.number, asset: patternLedgerAsset(p), count }] : [];
       }) : slotsFor(row, missing)));
     }

@@ -175,7 +175,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
         const working = { ...next }, copy = { ...event };
         if (move.p.header) header(copy, move.p.header, move.a, working);
         const accepted = enterClaims({ state: working, event: copy, agent: move.a, plots: move.p.plots, patterns, history,
-          settings: publicClaims ? s : receiptDocument ? { ...s, document: receiptDocument } : s, height: tip });
+          settings: publicClaims ? s : receiptDocument ? { ...s, document: receiptDocument } : s, height: tip, executionHeight: input.executionHeight ?? height });
         for (const slot of accepted.slots) {
           const oldDraw = recordGet(working.headerAwards, slot.block);
           assert(!oldDraw || oldDraw.windowHash === history.get(slot.block).hash, 'header_draw_reorg');

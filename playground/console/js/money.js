@@ -37,6 +37,9 @@ export function feePrice(policy, kind, tier = 1) {
   return tap((BigInt(policy.baseFee) * BigInt(multiplier)).toString(), policy.unit);
 }
 export function feePolicyTip(policy) {
+  const s = policy?.feeSettings;
+  if (s?.tierMultipliers?.length === 5 && s.tierMultipliers.every(n => n === 1) && s.compoundMinimum === 1 && s.link === 1)
+    return `Changes apply to new quotes. Every pattern and compound mint: ${feePrice(policy, 'find')}; Bitmap link: ${feePrice(policy, 'link')}. Fixed in TAP; network fees are separate.`;
   const tiers = Array.from({ length: 5 }, (_, i) => feePrice(policy, 'find', i + 1)).join(', ');
   return `Changes apply to new quotes. Link: ${feePrice(policy, 'link')}; tiers: ${tiers}; compounds from: ${feePrice(policy, 'compound-minimum')}.`;
 }

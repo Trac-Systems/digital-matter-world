@@ -41,6 +41,35 @@ function setup() {
   return { store, context, make, accept, get reads() { return reads; } };
 }
 const anchor = { height: '100', hash: r.hash('100') }, matches = ['1', '10', '11'].map(height => ({ height, hash: r.hash(height), count: '3' }));
+test('field-value gateway admission uses the counted execution height and only submitted evidence', async () => {
+  const f = setup(), active = r.FIELD_VALUE_AMOUNT_HEIGHT;
+  f.context.tip = f.context.counted = String(BigInt(active) - 2n);
+  const proposal = { name: 'dmwvalue', pat: '1', fld: 10, dt: 'n', amountMode: 'field-value' }, salt = r.hash('value');
+  const values = matches.map(m => ({ ...m, count: '111' }));
+  const commitment = r.namedCommitment({ proposal, salt, agent, anchor, matches: values, settings });
+  await f.make().accept(r.stableJSON(packet('discovery-commit-v2', { commitment }, f.context.tip)));
+  await f.accept();
+  f.context.tip = active; f.context.counted = String(BigInt(active) - 1n);
+  const text = r.stableJSON(packet('discovery-reveal-v2', { proposal, salt, commitmentId: commitment,
+    anchor, matches: values, witnessRoot: r.witnessRoot(values) }, active));
+  const before = JSON.stringify([...f.store.rows]), reads = f.reads;
+  await assert.rejects(f.make().accept(text), /proposal_payload/);
+  assert.equal(JSON.stringify([...f.store.rows]), before);
+  assert.equal(f.reads, reads);
+  f.context.counted = active;
+  await f.make().accept(text);
+  assert.equal(f.reads - reads, 4);
+  await f.accept();
+  const record = r.namedGet(f.context.state.records, 'pattern/' + r.definitionKey(proposal, settings));
+  assert.equal(record.amountMode, 'field-value');
+  assert.equal(record.knownMatchCount, '3'); assert.equal(record.knownOccurrenceTotal, '333');
+  f.context.segmented = true;
+  await f.store.transact([{ space: 'meta', id: 'ruleState', value: { catalogRoot: f.context.acceptedRoot } }]);
+  const admission = new NamedAdmission({ store: f.store, secret, context: () => f.context,
+    history: { get() { throw Error('admission_must_not_replay_claims'); } }, hashAt: r.hash, resources });
+  await admission.accept(r.stableJSON(packet('claim-v2', { window: active, plots: [{ block: '1', patterns: [record.number] }] }, active)));
+  assert.ok(f.store.get('namedDrafts', f.context.batch).work.bytes <= settings.values.auditTotalBytes);
+});
 test('the first admission of a new batch never enumerates another loader\'s retained occurrence trees', async () => {
   for (const retained of [100, 10000]) {
     const f = setup(), state = r.emptyNamedDiscovery();

@@ -248,7 +248,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const named = catalogAsset?.startsWith('p2:') && !asset.startsWith('p2:') && await store.get('patternsByAsset', catalogAsset);
       const provenance = /^(p2:|c2:)/.test(asset) || named?.legacy?.asset === asset ? await acceptedAssetProvenance({ store, reads, asset: catalogAsset, block }) : null;
       if (provenance?.pattern) check(asset === (provenance.pattern.legacy?.asset ?? catalogAsset), 'mint_asset_use_ledger');
-      if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]), 'asset_provenance_deployment');
+      if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]) &&
+        (registered.pattern?.amountMode ?? 'count') === (provenance.pattern.amountMode ?? 'count'), 'asset_provenance_deployment');
       if (provenance?.compound) check(registered.kind === 'compound', 'asset_provenance_deployment');
       const indexTick = registered.indexTick ?? registered.tick;
       const { deployment, authority } = await verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });

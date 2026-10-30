@@ -122,10 +122,21 @@ wildcards, lookarounds, backreferences, embedded flags, `*`, `+` or `{m,}`.
 A pattern matching the empty string is rejected. Letters `a-f` are syntactically
 valid in decimal patterns but cannot match decimal field strings.
 
-**Units = the number of non-overlapping global matches**, not matched characters
+By default, **units = the number of non-overlapping global matches**, not matched characters
 or overlapping windows. `7{3}` on `7777` gives one unit; `f{2}` on `ffff` gives
 two. Alternatives use JavaScript's left-to-right choice. No match gives zero
 units. Rarity counts blocks with at least one match; total counts all units.
+
+V2 proposals may select `amountMode:"field-value"` after its coordinated height
+activation. Keep `pat`, `fld` and `dt`: the regex selects blocks, but each matching
+block gives its full numeric height, nonce or compact bits value once. Hex bits
+still pay the decimal integer value. Zero values give no units. Omitted mode
+(or explicit `"count"` after activation) uses the existing count identity;
+field-value mode is a different identity. Search previews work locally before
+activation; proposing then is refused. Witness `count`, mint amounts, balances
+and compound quantities are exact decimal strings. Tier still counts blocks.
+TAP value-mode elements omit the regex (`name.FIELD.element`); DMW's privilege
+authority enforces the locally selected blocks. Do not inscribe an empty regex.
 
 V2 acceptance needs at least settings.values.minMatchingBlocks named witnesses;
 constant match counts are allowed. The configured grammar limits can be tighter
@@ -142,8 +153,12 @@ accepted reservation and payable:true. pay_mint uses the explicitly authorized
 local Bitcoin signer; poll_mint reads progress; inscribe_mint uses the issued
 permit; indexer confirmation establishes minted. Fees are TAP atomic integers
 with 18 decimals. Bitcoin miner fees are separate satoshi integers. Read current
-feePolicy/feeSettings; no fixed legacy link or compound fees apply. Requests
-retain their signed fee terms. Ethereum payment/release uses the owner's
+feePolicy/feeSettings. Flat fees use tierMultipliers [1,1,1,1,1],
+compoundMinimum 1 and link 1: one operator-set TAP amount per pattern mint,
+public mint, compound mint or Bitmap link. The reference target is US $0.50;
+there is no live USD peg. Before activation, use the effective policy as read.
+Requests retain their signed fee terms; refunds and fee credits retain the
+original paid amounts. Ethereum payment/release uses the owner's
 Ethereum wallet and gas; the kit's pay_mint path handles TAP.
 
 bind_payout_wallet requests a binding; the human proves wallet control.

@@ -4,12 +4,14 @@ import { signNamedMove } from './signing.mjs';
 import { searchMatchPage } from './search-matches.mjs';
 import { check, nonce, sha256 } from './check.mjs';
 import { historyProof } from './headers.mjs';
+import { fieldValueAmountActive } from '../../rules/src/pattern-amount.js';
 
 const localView = history => ({ get: h => history.get(safeNumberV2(h)) });
 async function evidence(agent, proposal, history, settings, supplied) {
   historyProof(history);
   canonicalDefinition(proposal, settings);
   const head = await agent.trac.head(), at = Math.min(history.length - 1, safeNumberV2(decimalV2(head.counted))), hash = history.get(at).hash;
+  check(proposal.amountMode === undefined || fieldValueAmountActive(head.counted), 'pattern_amount_inactive');
   check(await agent.trac.hashAt(at) === hash, 'Discovery snapshot is not canonical');
   const page = supplied ?? await searchMatchPage({ history, proposal, tip: { height: at, hash }, pageSize: settings.values.minMatchingBlocks, settings });
   const anchor = { height: decimalV2(page.anchor?.height ?? page.searchSnapshot.height), hash: page.anchor?.hash ?? page.searchSnapshot.hash };
@@ -19,7 +21,9 @@ async function evidence(agent, proposal, history, settings, supplied) {
   return { anchor, matches, witnessRoot: witnessRoot(matches) };
 }
 export async function sendNamedMove(agent, id, type, payload, settings, validate = async () => {}) {
-  validateNamedPayload(type, payload, settings, type === 'craft-v2' ? payload.snapshot?.height ?? '0' : '0');
+  const executionHeight = type === 'discovery-reveal-v2' && payload.proposal?.amountMode !== undefined
+    ? decimalV2((await agent.trac.head()).counted) : type === 'craft-v2' ? payload.snapshot?.height ?? '0' : '0';
+  validateNamedPayload(type, payload, settings, executionHeight);
   let row = agent.journal.get(id); const intent = { type, payload };
   if (row) check(row.fingerprint === sha256(stableJSON(intent)), 'Conflicting action refused; use the saved intent');
   if (!agent.dryRun && row && ['received', 'accepted', 'rejected'].includes(row.state)) return { state: row.state, receipt: row.result, replayed: true };

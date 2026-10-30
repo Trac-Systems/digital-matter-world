@@ -294,7 +294,8 @@ export class DashboardState {
     const discoveries = await this.collect(cursor => this.service.profile(address, { collection: 'discoveries', limit: 50, cursor }), 'discoveries', 4);
     for (const row of discoveries.rows) {
       const discoverer = wireIdentities(row).discoverer;
-      if (!discoverer || discoverer === this.agent.owner) add(row.asset, { discovered: true, name: row.name ?? null, tier: row.tier ?? null });
+      if (!discoverer || discoverer === this.agent.owner) add(row.asset, { discovered: true, name: row.name ?? null, tier: row.tier ?? null,
+        ...(row.amountMode ? { amountMode: row.amountMode } : {}) });
     }
     // Patterns with claims: the newest own finds, mint rights and held units.
     const pages = await Promise.all([
@@ -321,6 +322,7 @@ export class DashboardState {
     const token = tokenState(deployment);
     return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? (detail && detail.name !== p.asset ? detail.name : 'Pattern #' + p.asset.slice(3)), tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
       token, deploymentState: deployment?.state ?? null,
+      ...((p.amountMode ?? deployment?.definition?.amountMode ?? detail?.amountMode) === 'field-value' ? { amountMode: 'field-value' } : {}),
       // The deployed ticker can differ from the name (a taken ticker gets a word added).
       ticker: token === 'deployed' ? deployment?.entry?.tick ?? null : null,
       // During the discoverer's week only the discoverer deploys; after it anyone may.

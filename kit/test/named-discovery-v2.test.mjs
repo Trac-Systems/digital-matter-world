@@ -9,6 +9,8 @@ import { Journal } from '../lib/journal.mjs';
 import { proposeNamed, revealNamed } from '../lib/named-discovery.mjs';
 import { findPatterns } from '../lib/search.mjs';
 import { loadHistory } from '../lib/headers.mjs';
+import { searchMatchPage } from '../lib/search-matches.mjs';
+import { gameTools } from '../lib/tools.mjs';
 import { serviceError as oldError } from './fixtures/bafea17-errors.mjs';
 const settings = r.settingsRevision({ network: 'fixture', effectiveBatch: '43', effectiveBitcoinWindow: '0', values: { ...r.SETTINGS_PROFILE, puzzleBits: 0 } });
 const secret = r.hashBytes('kit v2 fixture'), owner = r.bytesToHex(ed25519.getPublicKey(secret)), gateway = r.hashBytes('kit gateway fixture');
@@ -18,6 +20,39 @@ async function verified(directory) {
   await writeFile(path, Buffer.from((await readFile(new URL('./fixtures/mainnet-64.hex', import.meta.url), 'utf8')).trim(), 'hex'));
   return loadHistory(path);
 }
+test('field-value search emits exact TAP amounts, distinct identities and mode-aware tool schemas', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dmw-field-value-search-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const history = await verified(directory), value = { ...proposal, fld: 10, pat: '[0-9]', amountMode: 'field-value' };
+  const page = await findPatterns({ history, tip: history.get(63), existing: [], owner: r.encodeTracAddress(owner), settings, candidates: [value], maxCandidates: 1 });
+  assert.equal(page.rejected.length, 0);
+  const expected = Array.from({ length: 64 }, (_, h) => BigInt(history.get(h).nonce));
+  assert.equal(page.accepted[0].localOccurrenceTotal, String(expected.reduce((a, b) => a + b, 0n)));
+  assert.equal(page.accepted[0].localMatchCount, String(expected.filter(n => n > 0n).length));
+  assert.equal(page.accepted[0].matches[0].count, '2083236893');
+  const one = await searchMatchPage({ history, tip: history.get(63), proposal: value, settings, pageSize: 1 });
+  const two = await searchMatchPage({ history, tip: history.get(63), proposal: value, settings, pageSize: 1, cursor: one.nextCursor });
+  assert.equal(two.matches[0].count, '2573394689');
+  await assert.rejects(searchMatchPage({ history, tip: history.get(63), proposal: { ...value, amountMode: 'count' }, settings, pageSize: 1, cursor: one.nextCursor }), /cursor changed/);
+  const tools = gameTools({ agent: { owner, service: {}, trac: {} }, history });
+  assert.equal(tools.search_patterns.schema.parse({ candidates: [value] }).candidates[0].amountMode, 'field-value');
+  assert.equal(tools.propose_pattern.schema.parse({ actionId: 'value', proposal: value }).proposal.amountMode, 'field-value');
+  assert.throws(() => tools.propose_pattern.schema.parse({ actionId: 'value', proposal: { ...value, amountMode: 'bad' } }));
+});
+
+test('proposing field values before activation cannot save or send a commitment; local evidence works after activation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dmw-field-value-propose-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const history = await verified(directory), value = { ...proposal, fld: 10, pat: '[0-9]', amountMode: 'field-value' };
+  let counted = String(BigInt(r.FIELD_VALUE_AMOUNT_HEIGHT) - 1n);
+  const agent = { owner, dryRun: true, actionId() {}, journal: { get: () => null, reserve: () => assert.fail('dry run saved') },
+    trac: { head: async () => ({ counted, tip: history.get(63) }), hashAt: async h => history.get(h).hash },
+    service: { submit: () => assert.fail('dry run submitted') } };
+  await assert.rejects(proposeNamed(agent, { actionId: 'value', proposal: value, history }, { settings }), /pattern_amount_inactive/);
+  counted = r.FIELD_VALUE_AMOUNT_HEIGHT;
+  const result = await proposeNamed(agent, { actionId: 'value', proposal: value, history }, { settings });
+  assert.equal(result.state, 'dry-run'); assert.equal(result.witnesses, settings.values.minMatchingBlocks);
+});
 test('v2 kit keeps the exact witnessed proposal and uncertain packet across journal restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dmw-r1b-journal-'));
   let journal, tip = 31, sends = 0, fail = true;

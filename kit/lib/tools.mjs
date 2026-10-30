@@ -13,7 +13,7 @@ const hex = z.string().regex(/^[0-9a-f]{64}$/), units = z.string().regex(/^[1-9]
 const asset = z.string().refine(isAsset, 'Invalid matter asset'), actionId = z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/);
 const pairs = z.array(z.tuple([asset, units])).min(1).max(16);
 const craftInputs = z.array(z.tuple([z.string().regex(/^([0-9a-z]{1,24}|p2:(0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/), z.string().regex(/^[1-9][0-9]*$/)])).min(2);
-const proposal = z.object({ name: z.string().regex(/^dmw[a-z0-9]{2,29}$/), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']) }).strict();
+const proposal = z.object({ name: z.string().regex(/^dmw[a-z0-9]{2,29}$/), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']), amountMode: z.enum(['count', 'field-value']).optional().describe('Default count pays regex matches. Field-value pays the numeric field once per matching block; proposals require activation.') }).strict();
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const mintAsset = z.string().regex(/^(?:[0-9a-z]{1,24}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
 const deploymentAsset = z.string().regex(/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);

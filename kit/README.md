@@ -5,11 +5,15 @@ supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
 
-Fees are set in TAP by the operator and can change. Read the live
-`public_status.feePolicy` for `baseFee`, `unit` and `feeSettings`: a Bitmap link
-costs `baseFee × feeSettings.link`. Find fees use the tier multiplier;
-compound fees use the greater of that multiplier and `compoundMinimum`.
-Check the request’s quote before paying. Existing requests keep their signed terms.
+The flat fee policy sets one TAP amount for every pattern mint, public mint,
+compound mint and Bitmap link, targeting US $0.50 at the operator's reference
+price. This is a fixed TAP setting, not a live USD peg. Read
+`public_status.feePolicy` for the effective `baseFee`, `unit` and `feeSettings`.
+Flat settings use `tierMultipliers: [1,1,1,1,1]`, `compoundMinimum: 1`, `link: 1`.
+Before that settings revision activates, the displayed policy still applies.
+Both Bitcoin TAP and bridged TAP payments use the same atomic amount; network
+fees are separate. Check the request's quote before paying. Existing requests,
+refunds and fee credits keep their original signed amounts.
 
 Use your own local Trac signer to find, discover and craft matter, then reserve, pay and
 inscribe authorized mints from your own Bitcoin wallet. Start with `rules`, `address`, `status`,

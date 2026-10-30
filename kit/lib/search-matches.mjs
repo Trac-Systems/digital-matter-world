@@ -1,4 +1,4 @@
-import { countWith, hashObject, stableJSON, validateDefinition, canonicalDefinition } from '../../rules/src/index.js';
+import { amountWith, hashObject, stableJSON, validateDefinition, canonicalDefinition } from '../../rules/src/index.js';
 import { assertHistoryTip, historyProof } from './headers.mjs';
 import { check } from './check.mjs';
 
@@ -9,7 +9,8 @@ export async function searchMatchPage({ history, tip, proposal, cursor, pageSize
     const proof = historyProof(history);
     check(Number.isSafeInteger(tip.height) && tip.height >= 0 && tip.height < proof.count && history.get(tip.height).hash === tip.hash, 'Local search snapshot is not in verified history');
   } else assertHistoryTip(history, tip);
-  if (settings) canonicalDefinition(proposal, settings); else validateDefinition(proposal);
+  if (settings) canonicalDefinition(proposal, settings);
+  else { check(proposal.amountMode === undefined, 'Pattern amount modes require v2 rules'); validateDefinition(proposal); }
   check(Number.isSafeInteger(pageSize) && pageSize >= (settings ? 1 : 3) && pageSize <= (settings?.values.occurrencePageSize ?? 200), 'Invalid local match page size');
   let searchSnapshot = { height: tip.height, hash: tip.hash }, saved;
   let start = 0;
@@ -27,8 +28,8 @@ export async function searchMatchPage({ history, tip, proposal, cursor, pageSize
   const matches = [], re = new RegExp(proposal.pat, 'g'); let height = start;
   for (; height <= searchSnapshot.height; height++) {
     signal?.throwIfAborted();
-    const count = countWith(re, history.field(height, proposal.fld, proposal.dt));
-    if (count) matches.push({ height: String(height), hash: history.get(height).hash, count: String(count) });
+    const count = amountWith(proposal, re, history.field(height, proposal.fld, proposal.dt));
+    if (count !== '0') matches.push({ height: String(height), hash: history.get(height).hash, count });
     if (matches.length === pageSize) { height++; break; }
     if ((height - start) % 4096 === 0) await new Promise(resolve => setImmediate(resolve));
   }

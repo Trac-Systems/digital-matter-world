@@ -17,7 +17,7 @@ export function mineral(id) {
   return MINERALS[x % MINERALS.length];
 }
 export const FIELDS = { 4: 'Height', 10: 'Nonce', 11: 'Difficulty bits' };
-export function fieldName(p) { return p ? `${FIELDS[p.fld] ?? `Field ${p.fld}`}${p.fld === 11 ? (p.dt === 'h' ? ' (hex)' : ' (decimal)') : ''}` : '–'; }
+export function fieldName(p) { return p ? `${FIELDS[p.fld] ?? `Field ${p.fld}`}${p.fld === 11 ? (p.dt === 'h' ? ' (hex)' : ' (decimal)') : ''}${p.amountMode === 'field-value' ? ' · field value' : ''}` : '–'; }
 export function title(name) {
   const n = String(name ?? '').replace(/^dmw/, '');
   return n ? n[0].toUpperCase() + n.slice(1) : '–';

@@ -47,7 +47,7 @@ export function executeNamedMove(state, { move, settings, settingsHistory, tip, 
   const invalid = checkMoveV2(move, { settings, tip, hashAt, executionHeight }); assert(!invalid, invalid);
   const id = moveIdV2(move);
   assert(!namedGet(state.records, `executed/${id}`), 'move_already_executed');
-  const common = { agent: move.a, tip, counted, receiptPosition, settings, history, provenance };
+  const common = { agent: move.a, tip, counted, executionHeight, receiptPosition, settings, history, provenance };
   let result;
   if (['header-v2', 'claim-v2'].includes(move.t)) {
     if (move.t === 'claim-v2' && publicMintActive(settings, tip) && !claimsNeverCloseActive(claimSettings, executionHeight)) for (const plot of move.p.plots) for (const number of plot.patterns) {

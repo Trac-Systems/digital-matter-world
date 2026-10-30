@@ -5,6 +5,7 @@ import { validateSettingsDocument } from './settings-v2.js';
 import { leadingZeroBits } from './moves.js';
 import { validateCraftPayload } from './craft-v2.js';
 import { validateTransferPayload } from './transfer-v2.js';
+import { fieldValueAmountActive } from './pattern-amount.js';
 
 export const namedMoveTypes = Object.freeze(['discovery-commit-v2', 'discovery-reveal-v2', 'submit-occurrences-v2', 'challenge-count-v2']);
 export function validateNamedPayload(type, p, settings, executionHeight = '0') {
@@ -35,7 +36,7 @@ export function validateNamedPayload(type, p, settings, executionHeight = '0') {
     if (reveal) {
       assert(hex(p.commitmentId, 32) && hex(p.salt, 32) && hex(p.witnessRoot, 32), 'discovery_opening');
       // The original commitment's grammar revision is selected during replay.
-      assert(exactKeys(p.proposal, ['name', 'pat', 'fld', 'dt']), 'proposal_payload');
+      assert(exactKeys(p.proposal, ['name', 'pat', 'fld', 'dt', ...(fieldValueAmountActive(executionHeight) && Object.hasOwn(p.proposal, 'amountMode') ? ['amountMode'] : [])]), 'proposal_payload');
     } else assert(hex(p.patternKey, 32), 'pattern_key');
     assert(exactKeys(p.anchor, ['height', 'hash']) && hex(p.anchor.hash, 32), 'discovery_anchor'); uintV2(p.anchor.height);
     assert(Array.isArray(p.matches) && p.matches.length >= 1 && p.matches.length <= s.occurrencePageSize, 'discovery_witness_budget');

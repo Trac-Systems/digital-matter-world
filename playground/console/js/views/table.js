@@ -95,7 +95,7 @@ export function mount(root, params = {}) {
     clear(detail, h('section.panel', {},
       h('header', {}, h('span.swatch', { style: { background: mineral(p.asset ?? p.number), width: '14px', height: '14px' } }), h('h2', {}, title(p.name)), tierBadge(p.tier), h('div.grow'), inspectBtn(p.name, p)),
       kv([
-        ['Rule', h('code', {}, p.pat), 'TAP\'s regular-expression form, matched against one header field. Each match is one unit.'],
+        ['Rule', h('code', {}, p.pat), p.amountMode === 'field-value' ? 'A matching block gives the full numeric field value in units, once per block.' : 'TAP\'s regular-expression form, matched against one header field. Each match is one unit.'],
         ['Field', fieldName(p)],
         ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (p.countMeaning === 'verified_submitted_blocks' ? 'Verified submitted blocks; more matches may exist.' : site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
         ['Tier', `${p.tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
@@ -183,7 +183,7 @@ export function compoundFacts(c) {
   return kv([
     ['Recipe', c.recipe ? title(c.recipe) : null],
     ['Ingredients', compoundInputs(c).map(i => `${fmtInt(i.amount)} ${assetName(i.asset)}`).join(' + ') || null],
-    ['Tier', tier ? `${tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'compound', tier)} per mint` : null, 'Rarer compounds have higher tiers and cost more to make real.'],
+    ['Tier', tier ? `${tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'compound', tier)} per mint` : null, 'Rarer compounds have higher tiers. The flat fee policy charges the same amount per mint.'],
     ['Charge', p.charge ?? null],
     ['Spectrum', p.spectrum === undefined ? null : spectrumText(p.spectrum), 'The block header fields its ingredients were found in.'],
     ['Generation', p.generation === undefined ? null : generationText(p.generation), 'How many crafting steps it is away from plain patterns.'],

@@ -3,6 +3,27 @@ import assert from 'node:assert/strict';
 import { Provisioner } from '../src/provisioning.mjs';
 import { candidate, verifyDeployment } from '../src/deployments.mjs';
 import { provisioningFixture } from './provisioning-fixture.mjs';
+import { deploymentContent } from '../../kit/lib/inscription-core.mjs';
+import { mintAssetDefinition } from '../src/mint-assets.mjs';
+
+test('field-value deploys omit the TAP regex, reuse pattern-free elements, and reject count-mode substitutions', async t => {
+  const f = await provisioningFixture(t), pattern = { ...f.pattern, number: '0', amountMode: 'field-value' };
+  await f.store.put('patternsByAsset', 'p2:0', pattern);
+  assert.equal((await mintAssetDefinition(f.store, 'p2:0')).definition.amountMode, 'field-value');
+  const pending = await f.operator.advanceAsset('p2:0', pattern);
+  assert.equal(pending.content, 'dmwexample.4.element');
+  assert.equal(deploymentContent({ ...pending, inscriptionText: pending.content }).text, pending.content);
+  assert.throws(() => deploymentContent({ ...pending, definition: { ...pattern, amountMode: 'count' }, inscriptionText: pending.content }), /accepted pattern/);
+  const job = await f.complete('p2:0', pattern);
+  await verifyDeployment(f.reads, job.entry);
+  assert.equal(f.elements.find(e => e.ins === job.entry.elementId).pat, null);
+  await assert.rejects(verifyDeployment(f.reads, { ...job.entry, pattern: { ...pattern, amountMode: 'count' } }), /element_binding/);
+  const reused = await f.complete('p2:1', { ...pattern, number: '1', name: 'dmwother', pat: '456' });
+  assert.equal(reused.entry.elementId, job.entry.elementId);
+  assert.equal(reused.reused, true);
+  f.contents.set(job.entry.elementId, 'dmwexample..4.element');
+  await assert.rejects(verifyDeployment(f.reads, job.entry), /element_content/);
+});
 
 test('idle provisioning does not rewrite an unchanged cursor', async t => {
   const f = await provisioningFixture(t), before = f.store.sequence;

@@ -1,5 +1,6 @@
 // Shared by the local signer and the browser bundle. No network or storage.
 import { tapBurnAddress } from '../../rules/src/tap-burn.js';
+import { tapElementText } from '../../rules/src/pattern-amount.js';
 import * as btc from '@scure/btc-signer';
 import { schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -175,8 +176,8 @@ export function deploymentContent(job) {
   ensure(attempt && /^[0-9a-f]{64}$/.test(attempt.id), 'Missing deployment attempt');
   const text = job.inscriptionText;
   if (job.phase === 'element') {
-    const match = /^([a-z0-9]{3,32})\.(.*)\.(4|10|11)\.element$/.exec(text);
-    ensure(match && match[1].startsWith('dmw') && match[2] === job.definition?.pat && Number(match[3]) === job.definition?.fld &&
+    const name = typeof text === 'string' ? text.split('.')[0] : '';
+    ensure(/^dmw[a-z0-9]{0,29}$/.test(name) && text === tapElementText(name, job.definition) &&
       text === job.content && text === attempt.text, 'Element differs from the accepted pattern');
   } else {
     let payload; try { payload = JSON.parse(text); } catch { ensure(false, 'Invalid deployment content'); }

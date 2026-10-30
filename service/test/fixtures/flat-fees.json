@@ -1,0 +1,22 @@
+{
+  "targetUsd": "0.50",
+  "reference": {
+    "tapUsd": "0.044874",
+    "source": "https://www.mexc.com/price/TAP/USD",
+    "sourceUpdatedAt": "2026-10-30 16:01:56 (source timezone unspecified)",
+    "rounding": "ceil to one TAP atom"
+  },
+  "baseFeeTap": "11.142309577929313189",
+  "changes": {
+    "baseFee": "11142309577929313189",
+    "tierMultipliers": [
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "compoundMinimum": 1,
+    "link": 1
+  }
+}

@@ -36,7 +36,7 @@ export async function provisioningFixture(t, { secret = Buffer.alloc(32, 73) } =
   const index = (text, id) => {
     contents.set(id, text); canonical.set(id, tip);
     if (typeof text === 'string') {
-      const [, tick, pat, fld] = /^([^.]+)\.(.*)\.([0-9]+)\.element$/.exec(text);
+      const parts = text.split('.'), tick = parts[0], pat = parts.length === 3 ? null : parts.slice(1, -2).join('.'), fld = parts.at(-2);
       if (!elements.some(e => e.tick.toLowerCase() === tick.toLowerCase() || e.pat === pat && Number(e.fld) === Number(fld))) elements.push({ tick: tick.toLowerCase(), pat, fld: Number(fld), ins: id });
     } else {
       const tick = (text.op === 'dmt-deploy' ? 'dmt-' : '') + text.tick.toLowerCase();

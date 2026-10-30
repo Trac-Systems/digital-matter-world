@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import * as r from '../../rules/src/index.js';
 import { secp256k1 } from '../../kit/node_modules/@noble/curves/secp256k1.js';
@@ -11,18 +12,23 @@ import { applyPaymentPage } from '../../contract/payment-pages.js';
 import { financialPlan } from '../../rules/src/financial-execution.js';
 import { verifyFinancialExecution } from '../../committee/signer/financial-execution.mjs';
 import { accountSettings } from '../../rules/src/account-settings.js';
+import { permit } from '../../committee/signer/adapter.mjs';
+import { reserveFinancialCapacity } from '../../contract/financial-capacity.js';
 import { buildFinancialExecution } from '../src/financial-execution.mjs';
 const { installPublicMintSources, publicPaymentData } = await import('../src/public-mint-sources.mjs');
 const { FeeQuotes, createFeePolicy } = await import('../src/fees.mjs');
 const { identifyFinancialFees } = await import('../src/financial-fee-identity.mjs');
 
-function fixture({ legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false } = {}) {
+const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url))).changes;
+const flatSettings = { tierMultipliers: flat.tierMultipliers, compoundMinimum: flat.compoundMinimum, link: flat.link };
+
+function fixture({ baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false } = {}) {
   const network = 'test', key = new Uint8Array(32).fill(44), publicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
   const address = fundingAddress(publicKey, 'regtest'), asset = legacyAsset ? 'p0' : 'p2:0', block = '100';
-  const registry = { feePolicy: createFeePolicy('100') };
+  const registry = { feePolicy: createFeePolicy(baseFee, 0, feeSettings) };
   const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: {
     ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
-    linkMultiplier: r.FEE_DEFAULTS.link, finderWindow: 2, publicMintLegacyFinderWindow: 2, ...(!legacyPolicy ? { claimsNeverCloseHeight: '100' } : {}),
+    linkMultiplier: feeSettings?.link ?? r.FEE_DEFAULTS.link, finderWindow: 2, publicMintLegacyFinderWindow: 2, ...(!legacyPolicy ? { claimsNeverCloseHeight: '100' } : {}),
     ...(bitmapMintOpenHeight ? { bitmapMintOpenHeight } : {}), ...(publicPaymentV2Height ? { publicPaymentV2Height } : {}), ...(moveBytes ? { moveBytes } : {}) } });
   const feeQuotes = new FeeQuotes({ network, secret: Buffer.alloc(32, 9), registry: async () => registry, now: () => 1000 }); feeQuotes.document = document;
   const context = { pattern: { number: '0', pat: '[0-9]', fld: 4, dt: 'n', releaseHeight: '100', releaseFinderWindow: 2 },
@@ -85,6 +91,33 @@ function fixture({ legacyPolicy = false, legacyAsset = false, publicPaymentV2Hei
       values: { ...document.values, publicPaymentV2Height: boundary } }); },
     setPolicy: next => activeDocument = next, setHeight: h => height = h, setConfirmations: n => confirmations = n };
 }
+
+test('field-value quote amount equals TAP dmt-mint numeric amount and refuses before activation', async () => {
+  const f = fixture();
+  f.input.block = '973506';
+  f.context.pattern = { ...f.context.pattern, fld: 10, amountMode: 'field-value' };
+  f.reads.publicMintHeader = async () => ({ height: 973506, nonce: 3789512813, bits: 386007187 });
+  f.context.deployment.remaining = '18446744073709551615';
+  f.setHeight(String(BigInt(r.FIELD_VALUE_AMOUNT_HEIGHT) - 1n));
+  await assert.rejects(f.reads.publicMintQuote(f.input), /pattern_amount_inactive/);
+  f.setHeight(r.FIELD_VALUE_AMOUNT_HEIGHT);
+  for (const [fld, dt, amount] of [[4, 'n', '973506'], [10, 'n', '3789512813'], [11, 'n', '386007187'], [11, 'h', '386007187']]) {
+    Object.assign(f.context.pattern, { fld, dt, pat: dt === 'h' ? '[0-9a-f]' : '[0-9]' });
+    const quote = await f.reads.publicMintQuote(f.input);
+    assert.equal(quote.amount, amount); assert.equal(quote.intent.amount, amount);
+    const request = { asset: f.input.asset, block: f.input.block, amount: quote.amount };
+    const minted = permit('test', request, quote.deployment, f.input.tapAddress, r.hash('value-mint'), r.hash('paid'));
+    assert.equal(minted.payload.op, 'dmt-mint'); assert.equal(minted.payload.blk, '973506');
+    assert.equal(r.tapElementText('dmwfixture', f.context.pattern), `dmwfixture.${fld}.element`);
+    const capacity = { deployment: quote.deployment.id, asset: request.asset, block: request.block, amount, remaining: amount, limit: '0' };
+    const writes = await reserveFinancialCapacity({ get: async () => null }, r.hash('capacity'), capacity);
+    assert.equal(writes[0][1], amount);
+    await assert.rejects(reserveFinancialCapacity({ get: async () => null }, r.hash('capacity'), {
+      ...capacity, remaining: String(BigInt(amount) - 1n) }), /financial_capacity_reserved/);
+  }
+  f.context.pattern.pat = '^0$';
+  await assert.rejects(f.reads.publicMintQuote(f.input), /mint_no_match/);
+});
 
 for (const legacyAsset of [false, true]) test(`public quote source refuses before publicFrom and opens at the boundary; legacy asset=${legacyAsset}`, async () => {
   const f = fixture({ legacyAsset }), publicFrom = r.claimDeadline(f.context.pattern, f.input.block, f.document);
@@ -329,4 +362,37 @@ test('opaque payment activation preserves open linked minting and the current ho
   assert.equal(scan.payments[0].complete, true); assert.equal(scan.payments[0].paymentVersion, 2);
   assert.equal(scan.payments[0].source.feeItems.find(fee => fee.role === 'landowner').to, holder);
   assert.equal(f.records.get('fp/' + quote.id).state, 'consumed');
+});
+
+for (const opaque of [false, true]) for (let tier = 1; tier <= 5; tier++) test(`public tier ${tier} flat quote (opaque=${opaque}), independent verification and losing-payment refund preserve exact TAP atoms`, async () => {
+  const f = fixture({ baseFee: flat.baseFee, feeSettings: flatSettings, ...(opaque ? { publicPaymentV2Height: '103' } : {}) });
+  f.context.tier = tier;
+  f.context.treasury = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(45))).toString('hex'), 'regtest');
+  const quote = await f.reads.publicMintQuote(f.input);
+  assert.equal(quote.price, flat.baseFee);
+  assert.equal(quote.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), flat.baseFee);
+  if (opaque) { await f.register(quote); f.setHeight('104'); }
+  const reference = f.pay(quote);
+  if (opaque) await f.reveal(quote, reference);
+  const scan = await f.settle();
+  assert.equal(scan.payments[0].complete, true);
+  const losing = fixture({ baseFee: flat.baseFee, feeSettings: flatSettings, ...(opaque ? { publicPaymentV2Height: '103' } : {}) });
+  losing.context.tier = tier; losing.context.treasury = f.context.treasury;
+  const paid = await losing.reads.publicMintQuote(losing.input);
+  if (opaque) { await losing.register(paid); losing.setHeight('104'); }
+  const losingReference = losing.pay(paid);
+  if (opaque) await losing.reveal(paid, losingReference);
+  losing.context.find = { count: '3' };
+  const refused = await losing.settle();
+  assert.equal(refused.payments[0].refusal, 'claimed_first');
+  const refund = losing.records.get(publicRefundKey(refused.payments[0]));
+  assert.equal(refund.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), flat.baseFee);
+});
+
+test('flat gross public fee preserves payer self-share omission', async () => {
+  const f = fixture({ baseFee: flat.baseFee, feeSettings: flatSettings });
+  const quote = await f.reads.publicMintQuote(f.input);
+  assert.equal(quote.price, flat.baseFee);
+  assert.equal(quote.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), quote.split.burn);
+  assert.equal(quote.fees.some(fee => fee.to === f.input.tapAddress), false);
 });

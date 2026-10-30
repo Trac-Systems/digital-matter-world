@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { rules } from '../src/rules.mjs';
 import { Links } from '../src/links.mjs';
 import { Store } from '../src/store.mjs';
 import { FeeQuotes, createFeePolicy, changeFeePolicy, changeBaseFee, currentFee, issueFeeTerms, validateQuotedTerms, LAUNCH_FEE_SETTINGS } from '../src/fees.mjs';
+import { readRegistry, migrateRegistry } from '../src/registry.mjs';
 import { reloadFees, feeArguments } from '../scripts/base-fee.mjs';
 import { temp } from './helpers.mjs';
 import { fixture } from '../../committee/test/fixture.mjs';
@@ -13,7 +14,9 @@ import { Policy } from '../../committee/signer/policy.mjs';
 import { linkInput } from '../../committee/test/link-fixture.mjs';
 import { observationFixture, network, gateway, gatewaySecret, hashAt } from '../../rules/test/observation-fixture.mjs';
 
-test('old and 3× link quotes survive changes, payment verification and all five independent committee approvals', async () => {
+const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url)));
+
+test('legacy, revised and flat link quotes survive changes, payment verification and all five independent committee approvals', async () => {
   let now = 1000, registry = { feePolicy: createFeePolicy(rules.parseTapAmount('22.6')), link: { treasury: 'local-treasury' }, assets: {} };
   const readRegistry = async () => structuredClone(registry), store = await Store.open(await temp('lp1-links-'));
   const issuer = new FeeQuotes({ network, secret: gatewaySecret, now: () => now, registry: readRegistry });
@@ -25,12 +28,13 @@ test('old and 3× link quotes survive changes, payment verification and all five
   const links = new Links({ store, network, reads, terms: (...args) => issueFeeTerms(reads, 'link', ...args) });
   const inputs = [];
   try {
-    for (const [height, expected] of [[42, '452'], [43, '67.8']]) {
+    for (const [height, expected] of [[42, '452'], [43, '67.8'], [44, flat.baseFeeTap]]) {
       if (height === 43) registry = changeFeePolicy(registry, { link: 3 }, ++now);
+      if (height === 44) registry = changeFeePolicy(registry, flat.changes, ++now);
       const original = linkInput(height), body = { request: original.request, sig: original.sig, payer: original.terms.payer, paymentHash: original.terms.hash };
       const quote = await links.request(body);
       assert.equal(rules.formatTapAmount(quote.price), expected);
-      assert.equal(quote.split.burn, quote.split.treasury);
+      assert.ok(BigInt(quote.split.treasury) - BigInt(quote.split.burn) <= 1n);
       const paymentId = rules.hash('payment/' + height) + 'i0:0';
       const payment = { ...original.payment, id: paymentId, settlement: { ...original.payment.settlement, paymentId }, total: quote.price, base: quote.split.treasury,
         allocations: rules.tapPaymentAllocations(quote.split, {}, 'link') };
@@ -45,7 +49,7 @@ test('old and 3× link quotes survive changes, payment verification and all five
       assert.equal((await links.payment({ id: quote.id, paymentId: payment.id })).state, 'queued');
     }
     const paid = await links.inputs({ height: 95, tip: 100, tipHash: hashAt(100) });
-    assert.equal(paid.length, 2);
+    assert.equal(paid.length, 3);
     const observations = observationFixture(); observations.add(100, 95, { linkOperations: paid });
     const built = observations.build(), proposal = { network, kind: 'batch', batch: built.batch, files: built.fileBytes.map(rules.bytesToHex) };
     for (let member = 0; member < 5; member++) {
@@ -56,7 +60,7 @@ test('old and 3× link quotes survive changes, payment verification and all five
       independent.linkTerms = id => validateQuotedTerms(independent, 'link', store.get('linkRequests', id));
       await new Policy({ network, publicKey: f.publicKey, reads: independent }).approve(proposal);
     }
-    assert.equal(built.batch.ops.filter(op => op.key?.startsWith('link/')).length, 2);
+    assert.equal(built.batch.ops.filter(op => op.key?.startsWith('link/')).length, 3);
     const row = store.get('linkRequests', inputs[1].quote.id);
     await assert.rejects(validateQuotedTerms(reads, 'link', { ...row, terms: { ...row.terms, feeSettings: { ...LAUNCH_FEE_SETTINGS, link: 1 } } }), /link_policy/);
     const wrongPayment = { ...paid[1].payment, total: rules.parseTapAmount('22.6') };
@@ -105,4 +109,22 @@ test('public and installed-kit read projections preserve signed multiplier vecto
   const response = presentRead(await api.read('/mint/' + id + '?limit=1'));
   assert.deepEqual(response.feeQuote, quote); assert.deepEqual(response.feeSettings, LAUNCH_FEE_SETTINGS);
   await issuer.validate(response.feeQuote, 'link/' + id);
+});
+
+for (const keyed of [false, true]) test(`flat fee preview leaves the registry untouched and pins the exact eventual revision (keyed=${keyed})`, async () => {
+  const root = await temp('flat-fee-preview-'), path = join(root, 'registry.json');
+  const original = { feePolicy: createFeePolicy('100', 0, LAUNCH_FEE_SETTINGS), assets: {} };
+  await writeFile(path, JSON.stringify(original));
+  if (keyed) await migrateRegistry(path);
+  const before = await readRegistry(path), bytes = await readFile(path, 'utf8'), files = await readdir(root);
+  const flags = [path, '--registry', '--at', '1000', '--base-fee', flat.baseFeeTap,
+    '--tier-multipliers', '1,1,1,1,1', '--compound-minimum', '1', '--link', '1'];
+  const preview = await reloadFees(...feeArguments([...flags, '--dry-run']));
+  assert.equal(await readFile(path, 'utf8'), bytes);
+  assert.deepEqual(await readdir(root), files);
+  assert.equal((await readRegistry(path)).revision, before.revision);
+  for (const kind of ['find', 'compound', 'link']) for (let tier = 1; tier <= 5; tier++)
+    assert.equal(rules.feeFor(kind, preview.baseFee, tier, preview.feeSettings), preview.baseFee);
+  assert.deepEqual(await reloadFees(...feeArguments(flags)), preview);
+  assert.throws(() => feeArguments([path, '--registry', '--link', '1', '--dry-run']), /preview_timestamp/);
 });

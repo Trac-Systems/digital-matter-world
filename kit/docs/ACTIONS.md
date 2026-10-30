@@ -26,6 +26,21 @@ constraints. submit_bitmap and report_custody_payment return sent:false in dry-r
 
 ## Claims, discovery and occurrences
 
+V2 proposal definitions accept optional `amountMode: "count" | "field-value"`.
+Omit it for the existing count identity. `field-value` retains the regex as block
+eligibility and awards the full numeric field once, including decimal amounts
+when bits are matched in hex. Fields remain height (4), nonce (10), compact bits
+(11); the existing dt restrictions apply. `search_patterns` candidates and
+`pattern_search_matches` accept the mode now; proposing requires the coordinated
+activation height. The witness `count` is the block's exact decimal-string units,
+not its regex match count in value mode. Zero-valued blocks are omitted. Rarity
+and claim budgets count blocks/pairs, not units.
+
+Value-mode TAP provisioning uses `name.FIELD.element` and the existing privilege
+deployment. An element with a regex would mint the wrong amount and is refused.
+Large compound inputs retain exact units; only their reduced ratio is checked
+against the operator's `compoundRatio` and `compoundWorkBudget` settings.
+
 `mine_once {}`/CLI `once` read the string clock and current catalog, select
 historic plots, exclude public found/minted rows through p2 claimed-block pages,
 and respect `settings.values.claimsPerWindow`. Dry-run returns claim-v2 or
@@ -420,3 +435,12 @@ old player homes and signed legacy evidence.
 
 See [the canonical discovery reference](DISCOVERY.md) for tested field examples,
 a complete v2 search response, and every parser/search preflight error.
+
+## Mint and Bitmap link fees
+
+Read `public_status.feePolicy` and use the request's signed quote. Under the flat
+fee settings, every pattern tier, public mint, compound mint and Bitmap link
+uses the same operator-set TAP amount. The reference target is US $0.50; the
+amount is fixed in TAP until the operator updates the settings. Bitcoin TAP and
+bridged TAP share the same price; Bitcoin fees and Ethereum gas are additional.
+Old requests, refunds and credits retain their recorded amounts across revisions.

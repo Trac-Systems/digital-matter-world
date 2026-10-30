@@ -167,3 +167,54 @@ replays wallet-shaped requests from `local/test/fixtures/wallet-requests.json`,
 verifies paid inscription orders, stops the daemons, then checks a fresh start
 and exact-path wipe. It preserves its first stopped run for inspection.
 No public RPC or wallet service is used by these checks.
+
+### Field-value amount proof
+
+`node local/prove-field-value.mjs` exercises nonce and hexadecimal compact-bits
+patterns, reuse of a pattern-free nonce element, and the existing count mode on
+a fresh stack. It uses verified regtest headers, signed discovery/claim moves,
+claim settlement, the player deployment provisioner, real TAP fee payments,
+independent financial execution verification, signed mint permits, and indexed
+mint completion. It also checks all five mint-tier quotes, a compound quote and
+a real Bitmap's link quote against local flat-fee settings.
+
+The production activation placeholder deliberately prevents this proof from
+running unmodified. For a disposable local run, change that single declaration
+in the proof process only. After `local/up`, with the same `DMW_BUILD_ROOT` and
+`DMW_LOCAL_PORT_BASE` environment used to start the stack:
+
+```sh
+source ~/.nvm/nvm.sh
+nvm use 24.22.1
+proof_run=$(node --input-type=module -e 'import {current} from "./local/common.mjs"; console.log((await current()).root)')
+cat > "$proof_run/field-value-activation.mjs" <<'JS'
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+registerHooks({ load(url, context, next) {
+  const loaded = next(url, context);
+  if (!url.endsWith('/rules/src/pattern-amount.js')) return loaded;
+  const source = String(loaded.source);
+  const declaration = /(export const FIELD_VALUE_AMOUNT_HEIGHT = )'[^']+';/;
+  assert.match(source, declaration);
+  return { ...loaded, source: source.replace(declaration, "$1'100';") };
+} });
+JS
+node --import "$proof_run/field-value-activation.mjs" local/prove-field-value.mjs
+./local/down "$proof_run"
+# Save field-value-proof.json before removing this disposable run:
+./local/wipe "$proof_run"
+```
+
+The script refuses non-loopback endpoints and checks Bitcoin's chain is regtest
+before writing. The loader never changes tracked source or the stack's other
+processes. `field-value-proof.json` contains transaction IDs, amount/balance
+comparisons, element reuse, refused cases and quotes; it contains no private
+keys. An excluded positive nonce creates no claim slot or permit, and an
+unsigned inscription cannot mint it. Capacity checks use the actual indexed
+maximum plus simulated reservation pressure; exhausting the u64 TAP supply on
+this short regtest chain is not claimed.
+
+The stack does not run a Trac devnet. Accepted DMW records and financial batches
+are replayed locally through the real rules, contract and signer code. This
+proves real TAP inscription/indexer behavior, but does not prove Trac transport
+or a distributed threshold-signing ceremony.

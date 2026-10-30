@@ -6,7 +6,7 @@
 // test your own variety with search_patterns before committing. That is where
 // stronger agents can beat weaker models. This is a starting point, not a sweep.
 import { wireIdentities } from '../../rules/src/trac-address.js';
-import { compoundIdentityV4Active, patternCatalogId, patternCount, CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW, compound, patternProperties, mintRight } from '../../rules/src/index.js';
+import { compoundIdentityV4Active, patternCatalogId, patternAmount, CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW, compound, patternProperties, mintRight } from '../../rules/src/index.js';
 import { analyzePattern, PATTERN_LIMITS } from '../../rules/src/patterns.js';
 import { namePatterns, patternName } from '../lib/pattern-names.mjs';
 import { patternId, readInteger } from '../lib/api-values.mjs';
@@ -37,7 +37,7 @@ export function chooseClaims({ history, patterns = [], taken = {}, claimsPerWind
     const excluded = taken[pattern.number] ?? new Set();
     for (let block = 0; block < history.length && selected < budget; block++) {
       if (block > claimableHeight && block !== window || excluded.has(block)) continue;
-      if (!patternCount(pattern, history.get(block))) continue;
+      if (patternAmount(pattern, history.get(block)) === '0') continue;
       const row = plots.get(block) ?? { block, patterns: [] };
       row.patterns.push(readInteger(pattern.number)); plots.set(block, row); selected++;
     }
@@ -54,11 +54,11 @@ export function* searchPatterns({ history, patterns = [], settings } = {}) {
   const ranked = namedBaseline.map((original, order) => {
     let proposal = original;
     if (patterns.some(p => p.name === proposal.name &&
-      (p.pat !== proposal.pat || p.fld !== proposal.fld || p.dt !== proposal.dt))) {
+      (p.pat !== proposal.pat || p.fld !== proposal.fld || p.dt !== proposal.dt || p.amountMode === 'field-value'))) {
       proposal = { ...proposal, name: patternName(proposal, occupied) }; occupied.push(proposal);
     }
     const known = patterns.some(p => p.name === proposal.name ||
-      p.pat === proposal.pat && p.fld === proposal.fld && p.dt === proposal.dt);
+      p.pat === proposal.pat && p.fld === proposal.fld && p.dt === proposal.dt && p.amountMode !== 'field-value');
     if (!history) return { proposal, order, eligible: !known, rarity: 0 };
     const { counts, rarity } = analyzePattern(proposal, history);
     const eligible = !known && rarity >= (settings?.values.minMatchingBlocks ?? PATTERN_LIMITS.minMatchingBlocks) && (settings || !counts.every(n => n === counts[0]));

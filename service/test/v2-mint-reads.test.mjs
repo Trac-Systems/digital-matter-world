@@ -1,6 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, realpath } from 'node:fs/promises';
 import { provisioningFixture } from './provisioning-fixture.mjs';
 import { configFixture } from '../prod/test/helpers.mjs';
 import { migrateRegistry, updateRegistryAsset } from '../src/registry.mjs';
@@ -35,10 +35,12 @@ mock.module('../prod/trac.mjs', { exports: { configuredTrac: async () => {
 } } });
 const { productionReads } = await import('../prod/reads.mjs');
 
-for (const imported of [false, true]) test(`production mint reader authenticates ${imported ? 'imported p0' : 'pure p2'} finds and deployment definitions`, async t => {
+for (const mode of ['count', 'imported', 'field-value']) test(`production mint reader authenticates ${mode === 'imported' ? 'imported p0' : mode === 'field-value' ? 'field-value p2' : 'pure p2'} finds and deployment definitions`, async t => {
+  const imported = mode === 'imported';
   const f = await provisioningFixture(t), { config } = await configFixture(t);
   const asset = imported ? 'p0' : 'p2:1', catalogAsset = imported ? 'p2:0' : asset, number = catalogAsset.slice(3);
-  const definition = { ...f.pattern, number: Number(number), name: imported ? 'dmwflorite' : 'dmwnullspar', tier: 1 };
+  const definition = { ...f.pattern, number: Number(number), name: imported ? 'dmwflorite' : 'dmwnullspar', tier: 1,
+    ...(mode === 'field-value' ? { amountMode: mode, fld: 10, pat: '[0-9]' } : {}) };
   const pattern = { ...definition, number, key: r.hash('reader-pattern-' + asset), ...(imported ? { legacy: { asset, record: definition } } : {}) };
   const document = r.settingsRevision({ network: f.network, effectiveBatch: '1', effectiveBitcoinWindow: '0', values: { ...r.SETTINGS_PROFILE } });
   const named = r.emptyNamedDiscovery();
@@ -46,7 +48,7 @@ for (const imported of [false, true]) test(`production mint reader authenticates
   const saved = new r.NamedStorage({ get: () => undefined, cacheSize: 8 }).save(named);
   const snapshot = r.initialClaimSnapshot({ bitcoinAnchor: { height: '100' } }, '100'), claims = new r.ClaimStorage({ get: () => undefined, cacheSize: 8 });
   const hot = claims.load({ ...snapshot.hot, claimSnapshot: snapshot, claimRoot: r.claimStateRoot(snapshot) });
-  const find = { asset, block: '1', pattern: number, finder: definition.discoverer, count: '3', findHeight: '90', finderUntil: '200', settingsHash: r.hashObject(document) };
+  const find = { asset, block: '1', pattern: number, finder: definition.discoverer, count: mode === 'field-value' ? '2573394689' : '3', findHeight: '90', finderUntil: '200', settingsHash: r.hashObject(document) };
   hot.finds = r.recordSet(hot.finds, r.findIdV2('1', number), find);
   const claim = claims.save(hot);
   await f.store.transact([...saved.writes, ...claim.writes,
@@ -54,19 +56,25 @@ for (const imported of [false, true]) test(`production mint reader authenticates
     { space: 'patternsByAsset', id: catalogAsset, value: pattern }]);
   await writeFile(f.registryPath, JSON.stringify({ assets: {}, feePolicy: createFeePolicy('100') }));
   const job = await f.complete(asset, definition);
-  await migrateRegistry(f.registryPath);
+  const registryPath = mode === 'field-value' ? await realpath(f.registryPath) : f.registryPath;
+  await migrateRegistry(registryPath);
   active = { reads: f.reads, tip: { height: 100, hash: r.hash('block/100') }, context: { ready: true,
     catalogRoot: r.namedStateRoot(named), claimsRoot: claim.state.claimRoot, settings: document } };
   config.network = f.network;
   config.v2 = { document, resources: r.resourceRevision({ operator: 'test', values: { ...r.RESOURCE_PROFILE } }) };
-  config.prod.registry = f.registryPath; config.prod.warmReads = false;
+  config.prod.registry = registryPath; config.prod.warmReads = false;
   const reads = await productionReads(config, f.store); t.after(() => reads.close());
   for (const name of ['element', 'privilegeAuthority', 'included']) reads[name] = f.reads[name];
   reads.bindings.resolve = async () => null;
   const result = await reads.assetContext(asset, '1', 'tap');
   assert.deepEqual(result.find, find); assert.equal(result.deployment.id, job.entry.id);
   assert.equal(result.beneficiaries.finder, definition.discoverer); assert.ok(result.assetRevision);
+  if (mode === 'field-value') {
+    await updateRegistryAsset(registryPath, asset, entry => ({ ...entry, pattern: { ...entry.pattern, amountMode: 'count' } }));
+    await assert.rejects(reads.assetContext(asset, '1', 'tap'), /asset_provenance_deployment/);
+    await updateRegistryAsset(registryPath, asset, entry => ({ ...entry, pattern: { ...entry.pattern, amountMode: mode } }));
+  }
   // Registry hints cannot substitute another definition for the accepted one.
-  await updateRegistryAsset(f.registryPath, asset, entry => ({ ...entry, pattern: { ...entry.pattern, pat: '999' } }));
+  await updateRegistryAsset(registryPath, asset, entry => ({ ...entry, pattern: { ...entry.pattern, pat: '999' } }));
   await assert.rejects(reads.assetContext(asset, '1', 'tap'), /asset_provenance_deployment/);
 });

@@ -93,7 +93,7 @@ Paying works two ways. With TAP on Bitcoin, [Tap Wallet](https://chromewebstore.
 
 ## Rarity and the periodic table
 
-**How rare a pattern is.** A pattern's rarity is the number of blocks in Bitcoin's entire history where it occurs at least once. The committee counts it over all of history when the pattern is accepted, and anyone can count it again. Fewer blocks means rarer, a higher tier and a higher fee to make it real:
+**How rare a pattern is.** A pattern's rarity is the number of blocks in Bitcoin's entire history where it occurs at least once. The committee counts it over all of history when the pattern is accepted, and anyone can count it again. Fewer blocks means rarer and a higher tier. The flat fee policy charges the same mint fee at every tier:
 
 | Tier | Occurs in | Fee to make real |
 |---|---|---|
@@ -113,15 +113,15 @@ Rarity is only half of it. A pattern can appear several times in the same block,
 
 ## Who earns what
 
-Fees are set in TAP by the operator and can change. Existing requests keep their quoted fee.
+The flat fee policy uses the same operator-set TAP amount for every pattern mint, compound mint and Bitmap link. Its reference target is US $0.50; the TAP amount stays fixed until the operator updates it. Existing requests keep their quoted fee.
 
 | What | Fee |
 |---|---|
 | Make a found pattern real | {{price:find:1}}, {{price:find:2}}, {{price:find:3}}, {{price:find:4}} or {{price:find:5}}, by tier 1 to 5 |
-| Make a compound real | at least {{price:compound-minimum}}, depending on tier |
+| Make a compound real | {{price:compound-minimum}} per mint under the flat fee policy |
 | Link a Bitmap | {{price:link}}, once |
 
-These fees follow the live fee policy. Check your quote before paying;
+These values follow the live fee policy, including during the change to flat fees. Bitcoin network fees and Ethereum gas are separate. Check your quote before paying;
 existing requests keep their signed terms.
 
 Where a fee for making a found pattern real goes:

@@ -28,10 +28,26 @@ wildcards, lookarounds, backreferences, embedded flags, `*`, `+` or `{m,}`.
 A pattern matching the empty string is rejected. Letters `a-f` are syntactically
 valid in decimal patterns but cannot match decimal field strings.
 
-**Units = the number of non-overlapping global matches**, not matched characters
+By default, **units = the number of non-overlapping global matches**, not matched characters
 or overlapping windows. `7{3}` on `7777` gives one unit; `f{2}` on `ffff` gives
 two. Alternatives use JavaScript's left-to-right choice. No match gives zero
 units. Rarity counts blocks with at least one match; total counts all units.
+
+### Field value units
+
+V2 definitions can select `amountMode:"field-value"` after the coordinated
+activation height. The default remains regex match count. Value mode uses the
+same regex and field/dt grammar to select blocks, then awards the field's entire
+numeric value once; zero-valued blocks are omitted. Witness `count` and all unit
+amounts stay decimal strings. The mode belongs to the definition's identity;
+rarity still counts matching blocks. Local search can preview it before activation.
+TAP provisioning uses a pattern-free `name.FIELD.element`, with DMW's privilege
+authority enforcing block eligibility.
+
+`Pattern amount modes require v2 rules` means a legacy search/proposal path was
+given an amount mode; use the activated v2 context. `pattern_amount_inactive`
+means a proposal cannot yet be committed on the current chain.
+`pattern_amount_mode` rejects a value other than `count` or `field-value`.
 
 V2 requires accepted minMatchingBlocks distinct matching headers. Constant counts
 are allowed. Public knownMatchCount and knownOccurrenceTotal are revision-bound
@@ -214,6 +230,7 @@ on both versions. Grammar settings may tighten the hard bounds described above.
 | `pattern_empty_branch` | A branch is empty or contains only anchors. | Remove empty alternatives and give each branch an atom. |
 | `pattern_nullable` | The expression matches the empty string. | Require at least one character in every branch; remove wholly optional branches. |
 | `pattern_constant` | Legacy-only rejection; v2 allows constant counts. | On v2 use canonical-definition validation and accepted named witnesses; do not impose a constant-vector ban. |
+| `Pattern amount modes require v2 rules` | An amount mode was passed to the legacy search path. | Use a verified v2 rules context; omit the mode for legacy count searches. |
 | `pattern_too_rare` | Fewer than the accepted minMatchingBlocks named blocks match. | Broaden the expression and retain enough verified named witnesses. |
 | `pattern_duplicate` | v2: the same canonical definition is already accepted (or earlier in this search). Legacy v1: the complete count vector equals an existing pattern, even across fields. | Invent a different definition; a rename cannot fix it. |
 | `pattern_exists` | The name or assigned pattern number is already taken. | Choose another readable name for a distinct idea; refresh the catalog if numbering is stale. |

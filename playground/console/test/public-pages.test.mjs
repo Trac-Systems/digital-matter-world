@@ -193,6 +193,11 @@ test('About prices and the existing status cell follow the live policy and unava
   assert.deepEqual(await prices.allTextContents(), ['30 TAP', '20 TAP', '15 TAP', '10 TAP', '5 TAP',
     '5 TAP', '10 TAP', '15 TAP', '20 TAP', '30 TAP', '17.5 TAP', '12.5 TAP', '12.5 TAP']);
   assert.equal(await firstArticle.evaluate(node => node === document.querySelector('article.about')), true, 'status updates preserve the article');
+  policy = { ...policy, baseFee: '11142309577929313189', feeSettings: { tierMultipliers: [1, 1, 1, 1, 1], compoundMinimum: 1, link: 1 } };
+  await refresh();
+  assert.deepEqual(await prices.allTextContents(), Array(13).fill('11.14230957 TAP'));
+  assert.match(await fee.getAttribute('data-tip'), /Every pattern and compound mint: 11\.14230957 TAP; Bitmap link: 11\.14230957 TAP/);
+  assert.equal(await firstArticle.evaluate(node => node === document.querySelector('article.about')), true, 'flat fee refresh preserves the layout');
   unavailable = true;
   await refresh();
   assert.deepEqual(await prices.allTextContents(), fallback, 'failed reads clear stale prices');
@@ -201,7 +206,7 @@ test('About prices and the existing status cell follow the live policy and unava
   assert.deepEqual(await prices.allTextContents(), fallback, 'initial status failure keeps placeholders');
   unavailable = false;
   await refresh();
-  assert.equal(await prices.first().textContent(), '30 TAP', 'a later successful read restores prices');
+  assert.equal(await prices.first().textContent(), '11.14230957 TAP', 'a later successful read restores prices');
   assert.doesNotMatch(await p.locator('body').innerText(), /\bB\b|\{\{price:/);
   await p.getByRole('link', { name: 'Agents', exact: true }).click();
   await p.getByRole('heading', { name: 'Agents', exact: true }).waitFor();

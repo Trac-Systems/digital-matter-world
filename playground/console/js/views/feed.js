@@ -22,7 +22,7 @@ export function groupFinds(events) {
 }
 export function groupText(g) {
   const blocks = g.events.map(e => Number(e.data?.block)).filter(Number.isFinite);
-  const units = g.events.reduce((sum, e) => sum + (Number(e.data?.count ?? e.data?.amount) || 0), 0);
+  const units = g.events.reduce((sum, e) => sum + BigInt(e.data?.count ?? e.data?.amount ?? '0'), 0n);
   return `won ${fmtInt(units)} ${assetName(g.events[0].data?.asset)} in ${fmtInt(g.events.length)} blocks (${fmtInt(Math.min(...blocks))} – ${fmtInt(Math.max(...blocks))})`;
 }
 export const inspectGroup = g => inspect(`${fmtInt(g.events.length)} finds`, g.events);

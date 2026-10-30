@@ -1,5 +1,6 @@
 import { assert, exactKeys, hashObject, hex, stableJSON, utf8 } from './core.js';
-import { validateDefinition, countWith } from './patterns.js';
+import { validateDefinition } from './patterns.js';
+import { amountWith, fieldValueAmountActive } from './pattern-amount.js';
 import { discoveryCommitment } from '../legacy/v1/rules/src/discovery.js';
 import { uintV2, compareUint, nextUint, addUint, decimalV2 } from './integers-v2.js';
 import { namedGet, namedSet, namedRoot, EMPTY_NAMED_ROOT } from './named-index.js';
@@ -10,7 +11,8 @@ import { publicMintActive } from './public-mint.js';
 function policy(document) { validateSettingsDocument(document); return document.values; }
 export function canonicalDefinition(proposal, document) {
   const s = policy(document);
-  assert(exactKeys(proposal, ['name', 'pat', 'fld', 'dt']) && /^dmw[a-z0-9]{2,29}$/.test(proposal.name), 'pattern_name');
+  assert(exactKeys(proposal, ['name', 'pat', 'fld', 'dt', ...(Object.hasOwn(proposal, 'amountMode') ? ['amountMode'] : [])]) && /^dmw[a-z0-9]{2,29}$/.test(proposal.name), 'pattern_name');
+  assert(proposal.amountMode === undefined || ['count', 'field-value'].includes(proposal.amountMode), 'pattern_amount_mode');
   validateDefinition(proposal, { maxLength: s.patternMaxLength, maxLiteralDigits: s.patternMaxLiteralDigits,
     maxAlternatives: s.patternMaxAlternatives, maxAtoms: s.patternMaxAtoms, maxQuantifiers: s.patternMaxQuantifiers, minMatchingBlocks: s.minMatchingBlocks });
   assert(!new RegExp(proposal.pat).test(''), 'pattern_nullable');
@@ -24,7 +26,7 @@ export function canonicalDefinition(proposal, document) {
     }
     return '[' + [...chars].sort().join('') + ']';
   });
-  return { pat, fld: proposal.fld, dt: proposal.dt };
+  return { pat, fld: proposal.fld, dt: proposal.dt, ...(proposal.amountMode === 'field-value' ? { amountMode: proposal.amountMode } : {}) };
 }
 export const definitionKey = (proposal, document) => hashObject(['dmw-pattern-v2', canonicalDefinition(proposal, document)]);
 export function witnessRoot(matches) { return hashObject(['dmw-witnesses-v2', matches]); }
@@ -91,7 +93,7 @@ export function verifyNamedWitnesses(proposal, anchor, matches, settings, histor
   for (const m of matches) {
     const row = m.height === anchor.height ? anchorRow : checkHeader(history, m.height, m.hash);
     const field = proposal.fld === 4 ? m.height : (proposal.fld === 10 ? row.nonce : row.bits).toString(proposal.dt === 'h' ? 16 : 10);
-    assert(String(countWith(re, field)) === m.count, 'occurrence_count');
+    assert(amountWith(proposal, re, field) === m.count, 'occurrence_count');
   }
   return true;
 }
@@ -119,7 +121,7 @@ function storeRecord(next, record, settings) {
   write(next, `revision/${record.key}/${record.catalogRevision}`, record);
 }
 export function revealNamedDiscovery(state, { agent, commitmentId, proposal, salt, anchor, matches, witnessRoot: root,
-  tip, counted, receiptPosition, settings, currentSettings = settings, history, provenance = null }) {
+  tip, counted, executionHeight = counted, receiptPosition, settings, currentSettings = settings, history, provenance = null }) {
   const s = policy(settings); uintV2(tip); uintV2(receiptPosition);
   assert(Array.isArray(matches) && matches.length >= s.minMatchingBlocks && matches.length <= s.occurrencePageSize, 'discovery_witness_budget');
   assert(utf8(stableJSON({ proposal, anchor, matches })).length <= s.moveBytes, 'discovery_bytes');
@@ -128,6 +130,7 @@ export function revealNamedDiscovery(state, { agent, commitmentId, proposal, sal
   assert(c && !c.opened && compareUint(tip, c.eligible) >= 0 && (acceptedOpening || compareUint(tip, c.expires) <= 0), 'discovery_reveal_window');
   if (acceptedOpening) assert(stableJSON(acceptedOpening.original.proposal) === stableJSON(proposal), 'legacy_reveal_binding');
   assert(c.network === settings.network && c.settingsHash === hashObject(settings), 'discovery_settings');
+  assert(!Object.hasOwn(proposal, 'amountMode') || fieldValueAmountActive(executionHeight), 'pattern_name');
   const identity = definitionKey(proposal, settings);
   const expected = c.format === 1 ? discoveryCommitment(proposal, salt, agent) : namedCommitment({ proposal, salt, agent, anchor, matches, settings });
   assert(commitmentId === expected && root === witnessRoot(matches), 'discovery_opening');
@@ -136,7 +139,7 @@ export function revealNamedDiscovery(state, { agent, commitmentId, proposal, sal
   assert(!nameOwner || nameOwner === identity, 'pattern_exists');
   verifyNamedWitnesses(proposal, anchor, matches, settings, history, counted, s.minMatchingBlocks);
   const next = { ...state }, record = existing ? { ...existing } : {
-    key: identity, number: state.nextPattern, ...proposal, discoverer: agent, attribution: c,
+    key: identity, number: state.nextPattern, ...Object.fromEntries(Object.entries(proposal).filter(([k, v]) => k !== 'amountMode' || v !== 'count')), discoverer: agent, attribution: c,
     attributionCloses: c.expires, firstRevealPosition: receiptPosition, attributionProvisional: true,
     anchor, knownMatchCount: '0', knownOccurrenceTotal: '0', provenance,
     definitionSettingsHash: hashObject(settings),
@@ -174,7 +177,7 @@ export function challengeNamedCount(state, { patternKey, revision, height, histo
   const row = history.get(height); assert(row && String(row.height) === height, 'occurrence_header_missing');
   if (row.hash !== leaf.hash) return { outcome: 'reorg', reward: '0' };
   const field = record.fld === 4 ? height : (record.fld === 10 ? row.nonce : row.bits).toString(record.dt === 'h' ? 16 : 10);
-  return { outcome: String(countWith(new RegExp(record.pat, 'g'), field)) === leaf.count ? 'correct' : 'incorrect_count', reward: '0' };
+  return { outcome: amountWith(record, new RegExp(record.pat, 'g'), field) === leaf.count ? 'correct' : 'incorrect_count', reward: '0' };
 }
 export function closeNamedAttribution(state, { patternKey, tip, settings }) {
   uintV2(tip);
@@ -196,7 +199,7 @@ export function correctNamedOccurrence(state, { patternKey, revision, height, hi
   const leaf = namedGet(evidence, height); assert(leaf, 'occurrence_not_asserted');
   const row = history.get(height); assert(row && String(row.height) === height, 'occurrence_header_missing');
   const field = old.fld === 4 ? height : (old.fld === 10 ? row.nonce : row.bits).toString(old.dt === 'h' ? 16 : 10);
-  const count = String(countWith(new RegExp(old.pat, 'g'), field));
+  const count = amountWith(old, new RegExp(old.pat, 'g'), field);
   assert(row.hash !== leaf.hash || count !== leaf.count, 'occurrence_already_correct');
   const next = { ...state }, record = { ...old, correction: { height, previousHash: leaf.hash, canonicalHash: row.hash,
     reason: row.hash !== leaf.hash ? 'reorg' : 'incorrect_count', provenance } };

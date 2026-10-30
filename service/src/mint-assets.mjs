@@ -26,7 +26,7 @@ export async function mintAssetDefinition(store, requestedAsset) {
     const asset = pattern.legacy?.asset ?? catalogAsset;
     check(requestedAsset === catalogAsset || requestedAsset === asset, 'asset_unknown');
     const definition = pattern.legacy?.record ?? Object.fromEntries(
-      ['number', 'name', 'pat', 'fld', 'dt', 'discoverer'].filter(k => pattern[k] !== undefined).map(k => [k, pattern[k]]));
+      ['number', 'name', 'pat', 'fld', 'dt', 'amountMode', 'discoverer'].filter(k => pattern[k] !== undefined).map(k => [k, pattern[k]]));
     return { asset, catalogAsset, definition };
   }
   // v2 crafts are stored under compoundTypes, with their first maker.

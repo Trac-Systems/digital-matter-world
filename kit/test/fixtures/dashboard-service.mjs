@@ -72,7 +72,7 @@ export async function dashboardFixture(t, { http = false, site = false } = {}) {
       assert.equal(verifyFinancialMintRequest(network, r, body.signature, clock.counted), true);
       assert.equal(candidate(claims.find(f => f.asset === r.asset && f.block === r.block)).allowed, true);
       assert.equal(verifyPayer(network, body), true);
-      assert.equal(r.amount, '3'); assert.equal(body.receiver, binding.request.address); assert.equal(body.payer, binding.request.address);
+      assert.equal(r.amount, claims.find(f => f.asset === r.asset && f.block === r.block).count); assert.equal(body.receiver, binding.request.address); assert.equal(body.payer, binding.request.address);
       const evidence = { version: 2, requestId: id, owner: r.owner, asset: r.asset, amount: r.amount, receiver: body.receiver, payer: body.payer,
         rail: body.kind, expiry: r.expires, settingsHash: r.settingsHash, request: r, quote: body.feeQuote, signature: body.signature, authorization: body.authorization };
       const action = { type: 'reserve', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: hashObject(evidence), revision: '0', nonce: r.nonce, until: r.until };
