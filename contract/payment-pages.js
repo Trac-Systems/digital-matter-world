@@ -6,6 +6,7 @@ import { reserveFinancialCapacity, releaseFinancialCapacity } from './financial-
 import { applyFinancialLifecycle, financialUnfrozen } from './financial-lifecycle.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
 import { applyPublicScan } from './public-mint.js';
+import { applyPublicPayment } from './public-payment.js';
 
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
 const hash = value => bytesToHex(sha256(utf8ToBytes(canonicalJSON(value))));
@@ -25,7 +26,8 @@ export const paymentCreditDigest = (network, action) => {
 export async function applyPaymentPage(store, op, { network, height, settings = {}, capture = null }) {
   const limits = assetSettings(settings), clock = ordinalCodec(typeof height === 'string');
   check(op?.op === 'fp' && op.v === 2 && hex(op.id) && jsonBytes(op) <= limits.proofBytes, 'funding_operation');
-  if (op.type === 'public-scan') return applyPublicScan(store, op, { height, settings: limits });
+  if (op.type === 'public-scan') return applyPublicScan(store, op, { network, height, settings: limits });
+  if (op.type === 'public-payment') return applyPublicPayment(store, op, { network, height, settings: limits });
   if (op.type === 'lifecycle') return applyFinancialLifecycle(store, op, { network, height, limits });
   await financialUnfrozen(store, ['fp/' + op.id, 'fp/usage', ...(op.credit ? ['fc/' + op.credit] : [])]);
   const key = 'fp/' + op.id, old = await store.get(key), writes = [];

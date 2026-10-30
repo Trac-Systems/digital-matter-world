@@ -13,7 +13,7 @@ import { namedBatchEvidence } from './named-batch.mjs';
 import { buildCreditAccounts, AccountBatchOverlay } from './account-batch.mjs';
 import { publicFinancialOperations } from './public-financial.mjs';
 import { publishReceiptRenewal } from './receipt-renewal.mjs';
-import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
+import { readPublicWinner, readPublicWinnerBatch, publicClaimReaders } from './public-claim-readers.mjs';
 export class Pipeline {
   constructor({ store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns = [], settings = {}, limits = {}, replay = new Replay(), archiveWritePage = 256, pipelineDepth = 1 }) {
     Object.assign(this, { store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns, settings, limits, replay, archiveWritePage });
@@ -197,7 +197,8 @@ export class Pipeline {
       const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
       const publicMintRead = (asset, block) => readPublicWinner({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, asset, block);
       const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes'),
-        ...(publicClaimsActive ? { publicMintGet: publicMintRead } : {}) } : undefined;
+        ...(publicClaimsActive ? { publicMintGet: publicMintRead,
+          publicMintBatch: pairs => readPublicWinnerBatch({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, pairs) } : {}) } : undefined;
       const replay = async () => {
         const { claimEvidence, namedEvidence, ...output } = await this.replay.run(input, history, claimReads);
         if (claimEvidence) input.claimEvidence = claimEvidence;

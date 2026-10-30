@@ -11,6 +11,8 @@ import { PublicMintAdmission, openPublicMint } from './public-mint-admission.mjs
 import { discoverPublicMintPayments, publicPaymentReceipts } from './public-mint-discovery.mjs';
 import { newRequesterSecret, requesterSecretHash, publicMintTargetVisible, privatePublicMintView, privatePublicRefundView } from './public-mint-privacy.mjs';
 
+const registrationTransition = row => ({ type: 'public-payment', id: row.paymentRegistration.commitment,
+  action: 'register', registration: row.paymentRegistration });
 const refundView = row => ({ ...row, requestId: row.id, paymentId: row.reference });
 
 export class PublicMints {
@@ -77,6 +79,7 @@ export class PublicMints {
     }
     const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress }, await this.reads.batchStamp());
     const row = { id: q.id, publicMint: true, catalogAsset: resolved.catalogAsset, intent: q.intent, receiver: input.tapAddress, payer: input.tapAddress, kind: 'tap',
+      ...(q.registration ? { paymentRegistration: q.registration } : {}),
       request: { asset: resolved.asset, block, amount: q.amount, expires: q.feeQuote.validUntil }, expiry: q.feeQuote.validUntil, created: q.feeQuote.validFrom,
       quote: { ...q, payableAmount: q.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), baseFee: q.feeQuote.baseFee,
         feeSettings: q.feeQuote.feeSettings, actualTicker: q.deployment.tick, deploymentId: q.deployment.id },
@@ -85,7 +88,11 @@ export class PublicMints {
     const plot = rules.publicPlotId(resolved.asset, block);
     const secret = newRequesterSecret();
     const admitted = await this.admission.admit({ ...row, requesterSecretHash: requesterSecretHash(secret) }, ipHash, admitted => this.store.transact([{ space: 'mints', id: row.id, value: admitted }, { space: 'publicMintRequests', id: row.id, value: true },
+      ...(q.registration ? [{ space: 'publicMintCommitments', id: q.registration.commitment, value: row.id }] : []),
       { space: 'publicMintPlots', id: plot, value: { asset: resolved.asset, block } }]));
+    if (admitted.row.paymentRegistration) {
+      try { await this.registerPayment(admitted.row); } catch { /* Return the requester secret; durable registration retries on tick. */ }
+    }
     return { ...this.public(row.id, admitted.created ? secret : requesterSecret), ...(admitted.created ? { requesterSecret: secret } : {}) };
   }
   public(id, requesterSecret) {
@@ -97,10 +104,11 @@ export class PublicMints {
     // A checkout reserves nothing. Recheck before offering an unpaid request to the wallet.
     const current = !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length ? this.state(row.request.asset, row.request.block) : null;
     const unavailable = current && current.state !== 'public' ? current.state : null;
+    const registered = !row.paymentRegistration || !!this.store.get('accountRecords', rules.publicPaymentKey(row.paymentRegistration.commitment));
     const state = row.permit ? row.state : refunds.length && scan?.winner?.id !== id ? 'refundable' : lost ? 'someone_paid_first' : unavailable ?? row.state;
     const status = { ...publicMint(row), payer: row.payer, state, reservation: 'none', unitsConsumed: false, publicMint: true, catalogAsset: row.catalogAsset,
       ...(state === 'not_yet_public' && current?.publicFrom !== undefined ? { publicFrom: current.publicFrom } : {}),
-      payable: !unavailable && !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length,
+      payable: registered && !unavailable && !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length,
       refunds, winner: scan?.winner ? { id: scan.winner.id, tapAddress: scan.winner.tapAddress } : null,
       reason: refunds.find(refund => refund.reason === 'claimed_first')?.reason ?? (lost ? 'someone_paid_first' : refunds[0]?.reason ?? unavailable ?? row.reason ?? null), paymentPage: '/mint/' + id,
       ...(row.mintInscription ? { sentInscription: row.mintInscription } : {}) };
@@ -161,6 +169,10 @@ export class PublicMints {
     const writes = [];
     for (const { id } of rows) {
       const row = this.store.get('mints', id);
+      if (row?.paymentRegistration && BigInt(height) > BigInt(row.expiry)) {
+        const work = rules.hashObject(['dmw-financial-transition-v2', registrationTransition(row)]);
+        if (this.store.get('financialQueue', work) && !await this.parent.financial.expire(work, { counted: height })) continue;
+      }
       if (!openPublicMint(this.store, row, height)) writes.push({ space: 'publicMintRequests', id });
     }
     // Only release local checkout admission capacity. Retain every request and
@@ -174,9 +186,20 @@ export class PublicMints {
     if (this.running) return; this.running = true;
     try {
     await this.releaseFinishedRequests(this.store.get('meta', 'ruleState').counted);
+    const registrationAfter = this.store.get('meta', 'publicMintRegistrationCursor') ?? '';
+    let pending = this.store.list('publicMintRequests', { after: registrationAfter, limit: this.parent.resources.workPage });
+    if (!pending.length && registrationAfter) pending = this.store.list('publicMintRequests', { limit: this.parent.resources.workPage });
+    for (const { id } of pending) {
+      const row = this.store.get('mints', id);
+      if (row?.paymentRegistration && BigInt(row.expiry) >= BigInt(this.store.get('meta', 'ruleState').counted) &&
+          !this.store.get('accountRecords', rules.publicPaymentKey(row.paymentRegistration.commitment))) {
+        try { await this.registerPayment(row); } catch { /* The durable request is retried next tick. */ }
+      }
+    }
+    await this.store.put('meta', 'publicMintRegistrationCursor', pending.at(-1)?.id ?? '');
     await this.migrateSettledPlots(this.store.get('meta', 'ruleState').counted);
     try { await discoverPublicMintPayments(this, await this.reads.batchStamp()); }
-    catch (error) { await this.store.put('meta', 'publicMintDiscoveryFailure', { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' }); }
+    catch (error) { error = await this.revealPayment(error); await this.store.put('meta', 'publicMintDiscoveryFailure', { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' }); }
     const limit = this.document.values.publicMintScanBlocks;
     const after = this.store.get('meta', 'publicMintCursor') ?? '';
     let plots = this.store.list('publicMintPaidPlots', { after, limit }); if (!plots.length && after) plots = this.store.list('publicMintPaidPlots', { limit });
@@ -195,10 +218,25 @@ export class PublicMints {
         }
         const t = { type: 'public-scan', id, asset: value.asset, block: value.block, previous: rules.hashObject(state ?? null) };
         await this.reads.publicMintScan(t, at); await this.parent.financial.submit(t);
-      } catch (error) { if (error.message !== 'public_scan_pending') await this.store.put('publicMintFailures', id, { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' }); }
+      } catch (error) { error = await this.revealPayment(error); if (error.message !== 'public_scan_pending') await this.store.put('publicMintFailures', id, { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' }); }
     }
     await this.store.put('meta', 'publicMintCursor', plots.at(-1)?.id ?? '');
     } finally { this.running = false; }
+  }
+  async registerPayment(row) {
+    return this.parent.financial.submit(registrationTransition(row));
+  }
+  async revealPayment(error) {
+    if (error.message !== 'public_payment_unrevealed') return error;
+    const requestId = this.store.get('publicMintCommitments', error.commitment), row = requestId && this.store.get('mints', requestId);
+    if (row?.intent) {
+      const transition = { type: 'public-payment', id: error.commitment, action: 'reveal', intent: row.intent, reference: error.reference };
+      try {
+        await this.reads.publicMintPayment(transition, await this.reads.batchStamp());
+        await this.parent.financial.submit(transition);
+      } catch (revealError) { return revealError; }
+    }
+    return error;
   }
   async issue(winner, at) {
     let row = this.store.get('mints', winner.id);

@@ -64,6 +64,15 @@ for (const observationsPerBatch of [1, 3]) test(`financial intents pass policy, 
         await assert.rejects(adversary.approve(proposal), /financial_evidence_read/);
       }
       const approved = await policy.approve(proposal); approvals++;
+      // Reconstruct the exact financial batch twice from the same accepted
+      // predecessor, including after reopening the gateway above.
+      const context = await policyReads.batchContext();
+      const cold = rebuildBatch(network, proposal, context), repeated = rebuildBatch(network, proposal, context);
+      assert.deepEqual(repeated.batch, cold.batch);
+      assert.equal(repeated.digest, Buffer.from(batchDigest(network, proposal.batch)).toString('hex'));
+      assert.equal(repeated.digest, approved.digest);
+      assert.equal(cold.batch.root, proposal.batch.root);
+      assert.deepEqual(repeated.files.map(r.encodeBinary), cold.files.map(r.encodeBinary));
       return { signature: { compact: secp256k1.sign(approved.digest, committeeSecret, { lowS: true, prehash: false }).toCompactHex() } };
     } };
     const transport = { prepareMessage: async (op, value) => ({ op, value }), sendMessage: async m => {

@@ -5,5 +5,6 @@ export function accountSettings(document) {
     paymentPage: v.paymentPage, actions: v.accountActions, recoveryHeaders: v.recoveryHeaders, lockMin: v.lockMinBlocks, lockMax: v.lockMaxBlocks,
     ...(v.publicMintActivationHeight === undefined ? {} : { publicMintActivationHeight: v.publicMintActivationHeight, publicMintPageSize: v.publicMintPageSize }),
     ...(v.claimsNeverCloseHeight === undefined ? {} : { claimsNeverCloseHeight: v.claimsNeverCloseHeight }),
+    ...(v.publicPaymentV2Height === undefined ? {} : { publicPaymentV2Height: v.publicPaymentV2Height }),
     ...(v.bitmapMintOpenHeight === undefined ? {} : { bitmapMintOpenHeight: v.bitmapMintOpenHeight }) };
 }

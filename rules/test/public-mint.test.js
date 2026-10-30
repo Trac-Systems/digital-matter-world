@@ -145,3 +145,28 @@ test('open Bitmap mint settings are optional, exact, immutable and cannot retroa
   assert.equal(r.bitmapMintOpenActive({ bitmapMintOpenHeight: huge }, (BigInt(huge) - 1n).toString()), false);
   assert.equal(r.bitmapMintOpenActive({ bitmapMintOpenHeight: huge }, huge), true);
 });
+
+test('opaque payment and Bitmap heights are independently optional and immutable once introduced', () => {
+  for (const fields of [{ publicPaymentV2Height: '110' }, { bitmapMintOpenHeight: '105' }, { publicPaymentV2Height: '110', bitmapMintOpenHeight: '105' }]) {
+    const next = r.settingsRevision({ network: document.network, previous: document, effectiveBatch: '3', effectiveBitcoinWindow: '103', values: { ...document.values, ...fields } });
+    assert.equal(r.settingsSuccessor(document, next), next);
+    assert.equal(r.publicPaymentV2Active(next, '109'), false);
+    assert.equal(r.publicPaymentV2Active(next, '110'), fields.publicPaymentV2Height !== undefined);
+    for (const [key, value] of Object.entries(fields)) {
+      assert.equal(accountSettings(next)[key], value);
+      for (const remove of [false, true]) {
+        const values = { ...next.values, [key]: '111' }; if (remove) delete values[key];
+        const changed = r.settingsRevision({ network: document.network, previous: next, effectiveBatch: '4', effectiveBitcoinWindow: '104', values });
+        assert.throws(() => r.settingsSuccessor(next, changed), /boundary/);
+      }
+    }
+  }
+  for (const publicPaymentV2Height of [110, '0110', '-1', '99']) {
+    assert.throws(() => r.settingsRevision({ network: document.network, previous: document, effectiveBatch: '3', effectiveBitcoinWindow: '103',
+      values: { ...document.values, publicPaymentV2Height } }));
+  }
+  const early = r.settingsRevision({ network: document.network, previous: document, effectiveBatch: '3', effectiveBitcoinWindow: '103',
+    values: { ...document.values, publicPaymentV2Height: '102' } });
+  assert.throws(() => r.settingsSuccessor(document, early), /boundary/);
+  assert.equal(r.publicPaymentV2Active(document, '999999999999999999999999'), false);
+});

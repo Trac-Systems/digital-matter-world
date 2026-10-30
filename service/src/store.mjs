@@ -11,8 +11,8 @@ import { AuthenticatedIndex, evidenceKey } from './authenticated-index.mjs';
 import { exportableSpace, projectEvidence } from './evidence-projection.mjs';
 import { rules } from './rules.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
-import { projectionSchema, projectRevision } from './projection-state.mjs';
-import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset } from './public-projection-index.mjs';
+import { projectionSchema, projectRevision, flushProjectionRevisions } from './projection-state.mjs';
+import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset, consumesPublicRecord, flushPublicItems } from './public-projection-index.mjs';
 const run = promisify(execFile);
 const identity = async pid => (await run('ps', ['-p', String(pid), '-o', 'lstart='])).stdout.trim();
 export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096 });
@@ -110,6 +110,10 @@ export class Store {
     this.db.exec('CREATE TABLE IF NOT EXISTS evidence_values(space TEXT,id TEXT,value TEXT,PRIMARY KEY(space,id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS evidence_progress(id INTEGER PRIMARY KEY,ready INTEGER NOT NULL)');
     this.db.prepare('INSERT OR IGNORE INTO evidence_progress VALUES(1,?)').run(this.db.prepare('SELECT 1 FROM records LIMIT 1').get() ? 0 : 1);
     this.evidenceReady = this.db.prepare('SELECT ready FROM evidence_progress WHERE id=1').get().ready === 1;
+    this.evidenceDeleteStmt = this.db.prepare('DELETE FROM evidence_values WHERE space=? AND id=?');
+    this.evidencePutStmt = this.db.prepare('INSERT OR REPLACE INTO evidence_values VALUES(?,?,?)');
+    this.decimalProgressStmt = this.db.prepare('INSERT OR REPLACE INTO journal_progress VALUES(1,?)');
+    this.progressStmt = this.db.prepare('UPDATE progress SET sequence=? WHERE id=1');
     this.path = join(this.directory, 'pending.log'); this.fd = await open(this.path, 'a+', 0o600);
     const size = (await this.fd.stat()).size; let offset = 0, previous = null;
     const header = Buffer.alloc(36);
@@ -139,7 +143,7 @@ export class Store {
         .filter(r => patternLedgerAsset(r.value.asset) && !r.value.asset.startsWith('p2:'));
       this.db.exec('BEGIN IMMEDIATE');
       try {
-        for (const r of rows) projectPublicRecord(this, { space: 'finds', id: r.id, value: r.value }, null);
+        for (const r of rows) projectPublicRecord(this, { space: 'finds', id: r.id, value: r.value }, null, { rebuild: true });
         this.db.exec("INSERT INTO public_projection_fixes VALUES('legacy-pattern-finds'); COMMIT");
       } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     }
@@ -148,7 +152,7 @@ export class Store {
       try {
         for (const r of this.db.prepare("SELECT id,value FROM records WHERE space='mints'").iterate()) {
           const value = JSON.parse(r.value);
-          if (value.publicMint) projectPublicRecord(this, { space: 'mints', id: r.id, value }, null);
+          if (value.publicMint) projectPublicRecord(this, { space: 'mints', id: r.id, value }, null, { rebuild: true });
         }
         this.db.exec("INSERT INTO public_projection_fixes VALUES('public-mint-request-privacy'); COMMIT");
       } catch (e) { this.db.exec('ROLLBACK'); throw e; }
@@ -165,7 +169,8 @@ export class Store {
   applyOperation(op) {
     if (op.space === 'meta' && op.id === 'ruleState') this.publicProjectionActive = op.value?.batchVersion === 2;
     if (this.publicProjectionActive) {
-      projectRevision(this, op); projectPublicRecord(this, op, this.get(op.space, op.id));
+      projectRevision(this, op);
+      if (consumesPublicRecord(op.space)) projectPublicRecord(this, op, this.get(op.space, op.id));
     }
     if (this.evidenceReady) this.indexEvidence(op);
     if (op.value === undefined) this.delStmt.run(op.space, String(op.id));
@@ -174,6 +179,7 @@ export class Store {
   apply(rows) {
     const previousProjection = this.publicProjectionActive;
     this.db.exec('BEGIN IMMEDIATE');
+    this.projectionRevisions = new Map(); this.projectionItems = new Map();
     try {
       for (const row of rows) {
         if (row.stage) this.stageStmt.run(row.stage.tx, row.stage.part, row.stage.data);
@@ -192,24 +198,26 @@ export class Store {
           this.clearStagesStmt.run(row.commit.tx);
         } else for (const op of row.operations) this.applyOperation(op);
       }
+      flushPublicItems(this); flushProjectionRevisions(this);
       const decimal = this.decimalSequence || this.publicProjectionActive;
       const sequence = decimal ? rules.decimalV2(rows.at(-1).sequence) : rows.at(-1).sequence;
-      if (decimal) this.db.prepare('INSERT OR REPLACE INTO journal_progress VALUES(1,?)').run(sequence);
-      else this.db.prepare('UPDATE progress SET sequence=? WHERE id=1').run(sequence);
+      if (decimal) this.decimalProgressStmt.run(sequence);
+      else this.progressStmt.run(sequence);
       this.db.exec('COMMIT'); this.sequence = sequence;
       this.decimalSequence = decimal;
     } catch (e) { this.db.exec('ROLLBACK'); this.publicProjectionActive = previousProjection; throw e; }
+    finally { this.projectionRevisions = this.projectionItems = null; }
   }
   indexEvidence({ space, id, value }) {
     id = String(id);
     if (!exportableSpace(space)) return;
     const projected = projectEvidence(space, id, value ?? null), key = evidenceKey(space, id);
     if (projected == null) {
-      this.db.prepare('DELETE FROM evidence_values WHERE space=? AND id=?').run(space, id);
+      this.evidenceDeleteStmt.run(space, id);
       this.evidenceIndex.set(key, null);
     } else {
-      const text = rules.stableJSON(JSON.parse(JSON.stringify(projected)));
-      this.db.prepare('INSERT OR REPLACE INTO evidence_values VALUES(?,?,?)').run(space, id, text);
+      const text = canonicalEvidenceJSON(projected);
+      this.evidencePutStmt.run(space, id, text);
       this.evidenceIndex.set(key, hash(text));
     }
     // Legacy catalogs are still committed as arrays. Publish a point index so
@@ -335,4 +343,12 @@ export class Store {
     await this.fd?.close(); this.db?.close();
     if (this.lock) { await this.lock.close(); const owned = JSON.parse(await readFile(this.lockPath, 'utf8')); check(owned.token === this.lockIdentity?.token, 'store_lock_changed'); await unlink(this.lockPath); }
   }
+}
+
+// Canonical JSON accepts only JSON values (and rejects -0, nonfinite numbers,
+// undefined and sparse arrays). On that domain the round trip is an identity.
+// Keep normalization for legacy callers that supply structured-clone values.
+export function canonicalEvidenceJSON(value) {
+  try { return rules.stableJSON(value); }
+  catch { return rules.stableJSON(JSON.parse(JSON.stringify(value))); }
 }

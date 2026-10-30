@@ -1,7 +1,7 @@
 import { patternCatalogId } from './mint-assets.mjs';
 import { rules } from './rules.mjs';
 import { heightKey } from './util.mjs';
-import { bumpProjection } from './projection-state.mjs';
+import { bumpProjection, projectionStatement } from './projection-state.mjs';
 import { rankingSchema, rankFind } from './public-rankings.mjs';
 import { publicMintTargetVisible } from './public-mint-privacy.mjs';
 export const PUBLIC_SORTS = {
@@ -44,33 +44,68 @@ export function publicProjectionSchema(db) {
 }
 // Pattern ledger assets: v2 p2:N, and imported v1 patterns that keep their ledger asset (p0).
 export const patternLedgerAsset = asset => typeof asset === 'string' && (asset.startsWith('p2:') || /^p[0-9a-z]{1,23}$/.test(asset));
-export function projectPublicRecord(store, op, previous) {
+const publicSpaces = new Set(['catalogPatterns', 'catalogTypes', 'catalogAgents', 'finds', 'rankExpiry', 'links', 'minted',
+  'publicBalances', 'submittedBitmaps', 'publicEvents', 'publicSupply', 'mints', 'linkRequests', 'payoutTotals', 'commissionOwed', 'payoutPaid']);
+export const consumesPublicRecord = space => publicSpaces.has(space) || ['discoveriesByAgent/', 'findsByAgent/', 'publicResults/', 'window/'].some(prefix => space.startsWith(prefix));
+const sortsByKind = new Map(Object.entries(PUBLIC_SORTS).map(([kind, sorts]) => [kind, sorts.split(' ')]));
+function sortKey(value, sort, id) {
+  let v = sort === 'id' ? id : value[sort] ?? (sort === 'mass' ? value.properties?.mass : undefined);
+  if (typeof v === 'boolean') v = Number(v);
+  return v == null ? '' : numeric.has(sort) && /^(0|[1-9][0-9]*)$/.test(String(v)) ? rules.uintKeyV2(String(v)) : String(v);
+}
+function writeItem(store, { kind, scope, key, value, position, rebuild }) {
+  const sql = text => projectionStatement(store.db, text);
+  const previous = sql('SELECT value,position,owner,asset,block,state FROM publicItemsV2 WHERE kind=? AND scope=? AND id=?').get(kind, scope, key);
+  if (!!previous !== (value != null)) {
+    const prior = sql('SELECT n FROM publicItemCountsV2 WHERE kind=? AND scope=?').get(kind, scope)?.n ?? '0';
+    sql('INSERT OR REPLACE INTO publicItemCountsV2 VALUES(?,?,?)').run(kind, scope, String(BigInt(prior) + (value == null ? -1n : 1n)));
+  }
+  if (value == null) {
+    if (previous) {
+      sql('DELETE FROM publicOrderV2 WHERE kind=? AND scope=? AND id=?').run(kind, scope, key);
+      sql('DELETE FROM publicItemsV2 WHERE kind=? AND scope=? AND id=?').run(kind, scope, key);
+    }
+    return;
+  }
+  const text = JSON.stringify(value), columns = [value.owner ?? value.finder ?? value.agent ?? '', value.asset ?? '',
+    value.block == null ? '' : rules.decimalV2(value.block), value.state ?? value.action ?? ''];
+  const changedColumns = previous && ['owner', 'asset', 'block', 'state'].some((name, i) => previous[name] !== columns[i]);
+  if (!rebuild && previous && previous.value === text && previous.position === position && !changedColumns) return;
+  sql('INSERT INTO publicItemsV2 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(kind,scope,id) DO UPDATE SET value=excluded.value,position=excluded.position,owner=excluded.owner,asset=excluded.asset,block=excluded.block,state=excluded.state')
+    .run(kind, scope, key, text, position, ...columns);
+  if (changedColumns) sql('UPDATE publicOrderV2 SET owner=?,asset=?,block=?,state=? WHERE kind=? AND scope=? AND id=?').run(...columns, kind, scope, key);
+  // Explicit migrations repair old/inconsistent sort rows as well as values.
+  if (rebuild) sql('DELETE FROM publicOrderV2 WHERE kind=? AND scope=? AND id=?').run(kind, scope, key);
+  const old = !rebuild && previous ? JSON.parse(previous.value) : null;
+  for (const sort of sortsByKind.get(kind) ?? ['id']) {
+    const order = sortKey(value, sort, key), prior = old === null ? null : sortKey(old, sort, key);
+    if (old !== null && order === prior) continue;
+    if (old !== null) sql('DELETE FROM publicOrderV2 WHERE kind=? AND scope=? AND sort=? AND key=? AND id=?').run(kind, scope, sort, prior, key);
+    sql('INSERT INTO publicOrderV2 VALUES(?,?,?,?,?,?,?,?,?)').run(kind, scope, sort, order, key, ...columns);
+  }
+}
+export function flushPublicItems(store) {
+  for (const item of store.projectionItems?.values() ?? []) writeItem(store, item);
+  store.projectionItems?.clear();
+}
+export function projectPublicRecord(store, op, previous, { rebuild = false } = {}) {
   const { db } = store, id = String(op.id), row = op.value;
   const item = (kind, scope, key, value, position = key) => {
+    // Preserve every logical invalidation, even when physical writes coalesce.
     bumpProjection(store, `items/${kind}/${scope}`);
-    const existed = !!db.prepare('SELECT 1 FROM publicItemsV2 WHERE kind=? AND scope=? AND id=?').get(kind, scope, key);
-    if (existed !== (value != null)) {
-      const prior = db.prepare('SELECT n FROM publicItemCountsV2 WHERE kind=? AND scope=?').get(kind, scope)?.n ?? '0';
-      const n = BigInt(prior) + (value == null ? -1n : 1n);
-      db.prepare('INSERT OR REPLACE INTO publicItemCountsV2 VALUES(?,?,?)').run(kind, scope, String(n));
-    }
-    db.prepare('DELETE FROM publicOrderV2 WHERE kind=? AND scope=? AND id=?').run(kind, scope, key);
-    if (value == null) db.prepare('DELETE FROM publicItemsV2 WHERE kind=? AND scope=? AND id=?').run(kind, scope, key);
-    else db.prepare('INSERT OR REPLACE INTO publicItemsV2 VALUES(?,?,?,?,?,?,?,?,?)').run(kind, scope, key, JSON.stringify(value), position,
-      value.owner ?? value.finder ?? value.agent ?? '', value.asset ?? '', value.block == null ? '' : rules.decimalV2(value.block), value.state ?? value.action ?? '');
-    if (value != null) for (const sort of (PUBLIC_SORTS[kind] ?? 'id').split(' ')) {
-      let v = sort === 'id' ? key : value[sort] ?? (sort === 'mass' ? value.properties?.mass : undefined);
-      if (typeof v === 'boolean') v = Number(v);
-      const order = v == null ? '' : numeric.has(sort) && /^(0|[1-9][0-9]*)$/.test(String(v)) ? rules.uintKeyV2(String(v)) : String(v);
-      db.prepare('INSERT INTO publicOrderV2 VALUES(?,?,?,?,?,?,?,?,?)').run(kind, scope, sort, order, key,
-        value.owner ?? value.finder ?? value.agent ?? '', value.asset ?? '', value.block == null ? '' : rules.decimalV2(value.block), value.state ?? value.action ?? '');
-    }
+    const entry = { kind, scope, key, value, position, rebuild }, identity = JSON.stringify([kind, scope, key]);
+    if (!store.projectionItems) return writeItem(store, entry);
+    // Iterable journal transactions can be arbitrarily large. Keep this bounded.
+    const pending = store.projectionItems.get(identity);
+    if (store.projectionItems.size >= 128 || pending &&
+      (pending.position !== position || JSON.stringify(pending.value ?? null) !== JSON.stringify(value ?? null))) flushPublicItems(store);
+    store.projectionItems.set(identity, entry);
   };
   const block = (height, field, delta) => {
     bumpProjection(store, 'world');
     const h = rules.decimalV2(height), k = rules.uintKeyV2(h);
-    db.prepare('INSERT OR IGNORE INTO publicBlocksV2(heightKey,height) VALUES(?,?)').run(k, h);
-    db.prepare(`UPDATE publicBlocksV2 SET ${field}=${field}+? WHERE heightKey=?`).run(delta, k);
+    projectionStatement(db, 'INSERT OR IGNORE INTO publicBlocksV2(heightKey,height) VALUES(?,?)').run(k, h);
+    projectionStatement(db, `UPDATE publicBlocksV2 SET ${field}=${field}+? WHERE heightKey=?`).run(delta, k);
   };
   if (op.space.startsWith('discoveriesByAgent/')) item('discoveries', op.space.slice(19), id, row && { ...row, asset: id, state: 'accepted' });
   if (op.space === 'catalogPatterns') item('patterns', '', id, row && { ...row, asset: id, rarity: row.knownMatchCount, countMeaning: 'verified_submitted_blocks' }, row ? rules.uintKeyV2(rules.decimalV2(row.number)) : id);
@@ -81,12 +116,12 @@ export function projectPublicRecord(store, op, previous) {
     const f = row ?? previous, h = rules.decimalV2(f.block), pos = rules.uintKeyV2(h);
     for (const scope of ['', 'owner/' + f.finder, 'block/' + h]) item('finds', scope, id, row, pos);
     block(h, 'finds', Number(!!row) - Number(!!previous));
-    if (row) db.prepare('INSERT OR REPLACE INTO publicRightsV2 VALUES(?,?,?,?,?,?,?,?)').run(id, row.asset, h, pos, row.finder,
+    if (row) projectionStatement(db, 'INSERT OR REPLACE INTO publicRightsV2 VALUES(?,?,?,?,?,?,?,?)').run(id, row.asset, h, pos, row.finder,
       rules.uintKeyV2(rules.decimalV2(row.finderUntil)), rules.uintKeyV2(rules.decimalV2(row.count)), JSON.stringify(row));
-    else db.prepare('DELETE FROM publicRightsV2 WHERE id=?').run(id);
+    else projectionStatement(db, 'DELETE FROM publicRightsV2 WHERE id=?').run(id);
   }
   if (op.space.startsWith('findsByAgent/') && row) rankFind(store, id, row, store.get('catalogPatterns', row.asset) ?? store.get('patternsByAsset', row.asset));
-  if (op.space === 'rankExpiry' && row) db.prepare('DELETE FROM publicRanksV2 WHERE kind=? AND id=?').run(row.kind, row.id);
+  if (op.space === 'rankExpiry' && row) projectionStatement(db, 'DELETE FROM publicRanksV2 WHERE kind=? AND id=?').run(row.kind, row.id);
   if (op.space === 'links') {
     const value = row ?? previous;
     if (value?.block != null) {
@@ -97,21 +132,21 @@ export function projectPublicRecord(store, op, previous) {
   if (op.space === 'minted' && patternLedgerAsset(id.split('/')[0])) {
     const [ledger, height] = id.split('/'), asset = patternCatalogId(ledger);
     block(height, 'mints', Number(!!row) - Number(!!previous));
-    db.prepare('UPDATE claimedBlocksV2 SET minted=? WHERE asset=? AND heightKey=?').run(Number(!!row), asset, rules.uintKeyV2(height));
+    projectionStatement(db, 'UPDATE claimedBlocksV2 SET minted=? WHERE asset=? AND heightKey=?').run(Number(!!row), asset, rules.uintKeyV2(height));
     bumpProjection(store, 'mintedAsset/' + asset);
   }
   if (op.space === 'publicBalances') {
     const value = row ?? previous;
-    if (row) db.prepare('INSERT OR REPLACE INTO publicBalancesV2 VALUES(?,?,?,?)').run(row.owner, row.asset, row.amount, rules.uintKeyV2(row.amount));
-    else if (value) db.prepare('DELETE FROM publicBalancesV2 WHERE owner=? AND asset=?').run(value.owner, value.asset);
+    if (row) projectionStatement(db, 'INSERT OR REPLACE INTO publicBalancesV2 VALUES(?,?,?,?)').run(row.owner, row.asset, row.amount, rules.uintKeyV2(row.amount));
+    else if (value) projectionStatement(db, 'DELETE FROM publicBalancesV2 WHERE owner=? AND asset=?').run(value.owner, value.asset);
     if (value) item('balances', value.owner, value.asset, row);
   }
   if (op.space === 'submittedBitmaps') {
     if (previous) item('bitmaps', previous.agent, id, null);
     if (row) {
-      db.prepare('INSERT OR REPLACE INTO publicBitmapV2 VALUES(?,?,?,?)').run(row.block, row.agent, row.address, JSON.stringify(row));
+      projectionStatement(db, 'INSERT OR REPLACE INTO publicBitmapV2 VALUES(?,?,?,?)').run(row.block, row.agent, row.address, JSON.stringify(row));
       item('bitmaps', row.agent, id, { ...row, height: row.block, linked: !!store.get('links', heightKey(row.block)) }, id);
-    } else if (previous) db.prepare('DELETE FROM publicBitmapV2 WHERE block=?').run(previous.block);
+    } else if (previous) projectionStatement(db, 'DELETE FROM publicBitmapV2 WHERE block=?').run(previous.block);
   }
   if (op.space === 'publicEvents') {
     item('events', '', id, row, row ? rules.uintKeyV2(rules.decimalV2(row.sequence)) : id);

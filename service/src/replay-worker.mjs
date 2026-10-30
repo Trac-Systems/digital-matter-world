@@ -2,9 +2,20 @@ import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import { rules, processObservation } from './rules.mjs';
 import { NodeEvidence } from './node-evidence.mjs';
+import { PublicMintPrefetch } from '../../rules/src/public-mint-prefetch.js';
 parentPort.on('message', ({ id, input, headers, length, database, branch, shared, publicMintShared, headerPageSize, claimDatabase, claimCacheKiB, claimNodes, namedNodes, headerCachePages = 8, cacheKiB = 4096 }) => {
   let db, claimDb;
   try {
+    const publicMints = new PublicMintPrefetch(id, (pairs, snapshot) => {
+      const control = new Int32Array(publicMintShared, 0, 2);
+      Atomics.store(control, 0, 0); parentPort.postMessage({ id, requestPublicMints: pairs, snapshot });
+      Atomics.wait(control, 0, 0);
+      if (Atomics.load(control, 0) !== 1) throw Error('public_mint_evidence_missing');
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(publicMintShared, 8, Atomics.load(control, 1))));
+    }, !!input.settings?.document && rules.claimsNeverCloseActive(input.settings, input.executionHeight ?? input.height));
+    for (const [, row] of namedNodes ?? []) publicMints.node(row);
+    for (const [, row] of claimNodes ?? []) publicMints.node(row);
+    publicMints.seed(input);
     const decimal = !!input.settings?.document;
     const rows = new Map(headers), pages = new Map(); let pageQuery;
     if (database) {
@@ -66,21 +77,15 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
       namedNodeGet = id => {
         const raw = namedStaged.has(id) ? null : namedQuery.get(id);
         const row = namedStaged.get(id) ?? (raw ? JSON.parse(raw.value) : undefined);
-        namedProof.add(id, row); return row;
+        namedProof.add(id, row); publicMints.node(row); return row;
       };
       claimNodeGet = id => {
         const raw = staged.has(id) ? null : query.get(id), row = staged.get(id) ?? (raw ? JSON.parse(raw.value) : undefined);
-        claimProof.add(id, row);
+        claimProof.add(id, row); publicMints.node(row);
         return row;
       };
     }
-    const publicMintGet = (asset, block) => {
-      const control = new Int32Array(publicMintShared, 0, 2);
-      Atomics.store(control, 0, 0); parentPort.postMessage({ id, requestPublicMint: [asset, block] });
-      Atomics.wait(control, 0, 0);
-      if (Atomics.load(control, 0) !== 1) throw Error('public_mint_evidence_missing');
-      return new TextDecoder().decode(new Uint8Array(publicMintShared, 8, Atomics.load(control, 1))) || null;
-    };
+    const publicMintGet = (asset, block) => publicMints.get(asset, block);
     const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet, publicMintGet });
     parentPort.postMessage({ id, output: claimDatabase ? { ...output, claimEvidence: claimProof.value(), namedEvidence: namedProof.value() } : output });
   } catch (e) { parentPort.postMessage({ id, error: e.message }); }

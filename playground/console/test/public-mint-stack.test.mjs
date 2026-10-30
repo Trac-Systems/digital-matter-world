@@ -14,7 +14,7 @@ import { tapWallet1049 } from '../../../kit/test/tap-wallet-1049-fixture.mjs';
 
 // The gateway, five HTTP signer policies, financial batches and notary are real
 // local fixtures. Only the wallet extension and Bitcoin/TAP indexing are mocked.
-test('a TAP-only browser deploys and mints a public block through the activated v2 stack', { timeout: 180000 }, async t => {
+for (const opaque of [false, true]) test(`a TAP-only browser deploys and mints a public block through the activated v2 stack; opaque=${opaque}`, { timeout: 180000 }, async t => {
   await v2StackFixture(t, { finderWindow: 2, scenario: async s => {
     const { store, files, history, contract, network, document, drain, legacyRecord, players } = s;
     const asset = 'p2:0', ledger = 'p0', block = '201';
@@ -23,7 +23,8 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     await drain();
     const successor = r.settingsRevision({ network, previous: document,
       effectiveBatch: r.addUint((await contract.state().batchLast()).n, '2'), effectiveBitcoinWindow: '1012',
-      values: { ...document.values, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '1013', publicMintLegacyFinderWindow: 2 } });
+      values: { ...document.values, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '1013', publicMintLegacyFinderWindow: 2,
+        ...(opaque ? { publicPaymentV2Height: '1013' } : {}) } });
     assert.equal(await contract.run('ad_settings', { document: successor }), null);
     await s.advance(1011); assert.equal(await contract.run('ad_apply', { id: 'settings' }), null);
     await s.advance(1012); assert.equal(contract.db.get('v2/settings').revision, successor.revision);
@@ -71,6 +72,10 @@ test('a TAP-only browser deploys and mints a public block through the activated 
       if (method === 'singleTxTransfer') {
         payments++; assert.equal(payments, 1);
         const status = store.get('mints', checkoutId).quote; assert.deepEqual(args[0], r.walletFeeItems(status.fees, 'regtest'));
+        if (opaque) {
+          assert.ok(args[0].every(item => /^dmw-public-pay-v2\|[0-9a-f]{64}\|[a-zA-Z]+$/.test(item.dta)));
+          await s.advance(Number((await s.stamp()).counted) + 1);
+        }
         const payload = { p: 'tap', op: 'token-auth', redeem: { items: args[0] } };
         const payment = buildInscription({ text: JSON.stringify(payload), receiver: f.receiver, publicKey: f.bitcoinPublic, network: 'regtest', feeRate: 1, maxFeeSats: '1000000',
           utxos: [{ txid: r.hash('browser-payment'), vout: 0, value: '10000000', script, confirmed: true, cardinal: true }] });
@@ -130,6 +135,19 @@ test('a TAP-only browser deploys and mints a public block through the activated 
     assert.equal(f.mints.public(checkoutId).payer, f.receiver);
     assert.equal(f.mints.public(checkoutId).block, undefined);
     assert.ok(await page.evaluate(id => /^[0-9a-f]{64}$/.test(localStorage.getItem('dmw-public-mint-requester/' + id)), checkoutId));
+    if (opaque) {
+      const requesterSecret = await page.evaluate(id => localStorage.getItem('dmw-public-mint-requester/' + id), checkoutId);
+      assert.equal(f.mints.public(checkoutId, requesterSecret).payable, false, 'Pay waits for accepted opaque registration');
+      const row = store.get('mints', checkoutId);
+      assert.equal(contract.db.get(r.publicPaymentKey(row.paymentRegistration.commitment)), undefined);
+      await drain();
+      const accepted = contract.db.get(r.publicPaymentKey(row.paymentRegistration.commitment));
+      assert.equal(accepted.registration.commitment, row.paymentRegistration.commitment);
+      assert.equal(accepted.intent, undefined, 'registration reveals no target');
+      assert.equal(f.mints.public(checkoutId).block, undefined, 'PF1 anonymity remains intact');
+      assert.equal(f.mints.public(checkoutId, requesterSecret).payable, true);
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    }
     await page.getByRole('button', { name: 'Pay missing items', exact: true }).waitFor();
     assert.ok(requests.some(r => r.path === '/mint/' + checkoutId && r.requester), 'the requester browser authenticates its status reads');
     await page.getByRole('button', { name: 'Pay missing items', exact: true }).click();

@@ -11,6 +11,7 @@ export * from './batch.js';
 export * from './operations.js';
 export * from './mint-rights.js';
 export * from './public-mint.js';
+export * from './public-payment.js';
 export * from './public-claims.js';
 export * from './block-lists.js';
 export * from './binary.js';

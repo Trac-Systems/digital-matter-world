@@ -3,6 +3,7 @@ import { assert, hex, hashObject, stableJSON, exactKeys } from './core.js';
 import { financialLifecyclePlan, reserveCapacity, terminalCapacity } from './financial-lifecycle.js';
 import { publicMintActive, publicPlotId, claimsNeverCloseActive } from './public-mint.js';
 import { validatePublicScanClaim } from './public-claims.js';
+import { publicPaymentV2Active, publicPaymentKey } from './public-payment.js';
 
 // Financial evidence is independently reconstructed by every signer. These
 // plans bind it to exact notary effects; a gateway cannot smuggle arbitrary
@@ -20,6 +21,16 @@ async function financialEffects(input, { read, height, document }) {
   const clock = ordinalCodec(typeof height === 'string');
   const t = input.transition, evidence = hashObject(input.evidence);
   assert(t && hex(t.id, 32), 'financial_identity');
+  if (t.type === 'public-payment') {
+    const e = input.evidence, register = t.action === 'register';
+    assert(publicPaymentV2Active(document, height) && ['register', 'reveal'].includes(t.action) &&
+      exactKeys(t, ['type', 'id', 'action', ...(register ? ['registration'] : ['intent', 'reference'])]) &&
+      e.requestId === t.id && e.action === t.action && e.previous === hashObject(await read(publicPaymentKey(t.id)) ?? null) &&
+      (register ? stableJSON(t.registration) === stableJSON(e.registration) :
+        stableJSON(t.intent) === stableJSON(e.intent) && t.reference === e.reference), 'public_payment_binding');
+    const { requestId, ...fields } = e;
+    return [{ op: 'fp', v: 2, type: 'public-payment', id: t.id, ...fields }];
+  }
   if (t.type === 'public-scan') {
     const e = input.evidence;
     if (claimsNeverCloseActive(document, height)) validatePublicScanClaim(e.claim, t.asset);

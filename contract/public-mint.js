@@ -4,6 +4,7 @@ import { hashObject, hex, stableJSON } from '../rules/src/core.js';
 import { uintV2 } from '../rules/src/integers-v2.js';
 import { reserveFinancialCapacity } from './financial-capacity.js';
 import { financialUnfrozen } from './financial-lifecycle.js';
+import { validatePublicPaymentSettlement } from './public-payment.js';
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
 export const publicScanKey = id => 'fp/public/' + id;
 export const publicRefundKey = payment => 'fp/public-refund/' + hashObject([payment.id, payment.reference]);
@@ -11,7 +12,7 @@ const cursor = c => c && ['height', 'transactionIndex', 'inscriptionIndex'].ever
 
 // Only a quorum-certified complete Bitcoin prefix can advance this cursor.
 // Starting a checkout never creates an account, hold or capacity reservation.
-export async function applyPublicScan(store, op, { height, settings }) {
+export async function applyPublicScan(store, op, { network, height, settings }) {
   check(publicMintActive(settings, height), 'public_mint_inactive');
   const key = publicScanKey(op.id), old = await store.get(key);
   await financialUnfrozen(store, [key, 'fp/chain']);
@@ -24,6 +25,7 @@ export async function applyPublicScan(store, op, { height, settings }) {
     typeof p.complete === 'boolean' && p.asset === op.asset && p.block === op.block && typeof p.tapAddress === 'string' && p.tapAddress.length <= 128 &&
     Array.isArray(p.fees) && p.fees.length <= settings.paymentPage && p.fees.every(f => typeof f.amount === 'string' && /^[1-9][0-9]*$/.test(f.amount)) &&
     paymentOrder(p, op.from) >= 0 && paymentOrder(p, op.next) < 0 && (!i || paymentOrder(op.payments[i - 1], p) < 0)), 'public_scan_payments');
+  for (const payment of op.payments) await validatePublicPaymentSettlement(store, payment, { network, height, settings });
   const active = claimsNeverCloseActive(settings, height);
   if (active) {
     // Agent state is authenticated by the independently replayed quorum batch.

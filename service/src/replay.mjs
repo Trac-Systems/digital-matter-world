@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
+import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 // One computational worker isolates regex/history scans and batch signature
 // verification from HTTP.
 export class Replay {
@@ -47,11 +48,19 @@ export class Replay {
         const done = () => { clearTimeout(timer); this.worker.off('message', message); this.worker.off('error', error); this.worker.off('exit', exit); };
         const message = msg => {
           if (msg.id !== id) return;
-          if (msg.requestPublicMint) {
+          if (msg.requestPublicMints) {
             const control = new Int32Array(publicMintShared, 0, 2);
-            void Promise.resolve().then(() => claims?.publicMintGet?.(...msg.requestPublicMint)).then(answer => {
-              check(answer === null || rules.hex(answer, 32), 'public_mint_evidence_missing');
-              const bytes = new TextEncoder().encode(answer ?? '');
+            void Promise.resolve().then(() => {
+              check(msg.snapshot === id, 'public_mint_snapshot');
+              pointBatch(msg.requestPublicMints.map(pair => pair.join('/')));
+              return claims?.publicMintBatch ? claims.publicMintBatch(msg.requestPublicMints) :
+                pointResults(msg.requestPublicMints, pair => claims?.publicMintGet?.(...pair));
+            }).then(answer => {
+              // Only winner IDs/absence enter the shared buffer. Bound adapter
+              // diagnostics so an unused failed hint cannot crowd out a result.
+              const bytes = new TextEncoder().encode(JSON.stringify(answer.map(row => row?.error
+                ? { error: String(row.error).slice(0, 256) } : { value: row?.value })));
+              check(bytes.length <= publicMintShared.byteLength - 8, 'public_mint_evidence_budget');
               new Uint8Array(publicMintShared, 8).set(bytes);
               Atomics.store(control, 1, bytes.length); Atomics.store(control, 0, 1);
             }).catch(() => Atomics.store(control, 0, -1)).finally(() => Atomics.notify(control, 0));
@@ -74,7 +83,7 @@ export class Replay {
         };
         const error = e => { done(); reject(e); }, exit = () => error(Error('replay_worker_exit'));
         this.worker.on('message', message); this.worker.once('error', error); this.worker.once('exit', exit);
-        const publicMintShared = new SharedArrayBuffer(72);
+        const publicMintShared = new SharedArrayBuffer(65536);
         this.worker.postMessage({ id, input, headers, length: history.length, database, branch: history.branch, shared, publicMintShared, headerPageSize, headerCachePages: this.headerCachePages, cacheKiB: this.cacheKiB,
           ...(claims ? { claimDatabase: join(claims.store.directory, 'index.sqlite'), claimCacheKiB: claims.store.cacheKiB,
             claimNodes: [...claims.staged], namedNodes: [...(claims.namedStaged ?? [])] } : {}) });

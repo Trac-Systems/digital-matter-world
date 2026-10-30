@@ -2,6 +2,8 @@ import { Worker, isMainThread, parentPort, MessageChannel, receiveMessageOnPort 
 import { rebuildBatch, rules } from './adapter.mjs';
 import { ReplayHistories } from './replay-history.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
+import { PublicMintPrefetch } from '../../rules/src/public-mint-prefetch.js';
+import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 
 export const DEFAULT_REPLAY_TIMEOUT_MS = 120000;
 if (!isMainThread) {
@@ -13,6 +15,9 @@ if (!isMainThread) {
       while (!Atomics.load(flag, 0)) Atomics.wait(flag, 0, 0);
       const { message } = receiveMessageOnPort(port); if (message.error) throw Error(message.error); return message.value;
     };
+    const snapshot = JSON.stringify([context.counted, context.last]);
+    const publicMints = new PublicMintPrefetch(snapshot, (pairs, at) => call(0, 'publicMintBatch', [pairs, at]),
+      !!context.settings?.document && rules.claimsNeverCloseActive(context.settings, context.counted));
     // The executor's small path cache can revisit the same immutable node many
     // times while closing a window. Keep bounded raw rows beside the executor
     // to avoid a synchronous thread round trip on every revisit. Scope this
@@ -26,11 +31,13 @@ if (!isMainThread) {
       else {
         const fetched = call(0, method, [id, ancestors]); row = fetched.row;
         for (const [hash, value] of fetched.neighbors ?? []) {
+          publicMints.node(value);
           const key = method + '/' + hash; nodes.delete(key); nodes.set(key, value);
           if (nodes.size > nodeCacheEntries) nodes.delete(nodes.keys().next().value);
         }
       }
       if (row) {
+        publicMints.node(row);
         nodes.set(key, row);
         if (nodes.size > nodeCacheEntries) nodes.delete(nodes.keys().next().value);
       }
@@ -40,10 +47,11 @@ if (!isMainThread) {
     // read their verified local store directly, with no per-header thread RPC.
     const view = i => ({ hashAt: h => call(i, 'hashAt', [h]), history: { length: call(i, 'length', []), get: h => call(i, 'get', [h]), field: (...args) => call(i, 'field', args) } });
     try {
+      for (const input of context.inputs) publicMints.seed(input);
       const local = histories.views(sources), views = sources.map((_, i) => local[i] ?? view(i));
       const { state: _state, patterns: _patterns, ...result } = rebuildBatch(network, proposal, { ...context, ...views[0], views,
         claimNode: (id, ancestors) => node('claimNode', id, ancestors), namedNode: (id, ancestors) => node('namedNode', id, ancestors),
-        publicMintGet: (asset, block) => call(0, 'publicMintGet', [asset, block]) });
+        publicMintGet: (asset, block) => publicMints.get(asset, block) });
       parentPort.postMessage({ result });
     } catch (e) { parentPort.postMessage({ error: e.message }); }
     finally { port.close(); }
@@ -94,7 +102,7 @@ export class BatchReplay {
     } finally { this.busy = false; }
   }
   perform(network, proposal, context) {
-    const { history, hashAt, views, claimNode, namedNode, replayNodes, publicMintGet, ...data } = context;
+    const { history, hashAt, views, claimNode, namedNode, replayNodes, publicMintGet, publicMintBatch, ...data } = context;
     const source = views ?? context.inputs.map(() => ({ history, hashAt }));
     const signal = new SharedArrayBuffer(4), flag = new Int32Array(signal), { port1, port2 } = new MessageChannel();
     return new Promise((resolve, reject) => {
@@ -108,7 +116,12 @@ export class BatchReplay {
               if (!Array.isArray(rows) || !rows.length || rows.length > this.nodeCacheEntries || rows[0]?.[0] !== args[0]) throw Error('replay_node_batch');
               value = { row: rows[0][1], neighbors: rows.slice(1) };
             } else value = { row: await (method === 'claimNode' ? claimNode : namedNode)?.(...args) };
-          } else if (method === 'publicMintGet') value = await publicMintGet?.(...args);
+          } else if (method === 'publicMintBatch') {
+            const [pairs, at] = args;
+            if (at !== JSON.stringify([context.counted, context.last])) throw Error('public_mint_snapshot');
+            pointBatch(pairs.map(pair => pair.join('/')));
+            value = publicMintBatch ? await publicMintBatch(pairs) : await pointResults(pairs, pair => publicMintGet?.(...pair));
+          }
           else value = method === 'length' ? s.history.length : method === 'hashAt' ? s.hashAt(...args) : s.history[method](...args);
           port1.postMessage({ value });
         }

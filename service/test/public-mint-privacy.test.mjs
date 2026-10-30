@@ -40,7 +40,7 @@ async function fixture(t) {
   };
   const start = () => request('/public-mints/start', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ asset: 'p2:0', block: '987654', tapAddress: address }) });
-  return { store, mints, publicAPI, checkout, http, id, start, request };
+  return { store, mints, publicAPI, checkout, http, id, start, request, q };
 }
 function concealed(value) {
   const text = JSON.stringify(value);
@@ -149,4 +149,27 @@ test('opening a pre-upgrade store rewrites target-bearing public request project
   await store.close(); store = await Store.open(directory);
   concealed(JSON.parse(store.db.prepare("SELECT value FROM publicItemsV2 WHERE kind='mints' AND id=?").get(id).value));
   assert.equal(store.db.prepare("SELECT 1 FROM publicOrderV2 WHERE kind='mints' AND asset='p2:0'").get(), undefined);
+});
+
+
+test('a full registration queue still returns the requester secret and retries without exposing the opaque target', async t => {
+  const f = await fixture(t), commitment = rules.hash('private-commitment'), submitted = [];
+  f.q.registration = { commitment, validUntil: '20' };
+  f.q.fees[0].dta = 'dmw-public-pay-v2|' + commitment + '|treasury';
+  f.mints.financial.submit = async () => { throw Error('financial_queue_capacity'); };
+  const started = await f.start();
+  assert.equal(started.response.status, 200); assert.equal(started.value.requesterSecret.length, 64);
+  assert.equal(started.value.payable, false); assert.equal(started.value.block, '987654');
+  const saved = f.store.get('mints', f.id);
+  assert.ok(matchesRequesterSecret(saved.requesterSecretHash, started.value.requesterSecret));
+  assert.equal(f.store.get('publicMintCommitments', commitment), f.id);
+  concealed((await f.request('/mint/' + f.id)).value);
+  f.mints.financial.submit = async transition => submitted.push(transition);
+  await f.mints.publicMints.tick();
+  assert.deepEqual(submitted, [{ type: 'public-payment', id: commitment, action: 'register', registration: f.q.registration }]);
+  assert.equal(f.mints.public(f.id, started.value.requesterSecret).payable, false, 'queued is not accepted');
+  await f.store.put('accountRecords', rules.publicPaymentKey(commitment), { registration: f.q.registration, registeredHeight: '12' });
+  assert.equal(f.mints.public(f.id, started.value.requesterSecret).payable, true);
+  concealed((await f.request('/mint/' + f.id)).value);
+  assert.equal((await f.start()).value.requesterSecret, undefined, 'retry cannot reissue the private capability');
 });

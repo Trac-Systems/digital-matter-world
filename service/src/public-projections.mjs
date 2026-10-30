@@ -3,7 +3,7 @@ import { check, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { projectionReady, projectionRevision } from './projection-state.mjs';
 import { bitmapFresh } from './submitted-bitmaps.mjs';
-import { publicIdentities } from '../../rules/src/trac-address.js';
+import { publicPageBytes } from './public-page-bytes.mjs';
 import { PUBLIC_SORTS } from './public-projection-index.mjs';
 import { financialBlock } from './financial-status.mjs';
 import { patternCatalogId } from './mint-assets.mjs';
@@ -26,11 +26,11 @@ function paging(params, scope, revision, settings, allowed = []) {
 }
 function finishPage(rows, key, p, revision, map = row => JSON.parse(row.value), extra = {}) {
   const result = { ...extra, v: 3, revision, [key]: [], total: null, next: null, nextCursor: null, limit: p.limit, order: p.order };
+  const fits = publicPageBytes(result, key);
   let more = rows.length > p.limit;
   for (const row of rows.slice(0, p.limit)) {
     const value = map(row), next = p.cursor([row.position, row.id]);
-    const candidate = { ...result, [key]: [...result[key], value], next, nextCursor: next };
-    if (Buffer.byteLength(JSON.stringify(publicIdentities(candidate))) > p.maxBytes) {
+    if (!fits(value, next, p.maxBytes)) {
       check(result[key].length, 'page_row_budget', 503); more = true; break;
     }
     result[key].push(value); result.next = result.nextCursor = next;

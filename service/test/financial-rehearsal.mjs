@@ -203,8 +203,24 @@ try {
   service.requestMint = async body => { const result = await requestMint(body); if (body.reserve && loseResponse) { loseResponse = false; throw Error('simulated_response_loss'); } return result; };
   const mintIntent = { actionId: 'paid-regtest', asset: 'c1', amount: '3', receiver, payer, kind: 'tap', compound: true };
   let id;
-  const progress = async until => { for (let i = 0; i < 600; i++) { await checkpoint(); await pipeline.tick(); if (await until()) return; await runtime.mints.tick(); await runtime.links.tick(); if (await until()) return; await sleep(100); } throw Error('financial_progress_timeout:' + store.get('mints', id)?.lastError + ':' + JSON.stringify(store.list('financialDeferred', { limit: 10 }))); };
-  await assert.rejects(agent.makeReal(mintIntent), /financial_deployment_pending/);
+  const progress = async until => {
+    for (let i = 0; i < 600; i++) {
+      await checkpoint();
+      // Production schedules deployment registration separately from mint work.
+      await runtime.mints.deploymentTick();
+      await pipeline.tick(); if (await until()) return;
+      await runtime.mints.tick(); await runtime.links.tick(); if (await until()) return;
+      await sleep(100);
+    }
+    throw Error('financial_progress_timeout:' + store.get('mints', id)?.lastError + ':' + JSON.stringify(store.list('financialDeferred', { limit: 10 })));
+  };
+  const pendingDeployment = await agent.makeReal(mintIntent);
+  assert.equal(pendingDeployment.state, 'deployment_pending');
+  assert.equal(pendingDeployment.signed, false);
+  assert.equal(pendingDeployment.payable, false);
+  assert.deepEqual(pendingDeployment.blocked, ['financial_deployment_pending']);
+  assert.equal(journal.get('mint/' + mintIntent.actionId), null);
+  assert.deepEqual(pendingDeployment.next, [{ tool: 'mint_on_chain', arguments: mintIntent }]);
   await progress(() => !!store.get('accountRecords', 'fd/asset/c1')); pass('threshold batch registers independently verified pristine deployment generation');
   await assert.rejects(agent.makeReal(mintIntent), /simulated_response_loss/);
   journal.close(); journal = agent.journal = await Journal.open(join(directory, 'kit'), network, { intervalMs: 0 });

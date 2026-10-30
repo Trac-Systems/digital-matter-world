@@ -1,7 +1,7 @@
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { inscriptionContents, tapReceipts } from './mint-payments.mjs';
-import { publicPaymentIntent, publicPaymentData } from './public-mint-sources.mjs';
+import { resolvePublicPaymentIntent, publicPaymentData } from './public-mint-sources.mjs';
 
 // Scheduling hints only: the existing public-scan reader still rebuilds and
 // verifies the complete Bitcoin prefix independently on every signer.
@@ -34,11 +34,13 @@ export async function discoverPublicMintPayments(mints, at) {
       if (payload?.p !== 'tap' || payload.op !== 'token-auth' || !Array.isArray(payload.redeem?.items)) continue;
       const intents = new Map();
       for (const item of payload.redeem.items) {
-        const intent = publicPaymentIntent(item.dta, document.values.moveBytes);
+        const intent = await resolvePublicPaymentIntent(reads, item, { document, height: from.height, reference: parsed.txid + 'i' + ii, at });
         if (!intent) continue;
         try {
           const signed = reads.feeQuotes.verify('dmw-public-mint-quote-v1', intent);
           if (signed.network !== mints.parent.network) continue;
+          if (signed.paymentVersion !== 2 && document.values.publicPaymentV2Height !== undefined &&
+              BigInt(signed.feeQuote.validFrom) >= BigInt(document.values.publicPaymentV2Height)) continue;
           intents.set(rules.publicRequestId(signed.network, intent), intent);
         } catch { /* An unsigned payload cannot add work to the paid queue. */ }
       }

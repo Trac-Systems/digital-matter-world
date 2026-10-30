@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Policy } from '../signer/policy.mjs';
-import { readPublicWinner, verifyPublicMintEvidence } from '../signer/public-claims.mjs';
+import { readPublicWinner, readPublicWinners, verifyPublicMintEvidence } from '../signer/public-claims.mjs';
+import { BatchReplay } from '../signer/replay-worker.mjs';
+import { rebuildBatch } from '../signer/adapter.mjs';
+import { readPublicWinnerBatch } from '../../service/src/public-claim-readers.mjs';
 import { hash } from '../../rules/src/core.js';
 import { publicPlotId } from '../../rules/src/public-mint.js';
 import { publicClaimBatch, publicScanBatch } from './public-claim-batch-fixture.mjs';
@@ -79,4 +82,43 @@ test('signer replays both agent-first refunds and public winners against indepen
 test('signer refuses a scan whose payment evidence carries a different claim decision than its replayed operation', async () => {
   const f = await publicScanBatch({ forgedEvidence: true });
   await assert.rejects(f.policy.approve(f.proposal), /financial_effects/);
+});
+
+test('every signer repeats bounded independent evidence reads in audit and prepare, including duplicate comparisons', async () => {
+  const rows = Array.from({ length: 130 }, (_, i) => ({ asset: 'p2:7', block: String(i), id: null }));
+  for (let signer = 0; signer < 5; signer++) {
+    let active = 0, peak = 0, count = 0;
+    const reads = { financialRecord: async () => { count++; active++; peak = Math.max(peak, active); await new Promise(resolve => setImmediate(resolve)); active--; return null; } };
+    for (let phase = 0; phase < 2; phase++) await verifyPublicMintEvidence([{ publicMintEvidence: [...rows, rows[0]] }], reads);
+    assert.equal(count, 260); assert.equal(peak, 8);
+    await assert.rejects(verifyPublicMintEvidence([{ publicMintEvidence: [rows[0], { ...rows[0], id: hash('forged') }] }], reads), /public_mint_evidence_read/);
+  }
+});
+
+test('batched winner reads preserve both draft overlays and two-stage native reads', async () => {
+  const id = hash('native'), draft = hash('draft'), at = { counted: '1', last: { n: '0', to: '0' } }, batches = [];
+  const base = new Map([['dc/plot/p2:7/1', id], ['fp/' + id, { publicMint: true, owner: null }]]);
+  const reads = { financialRecord: async key => base.get(key), financialRecords: async (keys, pin) => {
+    assert.deepEqual(pin, at); batches.push(keys); return keys.map(key => base.get(key));
+  } };
+  const overlay = new Map([['dc/plot/p2:7/2', draft], ['fp/' + draft, { publicMint: true, owner: null }], ['dc/plot/p2:7/3', null]]);
+  const store = { hasOverlay: (space, key) => overlay.has(key), get: (space, key) => overlay.get(key) };
+  assert.deepEqual(await readPublicWinnerBatch({ reads, store, at }, [['p2:7', '1'], ['p2:7', '2'], ['p2:7', '3']]),
+    [{ value: id }, { value: draft }, { value: null }]);
+  assert.deepEqual(batches, [['dc/plot/p2:7/1'], ['fp/' + id]]);
+  overlay.set('fp/' + id, { publicMint: false, owner: 'agent' });
+  assert.deepEqual(await readPublicWinnerBatch({ reads, store, at }, [['p2:7', '1']]), [{ value: null }]);
+});
+
+test('signer worker batched fallback reproduces serial signed bytes, digest and roots across predecessor changes', async t => {
+  const worker = new BatchReplay(); t.after(() => worker.close());
+  for (const supplied of [null, hash('old-public-winner')]) {
+    const f = publicClaimBatch({ supplied, remote: true });
+    const context = { ...f.context, authority: await f.reads.authority(), publicMintGet: () => supplied };
+    const expected = rebuildBatch(f.proposal.network, f.proposal, context), batches = [];
+    context.publicMintBatch = pairs => { batches.push(pairs); return readPublicWinners(f.reads, pairs, { counted: context.counted, last: context.last }); };
+    const actual = await worker.run(f.proposal.network, f.proposal, context);
+    assert.deepEqual(actual.batch, expected.batch); assert.equal(actual.digest, expected.digest); assert.deepEqual(actual.files, expected.files);
+    assert.ok(batches.length > 0); assert.ok(batches.every(b => b.length <= 64));
+  }
 });

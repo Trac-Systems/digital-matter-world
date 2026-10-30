@@ -42,7 +42,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
       evidence = { ...evidence, claim: rules.publicScanClaim({ ...publicClaims, pattern, asset, block: transition.block }) };
     }
     const input = { transition, evidence };
-    if (reads.financialChainAnchor && transition.type !== 'beacon-recovery' && !transition.action?.type.startsWith('recovery-')) input.chainAnchor = await reads.financialChainAnchor({ at, prior: await execution.getAsync('fp/chain'), ethereum: evidence.ethereumAnchor });
+    if (reads.financialChainAnchor && transition.type !== 'beacon-recovery' && !transition.action?.type?.startsWith('recovery-')) input.chainAnchor = await reads.financialChainAnchor({ at, prior: await execution.getAsync('fp/chain'), ethereum: evidence.ethereumAnchor });
     const plan = await financialPlan(input, { read: key => execution.getAsync(key), height, document }), operations = [];
     for (const op of plan) operations.push(op.op === 'ar' ? await execution.accounts(op.actions) : op.op === 'br' ?
       await execution.beacon(op, await reads.financialBeaconConfig()) : await execution.payment(op));
@@ -80,7 +80,7 @@ export class FinancialExecution {
   existing(id) { return this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null); }
   async submit(transition) {
     check(transition && rules.hex(transition.id, 32), 'financial_identity');
-    check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery', 'public-scan'].includes(transition.type) &&
+    check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery', 'public-scan', 'public-payment'].includes(transition.type) &&
       Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
     const key = rules.hashObject(['dmw-financial-transition-v2', transition]);
     const old = this.existing(key); if (old) return old;
@@ -147,7 +147,10 @@ export class FinancialExecution {
     if (!transition) return !this.store.get('financialAccepted', id);
     if (transition.type === 'refund') return false;
     const revision = this.revision;
-    if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
+    if (transition.type === 'public-payment') {
+      // Reveals account for actual payments and must remain recoverable.
+      if (transition.action !== 'register' || rules.compareOrdinal(at.counted, transition.registration.validUntil) <= 0) return false;
+    } else if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
     else {
       const exit = await this.reads.financialEvidence({ type: 'refund', id: transition.id, reason: 'credit' }, at);
       check(exit.state === 'credit' && rules.compareOrdinal(at.counted, exit.expiry) > 0, 'financial_exit_live');

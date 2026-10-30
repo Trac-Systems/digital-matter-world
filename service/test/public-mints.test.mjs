@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import { PublicMints } from '../src/public-mints.mjs';
 import { newStore } from './helpers.mjs';
 import { rules } from '../src/rules.mjs';
+import { FinancialExecution } from '../src/financial-execution.mjs';
 import { publicScanKey } from '../../contract/public-mint.js';
 
 async function fixture(t, workPage = 2) {
@@ -39,4 +40,61 @@ test('bounded checkout cleanup resumes after restart and releases losing checkou
   await resumed.releaseFinishedRequests('11'); assert.equal(f.store.get('publicMintRequests', 'a'), true);
   assert.deepEqual(f.store.get('mints', 'b'), loser);
   assert.deepEqual(f.store.list('publicMintRefundsByRequest/b', { limit: 1 })[0].value, refund);
+});
+
+test('opaque registration retries are durable, bounded, and continue beyond the first request page', async t => {
+  const f = await fixture(t, 1), submitted = [];
+  f.parent.document = { values: { publicMintActivationHeight: '100', publicPaymentV2Height: '103', publicMintScanBlocks: 1 } };
+  f.parent.financial = { submit: async transition => submitted.push(transition) };
+  f.parent.reads = { batchStamp: async () => ({ counted: '103' }), financialRecord: async () => null, publicMintScan: async () => ({}) };
+  await f.store.put('meta', 'ruleState', { counted: '103' });
+  for (const id of ['a', 'b', 'c']) {
+    const row = await f.add(id, '120');
+    await f.store.put('mints', id, { ...row, paymentRegistration: { commitment: rules.hash(id) } });
+  }
+  for (let i = 0; i < 3; i++) await new PublicMints(f.parent).tick();
+  assert.deepEqual(submitted.filter(t => t.type === 'public-payment').map(t => t.id), ['a', 'b', 'c'].map(rules.hash));
+  assert.ok(submitted.filter(t => t.type === 'public-payment').every(t => t.action === 'register' && !t.intent && !t.asset && !t.block));
+});
+
+test('gateway publishes the saved preimage only after the independent reader validates a confirmed reveal', async t => {
+  const f = await fixture(t), submitted = [], commitment = rules.hash('commitment'), reference = rules.hash('payment') + 'i0';
+  f.parent.document = { values: { publicMintActivationHeight: '100', publicPaymentV2Height: '103', publicMintScanBlocks: 1 } };
+  f.parent.financial = { submit: async transition => submitted.push(transition) };
+  let confirmed = false, validations = 0;
+  f.parent.reads = { batchStamp: async () => ({ counted: '104' }), financialRecord: async () => null,
+    publicMintScan: async () => { throw Object.assign(Error('public_payment_unrevealed'), { commitment, reference }); },
+    publicMintPayment: async transition => { validations++; assert.equal(transition.reference, reference); if (!confirmed) throw Error('public_payment_unconfirmed'); } };
+  await f.store.put('meta', 'ruleState', { counted: '104' });
+  const row = await f.add('a', '120'), intent = { asset: 'p2:0', block: '1', paymentSalt: rules.hash('salt') };
+  await f.store.put('mints', 'a', { ...row, intent });
+  await f.store.put('publicMintCommitments', commitment, 'a');
+  await f.mints.queuePlot('p2:0', '1', '104');
+  await new PublicMints(f.parent).tick(); assert.equal(submitted.length, 0);
+  confirmed = true; await new PublicMints(f.parent).tick();
+  assert.equal(validations, 2);
+  assert.deepEqual(submitted, [{ type: 'public-payment', id: commitment, action: 'reveal', intent, reference }]);
+});
+
+test('expired opaque registrations release queue capacity while uncertain drafts and paid reveals remain durable', async t => {
+  const f = await fixture(t), commitment = rules.hash('registration');
+  f.parent.financial = new FinancialExecution({ store: f.store, reads: {}, document: {}, resources: {} });
+  const row = { ...await f.add('a', '120'), paymentRegistration: { commitment, validUntil: '120' } };
+  await f.store.put('mints', 'a', row);
+  const transition = { type: 'public-payment', id: commitment, action: 'register', registration: row.paymentRegistration };
+  const work = rules.hashObject(['dmw-financial-transition-v2', transition]);
+  await f.store.put('financialQueue', work, transition);
+  assert.equal(await f.parent.financial.expire(work, { counted: '120' }), false);
+  await f.store.put('meta', 'draft', { proposal: { batch: { ops: [{ op: 'fp', id: commitment }] } } });
+  await f.mints.releaseFinishedRequests('121');
+  assert.ok(f.store.get('financialQueue', work)); assert.ok(f.store.get('publicMintRequests', 'a'));
+  await f.store.transact([{ space: 'meta', id: 'draft' }]);
+  await f.mints.releaseFinishedRequests('121');
+  assert.equal(f.store.get('financialQueue', work), null); assert.equal(f.store.get('publicMintRequests', 'a'), null);
+  assert.deepEqual(f.store.get('mints', 'a'), row, 'the preimage is retained for recovery');
+  const reveal = { type: 'public-payment', id: commitment, action: 'reveal', reference: rules.hash('paid') + 'i0', intent: {} };
+  const revealWork = rules.hashObject(['dmw-financial-transition-v2', reveal]);
+  await f.store.put('financialQueue', revealWork, reveal);
+  assert.equal(await f.parent.financial.expire(revealWork, { counted: '9000' }), false);
+  assert.deepEqual(f.store.get('financialQueue', revealWork), reveal);
 });

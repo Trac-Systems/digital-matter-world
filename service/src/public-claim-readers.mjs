@@ -1,6 +1,9 @@
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { NodeEvidence } from './node-evidence.mjs';
+import { readPublicWinners } from '../../committee/signer/public-claims.mjs';
+
+export const readPublicWinnerBatch = ({ store, reads, at }, pairs) => readPublicWinners(reads, pairs, at, store?.hasOverlay ? store : undefined);
 
 // Predecessor point reads are independently checked by signers. Earlier
 // observations in this draft may already have written the same financial keys.

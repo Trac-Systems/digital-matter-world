@@ -63,9 +63,11 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
   const publicMint = Object.hasOwn(values, 'publicMintActivationHeight');
   const neverClose = Object.hasOwn(values, 'claimsNeverCloseHeight');
   const bitmapOpen = Object.hasOwn(values, 'bitmapMintOpenHeight');
+  const paymentV2 = Object.hasOwn(values, 'publicPaymentV2Height');
   assert(exactKeys(values, [...Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k)),
-    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : []), ...(bitmapOpen ? ['bitmapMintOpenHeight'] : [])]), 'settings_keys');
+    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : []), ...(bitmapOpen ? ['bitmapMintOpenHeight'] : []), ...(paymentV2 ? ['publicPaymentV2Height'] : [])]), 'settings_keys');
   if (neverClose) assert(publicMint && compareUint(uintV2(values.claimsNeverCloseHeight), values.publicMintActivationHeight) >= 0, 'settings_claims_never_close');
+  if (paymentV2) assert(publicMint && compareUint(uintV2(values.publicPaymentV2Height), values.publicMintActivationHeight) >= 0, 'settings_public_payment_activation');
   if (bitmapOpen) assert(publicMint && compareUint(uintV2(values.bitmapMintOpenHeight), values.publicMintActivationHeight) >= 0, 'settings_bitmap_mint_open');
   for (const [key, value] of Object.entries(values)) {
     if (key === 'tierThresholds') {
@@ -73,7 +75,7 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
         uintV2(n); return compareUint(n, '0') > 0 && (!i || compareUint(n, value[i - 1]) > 0);
       }), 'settings_tiers');
     } else if (key === 'feePolicyRevision') assert(value === '0' || typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), 'settings_fee_revision');
-    else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight' || key === 'claimsNeverCloseHeight' || key === 'bitmapMintOpenHeight') uintV2(value);
+    else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight' || key === 'claimsNeverCloseHeight' || key === 'bitmapMintOpenHeight' || key === 'publicPaymentV2Height') uintV2(value);
     else assert(Number.isSafeInteger(value) && value >= (zeroAllowed.has(key) ? 0 : 1), 'settings_value');
     if (Object.hasOwn(capabilities, key)) assert(value <= capabilities[key], 'settings_capability');
   }
@@ -126,6 +128,9 @@ export function settingsSuccessor(previous, document) {
   const priorClaims = previous.values.claimsNeverCloseHeight, claims = document.values.claimsNeverCloseHeight;
   assert(priorClaims === undefined ? claims === undefined || compareUint(claims, document.effectiveBitcoinWindow) >= 0 : claims === priorClaims,
     'settings_claims_never_close_boundary');
+  const priorPayment = previous.values.publicPaymentV2Height, payment = document.values.publicPaymentV2Height;
+  assert(priorPayment === undefined ? payment === undefined || compareUint(payment, document.effectiveBitcoinWindow) >= 0 : payment === priorPayment,
+    'settings_publicPaymentV2Height_boundary');
   const priorBitmap = previous.values.bitmapMintOpenHeight, bitmap = document.values.bitmapMintOpenHeight;
   assert(priorBitmap === undefined ? bitmap === undefined || compareUint(bitmap, document.effectiveBitcoinWindow) >= 0 : bitmap === priorBitmap,
     'settings_bitmap_mint_open_boundary');

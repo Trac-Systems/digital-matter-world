@@ -16,6 +16,27 @@ function runtimeFixture() {
   const peer = { config: { dmw: deployment }, msbClient: bus, base: { key: Buffer.from(config.bootstrap, 'hex'), update: async () => {}, view: { get version() { return state.revision; }, get: async key => data.has(key) ? { value: data.get(key) } : null, async *createHistoryStream({ gte }) { yield* events.filter(e => e.seq >= gte); } } }, protocol: { instance: { api, broadcastTransaction: async (_dispatch, _flag, prepared) => { await bus.network.validatorMessageOrchestrator.send(prepared); return { txo: { tx: prepared.tx } }; } } } };
   return { config, deployment, runtime: { peer, bus, close: async () => {} }, state, data, events, chosen };
 }
+test('native point batches use one immutable checkout, bounded concurrency and the predecessor fence', async () => {
+  const f = runtimeFixture(), keys = Array.from({ length: 64 }, (_, i) => `dc/plot/p2:7/${i}`);
+  keys.forEach((key, i) => f.data.set(key, String(i)));
+  let active = 0, peak = 0, opened = 0, closed = 0, changed = false;
+  f.runtime.peer.base.view.checkout = revision => {
+    assert.equal(revision, f.state.revision); opened++; const rows = new Map(f.data);
+    return { get: async key => {
+      active++; peak = Math.max(peak, active); await new Promise(resolve => setImmediate(resolve)); active--;
+      f.data.set(key, 'later'); return { value: rows.get(key) };
+    }, close: async () => { closed++; if (changed) f.runtime.peer.protocol.instance.api.dmwBatchLast = async () => ({ n: 2, to: 100 }); } };
+  };
+  const client = await createTrac({ ...f, store: new MemoryStore(), network: 'fixture-main' });
+  const at = { counted: 100, last: { n: 1, to: 99 } };
+  assert.deepEqual(await client('readMany', [keys, at]), keys.map((_, i) => String(i)));
+  assert.equal(peak, 8); assert.equal(opened, 1); assert.equal(closed, 1);
+  await assert.rejects(client('readMany', [keys, { ...at, last: { n: 0, to: 0 } }]), /trac_snapshot_changed/);
+  assert.equal(opened, 1);
+  await assert.rejects(client('readMany', [[...keys, 'extra'], at]), /point_read_batch/);
+  changed = true; await assert.rejects(client('readMany', [keys, at]), /trac_snapshot_changed/);
+  assert.equal(closed, 2);
+});
 test('Trac uses three distinct validators and checks durable transaction identity and MSB state', async () => {
   const f = runtimeFixture(), client = await createTrac({ ...f, store: new MemoryStore(), network: 'fixture-main' }), prepared = { tx: '77'.repeat(32), txv: '01', dispatch: {} };
   await client('sendTransaction', [prepared]); assert.equal(new Set(f.chosen).size, 3);

@@ -1,12 +1,13 @@
 import { check, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { claimedPage } from './claimed-feeds.mjs';
-import { publicIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
+import { encodeTracAddress } from '../../rules/src/trac-address.js';
 import { rules } from './rules.mjs';
 import { projectionReady } from './claimed-v2.mjs';
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey, EMPTY_ACCOUNT_ROOT } from '../../contract/account-tree.js';
 import { projectionRevision } from './projection-state.mjs';
+import { publicPageBytes } from './public-page-bytes.mjs';
 
 export function recordPage(store, space, params, { key = 'rows', maxRows = R3_RESOURCES.patternDetailRows, maxBytes = R3_RESOURCES.publicPageBytes, map = r => ({ id: r.id, ...r.value }) } = {}) {
   projectionReady(store, space);
@@ -22,9 +23,10 @@ export function recordPage(store, space, params, { key = 'rows', maxRows = R3_RE
   }
   const rows = order === 'asc' ? store.list(space, { after, limit: limit + 1 }) : store.db.prepare(`SELECT id,value FROM records WHERE space=? ${after ? 'AND id<?' : ''} ORDER BY id DESC LIMIT ?`).all(space, ...(after ? [after] : []), limit + 1).map(r => ({ id: r.id, value: JSON.parse(r.value) })); let more = rows.length > limit;
   const result = { v: 3, revision, [key]: [], nextCursor: null, next: null, total: store.countUint(space), limit, sort, order };
+  const fits = publicPageBytes(result, key);
   for (const row of rows.slice(0, limit)) {
     const cursor = Buffer.from(JSON.stringify({ space, revision, order, sort, after: row.id })).toString('base64url'), projected = map(row);
-    if (Buffer.byteLength(JSON.stringify(publicIdentities({ ...result, [key]: [...result[key], projected], nextCursor: cursor, next: cursor }))) > maxBytes) { check(result[key].length > 0, 'page_row_budget', 503); more = true; break; }
+    if (!fits(projected, cursor, maxBytes)) { check(result[key].length > 0, 'page_row_budget', 503); more = true; break; }
     result[key].push(projected); result.nextCursor = cursor;
   }
   if (!more) result.nextCursor = null; result.next = result.nextCursor; return result;

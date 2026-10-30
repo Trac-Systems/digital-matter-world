@@ -20,6 +20,7 @@ import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { legacyMintBinding, legacyLinkBinding } from './pending-financial.mjs';
 import { installLegacyLinkSources } from './legacy-link-sources.mjs';
 import { installPublicMintSources } from './public-mint-sources.mjs';
+import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const feeKey = financialFeeKey;
@@ -69,9 +70,22 @@ export function installFinancialSources(reads, options) {
     else check(same(row.requestedFeeQuote, row.quote.feeQuote), 'financial_quote_binding');
     return row;
   };
-  reads.financialRecord = async (key, at) => {
+  const recordKey = key => {
     check(/^(?:(?:ar|al|ao|fp|fc|fl|bc|fd|dc|fr|fq|fm|fi)\/[a-z0-9:._/-]+|k\/link\/[0-9a-z]+|bt\/(?:last|observation)|br\/[0-9a-f]{64}\/[a-z0-9:/]+|b\/[a-z0-9/]+|s\/beaconRecovery|recoveryApproved\/[0-9a-f]{64})$/.test(key), 'financial_record_key');
+  };
+  reads.financialRecord = async (key, at) => {
+    recordKey(key);
     return await record(key, at) ?? null;
+  };
+  reads.financialRecords = async (keys, at) => {
+    pointBatch(keys); keys.forEach(recordKey);
+    if (options.recordMany) {
+      const rows = await options.recordMany(keys, at);
+      check(Array.isArray(rows) && rows.length === keys.length, 'point_read_batch');
+      return rows.map(row => row ?? null);
+    }
+    const rows = await pointResults(keys, key => reads.financialRecord(key, at));
+    return rows.map(row => { if (row.error) throw Error(row.error); return row.value; });
   };
   reads.financialReservation = async (row, at) => {
     check(recoveryVersion === 2, 'financial_permit_recovery_required');
@@ -187,6 +201,7 @@ export function installFinancialSources(reads, options) {
   reads.financialEvidence = async (transition, at) => {
     const t = transition;
     if (t.type === 'public-scan') return reads.publicMintScan(t, at);
+    if (t.type === 'public-payment') return reads.publicMintPayment(t, at);
     if (t.type === 'beacon-recovery') return reads.financialBeaconEvidence(t.operation, at);
     if (t.type === 'lifecycle') {
       if (t.action.type.startsWith('legacy-link-')) return reads.financialLegacyLinkEvidence(t.action, at);
@@ -239,13 +254,13 @@ export function installFinancialSources(reads, options) {
   // Normalize the execution anchor once and fence every independent read with
   // the same accepted notary revision and Bitcoin/TAP source snapshot.
   installPublicMintSources(reads, { network, bitcoinNetwork, lookupSettings });
-  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPermit']) {
+  for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPayment', 'publicMintPermit']) {
     const original = reads[name], index = ['financialReceipts', 'financialEscrow'].includes(name) ? 2 : 1;
     reads[name] = async (...args) => {
       const before = await reads.batchStamp(), at = args[index];
       check(!at || rules.compareOrdinal(at.counted, before.counted) === 0 && same(at.last, before.last) && (at.revision === undefined || at.revision === before.revision), 'financial_snapshot_changed');
       args[index] = before;
-      const result = name === 'publicMintScan' && reads.withTapSnapshot ?
+      const result = ['publicMintScan', 'publicMintPayment'].includes(name) && reads.withTapSnapshot ?
         await reads.withTapSnapshot(before, () => original(...args)) : await original(...args);
       check(same(before, await reads.batchStamp()), 'financial_snapshot_changed');
       return result;
@@ -253,7 +268,7 @@ export function installFinancialSources(reads, options) {
   }
   // Rebuild closures over a batch-local view. Each verifier supplies only its
   // own already-verified effects; concurrent requests keep the original view.
-  reads.financialScope = ({ record, reservations }) => installFinancialSources({ ...reads }, { ...options, record,
+  reads.financialScope = ({ record, reservations }) => installFinancialSources({ ...reads }, { ...options, record, recordMany: undefined,
     reservation: (id, at) => reservations.has(id) ? reservations.get(id) : reservation(id, at) });
   return reads;
 }

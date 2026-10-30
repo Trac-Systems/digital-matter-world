@@ -399,6 +399,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   if (config.v2) installFinancialSources(reads, { network: config.network, document: config.v2.document, recoveryVersion: config.assetRecoveryVersion,
     escrow: config.prod.ethereum, suspense: config.assetCustody, lookupSettings: config.prod.lookupSettings, request: async id => await store.get('financialLinks', id) ?? request(id),
     reservation: id => acceptedFinancialReservation({ store, audits, id }), record: (key, at) => trac('read', [key, at]),
+    recordMany: (keys, at) => trac('readMany', [keys, at]),
     ethereumRPC: ethRPC, payout: id => store.get('financialCustodyPayments', id) });
   reads.inscription = id => indexer.inscription(id);
   if (config.v2) {

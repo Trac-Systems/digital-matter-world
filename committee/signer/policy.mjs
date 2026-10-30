@@ -7,7 +7,7 @@ import { verifyBatchEvidence } from './batch-evidence.mjs';
 import { verifyFinancialExecution } from './financial-execution.mjs';
 import { financialMintId, financialPaymentHash } from '../../rules/src/financial-mint.js';
 import { verifyRecoveryBatch } from './recovery-batch.mjs';
-import { readPublicWinner, verifyPublicMintEvidence, verifyPublicPermit } from './public-claims.mjs';
+import { readPublicWinner, readPublicWinners, verifyPublicMintEvidence, verifyPublicPermit } from './public-claims.mjs';
 
 const uint = n => Number.isSafeInteger(n) && n >= 0 || typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n);
 const positive = n => typeof n === 'string' && /^[1-9][0-9]*$/.test(n) && BigInt(n) < 1n << 256n;
@@ -62,7 +62,8 @@ export class Policy {
       context = { ...context, counted };
     const approval = await this.replayBatch(this.network, proposal, { ...context, authority,
       replayNodes: this.reads.replayNodes?.bind(this.reads), claimNode: this.reads.claimNode?.bind(this.reads), namedNode: this.reads.namedNode?.bind(this.reads),
-      publicMintGet: (asset, block) => readPublicWinner(this.reads, asset, block, { counted: context.counted, last: context.last }) });
+      publicMintGet: (asset, block) => readPublicWinner(this.reads, asset, block, { counted: context.counted, last: context.last }),
+      publicMintBatch: pairs => readPublicWinners(this.reads, pairs, { counted: context.counted, last: context.last }) });
     await verifyPublicMintEvidence(approval.files, this.reads, { counted: context.counted, last: context.last });
     this.receiptFences?.checkBatch(proposal.batch, approval.files, context.renewal);
     for (const [index, file] of approval.files.entries()) {

@@ -80,10 +80,12 @@ test('settled scans leave the queue and a later payment reactivates the same plo
   await f.mints.tick(); assert.equal(f.submitted.length, 1);
 });
 
-test('shared Bitcoin discovery resumes across restarts and scans an unreported real payment', async t => {
+for (const created of [null, '10', '11']) test(created === null ? 'shared Bitcoin discovery resumes across restarts and scans an unreported real payment' :
+  `v1 discovery at opaque activation handles quote created at ${created}`, async t => {
   const f = await fixture(t), key = new Uint8Array(32).fill(44), pub = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
   const address = fundingAddress(pub, 'regtest');
-  const intent = f.reads.feeQuotes.sign('dmw-public-mint-quote-v1', { network: 'test', asset: 'p2:0', block: '9', tapAddress: address,
+  if (created !== null) f.parent.document.values.publicPaymentV2Height = '11';
+  const intent = f.reads.feeQuotes.sign('dmw-public-mint-quote-v1', { network: 'test', asset: 'p2:0', block: '9', tapAddress: address, ...(created === null ? {} : { feeQuote: { validFrom: created } }),
     fees: [{ role: 'treasury', ticker: 'tap', amount: '100', tt: 'a', to: address }] });
   const row = { id: rules.publicRequestId('test', intent), payer: address, quote: { fees: intent.fees.map(fee => ({ ...fee, dta: publicPaymentData(intent, fee.role) })) } };
   const payload = { p: 'tap', op: 'token-auth', redeem: { items: rules.walletFeeItems(row.quote.fees, 'regtest') } };
@@ -94,6 +96,11 @@ test('shared Bitcoin discovery resumes across restarts and scans an unreported r
   await f.mints.tick(); assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '11');
   const resumed = new PublicMints(f.parent);
   await resumed.tick(); assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12');
+  if (created === '11') {
+    await resumed.tick(); assert.equal(f.submitted.length, 0);
+    assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13');
+    return;
+  }
   f.reads.withTapSnapshot = async () => { throw Error('tap_lookup_index_catching_up'); };
   await resumed.tick();
   assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12', 'an unavailable TAP snapshot must not skip a payment');
@@ -133,4 +140,76 @@ test('a new payment arriving during queue cleanup retains the plot for its next 
   assert.equal(f.store.get('publicMintPaidPlots', rules.publicPlotId('p2:0', '1')).through, '13');
   assert.equal(f.submitted.length, 0);
   await f.mints.tick(); assert.equal(f.submitted.length, 1);
+});
+
+async function opaquePayment(f, { invalid } = {}) {
+  f.parent.document.values.publicPaymentV2Height = '11';
+  const key = new Uint8Array(32).fill(44), pub = Buffer.from(secp256k1.getPublicKey(key)).toString('hex'), address = fundingAddress(pub, 'regtest');
+  const intent = f.reads.feeQuotes.sign('dmw-public-mint-quote-v1', { network: 'test', asset: 'p2:0', block: '9', tapAddress: address,
+    paymentVersion: 2, paymentSalt: rules.hash('discovery-salt'), feeQuote: { validFrom: '11', validUntil: '20' }, settingsHash: rules.hash('settings'),
+    fees: [{ role: 'treasury', ticker: 'tap', amount: '100', tt: 'a', to: address }] });
+  const commitment = rules.publicPaymentCommitment(intent), registration = { commitment, network: 'test', payer: address,
+    validFrom: '11', validUntil: '20', settingsHash: intent.settingsHash,
+    feeBindings: intent.fees.map(fee => rules.publicPaymentFeeBinding(commitment, fee.role, fee.to, fee.ticker)) };
+  const accepted = { registration, registeredHeight: invalid === 'same-height' ? '12' : invalid === 'later-registration' ? '13' : '11' };
+  if (invalid !== 'unregistered') f.records.set(rules.publicPaymentKey(commitment), accepted);
+  const fees = intent.fees.map(fee => ({ ...fee, dta: publicPaymentData(intent, fee.role) }));
+  if (invalid === 'wrong-destination') fees[0].to = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(45))).toString('hex'), 'regtest');
+  if (invalid === 'wrong-role') fees[0].dta = fees[0].dta.replace('treasury', 'burn');
+  if (invalid === 'malformed') fees[0].dta += '|extra';
+  if (invalid === 'zero') fees[0].amount = '0';
+  const row = { id: rules.publicRequestId('test', intent), payer: invalid === 'wrong-payer' ? 'copied-by-another-wallet' : address, quote: { fees } };
+  const payload = { p: 'tap', op: 'token-auth', redeem: { items: fees.map(fee => ({ address: fee.to, tick: fee.ticker, amt: rules.formatTapAmount(fee.amount), dta: fee.dta })) } };
+  const plan = buildInscription({ text: JSON.stringify(payload), receiver: address, publicKey: pub, network: 'regtest', feeRate: 1, maxFeeSats: '1000000',
+    utxos: [{ txid: rules.hash('opaque-discovery-cardinal'), vout: 0, value: '10000000', script: Buffer.from(p2tr(secp256k1.getPublicKey(key).slice(1)).script).toString('hex'), confirmed: true, cardinal: true }] });
+  f.pay(row, plan.inscriptionId);
+  f.blocks.set('12', [{ id: plan.inscriptionId.slice(0, 64), hex: signCommit(plan, key).revealHex }]);
+  await f.store.put('meta', 'publicMintDiscovery', { height: '12', transactionIndex: 0, inscriptionIndex: 0 });
+  return { intent, commitment, accepted, row, reference: plan.inscriptionId };
+}
+
+test('opaque feed discovery holds its cursor, validates a saved reveal, and resumes from accepted records without a payment report', async t => {
+  const f = await fixture(t), q = await opaquePayment(f);
+  await f.mints.tick();
+  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12', 'a missing local preimage cannot skip a paid commitment');
+  assert.equal(f.store.get('meta', 'publicMintDiscoveryFailure').reason, 'public_payment_unrevealed');
+  assert.equal(f.submitted.length, 0);
+  const saved = { ...q.row, publicMint: true, request: { asset: 'p2:0', block: '9' }, created: '11', expiry: '11', intent: q.intent, state: 'awaiting_payment', paymentIds: [] };
+  await f.store.transact([{ space: 'mints', id: q.row.id, value: saved }, { space: 'publicMintRequests', id: q.row.id, value: true },
+    { space: 'publicMintCommitments', id: q.commitment, value: q.row.id }]);
+  let available = false, checks = 0;
+  f.reads.publicMintPayment = async transition => { checks++; assert.equal(transition.reference, q.reference); if (!available) throw Error('public_payment_unconfirmed'); };
+  await new PublicMints(f.parent).tick();
+  assert.equal(f.store.get('publicMintRequests', q.row.id), null, 'expiry frees admission but retains the saved reveal');
+  assert.deepEqual(f.store.get('mints', q.row.id), saved);
+  assert.equal(f.submitted.length, 0, 'a reveal cannot enter the queue before independent verification');
+  available = true; await new PublicMints(f.parent).tick();
+  assert.equal(checks, 2);
+  assert.deepEqual(f.submitted, [{ type: 'public-payment', id: q.commitment, action: 'reveal', intent: q.intent, reference: q.reference }]);
+  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12', 'queued reveal is not accepted evidence');
+  f.records.set(rules.publicPaymentKey(q.commitment), { ...q.accepted, intent: q.intent });
+  await f.store.transact([{ space: 'mints', id: q.row.id }, { space: 'publicMintCommitments', id: q.commitment }]);
+  await new PublicMints(f.parent).tick();
+  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13');
+  assert.equal(f.submitted.length, 2); assert.equal(f.submitted[1].type, 'public-scan'); assert.equal(f.submitted[1].block, '9');
+  assert.equal(f.store.count('mints'), 0);
+});
+
+for (const invalid of ['unregistered', 'same-height', 'later-registration', 'wrong-payer', 'wrong-destination', 'wrong-role', 'malformed', 'zero']) {
+  test(`opaque discovery ignores ${invalid} payments without queuing work or holding the cursor`, async t => {
+    const f = await fixture(t); await opaquePayment(f, { invalid });
+    await f.mints.tick();
+    assert.equal(f.submitted.length, 0); assert.equal(f.store.count('publicMintPaidPlots'), 0);
+    assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13');
+    assert.equal(f.store.get('meta', 'publicMintDiscoveryFailure'), null);
+  });
+}
+
+test('opaque discovery cannot skip a payment while the independent TAP snapshot is unavailable', async t => {
+  const f = await fixture(t); await opaquePayment(f);
+  f.reads.withTapSnapshot = async () => { throw Error('tap_lookup_index_catching_up'); };
+  await f.mints.tick();
+  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12');
+  assert.equal(f.submitted.length, 0);
+  assert.equal(f.store.get('meta', 'publicMintDiscoveryFailure').reason, 'tap_lookup_index_catching_up');
 });

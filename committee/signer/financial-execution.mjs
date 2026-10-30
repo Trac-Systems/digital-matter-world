@@ -51,7 +51,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
         evidence = { ...evidence, claim: input.evidence.claim };
       }
       check(equal(evidence, input.evidence), 'financial_evidence_read');
-      const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type.startsWith('recovery-') ?
+      const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type?.startsWith('recovery-') ?
         await reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor }) : undefined;
       check(equal(chainAnchor ?? null, input.chainAnchor ?? null), 'financial_chain_evidence');
       const plan = await financialPlan({ transition: input.transition, evidence, ...(chainAnchor ? { chainAnchor } : {}) }, { read: store.get, height, document });

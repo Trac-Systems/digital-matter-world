@@ -8,13 +8,45 @@ import { tapReceipts, inscriptionContents } from './mint-payments.mjs';
 import { permit } from '../../committee/signer/adapter.mjs';
 import { publicScanKey } from '../../contract/public-mint.js';
 import { plotKey } from '../../contract/financial-capacity.js';
+import { randomBytes } from 'node:crypto';
 const DOMAIN = 'dmw-public-mint-quote-v1', PREFIX = 'dmw-public-pay-v1|';
+const PREFIX_V2 = 'dmw-public-pay-v2|';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
-export const publicPaymentData = (intent, role) => PREFIX + Buffer.from(rules.stableJSON(intent)).toString('base64url') + '|' + role;
+export const publicPaymentData = (intent, role) => intent.paymentVersion === 2
+  ? PREFIX_V2 + rules.publicPaymentCommitment(intent) + '|' + role
+  : PREFIX + Buffer.from(rules.stableJSON(intent)).toString('base64url') + '|' + role;
+export function publicPaymentReference(data, maxBytes) {
+  if (typeof data !== 'string' || Buffer.byteLength(data) > maxBytes) return null;
+  return /^dmw-public-pay-v2\|([0-9a-f]{64})\|[a-zA-Z]+$/.exec(data)?.[1] ?? null;
+}
 export function publicPaymentIntent(data, maxBytes) {
   if (typeof data !== 'string' || !data.startsWith(PREFIX) || Buffer.byteLength(data) > maxBytes) return null;
   const parts = data.split('|'); if (parts.length !== 3) return null;
   try { return JSON.parse(Buffer.from(parts[1], 'base64url').toString()); } catch { return null; }
+}
+// Only accepted registrations/reveals resolve payment bytes. A local preimage
+// can propose a reveal, but cannot stand in for consensus evidence here.
+export async function resolvePublicPaymentIntent(reads, item, { document, height, reference, at }) {
+  const commitment = publicPaymentReference(item?.dta, document.values.moveBytes);
+  if (!commitment) return publicPaymentIntent(item?.dta, document.values.moveBytes);
+  if (!rules.publicPaymentV2Active(document, height) || typeof item.address !== 'string' || typeof item.tick !== 'string') return null;
+  const row = await reads.financialRecord(rules.publicPaymentKey(commitment), at);
+  if (!row || BigInt(height) <= BigInt(row.registeredHeight) || !row.registration.feeBindings.includes(
+    rules.publicPaymentFeeBinding(commitment, item.dta.split('|')[2], item.address, item.tick))) return null;
+  if (row.intent) return rules.bindPublicPaymentIntent(row.intent, row.registration);
+  const confirmed = async () => {
+    const inclusion = await reads.included(reference, at);
+    if (!inclusion || inclusion.confirmations < 1 || rules.decimalV2(inclusion.height) !== height) return false;
+    let amount; try { amount = rules.parseTapAmount(item.amt); } catch { return false; }
+    if (BigInt(amount) <= 0n) return false;
+    const transfers = await reads.paymentTransfers(reference);
+    return transfers.some(({ value: t }) => t.ins === reference && t.fail === false && t.int === true &&
+      t.addr === row.registration.payer && t.dta === item.dta && t.taddr === item.address && t.tick === item.tick && t.amt === amount);
+  };
+  if (await (reads.withTapSnapshot ? reads.withTapSnapshot(at, confirmed) : confirmed())) {
+    throw Object.assign(Error('public_payment_unrevealed'), { commitment, reference });
+  }
+  return null;
 }
 export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mainnet', lookupSettings }) {
   const active = async at => {
@@ -60,17 +92,27 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     return { ...resolved, feeQuote: q, price, split, destinations, beneficiaries: c.beneficiaries, plan };
   };
   reads.publicMintQuote = async (input, at) => {
-    const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document } = result;
+    const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document, height } = result;
     const body = { network, asset: input.asset, block: rules.decimalV2(input.block), tapAddress: input.tapAddress, amount, feeQuote,
-      price, split, fees: plan.fees, custody: plan.custody, ...(claimDeadline === undefined ? {} : { claimDeadline }), settingsHash: rules.hashObject(document) };
+      price, split, fees: plan.fees, custody: plan.custody, ...(claimDeadline === undefined ? {} : { claimDeadline }), settingsHash: rules.hashObject(document),
+      ...(rules.publicPaymentV2Active(document, height) ? { paymentVersion: 2, paymentSalt: randomBytes(32).toString('hex') } : {}) };
     const intent = reads.feeQuotes.sign(DOMAIN, body), id = rules.publicRequestId(network, intent);
     const fees = plan.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) }));
     check(fees.length > 0 && fees.every(f => Buffer.byteLength(f.dta) <= document.values.moveBytes), 'public_quote_size');
-    return { id, intent, fees, amount, price, split, feeQuote, deployment: c.deployment };
+    const commitment = intent.paymentVersion === 2 ? rules.publicPaymentCommitment(intent) : null;
+    const registration = commitment ? reads.feeQuotes.sign(rules.PUBLIC_PAYMENT_REGISTRATION_DOMAIN, {
+      network, commitment, payer: input.tapAddress, feeBindings: intent.fees.map(f => rules.publicPaymentFeeBinding(commitment, f.role, f.to, f.ticker)),
+      validFrom: feeQuote.validFrom, validUntil: feeQuote.validUntil, settingsHash: intent.settingsHash }) : null;
+    if (registration) check(Buffer.byteLength(rules.stableJSON({ type: 'public-payment', id: commitment, action: 'reveal', intent,
+      reference: '0'.repeat(64) + 'i9999999999' })) <= document.values.moveBytes, 'public_quote_size');
+    return { id, intent, fees, amount, price, split, feeQuote, deployment: c.deployment, ...(registration ? { registration } : {}) };
   };
   const payment = async (intent, reference, position, at) => {
     const signed = reads.feeQuotes.verify(DOMAIN, intent), id = rules.publicRequestId(network, intent);
     check(signed.network === network && signed.block === rules.decimalV2(signed.block), 'public_quote_binding');
+    const { document, height } = await active(at), v2 = signed.paymentVersion === 2;
+    check(v2 === rules.publicPaymentV2Active(document, signed.feeQuote.validFrom) &&
+      (!v2 || rules.publicPaymentV2Active(document, position.height)), 'public_payment_activation');
     const original = await reads.financialSettings(signed.settingsHash);
     check(rules.publicMintActive(original, position.height) && signed.feeQuote.settingsHash === signed.settingsHash, 'public_quote_binding');
     let result, refusal;
@@ -87,10 +129,12 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const row = { id, payer: signed.tapAddress, quote: { fees: feeItems } };
     const receipts = await tapReceipts(reads, row, [reference], lookupSettings, { at, confirmedOnly: true });
     if (!receipts.length) return null;
+    if (v2) check(receipts.every(r => r.verifiedHeight === position.height), 'public_payment_height');
     const progress = rules.paymentProgress(feeItems, receipts), complete = !refusal && progress.final;
     const received = receipts.map(({ role, to, ticker, amount, tt, key }) => ({ role, to, ticker, amount, tt, key }));
     const value = { id, asset: signed.asset, block: signed.block, tapAddress: signed.tapAddress, reference, ...position, complete,
-      fees: received, ...(refusal ? { refusal } : {}) };
+      fees: received, ...(refusal ? { refusal } : {}), ...(rules.publicPaymentV2Active(document, height) ? {
+        paymentVersion: v2 ? 2 : 1, paymentCreated: signed.feeQuote.validFrom, ...(v2 ? { commitment: rules.publicPaymentCommitment(intent) } : {}) } : {}) };
     if (!complete) return value;
     const d = result.context.deployment, request = { asset: signed.asset, block: signed.block, amount: signed.amount };
     const generation = await reads.financialRecord('fd/asset/' + signed.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
@@ -101,6 +145,33 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
       capacity: { deployment: d.id, asset: signed.asset, block: signed.block, amount: signed.amount, remaining: d.remaining, limit: d.limit ?? '0' } };
     const paymentHash = rules.paymentCommitment(progress.allocations), plan = permit(network, request, d, signed.tapAddress, id, paymentHash);
     return { ...value, source, paymentHash, permitHash: plan.digest };
+  };
+  reads.publicMintPayment = async (transition, at) => {
+    const { document, height } = await active(at), { id, action } = transition;
+    check(rules.publicPaymentV2Active(document, height), 'public_payment_activation');
+    const old = await reads.financialRecord(rules.publicPaymentKey(id), at), previous = rules.hashObject(old ?? null);
+    if (action === 'register') {
+      const r = rules.validatePublicPaymentRegistration(transition.registration, document, height);
+      reads.feeQuotes.verify(rules.PUBLIC_PAYMENT_REGISTRATION_DOMAIN, r);
+      const original = await reads.financialSettings(r.settingsHash);
+      check(!old && r.network === network && r.commitment === id && rules.publicPaymentV2Active(original, r.validFrom) &&
+        BigInt(height) <= BigInt(r.validUntil) && r.validUntil === rules.addUint(r.validFrom, String(original.values.quoteLifetimeTips)), 'public_payment_registration');
+      payoutAddress('tap', r.payer, bitcoinNetwork);
+      return { requestId: id, action, previous, registration: r };
+    }
+    check(action === 'reveal' && old && !old.intent, 'public_payment_reveal');
+    const { intent, reference } = transition;
+    rules.bindPublicPaymentIntent(intent, old.registration);
+    reads.feeQuotes.verify(DOMAIN, intent);
+    check(intent.network === network && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(reference ?? ''), 'public_payment_reveal');
+    const fees = intent.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) }));
+    const receipts = await tapReceipts(reads, { id: rules.publicRequestId(network, intent), payer: intent.tapAddress, quote: { fees } },
+      [reference], lookupSettings, { at, confirmedOnly: true });
+    const paymentHeight = receipts[0]?.verifiedHeight;
+    check(receipts.some(r => BigInt(r.amount) > 0n) && receipts.every(r => r.confirmations >= 1 && r.verifiedHeight === paymentHeight) &&
+      rules.publicPaymentV2Active(document, paymentHeight) && BigInt(paymentHeight) > BigInt(old.registeredHeight) &&
+      BigInt(paymentHeight) <= BigInt(height), 'public_payment_unconfirmed');
+    return { requestId: id, action, previous, intent, reference, paymentHeight };
   };
   reads.publicMintScan = async (transition, at) => {
     const { document, height } = await active(at), { asset, block } = transition, id = rules.publicPlotId(asset, block);
@@ -123,7 +194,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
         if (payload?.p !== 'tap' || payload.op !== 'token-auth' || !Array.isArray(payload.redeem?.items)) continue;
         const intents = new Map();
         for (const item of payload.redeem.items) {
-          const intent = publicPaymentIntent(item.dta, document.values.moveBytes);
+          const intent = await resolvePublicPaymentIntent(reads, item, { document, height: from.height, reference: parsed.txid + 'i' + ii, at });
           if (intent?.asset === asset && intent.block === block) intents.set(rules.publicRequestId(network, intent), intent);
         }
         // One public checkout per inscription gives an unambiguous position.
@@ -135,7 +206,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
         } catch (error) {
           // Invalid user payloads cannot halt scanning. Missing independent
           // chain/index/settings evidence must halt it instead of skipping.
-          if (!['fee_quote_signature', 'public_quote_binding', 'payment_redeem', 'payment_item_binding'].includes(error.message)) throw error;
+          if (!['fee_quote_signature', 'public_quote_binding', 'payment_redeem', 'payment_item_binding', 'public_payment_activation'].includes(error.message)) throw error;
         }
       }
       if (ii < parsed.contents.length) break;

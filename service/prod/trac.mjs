@@ -10,6 +10,7 @@ import { installValidatorFanout } from './runtime.mjs';
 import { msbIdentity } from './mainnet.mjs';
 import { isApplicationNotaryKey } from '../../contract/runtime/notary-records.js';
 import { lifecycleSignal, abortable } from '../src/lifecycle.mjs';
+import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 export const tracBinding = (config, deployment) => hash(rules.stableJSON({ config: {
   bootstrap: config.bootstrap, msbBootstrap: config.msbBootstrap, networkId: config.networkId }, deployment }));
@@ -48,7 +49,7 @@ export async function createTrac({ runtime, config, deployment, store, network }
   // unrelated appends, which made every long prepare fail on a live network.
   const batchClock = s => ({ counted: s.counted, tip: s.tip, tipHash: s.tipHash, last: s.last });
   const pinned = async (at, read) => { const before = await stamp(); if (at) check(clock.compare(before.counted, rules.decimalV2(at.counted)) >= 0 && same(before.last, at.last), 'trac_snapshot_changed');
-    const result = await read(); check(same(batchClock(before), batchClock(await stamp())), 'trac_snapshot_changed'); return result; };
+    const result = await read(before); check(same(batchClock(before), batchClock(await stamp())), 'trac_snapshot_changed'); return result; };
   const sync = () => gate(async () => {
     await abortable(peer.base.update(), signal); signal?.throwIfAborted();
     const end = sourceVersion(), cursor = clock.value(rules.decimalV2(store.get(progressSpace, 'cursor') ?? 0));
@@ -94,6 +95,16 @@ export async function createTrac({ runtime, config, deployment, store, network }
     renewalSlice: n => api.dmwReceiptRenewalSlice(n),
     settingsByHash: hash => api.dmwSettingsByHash(hash),
     read: (key, at) => pinned(at, () => raw(key)),
+    readMany: (keys, at) => {
+      pointBatch(keys);
+      return pinned(at, async before => {
+        const view = peer.base.view.checkout(sourceSeek(before.revision));
+        try {
+          const rows = await pointResults(keys, async key => (await view.get(key))?.value ?? null);
+          return rows.map(row => { if (row.error) throw Error(row.error); return row.value; });
+        } finally { await view.close(); }
+      });
+    },
     financialPage: (range, at) => pinned(at, async () => {
       const view = peer.base.view.checkout(sourceSeek(at.revision));
       try { return await financialInventoryPage(view, range, (await view.get('s/assets'))?.value?.settings); }
