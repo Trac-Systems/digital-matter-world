@@ -3,7 +3,7 @@ import { tapBurnAddress } from '../../rules/src/tap-burn.js';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1';
 import * as btc from '@scure/btc-signer';
-import { buildInscription, signCommit, acceptSignedCommit, hex, unhex, fundingAddress, digest as digestForTest, missingItems, transferItems, mintContent } from '../lib/inscription-core.mjs';
+import { buildInscription, signCommit, acceptSignedCommit, hex, unhex, fundingAddress, digest as digestForTest, missingItems, transferItems, mintContent, deploymentContent, checkDeployer } from '../lib/inscription-core.mjs';
 import { mempoolBitcoinSource } from '../lib/bitcoin-wallet.mjs';
 import { PlayerMint } from '../lib/player-mint.mjs';
 import { Journal } from '../lib/journal.mjs';
@@ -128,6 +128,55 @@ test('compound first maker deploys once and retries registration after finality'
   assert.equal((await player.deploy(args)).deploymentState, 'registered');
   assert.deepEqual(sends.slice(0, 2), sends.slice(2)); assert.deepEqual(registrations[0], registrations[1]);
   assert.equal((await player.deploy(args)).sent, false);
+});
+
+test('a c2 compound deployment job yields its dmwc token-deploy content; malformed ids are refused', async () => {
+  const { ServiceClient } = await import('../lib/service-client.mjs');
+  const asset = 'c2:' + 'ab'.repeat(32), payload = { p: 'tap', op: 'token-deploy', tick: 'dmwcabababab', prv: payee + 'i0', max: '18446744073709551615', dec: '0' };
+  const job = { asset, kind: 'compound', state: 'awaiting_player_deploy', phase: 'deployment', tickerAttempt: 0,
+    definition: { firstMaker: 'fixture-first-maker' }, content: payload, inscriptionText: JSON.stringify(payload), attempts: [{ id, phase: 'deployment', attempt: 0, text: payload }] };
+  assert.deepEqual(deploymentContent(job), { text: JSON.stringify(payload), attemptId: id, phase: 'deployment' });
+  for (const bad of ['c2:' + 'ab'.repeat(31), 'c2:' + 'AB'.repeat(32)]) assert.throws(() => deploymentContent({ ...job, asset: bad }), /not ready/);
+  assert.throws(() => deploymentContent({ ...job, kind: 'dmt' }), /not ready/);
+  const service = new ServiceClient({ origin: 'http://127.0.0.1:5570', mode: 'regtest' });
+  assert.equal(service.deploymentLink(asset), 'http://127.0.0.1:5570/mint/' + asset);
+  assert.throws(() => service.deploymentLink('c2:xyz'), /Invalid deployment asset/);
+});
+
+test('deploy content may name its discoverer or first maker in prov, never anyone else', () => {
+  const discoverer = 'trac1-discoverer', elem = 'ee'.repeat(32) + 'i0';
+  const payload = { p: 'tap', op: 'dmt-deploy', tick: 'dmwflorite', elem, dt: 'n', prv: payee + 'i0', prov: discoverer };
+  const job = { asset: 'p2:0', kind: 'dmt', state: 'awaiting_player_deploy', phase: 'deployment', tickerAttempt: 0, elementId: elem,
+    definition: { dt: 'n', discoverer }, content: payload, inscriptionText: JSON.stringify(payload), attempts: [{ id, phase: 'deployment', attempt: 0, text: payload }] };
+  assert.equal(deploymentContent(job).text, JSON.stringify(payload));
+  const { prov, ...older } = payload;
+  assert.equal(deploymentContent({ ...job, content: older, inscriptionText: JSON.stringify(older), attempts: [{ id, phase: 'deployment', attempt: 0, text: older }] }).text, JSON.stringify(older));
+  const wrong = { ...payload, prov: 'trac1-someone' };
+  assert.throws(() => deploymentContent({ ...job, content: wrong, inscriptionText: JSON.stringify(wrong), attempts: [{ id, phase: 'deployment', attempt: 0, text: wrong }] }), /another discoverer/);
+  const compound = { p: 'tap', op: 'token-deploy', tick: 'dmwcabababab', prv: payee + 'i0', prov: 'trac1-someone', max: '18446744073709551615', dec: '0' };
+  assert.throws(() => deploymentContent({ asset: 'c2:' + 'ab'.repeat(32), kind: 'compound', state: 'awaiting_player_deploy', phase: 'deployment', tickerAttempt: 0,
+    definition: { firstMaker: 'trac1-maker' }, content: compound, inscriptionText: JSON.stringify(compound), attempts: [{ id, phase: 'deployment', attempt: 0, text: compound }] }), /another discoverer or first maker/);
+});
+
+test('during the discoverer\'s week only the discoverer\'s wallet is offered the deploy', async t => {
+  const deployer = { onlyDiscoverer: true, until: '974730', discoverer: 'trac1-discoverer', address: 'bc1p-discoverer' };
+  const job = { kind: 'dmt', state: 'awaiting_player_deploy', deployer };
+  assert.doesNotThrow(() => checkDeployer(job, { owner: 'trac1-discoverer', address: 'bc1p-discoverer' }));
+  assert.doesNotThrow(() => checkDeployer(job, { address: 'bc1p-discoverer' }), 'a public mint wallet that is the discoverer\'s');
+  const refusal = 'Only the discoverer can deploy this token until block 974730. After that anyone can, and the deployer keeps its art rights.';
+  assert.throws(() => checkDeployer(job, { owner: 'trac1-other', address: 'bc1p-other' }), { message: refusal, code: 'discoverer_receiver' });
+  assert.throws(() => checkDeployer(job, { owner: 'trac1-other', address: 'bc1p-discoverer' }), { message: refusal });
+  assert.throws(() => checkDeployer({ ...job, deployer: { ...deployer, address: null } }, { owner: 'trac1-discoverer', address: 'bc1p-discoverer' }), { message: refusal });
+  for (const open of [{ ...job, deployer: { ...deployer, onlyDiscoverer: false } }, { ...job, deployer: undefined }, { ...job, state: 'registered' }, { ...job, kind: 'compound' }])
+    assert.doesNotThrow(() => checkDeployer(open, { owner: 'trac1-other', address: 'bc1p-other' }));
+  // The local agent refuses before preparing or signing anything.
+  const f = fixture(), journal = await Journal.open(await temp(t), 'week'); cleanup(t, () => journal.close());
+  let bound = 0;
+  const player = new PlayerMint({ wallet: f.wallet, journal, owner: 'trac1-other', dryRun: false, service: {
+    deployment: async () => ({ asset: 'p2', kind: 'dmt', state: 'awaiting_player_deploy', content: 'x', deployer }),
+    payoutBinding: async () => { bound++; return {}; } } });
+  await assert.rejects(player.deploy({ asset: 'p2', maxFeeSats: '10000' }), { message: refusal });
+  assert.equal(journal.recent().length, 0); assert.equal(bound, 0);
 });
 
 test('unconfirmed reservations never pay and payment hints identify the saved reveal', async t => {

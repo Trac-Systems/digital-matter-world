@@ -40,7 +40,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
     // the complete prefix to those results before applying any account effect.
     const credits = (file.settlements ?? []).flatMap(s => s.winners ?? []).map(w =>
       ({ op: 'ac', to: w.winner, assets: [[w.asset, String(w.count)]] }));
-    verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? []);
+    verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? [], file.compoundMerge);
     for (const op of prefix) await apply(op);
     for (const input of inputs) {
       let evidence = await sources.financialEvidence(input.transition, at);

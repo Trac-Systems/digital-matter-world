@@ -22,14 +22,43 @@ export function title(name) {
   const n = String(name ?? '').replace(/^dmw/, '');
   return n ? n[0].toUpperCase() + n.slice(1) : '–';
 }
-export function symbol(name) { const t = title(name); return t.length > 1 ? t[0] + t[1].toLowerCase() : t; }
+export function symbol(pattern) {
+  if (pattern && typeof pattern === 'object' && pattern.symbol !== undefined) return pattern.symbol;
+  const t = title(pattern && typeof pattern === 'object' ? pattern.name : pattern);
+  return t.length > 1 ? t[0] + t[1].toLowerCase() : t;
+}
 export function assetName(asset) {
   const p = store.pattern(asset);
   if (p) return title(p.name);
-  const c = store.compound(asset);
-  if (c) return c.name && c.name !== c.id ? c.name.replace(/\bdmw([a-z0-9]+)/g, (_, n) => title(n)) : `Compound ${short(asset, 6, 3)}`;
+  const c = store.compound(asset) ?? compounds.get(asset);
+  if (c?.name && c.name !== c.id) return c.name.replace(/\bdmw([a-z0-9]+)/g, (_, n) => title(n));
+  if (c || /^c2:[0-9a-f]{64}$/.test(asset ?? '')) return compoundName(c ?? { id: asset });
   return asset ?? '–';
 }
+// A compound is named by its recipe and ingredients ("Nullspar + Muffinite fusion"); its key is only a detail.
+const compounds = new Map();
+export function rememberCompound(c) {
+  const id = c?.id ?? c?.asset;
+  if (typeof id === 'string' && Array.isArray(c.inputs)) { compounds.delete(id); compounds.set(id, c); if (compounds.size > 500) compounds.delete(compounds.keys().next().value); }
+  return c;
+}
+// v2 records list { asset, amount, properties }; older ones [asset, amount].
+export const compoundInputs = c => (Array.isArray(c?.inputs) ? c.inputs : [])
+  .map(i => Array.isArray(i) ? { asset: i[0], amount: String(i[1]) } : { asset: i?.asset, amount: String(i?.amount ?? '') }).filter(i => typeof i.asset === 'string');
+export const compoundKey = id => { const s = String(id ?? ''); return s.startsWith('c2:') ? s.slice(3, 11) : short(s, 6, 3); };
+export function compoundName(c, depth = 0) {
+  const inputs = compoundInputs(c), id = c?.id ?? c?.asset;
+  if (!inputs.length) return `Compound ${compoundKey(id)}`;
+  const names = inputs.slice(0, 4).map(i => i.asset.startsWith('c') && depth < 1 && compounds.has(i.asset) ? compoundName(compounds.get(i.asset), depth + 1)
+    : i.asset.startsWith('c') ? `Compound ${compoundKey(i.asset)}` : assetName(i.asset));
+  return `${names.join(' + ')}${inputs.length > 4 ? ' + …' : ''} ${c.recipe === 'resonance' ? 'resonance' : 'fusion'}`;
+}
+// A v2 tier is { value, expression }.
+export const tierOf = t => t?.value ?? t ?? null;
+// Spectrum names the block header fields of the ingredients; generation counts crafting steps.
+const SPECTRUM = [[1, 'block height'], [2, 'nonce'], [4, 'difficulty bits']];
+export const spectrumText = n => Number.isSafeInteger(n) ? SPECTRUM.filter(([bit]) => n & bit).map(([, w]) => w).join(' + ') || '–' : '–';
+export const generationText = g => g === undefined || g === null ? '–' : String(g) === '0' ? '0 · a pattern' : `${g} · crafted`;
 export function assetKind(asset) { return store.pattern(asset) ? 'pattern' : store.compound(asset) ? 'compound' : 'asset'; }
 
 const ME = () => store.player?.address ?? store.status?.player?.address;

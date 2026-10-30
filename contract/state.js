@@ -253,7 +253,7 @@ export class StateTransition {
       if (document) installSettings(this, document);
     }
     const budget = { assets: 0, kv: 0 };
-    for (const op of batch.ops) { const error = await this.batchOp(op, height, settings, budget); if (error) return error; }
+    for (const op of batch.ops) { const error = await this.batchOp(op, height, settings, budget, batch.execution?.height ?? height); if (error) return error; }
     if (document) {
       // An old-policy execution borrows its original account limits only for
       // this transaction. It cannot roll back the authorized admission policy.
@@ -275,7 +275,7 @@ export class StateTransition {
     // Retain the signed request binding for late payments and rail credits.
     this.put(`m/${value.id}`, { ...m, s: 2 }); return null;
   }
-  async batchOp(op, height, settings, budget) {
+  async batchOp(op, height, settings, budget, executionHeight = height) {
     if (!op || typeof op.op !== 'string') return 'operation';
     const version = await this.get('s/assets');
     if (op.op === 'br') {
@@ -309,7 +309,7 @@ export class StateTransition {
     if (op.op === 'ar') {
       if (version?.version !== 2) return 'account_v2_inactive';
       try {
-        const result = await applyRootAccounts(this, op, { network: this.options.network, height, settings: version.settings });
+        const result = await applyRootAccounts(this, op, { network: this.options.network, height, executionHeight, settings: version.settings });
         budget.assets += result.assetTouches;
         return budget.assets > settings.batch_assets ? 'batch_assets' : null;
       }

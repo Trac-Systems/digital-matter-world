@@ -25,6 +25,6 @@ export async function preflightBatch(batch, at, { read, deployment }) {
   else check(!deployment.batchActivation || batch.n < deployment.batchActivation.sequence, 'preflight_activation');
   if (document) installSettings(state, document);
   const budget = { assets: 0, kv: 0 };
-  for (const op of batch.ops) { const error = await state.batchOp(op, applied, settings, budget); check(!error, `preflight:${error}`); }
+  for (const op of batch.ops) { const error = await state.batchOp(op, applied, settings, budget, batch.execution?.height ?? applied); check(!error, `preflight:${error}`); }
   return { ok: true, counted: applied, last, digest: rules.bytesToHex(rules.batchDigest(deployment.network, batch)) };
 }

@@ -44,7 +44,7 @@ export function replayNamedEntries(state, { entries, settings, settingsHistory, 
 // headers and indexed state passed by the caller are available to execution.
 export function executeNamedMove(state, { move, settings, settingsHistory, tip, counted, executionHeight = counted, receiptPosition, history, hashAt, provenance = null, craftCatalog = state, claimSettings = settings }) {
   uintV2(tip); uintV2(counted); uintV2(receiptPosition);
-  const invalid = checkMoveV2(move, { settings, tip, hashAt }); assert(!invalid, invalid);
+  const invalid = checkMoveV2(move, { settings, tip, hashAt, executionHeight }); assert(!invalid, invalid);
   const id = moveIdV2(move);
   assert(!namedGet(state.records, `executed/${id}`), 'move_already_executed');
   const common = { agent: move.a, tip, counted, receiptPosition, settings, history, provenance };
@@ -57,7 +57,7 @@ export function executeNamedMove(state, { move, settings, settingsHistory, tip, 
     result = { state };
   }
   else if (move.t === 'transfer-v2') result = executeTransferV2(state, { move, settings, tip, counted, executionHeight, provenance });
-  else if (move.t === 'craft-v2') result = executeCraftV2(state, { move, settings, counted, hashAt, provenance, catalog: craftCatalog });
+  else if (move.t === 'craft-v2') result = executeCraftV2(state, { move, settings, counted, executionHeight, hashAt, provenance, catalog: craftCatalog });
   else if (move.t === 'compound-refine-v2') result = advanceCompoundTier(state, { ...move.p, settings });
   else if (move.t === 'discovery-commit-v2') result = { state: commitNamedDiscovery(state, { ...common, ...move.p }) };
   else if (move.t === 'discovery-reveal-v2') {

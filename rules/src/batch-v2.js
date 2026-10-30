@@ -26,6 +26,7 @@ import { freezeLegacyClaimWindow } from './legacy-claims.js';
 import { verifyRenewalSegments, validateRenewalSlice } from './receipt-renewal.js';
 import { advanceClaimWindow, ClosureBudget } from './claim-closure.js';
 import { claimsNeverCloseActive } from './public-mint.js';
+import { mergeCompoundCatalogV4 } from './compound-merge-v4.js';
 import { publicMintEvidenceReader, applyPublicClaimScan } from './public-claims.js';
 
 export function processBlockV2(input, readers = {}) {
@@ -84,11 +85,14 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     decodeNodeHints(hints, 'named_proof_hints');
   }
   let named = s.document ? (state.namedSnapshot ? persistence.load(state.namedSnapshot) : emptyNamedDiscovery()) : null;
-  const craftCatalog = named;
+  let compoundMerge = null;
   if (s.document) {
     assert(namedStateRoot(named) === state.catalogRoot, 'named_predecessor');
+    const migrated = mergeCompoundCatalogV4(named, { network, height: input.executionHeight ?? height });
+    named = migrated.state; compoundMerge = migrated.merge;
     patterns = { get(number) { const key = namedGet(named.records, `number/${number}`), record = key && namedGet(named.records, `pattern/${key}`); return record && record; } };
   }
+  const craftCatalog = named;
   if (clock.compare(tip, state.lastTip ?? clock.add(tip, -1)) > 0) next.rounds.push({ ...claimRound(tip, tipHash, clock.min(height, tip), {
     root: state.catalogRoot ?? merkleRoot([]), nextNumber: named?.nextPattern ?? state.nextPatternNumber ?? (Array.isArray(patterns) ? patterns.length : 0),
     revision: named?.catalogRevision ?? state.catalogRevision ?? 0,
@@ -212,6 +216,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
   delete next.publicMintGet;
   const file = { v: 5, ruleset, settingsRevision, observation: next.observation, previousHeight: clock.value(state.counted ?? clock.add(height, -1)), height, hash: blockHash, tip, previousTip: clock.value(state.lastTip ?? clock.add(tip, -1)), tipHash, confirmed: clock.min(height, tip),
     receipts: entries.map(e => e.receipt), receiptRoot, rootAttestations, receiptReference: null, moves: outcomes, settlements, closures, occurrences,
+    ...(compoundMerge ? { compoundMerge } : {}),
     ...(closureProgress.length ? { closureProgress } : {}),
     ...(publicClaims ? { publicMintEvidence: publicClaims.rows() } : {}),
     discovery: { work: [], queued: 0, rejected: [] }, discoveries, crafts, ...(transfers.length ? { transfers } : {}), ...(refinements.length ? { refinements } : {}), commissions: [], mintOperations: [], mintOutcomes: [], linkOperations: [], linkOutcomes: [], ops: budget.operations(),
@@ -269,7 +274,7 @@ export function finalizeBlockV2Accounts(output, input, readers = {}) {
   const next = { ...output.state }, file = { ...output.file }, { crafts } = file;
   const { height, tip, entries, state } = input;
   if (s.document && input.accountOperations) {
-    file.ops = verifyCreditOperations(file.ops, input.accountOperations, crafts, file.transfers);
+    file.ops = verifyCreditOperations(file.ops, input.accountOperations, crafts, file.transfers, file.compoundMerge);
     if (input.financialOperations?.length) {
       assert(clock.compare(height, input.executionHeight) === 0, 'financial_execution_height');
       file.financialOperations = input.financialOperations;
@@ -288,7 +293,7 @@ export function finalizeBlockV2Accounts(output, input, readers = {}) {
   assert(!input.mintOperations?.length && !input.linkOperations?.length, 'rules_transition_unavailable');
   // Planning may calculate claim credits before adding financial proofs.
   // Final batches must change game state or advance a witnessed receipt chain.
-  assert(input.financialPlanning === true || file.receiptContinuation || entries.length || file.settlements.length || file.closures.length || file.closureProgress?.length || file.financialOperations?.length || clock.compare(height, state.counted ?? -1) > 0 || clock.compare(tip, state.lastTip ?? -1) > 0, 'batch_no_progress');
+  assert(input.financialPlanning === true || file.compoundMerge || file.receiptContinuation || entries.length || file.settlements.length || file.closures.length || file.closureProgress?.length || file.financialOperations?.length || clock.compare(height, state.counted ?? -1) > 0 || clock.compare(tip, state.lastTip ?? -1) > 0, 'batch_no_progress');
   const auditBytes = encodeBinary(file), viewerBytes = summaryBytes(file);
   assert(auditBytes.length <= s.auditMaxBytes && viewerBytes.length <= s.summaryMaxBytes, 'audit_budget');
   return { ...output, state: next, file, operations: file.ops, auditBytes, viewerBytes };
@@ -323,7 +328,7 @@ export function buildBatchV2(input) {
   assert(files.every((f, i) => f.ruleset === pin.ruleset && f.settingsRevision === pin.settingsRevision && (!s.document || f.settingsHash === pin.settingsHash && f.batchSequence === String(sequence)) && clock.compare(f.previousHeight, i ? files[i - 1].height : lastTo) === 0 && clock.compare(f.height, f.previousHeight) >= 0 && (!i || clock.compare(f.observation, clock.add(files[i - 1].observation)) === 0)), 'batch_continuity');
   if (s.document) assert(files.every((f, i) => hex(f.claimRoot, 32) && hex(f.claimPrevious, 32) && (!i || f.claimPrevious === files[i - 1].claimRoot)), 'batch_claim_continuity');
   assert(clock.valid(deadline) && clock.compare(deadline, executionHeight) >= 0 && clock.compare(deadline, clock.add(executionHeight, s.batchDeadlineMaxBlocks)) <= 0 && clock.compare(files.at(-1).height, executionHeight) <= 0, 'batch_deadline');
-  assert(files.some(f => f.receiptContinuation || f.closureProgress?.length || f.financialOperations?.length || f.moves.length || f.settlements.length || f.closures.length || clock.compare(f.height, f.previousHeight) > 0 || clock.compare(f.tip, f.previousTip) > 0), 'batch_no_progress');
+  assert(files.some(f => f.compoundMerge || f.receiptContinuation || f.closureProgress?.length || f.financialOperations?.length || f.moves.length || f.settlements.length || f.closures.length || clock.compare(f.height, f.previousHeight) > 0 || clock.compare(f.tip, f.previousTip) > 0), 'batch_no_progress');
   const fileBytes = files.map(encodeBinary);
   assert(fileBytes.every(b => b.length <= s.auditMaxBytes) && fileBytes.reduce((n, b) => n + b.length, 0) <= s.auditMaxBytes, 'batch_audit_budget');
   const finds = merkleRoot(files.map(f => encodeBinary({ settlements: f.settlements, closures: f.closures }))), receipts = merkleRoot(files.map(f => encodeBinary(f.receiptRoot)));

@@ -53,9 +53,12 @@ export function rankingHighlights(store) {
     const row = store.db.prepare('SELECT value FROM publicRanksV2 WHERE kind=? ORDER BY score,id LIMIT 1').get(kind);
     rarestFinds[kind] = row ? JSON.parse(row.value) : null;
   }
-  const compound = store.db.prepare("SELECT r.value FROM publicOrderV2 o JOIN publicItemsV2 r ON r.kind=o.kind AND r.scope=o.scope AND r.id=o.id WHERE o.kind='compounds' AND o.scope='' AND o.sort='mass' ORDER BY o.key DESC,o.id DESC LIMIT 1").get();
+  // v2 mass is a commitment, not a size: the standout compound is the highest tier, then generation, then newest.
+  const compound = store.db.prepare("SELECT r.value FROM publicOrderV2 o JOIN publicItemsV2 r ON r.kind=o.kind AND r.scope=o.scope AND r.id=o.id WHERE o.kind='compounds' AND o.scope='' AND o.sort='rank' ORDER BY o.key DESC,o.id DESC LIMIT 1").get();
   const c = compound && JSON.parse(compound.value);
   return { v: 3, asOf: now, clock: 'UTC; accepted Bitcoin find timestamps', scoreMeaning: 'known_match_fraction_at_find_publication',
     todayFrom: Math.floor(now / 86400000) * 86400000, weekFrom: now - 7 * 86400000, rarestFinds,
-    biggestCompound: c ? { asset: c.id, mass: c.properties?.mass, firstMaker: c.firstMaker, created: c.created } : null };
+    highestTierCompound: c ? { asset: c.id, tier: c.tier?.value ?? c.tier ?? null, generation: c.properties?.generation ?? null, recipe: c.recipe ?? null,
+      inputs: (c.inputs ?? []).map(i => Array.isArray(i) ? { asset: i[0], amount: i[1] } : { asset: i.asset, amount: i.amount }), firstMaker: c.firstMaker ?? null,
+      snapshotHeight: c.snapshot?.height ?? null } : null };
 }

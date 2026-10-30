@@ -59,7 +59,9 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   let index = ''; const usedFilters = new Set(['since']);
   for (const filter of ['asset', 'owner', 'block', 'state', 'action']) if (params.has(filter)) {
     if (index || kind === 'links' && filter === 'owner') continue; usedFilters.add(filter);
-    const column = filter === 'action' ? 'state' : filter; where.push(`o.${column}=?`); args.push(params.get(filter)); index ||= ' INDEXED BY publicOrderV2' + column[0].toUpperCase() + column.slice(1);
+    // A compound's asset is its id.
+    const column = filter === 'action' ? 'state' : kind === 'compounds' && filter === 'asset' ? 'id' : filter; where.push(`o.${column}=?`); args.push(params.get(filter));
+    index ||= ' INDEXED BY publicOrderV2' + (column === 'id' ? 'Identity' : column[0].toUpperCase() + column.slice(1));
   }
   if (params.has('since')) { check(kind === 'events' && sort === 'sequence', 'page_since'); where.push('o.key>?'); args.push(rules.uintKeyV2(rules.decimalV2(params.get('since')))); }
   if (p.anchor) { check(Array.isArray(p.anchor) && p.anchor.length === 2, 'page_cursor'); where.push(`(o.key,o.id)${p.order === 'asc' ? '>' : '<'}(?,?)`); args.push(...p.anchor); }
@@ -84,13 +86,15 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
       value.current = !value.blocked;
     }
     if (kind === 'finds') value.minted = !!store.get('minted', value.asset + '/' + value.block);
-    const matches = extra.every(k => {
+    const visible = !['balances', 'supply'].includes(kind) || !value.asset?.startsWith('c2:') || !store.get('compoundTypes', value.asset)?.retired;
+    const matches = visible && extra.every(k => {
       const expected = params.get(k);
       if (k === 'nonzero') { check(['true', 'false'].includes(expected), 'page_filter'); return (BigInt(value.amount ?? '0') !== 0n) === (expected === 'true'); }
       if (['minted', 'pending', 'linked', 'header'].includes(k)) { check(['true', 'false'].includes(expected), 'page_filter'); return !!value[k] === (expected === 'true'); }
       if (k === 'q') return [value.name, value.asset, value.id, value.address].some(v => String(v ?? '').toLowerCase().includes(expected.toLowerCase()));
       if (k === 'actor') return Object.values(value.data ?? {}).includes(expected);
       if (k === 'category') return (value.type?.startsWith('financial_') || ['mint_request', 'mint_permit', 'mint_complete', 'transfer', 'link'].includes(value.type) ? 'money' : 'chain') === expected;
+      if (k === 'tier') return String(value.tier?.value ?? value.tier ?? '') === expected;
       return String(value[k] ?? '') === expected;
     });
     last = row; examined++;
@@ -245,6 +249,7 @@ function rights(store, owner, params, settings, onlyBlock) {
       let visited = 0, lastAsset = after;
       for (const balance of candidates.slice(0, budget)) {
         visited++; lastAsset = balance.asset;
+        if (store.get('compoundTypes', balance.asset)?.retired) continue;
         const deployment = store.get('publicDeployments', balance.asset), account = store.get('accountRecords', 'ar/' + owner), head = store.get('publicBalanceHeads', owner);
         const known = !account || head?.root === account.root && head?.revision === account.revision;
         const registryRevision = store.get('meta', 'publicRegistryRevision'), registered = !!deployment && (registryRevision == null || deployment.registryRevision === registryRevision) && !deployment.suspended;

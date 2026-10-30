@@ -32,7 +32,7 @@ test('v2 provisioning retains imported ledger identity and the v1 inscription fo
   assert.deepEqual(imported.definition, f.legacy);
   const element = f.index(imported.content);
   const deploy = await f.operator.submit('p2:0', { phase: 'element', inscription: element });
-  assert.deepEqual(deploy.content, { p: 'tap', op: 'dmt-deploy', tick: 'dmwflorite', elem: element, dt: 'n', prv: f.privilege });
+  assert.deepEqual(deploy.content, { p: 'tap', op: 'dmt-deploy', tick: 'dmwflorite', elem: element, dt: 'n', prv: f.privilege, prov: rules.encodeTracAddress(f.pattern.discoverer) });
   const deployment = f.index(deploy.content);
   assert.equal((await f.operator.submit('p2:0', { phase: 'deployment', inscription: deployment })).state, 'registered');
   assert.equal((await f.reads.registry()).assets.p0.id, deployment);
@@ -94,10 +94,39 @@ test('a registered v2 compound keeps its existing financial registration path', 
   const mints = new FinancialMints({ store: f.store, reads: { batchStamp: async () => ({}), financialDeployment: async value => {
     assert.equal(value, asset); return generation;
   } }, network: f.network, document, financial: { submit: async value => submitted.push(value) } });
-  mints.provisioner = { request: () => assert.fail('v2 compound must not use pattern provisioning') };
+  const definition = { id: asset, commitment: 'aa'.repeat(32), v: 3, recipe: 'fusion', firstMaker: 'cd'.repeat(32) };
+  await f.store.put('compoundTypes', asset, definition);
+  // Its Bitcoin deployment comes first, from the provisioner; the financial registration follows.
+  let registered = false;
+  mints.provisioner = { request: async (id, value, options) => {
+    assert.equal(id, asset); assert.deepEqual(value, definition); assert.equal(options.registeredAsIs, true);
+    return registered ? { asset, state: 'registered' } : { asset, state: 'awaiting_player_deploy' };
+  } };
+  const needed = await mints.quote({ asset, amount: '1' });
+  assert.equal(needed.state, 'deployment_needed'); assert.equal(needed.deploymentPage, '/mint/' + asset); assert.equal(needed.payable, false);
+  registered = true;
   const quote = await mints.quote({ asset, amount: '1' });
   assert.equal(quote.state, 'deployment_pending'); assert.equal(quote.payable, false);
   assert.deepEqual(submitted, []);
   await mints.deploymentTick();
   assert.deepEqual(submitted, [{ type: 'lifecycle', ...generation }]);
+});
+
+test('c2 compounds use the deployment-state, prepare and registration routes', async t => {
+  const f = await fixture(t), commitment = '5e'.repeat(32), asset = 'c2:' + commitment;
+  await f.store.put('compoundTypes', asset, { id: asset, commitment, v: 3, recipe: 'fusion', firstMaker: 'cd'.repeat(32) });
+  const http = await serve({ intake: { store: f.store }, files: { serve: async () => false }, operator: { provisioner: f.operator } });
+  t.after(() => http.close());
+  const get = async path => { const response = await fetch(http.url + path); assert.equal(response.status, 200); return response.json(); };
+  const post = async value => { const response = await fetch(http.url + '/mint/deployment', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) }); assert.equal(response.status, 200); return response.json(); };
+  assert.equal((await get('/mint/deployment-state/' + asset)).state, 'not_started');
+  assert.equal((await get('/mint/deployment-state/' + encodeURIComponent(asset))).kind, 'compound');
+  await get('/mint/deployment/' + asset); await f.operator.work.drain();
+  const job = await get('/mint/deployment-state/' + asset);
+  assert.equal(job.state, 'awaiting_player_deploy'); assert.equal(job.phase, 'deployment');
+  assert.deepEqual(job.content, { p: 'tap', op: 'token-deploy', tick: 'dmwc5e5e5e5e', prv: f.privilege, prov: rules.encodeTracAddress('cd'.repeat(32)), max: '18446744073709551615', dec: '0' });
+  assert.equal((await post({ asset, phase: 'deployment', inscription: f.index(job.content) })).state, 'registered');
+  assert.equal((await f.reads.registry()).assets[asset].tick, 'dmwc5e5e5e5e');
+  const missing = await fetch(http.url + '/mint/deployment-state/c2:' + '5e'.repeat(31));
+  assert.equal(missing.status, 400); assert.equal((await missing.json()).error, 'deployment_asset');
 });

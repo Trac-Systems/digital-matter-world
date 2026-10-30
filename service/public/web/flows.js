@@ -5,7 +5,8 @@
 export const go = path => { history.pushState(null, '', path); dispatchEvent(new PopStateEvent('popstate')); };
 const open = (path, q) => { go(path + (q ? '?' + new URLSearchParams(q) : '')); return false; };
 export const mintFlow = ({ asset, block }) => open('/mint', { asset, ...(block === undefined || block === null ? {} : { block }) });
-export const compoundMintFlow = asset => open('/mint', { asset });
+// A compound's page on /mint explains how it is made real on TAP.
+export const compoundMintFlow = asset => { go('/mint/' + asset); return false; };
 export const linkFlow = height => open('/link', { block: height });
 export { wallet } from '../../connect.js';
 export function run() { return Promise.reject(new Error('read_only')); }

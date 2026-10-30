@@ -47,6 +47,7 @@ const messages = {
   mint_expired: 'This mint request has expired. Ask your agent to check its status before creating a new request.',
   deployment_confirmations: 'Wait until the inscription is included in a Bitcoin block, then register the same receipt again.',
   deployment_receiver: 'Use the wallet that received the pattern element for its token deployment.',
+  discoverer_receiver: 'Only the discoverer can deploy this token during its first week. After that anyone can, and the deployer keeps its art rights.',
   web_target_unavailable: 'Wallet payments are temporarily unavailable. Try again shortly.',
 };
 // Keep existing plain wallet guidance, but never put a bare protocol code on a

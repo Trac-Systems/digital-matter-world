@@ -3,6 +3,8 @@ import { sha256, utf8ToBytes, hexToBytes, bytesToHex, canonicalJSON, jsonBytes }
 import { accountKey, EMPTY_ACCOUNT_ROOT, verifyAccountProof } from './account-tree.js';
 import { assetSettings } from './asset-settings.js';
 import { financialUnfrozen } from './financial-lifecycle.js';
+import { compoundMergeManifest, validateCompoundMerges, COMPOUND_MERGE_ACCOUNT_MARKER } from '../rules/src/compound-merge-v4.js';
+import { hashObject } from '../rules/src/core.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
 
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
@@ -20,7 +22,7 @@ export const accountActionDigest = (network, action) => {
 // updates from actions, rather than trusting caller-supplied replacement roots.
 // One root/revision per touched agent and one supply root are written. Nonces
 // live inside account trees; unresolved obligations remain separately addressable.
-export async function applyRootAccounts(store, operation, { network, height, settings = {}, capture = null }) {
+export async function applyRootAccounts(store, operation, { network, height, settings = {}, capture = null, executionHeight = height, mergeManifest }) {
   const limits = assetSettings(settings), clock = ordinalCodec(typeof height === 'string');
   await financialUnfrozen(store, [
     ...(operation?.accounts?.map(a => 'ar/' + a.owner) ?? []), 'ar/supply',
@@ -64,8 +66,26 @@ export async function applyRootAccounts(store, operation, { network, height, set
     return obligations.get(id);
   };
   const pair = (owner, name, amount, sign) => { check(positive(amount), 'account_amount'); change(owner, name, BigInt(amount) * sign); };
+  let merged = null;
+  const mergeSupply = new Map();
   for (const action of operation.actions) {
-    if (action.type === 'credit') {
+    if (action.type === 'compound-merge') {
+      const manifest = compoundMergeManifest(network, executionHeight, mergeManifest);
+      check(manifest && Object.keys(action).length === 2 && action.manifest === hashObject(manifest) &&
+        !merged && !await store.get(COMPOUND_MERGE_ACCOUNT_MARKER), 'compound_merge_authorization');
+      validateCompoundMerges(manifest);
+      for (const row of manifest.rows) {
+        const old = read(account(row.holder), accountKey('balance', row.oldId)) ?? { available: '0', held: '0' };
+        // A stale or incomplete deployment list fails atomically. Held units
+        // cannot move while their original mint/lock obligation remains open.
+        check(old.available === row.amount && old.held === '0', 'compound_merge_balance');
+        change(row.holder, row.oldId, -BigInt(row.amount));
+        change(row.holder, row.newId, BigInt(row.amount));
+        supply(row.oldId, 0n, BigInt(row.amount)); supply(row.newId, BigInt(row.amount));
+        mergeSupply.set(row.oldId, (mergeSupply.get(row.oldId) ?? 0n) + BigInt(row.amount));
+      }
+      merged = action.manifest;
+    } else if (action.type === 'credit') {
       pair(action.owner, action.asset, action.amount, 1n); supply(action.asset, BigInt(action.amount));
     } else if (action.type === 'credits') {
       check(Array.isArray(action.assets) && action.assets.length > 0 && action.assets.length <= limits.accountLeaves, 'account_credits');
@@ -134,6 +154,7 @@ export async function applyRootAccounts(store, operation, { network, height, set
     const key = accountKey('supply', name); check(supplyOld.has(key), 'supply_leaf_missing');
     const old = supplyOld.get(key) ?? { issued: '0', burned: '0' };
     check(uint(old.issued) && uint(old.burned) && Object.keys(old).length === 2, 'supply_value');
+    if (mergeSupply.has(name)) check(BigInt(old.issued) - BigInt(old.burned) === mergeSupply.get(name), 'compound_merge_supply');
     const next = { issued: (BigInt(old.issued) + delta.issued).toString(), burned: (BigInt(old.burned) + delta.burned).toString() };
     check(BigInt(next.issued) >= BigInt(next.burned), 'supply_conservation'); supplyUpdates.set(key, next);
   }
@@ -149,6 +170,7 @@ export async function applyRootAccounts(store, operation, { network, height, set
   for (const [key, value] of writes) store.put(key, value);
   for (const [id, value] of obligations) store.put('ao/' + id, value);
   for (const [id, value] of locks) store.put('al/' + id, value);
+  if (merged) store.put(COMPOUND_MERGE_ACCOUNT_MARKER, merged);
   store.put('ar/availability', operation.availability);
-  return { accounts: accounts.size, assetTouches: touches, obligations: obligations.size, writes: writes.length + obligations.size + locks.size + 1 };
+  return { accounts: accounts.size, assetTouches: touches, obligations: obligations.size, writes: writes.length + obligations.size + locks.size + 1 + (merged ? 1 : 0) };
 }

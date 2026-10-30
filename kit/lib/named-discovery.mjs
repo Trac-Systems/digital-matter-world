@@ -19,7 +19,7 @@ async function evidence(agent, proposal, history, settings, supplied) {
   return { anchor, matches, witnessRoot: witnessRoot(matches) };
 }
 export async function sendNamedMove(agent, id, type, payload, settings, validate = async () => {}) {
-  validateNamedPayload(type, payload, settings);
+  validateNamedPayload(type, payload, settings, type === 'craft-v2' ? payload.snapshot?.height ?? '0' : '0');
   let row = agent.journal.get(id); const intent = { type, payload };
   if (row) check(row.fingerprint === sha256(stableJSON(intent)), 'Conflicting action refused; use the saved intent');
   if (!agent.dryRun && row && ['received', 'accepted', 'rejected'].includes(row.state)) return { state: row.state, receipt: row.result, replayed: true };

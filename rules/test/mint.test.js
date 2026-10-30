@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { bytesToHex, hash, hexToBytes, mintRight, acceptMintRequest, finishMintRequest, mintTiming, pendingId, signRequest,
-  compoundDeploy, compoundMintPermit, signMintPrivilege, compoundTicker } from '../src/index.js';
+  compoundDeploy, compoundMintPermit, signMintPrivilege, compoundTicker, compoundTickerV2 } from '../src/index.js';
 const secret = new Uint8Array(32).fill(1), owner = bytesToHex(ed25519.getPublicKey(secret)), other = '22'.repeat(32);
 const find = { asset: 'p1', block: 100, count: 3, finder: owner, findHeight: 200 };
 test('revisioned finds retain original decimal deadlines across settings amendments', () => {
@@ -70,6 +70,17 @@ test('TAP deploy and mint bytes match ord-tap raw-string SHA256 and recoverable 
     assert.equal(prv.address, params.address); assert.equal(prv.hash, bytesToHex(permit.signingDigest));
   }
   assert.throws(() => compoundMintPermit({ ...params, quantity: '18446744073709551616' }));
+});
+test('v2 compound tickers are dmwc and the first 8 hex of the commitment', () => {
+  const commitment = '1bafd6097265662a5da3cd6aecd4c1df945f866038ceb85151ee96ed6227e5d5';
+  assert.equal(compoundTickerV2(commitment), 'dmwc1bafd609');
+  assert.equal(compoundTicker('c2:' + commitment), 'dmwc1bafd609');
+  assert.equal(compoundTicker('c123'), 'dmwc123');
+  // The deploy and mint payloads accept the ticker, and ord-tap's visible length rule (1 to 32) holds.
+  assert.equal(compoundDeploy({ tick: compoundTicker('c2:' + commitment), authority: hash('authority') + 'i0' }).payload.tick, 'dmwc1bafd609');
+  assert.equal(compoundMintPermit({ tick: 'dmwc1bafd609', quantity: '1', address: 'bc1qrecipient', salt: hash('salt') }).payload.tick, 'dmwc1bafd609');
+  for (const bad of ['', '1bafd609', commitment.toUpperCase(), commitment + '00', null]) assert.throws(() => compoundTickerV2(bad), /compound_ticker/);
+  for (const bad of ['c2:' + commitment.slice(1), 'c2:' + commitment.toUpperCase()]) assert.throws(() => compoundTicker(bad), /compound_ticker/);
 });
 test('matching slots cannot mint without a find, even with units or a Bitmap link', async () => {
   const { mintCandidate } = await import('../src/index.js');

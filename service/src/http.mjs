@@ -92,7 +92,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         const p = JSON.parse(await body(req, context.settings.values.moveBytes));
         check(rules.exactKeys(p, ['recipe', 'inputs', 'snapshot']), 'craft_payload');
         const proof = rules.craftPreviewProof({ snapshot: intake.store.get('meta', 'ruleState').namedSnapshot,
-          get: id => intake.store.get('namedNodes', id), recipe: p.recipe, inputs: p.inputs, anchor: p.snapshot, settings: context.settings });
+          get: id => intake.store.get('namedNodes', id), recipe: p.recipe, inputs: p.inputs, anchor: p.snapshot, settings: context.settings, executionHeight: context.counted });
         check(proof.root === context.acceptedRoot, 'named_record_root');
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(proof)); return;
       }

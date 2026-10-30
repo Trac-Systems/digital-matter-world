@@ -1,6 +1,6 @@
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runTool } from './tools.mjs';
-import { stableJSON } from '../../rules/src/index.js';
+import { stableJSON, compoundIdentityV4Active } from '../../rules/src/index.js';
 import { nextCursor, isAsset } from './api-values.mjs';
 import { safeCode } from './errors.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
@@ -87,6 +87,8 @@ const SEND_RECENT = 10, CONFIRM_PAGES = 2, CONFIRM_TTL = 10000;
 // Craft: a pattern's charge is its number mod 65521 and its spectrum one bit
 // for the header field it matches (rules/src/compounds-v2.js).
 const CHARGE_MOD = 65521n, SPECTRUM_FIELD = { 4: 1, 10: 2, 11: 4 }, CRAFT_RECENT = 10, CRAFT_TTL = 60000;
+// A compound's name uses its ingredients' names as people read them: dmwnullspar → Nullspar.
+const niceName = name => /^dmw[a-z0-9]/.test(name) ? name[3].toUpperCase() + name.slice(4) : name;
 const tierValue = tier => tier && typeof tier === 'object' ? tier.value ?? null : Number.isSafeInteger(tier) ? tier : null;
 // A compound record's inputs: accepted records list {asset,amount}; older
 // projections list [asset, amount].
@@ -319,6 +321,10 @@ export class DashboardState {
     const token = tokenState(deployment);
     return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? (detail && detail.name !== p.asset ? detail.name : 'Pattern #' + p.asset.slice(3)), tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
       token, deploymentState: deployment?.state ?? null,
+      // The deployed ticker can differ from the name (a taken ticker gets a word added).
+      ticker: token === 'deployed' ? deployment?.entry?.tick ?? null : null,
+      // During the discoverer's week only the discoverer deploys; after it anyone may.
+      deployer: token === 'deployed' ? null : deployment?.deployer ?? null, ownWeek: !!deployment?.deployer && deployment.deployer.discoverer === this.agent.address,
       // null: the count could not be read this time.
       claims: finds && rights ? new Set([...unique(finds.rows), ...unique(rights.rows)]).size : null, moreClaims: !!(finds?.more || rights?.more),
       deploymentLink: token === 'deployed' ? null : this.service.deploymentLink(p.asset, this.agent.address, this.agent.paymentOrigin) };
@@ -487,7 +493,7 @@ export class DashboardState {
       const names = [];
       for (const [input] of inputs) names.push((await this.unitLabel(input)).name);
       label = { kind: 'compound', tier: tierValue(row?.tierProgress?.value ?? row?.tier),
-        name: names.length ? `Compound · ${row.recipe === 'fusion' ? 'fusion' : 'resonance'} of ${names.join(' + ')}${all.length > inputs.length ? ' + …' : ''}` : 'Compound #' + asset.slice(3, 11) };
+        name: names.length ? `${names.map(niceName).join(' + ')}${all.length > inputs.length ? ' + …' : ''} ${row.recipe === 'resonance' ? 'resonance' : 'fusion'}` : 'Compound #' + asset.slice(3, 11) };
     } else {
       let p = null;
       try { p = await this.pattern(asset); } catch { final = false; }
@@ -835,14 +841,16 @@ export class DashboardState {
   // Each ingredient's properties as the rules pin them: a pattern's charge is
   // its number mod 65521, its spectrum the header field it was found in, and
   // generation 0; a compound carries the properties of its accepted record.
-  async ingredient(u) {
+  async ingredient(u, active = false) {
     const base = { asset: u.asset, name: u.name, kind: u.kind, tier: u.tier, available: u.available, current: u.current };
-    if (u.kind === 'legacy') return { ...base, craftable: false, reason: 'craft_legacy' };
-    if (u.kind === 'pattern') {
+    if (u.kind === 'pattern' || u.kind === 'legacy') {
       let p = null;
-      try { p = await this.craftRead('p/' + u.asset, async () => (await this.service.patterns({ asset: u.asset, limit: 1 })).patterns?.[0] ?? null); } catch { /* properties unknown */ }
-      const number = /^p2:(0|[1-9][0-9]*)$/.exec(u.asset)[1];
-      return { ...base, craftable: true, properties: { charge: Number(BigInt(number) % CHARGE_MOD), spectrum: SPECTRUM_FIELD[p?.fld] ?? null, generation: '0',
+      try { p = await this.craftRead('p/' + canonicalAsset(u.asset), async () => (await this.service.patterns({ asset: canonicalAsset(u.asset), limit: 1 })).patterns?.[0] ?? null); } catch { /* properties unknown */ }
+      const number = /^p2:(0|[1-9][0-9]*)$/.exec(canonicalAsset(u.asset))?.[1];
+      const recognized = u.kind !== 'legacy' || p?.legacy?.asset === u.asset;
+      if (!recognized || number === undefined) return { ...base, craftable: false, reason: 'craft_unit_unknown' };
+      const craftable = u.kind !== 'legacy' || active;
+      return { ...base, craftable, ...(!craftable ? { reason: recognized ? 'craft_upgrade_pending' : 'craft_unit_unknown' } : {}), properties: { charge: Number(BigInt(number) % CHARGE_MOD), spectrum: SPECTRUM_FIELD[p?.fld] ?? null, generation: '0',
         matches: integer(p?.knownMatchCount) ? String(p.knownMatchCount) : null } };
     }
     let record = null;
@@ -853,11 +861,12 @@ export class DashboardState {
   // Units available to craft: available to send, minus units in crafts that
   // have not confirmed yet.
   async ingredients(units) {
+    const active = compoundIdentityV4Active((await this.agent.trac.head()).counted);
     const pending = this.craftPending(), owned = units.filter(u => BigInt(u.available) > 0n).map(u => {
       const out = pending.get(u.asset) ?? 0n, left = BigInt(u.available) - out;
       return { ...u, available: String(left > 0n ? left : 0n) };
     }), ingredients = [];
-    for (let i = 0; i < owned.length; i += 4) ingredients.push(...await Promise.all(owned.slice(i, i + 4).map(u => this.ingredient(u))));
+    for (let i = 0; i < owned.length; i += 4) ingredients.push(...await Promise.all(owned.slice(i, i + 4).map(u => this.ingredient(u, active))));
     return ingredients;
   }
   async craft() {
@@ -876,15 +885,82 @@ export class DashboardState {
     const from = [];
     for (const input of compoundInputs(record).slice(0, 8)) from.push({ asset: input[0], amount: input[1], name: (await this.unitLabel(input[0])).name });
     const refine = this.savedCrafts(CRAFT_RECENT * 3).find(c => c.kind === 'refine' && c.asset === u.asset);
+    const p = record?.properties ?? {}, maker = record ? wireIdentities(record).firstMaker : null;
+    const firstMaker = !!maker && maker === this.agent.owner, token = await this.compoundToken(u.asset);
     return { asset: u.asset, name: u.name, amount: u.amount, available: u.available, tier, recipe: record?.recipe ?? null, from,
+      generation: p.generation === undefined ? null : String(p.generation), charge: p.charge ?? null, spectrum: p.spectrum ?? null,
+      firstMaker, token, ticker: token === 'deployed' ? await this.compoundTicker(u.asset) : null,
+      // The first maker deploys the token on the same deployment page as patterns, with the agent's address filled in.
+      deploymentLink: firstMaker && token === 'not_deployed' ? this.service.deploymentLink(u.asset, this.agent.address, this.agent.paymentOrigin) : null,
       needsRefine: !!record && tier === null, refine: refine ? await this.craftView(refine) : null };
+  }
+  // A deployed compound's ticker, from its registered deployment.
+  async compoundTicker(asset) {
+    try { return await this.craftRead('k/' + asset, async () => { const d = await this.service.deploymentState(asset); return d?.state === 'registered' ? d.entry?.tick ?? null : null; }); }
+    catch { return null; }
+  }
+  // A compound's TAP token: 'deployed' once its first maker registered the deployment, else 'not_deployed'.
+  async compoundToken(asset) {
+    try {
+      const row = await this.craftRead('t/' + asset, async () => ((await this.service.mintRights(this.agent.address, { asset, limit: 1 })).mintRights ?? []).find(r => r.asset === asset) ?? null);
+      return row ? row.deploymentRegistered === true ? 'deployed' : 'not_deployed' : 'unknown';
+    } catch { return 'unknown'; }
+  }
+  // Make units of a held compound real on TAP: the agent signs a mint request for `amount` units;
+  // payment and inscription continue on the request page with the wallet checks there.
+  mintCompound(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).sort().join(',') === 'amount,asset' && /^c2:[0-9a-f]{64}$/.test(value.asset) && amountText(String(value.amount)) && BigInt(value.amount) > 0n, 'invalid_compound_mint');
+    const key = 'compound/' + value.asset;
+    if (this.inflight.has(key)) return this.inflight.get(key);
+    const task = this.queue.then(() => this.mintCompoundNow(value.asset, String(value.amount).trim()));
+    this.queue = task.catch(() => {});
+    this.inflight.set(key, task);
+    task.finally(() => this.inflight.delete(key)).catch(() => {});
+    return task;
+  }
+  // The newest saved compound mint for this asset; a refused one is never resent.
+  savedCompoundMint(asset) {
+    return this.savedMints().find(row => row.body.request.asset === asset && row.body.request.block === undefined && row.state !== 'rejected');
+  }
+  // The saved action exactly as it was signed: same action ID, same intent.
+  savedCompoundArguments(row) {
+    const body = row.body, intent = { asset: body.request.asset, amount: body.request.amount, receiver: body.receiver, payer: body.payer, kind: body.kind, compound: true };
+    dashboardCheck(digest(stableJSON(intent)) === row.fingerprint, 'saved_mint_intent_unavailable', 409);
+    return { ...intent, actionId: row.id.slice(5) };
+  }
+  async mintCompoundNow(asset, amount) {
+    const payout = await this.payout(), old = this.savedCompoundMint(asset);
+    let args;
+    if (old) {
+      // Until the saved request is minted or expired, a retry continues it and never signs a second one.
+      const id = this.idOf(old);
+      let status = null;
+      try { status = await this.status(id); } catch (error) { if (error.status !== 404) throw error; }
+      if (!status || !['minted', 'expired'].includes(status.state)) {
+        if (status && status.state !== 'authorizing') return { requestId: id, status, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin), replayed: true, amount: old.body.request.amount };
+        dashboardCheck(old.body.receiver === payout && old.body.payer === payout && old.body.kind === 'tap', 'saved_payout_changed', 409);
+        args = this.savedCompoundArguments(old);
+      }
+    }
+    if (!args) {
+      dashboardCheck(await this.compoundToken(asset) === 'deployed', 'compound_not_deployed', 409);
+      const held = (await this.units()).units.find(u => u.asset === asset);
+      dashboardCheck(held && BigInt(amount) <= BigInt(held.available), 'compound_over_available', 409);
+      args = { actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + asset + '/' + amount + '/' + Date.now()).slice(0, 48),
+        asset, amount, receiver: payout, payer: payout, kind: 'tap', compound: true };
+    }
+    const result = await runTool(this.context, 'mint_on_chain', args);
+    const saved = this.journal.get('mint/' + args.actionId), id = saved?.body?.request ? this.idOf(saved) : result.request?.id ?? result.request?.requestId;
+    if (!requestId(id)) return { state: result.state ?? 'unknown', signed: result.signed === true };
+    return { requestId: id, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin), ...(args.amount === amount ? {} : { replayed: true, amount: args.amount }) };
   }
   // Inputs as the craft action takes them: canonical pairs sorted by key.
   craftInputs(value) {
     dashboardCheck(value && ['fusion', 'resonance'].includes(value.recipe) && Array.isArray(value.inputs) && value.inputs.length <= 16, 'invalid_craft');
     const inputs = value.inputs.map(row => {
       dashboardCheck(Array.isArray(row) && row.length === 2 && typeof row[0] === 'string' && amountText(String(row[1])), 'craft_amount');
-      dashboardCheck(/^(p2:(0|[1-9][0-9]{0,77})|c2:[0-9a-f]{64})$/.test(row[0]), /^p[0-9a-z]/.test(row[0]) ? 'craft_legacy' : 'invalid_craft');
+      dashboardCheck(/^(p2:(0|[1-9][0-9]{0,77})|p[0-9a-z]{1,23}|c2:[0-9a-f]{64})$/.test(row[0]), 'invalid_craft');
       return [row[0], String(row[1]).trim()];
     }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
     dashboardCheck(inputs.length >= 2 && inputs.every(([a], i) => !i || a !== inputs[i - 1][0]), 'craft_two_inputs');
@@ -898,7 +974,7 @@ export class DashboardState {
     dashboardCheck(inputs.length <= maxInputs, 'craft_too_many_inputs');
     const ingredients = await this.ingredients((await this.units()).units), rows = inputs.map(([asset, amount]) => {
       const i = ingredients.find(i => i.asset === asset);
-      dashboardCheck(i?.craftable, 'craft_unit_unknown');
+      dashboardCheck(i?.craftable, i?.reason ?? 'craft_unit_unknown');
       dashboardCheck(BigInt(amount) <= BigInt(i.available), 'craft_over_available');
       return { asset, amount, name: i.name, available: i.available, left: String(BigInt(i.available) - BigInt(amount)) };
     });
@@ -906,9 +982,10 @@ export class DashboardState {
     // A rules refusal (resonance_charge, compound_ratio, craft_preview_proof, …) is the player's answer, not a dashboard failure.
     try { ({ result } = await this.preview({ recipe, inputs }, context)); }
     catch (error) { if (error.status === undefined && /^[a-z][a-z0-9_]{0,80}$/.test(error.message)) error.status = 400; throw error; }
-    const record = result.record, names = rows.map(r => r.name);
+    const record = result.record, names = [...new Map(rows.map(r => [canonicalAsset(r.asset), r.name]))]
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, name]) => name);
     return { recipe, inputs: rows,
-      result: { id: record.id, amount: result.amount, tier: tierValue(record.tier), label: `Compound · ${recipe} of ${names.join(' + ')}`,
+      result: { id: record.id, amount: result.amount, existing: !!result.existing, tier: tierValue(record.tier), label: `${names.map(niceName).join(' + ')} ${recipe}`,
         properties: { charge: record.properties.charge, spectrum: record.properties.spectrum, generation: String(record.properties.generation) }, snapshot: record.snapshot?.height ?? null },
       warnings: await this.craftWarnings(rows) };
   }
@@ -917,7 +994,7 @@ export class DashboardState {
   // they need. Bounded: two pages of mint rights per ingredient.
   async craftWarnings(rows) {
     const warnings = [];
-    for (const r of rows.filter(r => r.asset.startsWith('p2:'))) {
+    for (const r of rows.filter(r => assetId(r.asset))) {
       let page;
       try { page = await this.collect(cursor => this.service.mintRights(this.agent.address, { asset: r.asset, minted: false, limit: 50, cursor }), 'mintRights', 2); }
       catch { warnings.push({ code: 'craft_claims_unknown', asset: r.asset, name: r.name }); continue; }

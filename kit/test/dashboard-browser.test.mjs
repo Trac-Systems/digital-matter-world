@@ -336,7 +336,7 @@ async function craftPage(t, setup = () => {}) {
   const { DashboardState } = await import('../lib/dashboard-state.mjs'), { createHash } = await import('node:crypto');
   const sha = value => createHash('sha256').update(value).digest('hex'), made = 'c2:' + 'ef'.repeat(32);
   f.patterns.length = 0;
-  f.patterns.push({ number: '0', asset: 'p2:0', name: 'dmwflorite', tier: 4, fld: 10, knownMatchCount: '571' },
+  f.patterns.push({ number: '0', asset: 'p2:0', name: 'dmwflorite', legacy: { asset: 'p0' }, tier: 4, fld: 10, knownMatchCount: '571' },
     { number: '1', asset: 'p2:1', name: 'dmwnullspar', tier: 3, fld: 10, knownMatchCount: '40' }, { number: '2', asset: 'p2:2', name: 'dmwmuffinite', tier: 2, fld: 4, knownMatchCount: '900' });
   f.balances.set('p2:1', { amount: '92', current: true }); f.balances.set('p2:2', { amount: '100', current: true }); f.balances.set('p0', { amount: '99', current: true });
   const events = [], previews = [], crafts = [], service = f.agent.service, profile = service.profile.bind(service);
@@ -376,7 +376,7 @@ test('My agent: with units of one pattern only, Craft explains that a second pat
   const craft = section('Craft a compound');
   await craft.getByText('You need units of at least two patterns to craft — claim blocks of another pattern first.').waitFor();
   assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true);
-  await craft.getByText('Imported — can’t be crafted.', { exact: false }).waitFor();
+  await craft.getByText('These units become craftable at the compound upgrade activation height.', { exact: false }).waitFor();
   await shot('empty', craft);
   assert.equal(await page.getByRole('button', { name: 'Review craft' }).isDisabled(), true);
   assert.deepEqual(errors, []);
@@ -387,14 +387,14 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   const craft = section('Craft a compound');
   await craft.getByRole('checkbox', { name: /dmwnullspar/ }).waitFor();
   await craft.getByText('Charge 1 · Spectrum: nonce · Generation 0 · a pattern · 40 known blocks').waitFor();
-  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true, 'imported units cannot be crafted');
+  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true, 'legacy crafting waits for activation');
   await craft.getByRole('checkbox', { name: /dmwnullspar/ }).check();
   await craft.getByRole('checkbox', { name: /dmwmuffinite/ }).check();
   await shot('picker', craft);
   // Charges 1 and 2: Resonance is disabled and says why.
   assert.equal(await craft.getByRole('radio', { name: /Resonance/ }).isDisabled(), true);
   await craft.getByText('dmwnullspar has charge 1, dmwmuffinite has charge 2', { exact: false }).waitFor();
-  await craft.getByText('Compound · fusion of dmwnullspar + dmwmuffinite').waitFor();
+  await craft.getByText('Nullspar + Muffinite fusion').waitFor();
   await craft.getByText('preview — nothing signed').waitFor();
   assert.equal(crafts.length, 0);
   await craft.getByRole('textbox', { name: 'Units of dmwnullspar to use' }).fill('2');
@@ -409,7 +409,7 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   await craft.getByText('2 dmwnullspar (90 left)', { exact: false }).waitFor();
   await assertEventually(async () => !await craft.getByRole('button', { name: 'Review craft' }).isDisabled());
   await craft.getByRole('button', { name: 'Review craft' }).click();
-  await craft.getByText('Craft 2 dmwnullspar + 2 dmwmuffinite into 2 units of Compound · fusion of dmwnullspar + dmwmuffinite?').waitFor();
+  await craft.getByText('Creates Nullspar + Muffinite fusion with 2 units from 2 dmwnullspar + 2 dmwmuffinite?').waitFor();
   await shot('confirm', craft);
   assert.ok(previews.length > 0); assert.equal(crafts.length, 0, 'review signs nothing');
   await craft.getByRole('button', { name: 'Craft now' }).click();
@@ -428,7 +428,22 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   await shot('compounds', mine);
   // The new compound is offered under Send units with its label.
   const unit = section('Send units on Trac').getByRole('combobox', { name: 'Units, row 1' });
-  await assertEventually(async () => (await unit.locator('option').allTextContents()).some(o => o.startsWith('Compound · fusion of dmwnullspar + dmwmuffinite')));
+  await assertEventually(async () => (await unit.locator('option').allTextContents()).some(o => o.startsWith('Nullspar + Muffinite fusion')));
   assert.equal(crafts.length, 1);
+  assert.deepEqual(errors, []);
+});
+
+
+test('My agent enables florite after activation and says when a craft adds units', async t => {
+  const { COMPOUND_IDENTITY_V4_HEIGHT } = await import('../../rules/src/index.js');
+  const { page, errors, section, state, previews } = await craftPage(t, f => { f.clock.counted = COMPOUND_IDENTITY_V4_HEIGHT; });
+  const original = state.preview;
+  state.preview = async args => { const result = await original(args); result.result.existing = true; return result; };
+  const craft = section('Craft a compound');
+  const florite = craft.getByRole('checkbox', { name: /dmwflorite/ });
+  await florite.waitFor(); assert.equal(await florite.isDisabled(), false);
+  await florite.check(); await craft.getByRole('checkbox', { name: /dmwnullspar/ }).check();
+  await craft.getByText('Adds 1 units to Florite + Nullspar fusion', { exact: true }).waitFor();
+  assert.deepEqual(previews.at(-1).inputs, [['p0', '1'], ['p2:1', '1']]);
   assert.deepEqual(errors, []);
 });

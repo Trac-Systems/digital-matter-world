@@ -4,8 +4,9 @@ import { heightKey } from './util.mjs';
 import { bumpProjection, projectionStatement } from './projection-state.mjs';
 import { rankingSchema, rankFind } from './public-rankings.mjs';
 import { publicMintTargetVisible } from './public-mint-privacy.mjs';
+import { patternSymbolSchema, assignPatternSymbol, patternSymbol } from './pattern-symbols.mjs';
 export const PUBLIC_SORTS = {
-  patterns: 'number name tier rarity supply minted madeReal discoverer', compounds: 'id name tier recipe supply madeReal firstMaker mass',
+  patterns: 'number name tier rarity supply minted madeReal discoverer', compounds: 'id name tier recipe supply madeReal firstMaker rank',
   agents: 'finds address discoveries crafts mints links', finds: 'block asset pattern count finder findHeight',
   discoveries: 'asset name state opensAt', balances: 'asset amount', bitmaps: 'height inscription linked', events: 'sequence at type',
   mints: 'id asset block amount kind state price', payments: 'id block action total', ethereum: 'id amount status payer',
@@ -13,12 +14,13 @@ export const PUBLIC_SORTS = {
   claims: 'agent window reason', draws: 'window settledAt',
   credits: 'id owner amount revision', custody: 'id owner amount state', linkRequests: 'block id state owner', supply: 'asset outstanding issued burned',
 };
-const numeric = new Set('number tier rarity supply minted madeReal mass finds discoveries crafts mints links block pattern count findHeight amount height linked sequence at price total status accrued paid owed linkHeight window settledAt revision outstanding issued burned'.split(' '));
+const numeric = new Set('number tier rarity supply minted madeReal finds discoveries crafts mints links block pattern count findHeight amount height linked sequence at price total status accrued paid owed linkHeight window settledAt revision outstanding issued burned'.split(' '));
 
 // All rows are projections of accepted/local verified records. No source reads
 // occur here. Schema/index updates are part of the record's atomic transaction.
 export function publicProjectionSchema(db) {
   rankingSchema(db);
+  patternSymbolSchema(db);
   db.exec(`CREATE TABLE IF NOT EXISTS publicItemCountsV2(kind TEXT,scope TEXT,n TEXT,PRIMARY KEY(kind,scope)) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS publicItemsV2(kind TEXT,scope TEXT,id TEXT,value TEXT,position TEXT,owner TEXT,asset TEXT,block TEXT,state TEXT,PRIMARY KEY(kind,scope,id)) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS publicItemsV2Page ON publicItemsV2(kind,scope,position,id);
@@ -48,8 +50,14 @@ const publicSpaces = new Set(['catalogPatterns', 'catalogTypes', 'catalogAgents'
   'publicBalances', 'submittedBitmaps', 'publicEvents', 'publicSupply', 'mints', 'linkRequests', 'payoutTotals', 'commissionOwed', 'payoutPaid']);
 export const consumesPublicRecord = space => publicSpaces.has(space) || ['discoveriesByAgent/', 'findsByAgent/', 'publicResults/', 'window/'].some(prefix => space.startsWith(prefix));
 const sortsByKind = new Map(Object.entries(PUBLIC_SORTS).map(([kind, sorts]) => [kind, sorts.split(' ')]));
+// v2 compounds carry their tier as { value, expression }.
+const tierOf = value => value?.tier?.value ?? value?.tier;
+// Compound standing: highest tier, then highest generation, then newest snapshot.
+const rankKey = value => [tierOf(value), value.properties?.generation, value.snapshot?.height]
+  .map(v => rules.uintKeyV2(/^(0|[1-9][0-9]*)$/.test(String(v ?? '')) ? String(v) : '0')).join('');
 function sortKey(value, sort, id) {
-  let v = sort === 'id' ? id : value[sort] ?? (sort === 'mass' ? value.properties?.mass : undefined);
+  if (sort === 'rank') return rankKey(value);
+  let v = sort === 'id' ? id : sort === 'tier' ? tierOf(value) : value[sort];
   if (typeof v === 'boolean') v = Number(v);
   return v == null ? '' : numeric.has(sort) && /^(0|[1-9][0-9]*)$/.test(String(v)) ? rules.uintKeyV2(String(v)) : String(v);
 }
@@ -89,7 +97,10 @@ export function flushPublicItems(store) {
   store.projectionItems?.clear();
 }
 export function projectPublicRecord(store, op, previous, { rebuild = false } = {}) {
-  const { db } = store, id = String(op.id), row = op.value;
+  const { db } = store, id = String(op.id);
+  let row = op.value;
+  if (row && op.space === 'catalogPatterns') row = { ...row, symbol: assignPatternSymbol(store, id, row.name) };
+  if (row && op.space.startsWith('discoveriesByAgent/')) row = { ...row, symbol: patternSymbol(store, id) };
   const item = (kind, scope, key, value, position = key) => {
     // Preserve every logical invalidation, even when physical writes coalesce.
     bumpProjection(store, `items/${kind}/${scope}`);
@@ -183,4 +194,8 @@ export function projectPublicRecord(store, op, previous, { rebuild = false } = {
     const [, window, kind] = op.space.split('/'), value = row?.row ?? previous?.row;
     if (value?.block != null) item(kind === 'winners' ? 'draws' : kind, rules.decimalV2(value.block), id, row && { ...value, window, provenance: { batch: row.batch, audit: row.audit, root: row.root } });
   }
+  // Catalog/discovery records are themselves public projections. Persist the
+  // derived display field there too, without changing the journal operation,
+  // patternsByAsset, accepted feed events or authenticated evidence.
+  return row === op.value ? op : { ...op, value: row };
 }

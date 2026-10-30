@@ -4,14 +4,36 @@ import { createRequire } from 'node:module';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
 
 export const same = (a, b) => a === undefined || b === undefined ? a === b : rules.stableJSON(a) === rules.stableJSON(b);
-export const candidate = (job, domain, attempt) => 'dmw' + hash(rules.stableJSON(['dmw-allocation-v1', job.network, job.asset, job.generation, domain, job.salt, attempt])).slice(0, 29);
+// Words for a taken ticker or element name: the same name plus a word, then two words.
+export const NAME_WORDS = Object.freeze(['amber', 'basalt', 'cobalt', 'dune', 'ember', 'flint', 'garnet', 'granite', 'jade', 'jasper',
+  'onyx', 'opal', 'pearl', 'quartz', 'ruby', 'slate', 'topaz', 'agate', 'beryl', 'coral', 'delta', 'fern', 'frost', 'gneiss',
+  'gypsum', 'halite', 'iron', 'ivory', 'lava', 'lichen', 'marble', 'mica', 'moss', 'nickel', 'ochre', 'pumice', 'pyrite', 'reef',
+  'river', 'sand', 'shale', 'silver', 'spruce', 'stone', 'talc', 'tide', 'zinc', 'zircon', 'aspen', 'birch', 'cedar', 'cliff',
+  'comet', 'crest', 'dawn', 'drift', 'dusk', 'glade', 'grove', 'mesa', 'peak', 'ridge', 'storm', 'vale', 'willow', 'brook',
+  'canyon', 'cave', 'clay', 'copper', 'dew', 'elm', 'fjord', 'gale', 'glacier', 'gold', 'hail', 'heath', 'isle', 'kelp', 'lake',
+  'leaf', 'loam', 'maple', 'marsh', 'meadow', 'mist', 'nova', 'oak', 'oasis', 'pine', 'prism', 'rain', 'sage', 'snow', 'summit',
+  'thorn', 'umber', 'wave', 'wind']);
+// Every party derives the same name from the job and attempt. The name part is
+// shortened to fit 32 characters; the dmw prefix always stays.
+export function candidate(job, domain, attempt, base) {
+  check(Number.isSafeInteger(attempt) && attempt >= 1 && typeof base === 'string' && /^dmw[a-z0-9]*$/.test(base), 'candidate_name');
+  const seed = hash(rules.stableJSON(['dmw-allocation-v2', job.network, job.asset, job.generation, domain, job.salt]));
+  const n = NAME_WORDS.length, a = parseInt(seed.slice(0, 8), 16), b = parseInt(seed.slice(8, 16), 16), k = attempt - 1;
+  const word = (offset, i) => NAME_WORDS[(offset + i) % n];
+  const suffix = k < n ? word(a, k) : k < n + n * n ? word(a, k - n) + word(b, Math.floor((k - n) / n)) : word(a, k) + String(Math.floor(k / n));
+  return base.slice(0, Math.max(3, 32 - suffix.length)) + suffix;
+}
 export const deploymentOptions = kind => kind === 'dmt' ? {} : { max: '18446744073709551615', dec: '0' };
+// prov names the pattern's discoverer or the compound's first maker (a trac1 address).
+// Entries registered before it existed carry none.
 export function deploymentPayload(entry) {
-  return entry.kind === 'dmt' ? { p: 'tap', op: 'dmt-deploy', tick: entry.tick, elem: entry.elementId, dt: entry.dt, prv: entry.privilege, ...entry.options } :
-    { p: 'tap', op: 'token-deploy', tick: entry.tick, prv: entry.privilege, ...entry.options };
+  const prov = entry.prov === undefined ? {} : { prov: entry.prov };
+  return entry.kind === 'dmt' ? { p: 'tap', op: 'dmt-deploy', tick: entry.tick, elem: entry.elementId, dt: entry.dt, prv: entry.privilege, ...prov, ...entry.options } :
+    { p: 'tap', op: 'token-deploy', tick: entry.tick, prv: entry.privilege, ...prov, ...entry.options };
 }
 export function generationDigest(entry) {
-  return hash(rules.stableJSON(Object.fromEntries(['network', 'asset', 'generation', 'id', 'privilege', 'authorityKey', 'elementId', 'elementName', 'receiver', 'dt', 'kind', 'tick', 'indexTick', 'options'].map(k => [k, entry[k] ?? null]))));
+  const keys = ['network', 'asset', 'generation', 'id', 'privilege', 'authorityKey', 'elementId', 'elementName', 'receiver', 'dt', 'kind', 'tick', 'indexTick', 'options'];
+  return hash(rules.stableJSON(Object.fromEntries([...keys, ...(entry.prov === undefined ? [] : ['prov'])].map(k => [k, entry[k] ?? null]))));
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
 // well as the exact inscription. Sharing an authority is not an approval.

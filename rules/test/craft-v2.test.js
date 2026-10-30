@@ -111,3 +111,76 @@ test('multi-limb continuation distinguishes the two sides of a threshold with ex
     assert.equal(r.compoundTierProgress(state, preview.record.id).value, index < 0 ? 1 : 5 - index);
   }
 });
+
+const activeHeight = r.COMPOUND_IDENTITY_V4_HEIGHT;
+const beforeHeight = String(BigInt(activeHeight) - 1n);
+function activeFixture() {
+  const state = fixture(), k = r.namedGet(state.records, 'number/0');
+  state.records = r.namedSet(state.records, `pattern/${k}`, { ...r.namedGet(state.records, `pattern/${k}`), legacy: { asset: 'p0' } });
+  return state;
+}
+const previewAt = (state, inputs, height = activeHeight, extra = {}) => r.previewCraftV2(state, {
+  recipe: 'fusion', inputs, snapshot, settings, executionHeight: height, ...extra
+});
+test('activation preserves the old record bytes and switches identity using execution height, not snapshot', () => {
+  const state = activeFixture(), inputs = [['p2:0', '1'], ['p2:1', '1']];
+  const old = previewAt(state, inputs, beforeHeight), legacy = previewAt(state, inputs, '9999');
+  assert.deepEqual(old.record, legacy.record);
+  assert.equal(old.record.commitment, r.hashObject({ v: 3, recipe: 'fusion', inputs: old.record.inputs, snapshot, settingsHash: r.hashObject(settings), properties: old.record.properties }));
+  const upgraded = previewAt(state, inputs);
+  assert.equal(upgraded.record.v, 4); assert.notEqual(upgraded.record.id, old.record.id);
+  assert.deepEqual(upgraded.record.properties, old.record.properties); assert.deepEqual(upgraded.record.tier, old.record.tier);
+  assert.throws(() => previewAt(state, [['p0', '1'], ['p2:1', '1']], beforeHeight), /compound_inputs/);
+});
+test('recipe and reduced canonical ratio alone define identity; later snapshots and policies reuse the first record', () => {
+  const state = activeFixture(), first = previewAt(state, [['p2:0', '1'], ['p2:1', '1']]);
+  const later = { height: '10000', hash: r.hash('later') };
+  const two = previewAt(first.state, [['p2:1', '2'], ['p2:0', '2']], activeHeight, { snapshot: later });
+  assert.equal(two.amount, '2'); assert.equal(two.existing, true); assert.deepEqual(two.record, first.record);
+  const freshLater = previewAt(state, [['p2:0', '1'], ['p2:1', '1']], activeHeight, { snapshot: later });
+  assert.equal(freshLater.record.id, first.record.id); assert.notDeepEqual(freshLater.record.properties, first.record.properties);
+  assert.notEqual(previewAt(state, [['p2:0', '1'], ['p2:1', '2']]).record.id, first.record.id);
+  assert.deepEqual(previewAt(state, [['p0', '1'], ['p2:1', '1']]).record, first.record);
+  const mixed = previewAt(state, [['p0', '1'], ['p2:0', '1'], ['p2:1', '2']]);
+  assert.equal(mixed.record.id, first.record.id); assert.equal(mixed.amount, '2');
+  assert.throws(() => previewAt(state, [['p0', '1'], ['p2:0', '1']]), /compound_inputs/);
+  assert.throws(() => previewAt(state, [['p1', '1'], ['p2:0', '1']]), /compound_input_identity/);
+  const doc = r.settingsRevision({ network: settings.network, effectiveBatch: '1', effectiveBitcoinWindow: '0', values: { ...settings.values, compoundPrecisionBits: 8 } });
+  assert.deepEqual(previewAt(first.state, [['p0', '2'], ['p2:1', '2']], activeHeight, { settings: doc }).record, first.record);
+});
+test('activated signed crafts verify their canonical output and preserve first maker; old payload outcomes still replay', () => {
+  let state = activeFixture();
+  const make = (inputs, nonce) => {
+    const preview = previewAt(state, inputs), action = { type: 'craft', owner, revision: '0', nonce: r.hash(nonce), until: String(BigInt(activeHeight) + 1n), in: inputs,
+      out: [[preview.record.id, preview.amount]], compound: preview.record.commitment };
+    action.sig = r.bytesToHex(ed25519.sign(r.craftActionDigest(settings.network, action), key));
+    const move = { ...signed(state).move, p: { recipe: 'fusion', snapshot, action } };
+    move.sig = r.bytesToHex(ed25519.sign(r.moveDigestV2(move), key)); return move;
+  };
+  const first = make([['p0', '1'], ['p2:1', '1']], 'active one');
+  assert.throws(() => execute(state, first, settings, { executionHeight: beforeHeight }), /craft_inputs/);
+  const one = execute(state, first, settings, { executionHeight: activeHeight }); state = one.state;
+  const two = execute(state, make([['p2:0', '2'], ['p2:1', '2']], 'active two'), settings, { executionHeight: activeHeight });
+  assert.equal(two.craft.id, one.craft.id); assert.equal(two.craft.amount, '2'); assert.equal(two.craft.firstMaker, owner);
+  const bad = make([['p2:0', '1'], ['p2:1', '1']], 'bad'); bad.p.action.out[0][1] = '99';
+  bad.p.action.sig = r.bytesToHex(ed25519.sign(r.craftActionDigest(settings.network, bad.p.action), key));
+  bad.sig = r.bytesToHex(ed25519.sign(r.moveDigestV2(bad), key));
+  assert.throws(() => execute(state, bad, settings, { executionHeight: activeHeight }), /craft_output/);
+});
+test('resonance remains charge-gated and deterministic across snapshots and proportional inputs', () => {
+  const state = activeFixture(), p = { ...r.namedGet(state.records, `pattern/${r.namedGet(state.records, 'number/1')}`), number: '65521', key: r.hash('same charge') };
+  state.records = r.namedSet(state.records, `number/${p.number}`, p.key); state.records = r.namedSet(state.records, `pattern/${p.key}`, p);
+  const opts = { recipe: 'resonance' }, first = previewAt(state, [['p0', '1'], ['p2:65521', '1']], activeHeight, opts);
+  const again = previewAt(first.state, [['p2:65521', '2'], ['p2:0', '2']], activeHeight, { ...opts, snapshot: { height: '10001', hash: r.hash('next') } });
+  assert.deepEqual(again.record, first.record); assert.equal(again.amount, '2');
+  assert.notEqual(first.record.id, previewAt(state, [['p0', '1'], ['p2:65521', '1']]).record.id);
+  assert.throws(() => previewAt(state, [['p0', '1'], ['p2:1', '1']], activeHeight, opts), /resonance_charge/);
+});
+
+test('pre-activation signed craft replays the exact accepted record and state bytes from the base release', () => {
+  // Captured by executing this fixture with e184e980ce4b854f1409e5ca6ed90eba454f8f75.
+  const state = fixture(), result = execute(state, signed(state).move);
+  assert.equal(result.craft.id, 'c2:809226043bb181494dd4b16ef9a43b764099fa13a11ab900b87dc4fc1be99946');
+  assert.equal(r.hashObject(result.craft), 'd51e0220ae06ca5bc6d440bf6d66cd8f7eb519d2beda8bd52aef66a64712b959');
+  assert.equal(r.namedStateRoot(result.state), '488f866b66b6dbaa74645ae590b34093a4e14223a5de7889a9c400c40f0fca7a');
+});

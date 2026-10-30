@@ -12,8 +12,11 @@
       "publicBitmapV2": "d91486558eb09464c58d9e92015ee59dd92a0f8ff1928ad1f754ea92f15bd6c9",
       "publicBlocksV2": "efb6bba9cb6f8cb829363b06dce32071453a2c0d18b71e7903eeda3f6e65fe13",
       "publicItemCountsV2": "8e24bf3fb2cef9e1fa90791e5932e9049f713a9270bc5b7f549f179f1537f18f",
-      "publicItemsV2": "b6b5e60475ddba99aeab8b117dee66b9f499fb8ce465651a5201e2675e1b6df0",
-      "publicOrderV2": "e85544f9f547e4970a753fa4d29bcf40f7aa7984ace2870ab09fe5023d8b1177",
+      "publicItemsV2": "23fe2106b26b66ca3303fe9e9d48acbf701ccb5f60af600ca2c499d1cadf2e86",
+      "publicOrderV2": "41c7382f9614e8da132086f00d1fd20014ad1c86996ddde962d008d1528f7a6e",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -23,8 +26,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "records": "1d26920f887236cdd35069b3825f07f4a8578437e24be505a83eedb1f9ac5990"
+      "public_projection_fixes": "25603e763c549c83d2878430230bb68a3cb8784036d99f5b793f540686ac641e",
+      "records": "59483e5ae2d1d7a79ff4a32439e9dd39f050e44ccf1c31971f7aa9ca49aec1cf"
     },
     {
       "evidence_nodes": "e7157673f99fdea90bc5194749e25d290822ffff4ddfa43eec481066e586f104",
@@ -38,8 +41,11 @@
       "publicBitmapV2": "8a054e8cd783d5c49b0f8de5a71f549a82598fa5d428a3c7a6d3cc1d28c3def4",
       "publicBlocksV2": "efb6bba9cb6f8cb829363b06dce32071453a2c0d18b71e7903eeda3f6e65fe13",
       "publicItemCountsV2": "afbbc769eb9e2024ef2674437744276ec65560ff20b286d53409d30116ea2696",
-      "publicItemsV2": "5b767632c570bb7a824aa25ca74bb19d3f1d5b3ae7350bf082a781fe6cbf7368",
-      "publicOrderV2": "dbfadc86d109d15d47c1273c054382b32cedfc714b63081a3817bdb8ffdf138e",
+      "publicItemsV2": "ef66cd857e21682512b82281a151011dce88e69c6d62b10b19cabb9aaacbf64c",
+      "publicOrderV2": "e330fb7245caaff4fd5e5f58052703e8fb77642ff7b924a06186b5f2a086a407",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -49,8 +55,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "records": "546f483691d77033fc414399b1f96afe5dda70f1f844e10c859fabd9e1fed128"
+      "public_projection_fixes": "25603e763c549c83d2878430230bb68a3cb8784036d99f5b793f540686ac641e",
+      "records": "35e49e82bb52777144b19725af1750d746f9b22ba43ee5f422851e3620b96e07"
     },
     {
       "evidence_nodes": "e7157673f99fdea90bc5194749e25d290822ffff4ddfa43eec481066e586f104",
@@ -64,8 +70,11 @@
       "publicBitmapV2": "8a054e8cd783d5c49b0f8de5a71f549a82598fa5d428a3c7a6d3cc1d28c3def4",
       "publicBlocksV2": "9cd5308130379213bba00aebee6b26bed710dbf7f2395f3c926aad2b843dc3d7",
       "publicItemCountsV2": "3ecd212b93295639a36300caf4ea4b8f0cae7df5f4642ef8abd8991845cf0c00",
-      "publicItemsV2": "292a329f4365b791ec6424f7103aa9e4bd0ce7ccb3eae01c017e5f64be67d329",
-      "publicOrderV2": "75e52b94fcdebacb6edfef8c46eeb0e5fd89f01e93f33e77a3bfa854f830a3c5",
+      "publicItemsV2": "d94dbd17cbd475feabdfc03ba46356f7081568b869c35832b5c237d42bad3242",
+      "publicOrderV2": "a390d317f51079e488f33c87d5b73587bc8356acabbd47135acabb8bfa117326",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -75,8 +84,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "records": "368af56baad26b2fa57b228ad20cf2f94d1bba9a89bc1ec2b2f8afe51e06465c"
+      "public_projection_fixes": "25603e763c549c83d2878430230bb68a3cb8784036d99f5b793f540686ac641e",
+      "records": "b009a78d2de97fc0f842e3e1694806290ba6a9700798a284aee072a1ccdde201"
     },
     {
       "evidence_nodes": "e7157673f99fdea90bc5194749e25d290822ffff4ddfa43eec481066e586f104",
@@ -90,8 +99,11 @@
       "publicBitmapV2": "8a054e8cd783d5c49b0f8de5a71f549a82598fa5d428a3c7a6d3cc1d28c3def4",
       "publicBlocksV2": "9cd5308130379213bba00aebee6b26bed710dbf7f2395f3c926aad2b843dc3d7",
       "publicItemCountsV2": "2e6511a46328d596614201c3f643c9038dcef67f296069008cc0e515e6d2f63b",
-      "publicItemsV2": "01b664d10d0cbe56a799ae063a81c8410959d78a7ad3c7b134b5a2b1ae61d45c",
-      "publicOrderV2": "e3d2e431acd349f750e4485eeeca023e269e0ae12e7196922b82fd981f6dfccd",
+      "publicItemsV2": "bc547b73a7d29a1cb375941c8c41676918a60e630723f40cb1c2df3f09375311",
+      "publicOrderV2": "1d586f34e977120af94e43216a4b1b5395e382c586824013a38a8c2cdcad8f87",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -101,8 +113,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "records": "82f1c9db0d7e3167f184df5816e4922a5fbdb2ec206cb37a8d3e81c15e579959"
+      "public_projection_fixes": "25603e763c549c83d2878430230bb68a3cb8784036d99f5b793f540686ac641e",
+      "records": "d80fda4991f32dfac2f37f83aa1e6138421b6329c7a497a0527247f2f9b829a3"
     },
     {
       "evidence_nodes": "e7157673f99fdea90bc5194749e25d290822ffff4ddfa43eec481066e586f104",
@@ -111,13 +123,16 @@
       "projectionAttribution": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "projectionControl": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515",
       "projectionPending": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "projectionRevisions": "25b259d126bfcbb13c3dfaf002a47534f1aa905e75a410a8c00edc2538039459",
+      "projectionRevisions": "46c0e20cee6ae708e70f90b3cf63af3afb01a181cdc3d3eb03a41d8db15c2d19",
       "publicBalancesV2": "50c222799938b92782ac79d1881c358ba3e567597688f2a57d6c72e6e77641fc",
       "publicBitmapV2": "8a054e8cd783d5c49b0f8de5a71f549a82598fa5d428a3c7a6d3cc1d28c3def4",
       "publicBlocksV2": "9cd5308130379213bba00aebee6b26bed710dbf7f2395f3c926aad2b843dc3d7",
       "publicItemCountsV2": "2e6511a46328d596614201c3f643c9038dcef67f296069008cc0e515e6d2f63b",
-      "publicItemsV2": "01b664d10d0cbe56a799ae063a81c8410959d78a7ad3c7b134b5a2b1ae61d45c",
-      "publicOrderV2": "e3d2e431acd349f750e4485eeeca023e269e0ae12e7196922b82fd981f6dfccd",
+      "publicItemsV2": "bc547b73a7d29a1cb375941c8c41676918a60e630723f40cb1c2df3f09375311",
+      "publicOrderV2": "1d586f34e977120af94e43216a4b1b5395e382c586824013a38a8c2cdcad8f87",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -127,8 +142,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "7eff0a084faabfb33d01e5e92c759f75b14658f04d05ad33e385a37754302bfe",
-      "records": "82f1c9db0d7e3167f184df5816e4922a5fbdb2ec206cb37a8d3e81c15e579959"
+      "public_projection_fixes": "f9a834e7fa38ddca95fa9948b00fb0d457f143ad1828c572e5b728bb6d5f9820",
+      "records": "d80fda4991f32dfac2f37f83aa1e6138421b6329c7a497a0527247f2f9b829a3"
     },
     {
       "evidence_nodes": "e7157673f99fdea90bc5194749e25d290822ffff4ddfa43eec481066e586f104",
@@ -137,13 +152,16 @@
       "projectionAttribution": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "projectionControl": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515",
       "projectionPending": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "projectionRevisions": "25b259d126bfcbb13c3dfaf002a47534f1aa905e75a410a8c00edc2538039459",
+      "projectionRevisions": "46c0e20cee6ae708e70f90b3cf63af3afb01a181cdc3d3eb03a41d8db15c2d19",
       "publicBalancesV2": "50c222799938b92782ac79d1881c358ba3e567597688f2a57d6c72e6e77641fc",
       "publicBitmapV2": "8a054e8cd783d5c49b0f8de5a71f549a82598fa5d428a3c7a6d3cc1d28c3def4",
       "publicBlocksV2": "9cd5308130379213bba00aebee6b26bed710dbf7f2395f3c926aad2b843dc3d7",
       "publicItemCountsV2": "2e6511a46328d596614201c3f643c9038dcef67f296069008cc0e515e6d2f63b",
-      "publicItemsV2": "01b664d10d0cbe56a799ae063a81c8410959d78a7ad3c7b134b5a2b1ae61d45c",
-      "publicOrderV2": "e3d2e431acd349f750e4485eeeca023e269e0ae12e7196922b82fd981f6dfccd",
+      "publicItemsV2": "bc547b73a7d29a1cb375941c8c41676918a60e630723f40cb1c2df3f09375311",
+      "publicOrderV2": "1d586f34e977120af94e43216a4b1b5395e382c586824013a38a8c2cdcad8f87",
+      "publicPatternSymbolFill": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbolQueue": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "publicPatternSymbols": "e7b7efb8c66e277cecff372292d597a3713bb72a53a1e69a4508566d5fc8fe19",
       "publicRanksV2": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadChanges": "1e7177c64c08f4d0393aa6a253e6df77eafe0fc793ac24beb19c7a42f7317581",
       "publicReadHeaderFields": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
@@ -153,8 +171,8 @@
       "publicReadRows": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicReadState": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "publicRightsV2": "69ab3b86e414e0b8543cb0d3eba14c480bfa80aaede81d4a924ed72ca6f86cec",
-      "public_projection_fixes": "7eff0a084faabfb33d01e5e92c759f75b14658f04d05ad33e385a37754302bfe",
-      "records": "82f1c9db0d7e3167f184df5816e4922a5fbdb2ec206cb37a8d3e81c15e579959"
+      "public_projection_fixes": "f9a834e7fa38ddca95fa9948b00fb0d457f143ad1828c572e5b728bb6d5f9820",
+      "records": "d80fda4991f32dfac2f37f83aa1e6138421b6329c7a497a0527247f2f9b829a3"
     }
   ],
   "responses": {
@@ -164,11 +182,11 @@
     ],
     "/patterns?sort=name": [
       200,
-      "{\"sort\":\"name\",\"examined\":2,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"5\",\"patterns\":[{\"number\":\"1\",\"name\":\"new name\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"asset\":\"p2:1\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"},{\"number\":\"2\",\"name\":\"second\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"asset\":\"p2:2\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"asc\",\"route\":\"/patterns\"}"
+      "{\"sort\":\"name\",\"examined\":2,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"5\",\"patterns\":[{\"number\":\"1\",\"name\":\"new name\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"symbol\":\"É漢\",\"asset\":\"p2:1\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"},{\"number\":\"2\",\"name\":\"second\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"symbol\":\"Se\",\"asset\":\"p2:2\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"asc\",\"route\":\"/patterns\"}"
     ],
     "/patterns?sort=number&order=desc": [
       200,
-      "{\"sort\":\"number\",\"examined\":2,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"5\",\"patterns\":[{\"number\":\"2\",\"name\":\"second\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"asset\":\"p2:2\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"},{\"number\":\"1\",\"name\":\"new name\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"asset\":\"p2:1\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"desc\",\"route\":\"/patterns\"}"
+      "{\"sort\":\"number\",\"examined\":2,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"5\",\"patterns\":[{\"number\":\"2\",\"name\":\"second\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"symbol\":\"Se\",\"asset\":\"p2:2\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"},{\"number\":\"1\",\"name\":\"new name\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"symbol\":\"É漢\",\"asset\":\"p2:1\",\"rarity\":\"2\",\"countMeaning\":\"verified_submitted_blocks\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"desc\",\"route\":\"/patterns\"}"
     ],
     "/compounds": [
       200,
@@ -216,7 +234,7 @@
     ],
     "/agents/trac1424242424242424242424242424242424242424242424242424qkypv33/discoveries": [
       200,
-      "{\"sort\":\"asset\",\"examined\":1,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"1\",\"discoveries\":[{\"number\":\"1\",\"name\":\"é漢😀\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"asset\":\"p2:1\",\"state\":\"accepted\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"asc\",\"route\":\"/agents/trac1424242424242424242424242424242424242424242424242424qkypv33/discoveries\"}"
+      "{\"sort\":\"asset\",\"examined\":1,\"continuationMeaning\":\"bounded_index_work\",\"v\":3,\"revision\":\"1\",\"discoveries\":[{\"number\":\"1\",\"name\":\"é漢😀\",\"knownMatchCount\":\"2\",\"discoverer\":\"trac1424242424242424242424242424242424242424242424242424qkypv33\",\"tier\":1,\"symbol\":\"É漢\",\"asset\":\"p2:1\",\"state\":\"accepted\"}],\"total\":null,\"next\":null,\"nextCursor\":null,\"limit\":4,\"order\":\"asc\",\"route\":\"/agents/trac1424242424242424242424242424242424242424242424242424qkypv33/discoveries\"}"
     ]
   },
   "evidenceRoot": "7348e87f4405bb2e2910a84dd0a9217ef2ee892ec124d23448efc0e538f09eab"

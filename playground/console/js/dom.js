@@ -56,7 +56,7 @@ export async function copy(text) {
 }
 export function pill(text, kind = '', tip) { return h(`span.pill${kind ? '.' + kind : ''}`, tip ? { 'data-tip': tip } : {}, text); }
 export function tipIcon(text) { return h('span.tipicon', { 'data-tip': text, tabindex: 0, 'aria-label': text }, '?'); }
-export function tierBadge(t) { return t ? h('span.tier', { 'data-tip': `Rarity tier ${t} of 5. Higher tiers are rarer and cost more to mint on-chain.` }, `T${t}`) : h('span.faint', {}, '–'); }
+export function tierBadge(t) { t = t?.value ?? t; return t ? h('span.tier', { 'data-tip': `Rarity tier ${t} of 5. Higher tiers are rarer and cost more to mint on-chain.` }, `T${t}`) : h('span.faint', {}, '–'); }
 
 // Tooltip: one floating element driven by data-tip attributes anywhere in the page.
 let tipEl;

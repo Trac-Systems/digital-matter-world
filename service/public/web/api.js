@@ -57,10 +57,11 @@ export const site = {
     if (view === 'feed') return '/feed';
     return '/' + view;
   },
-  // A pattern's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inscribed' | 'none', label, kind }, or
-  // null when the gateway does not know the asset. Read-only; pages ask only for what is on screen.
+  // A pattern's or compound's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inscribed' | 'none', label, kind,
+  // tick (the deployed ticker, which can differ from the name), deployer (who may deploy until when) }, or null when
+  // the gateway does not know the asset. Read-only; pages ask only for what is on screen.
   token(asset) {
-    if (!/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(asset ?? '')) return Promise.resolve(null);
+    if (!/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(asset ?? '')) return Promise.resolve(null);
     const hit = tokens.get(asset);
     if (hit && Date.now() - hit.at < TOKEN_MS) return hit.value;
     const value = slot(() => get('/mint/deployment-state/' + asset)).then(tokenStep, error => {
@@ -87,7 +88,8 @@ const JOB_STATES = new Set(['not_started', 'queued', 'awaiting_player_deploy', '
 function tokenStep(job) {
   const step = job?.state === 'registered' ? 'deployed' : !JOB_STATES.has(job?.state) ? null
     : job.state === 'confirming' && job.entry ? 'confirming' : job.elementId ? 'inscribed' : 'none';
-  return step && { step, label: TOKEN_STEPS[step][0], kind: TOKEN_STEPS[step][1] };
+  return step && { step, label: TOKEN_STEPS[step][0], kind: TOKEN_STEPS[step][1], tick: step === 'deployed' ? job.entry?.tick ?? null : null,
+    deployer: step === 'deployed' ? null : job.deployer ?? null };
 }
 
 export const bus = {

@@ -94,8 +94,10 @@ export class NamedAdmission {
     // accepted catalog and occurrence history on the first move of each batch.
     const starting = draft ? this.persistence.load(draft.snapshot) : ctx.snapshot ? this.persistence.load(ctx.snapshot) : accepted;
     if (!draft) check(rules.namedStateRoot(starting) === acceptedRoot, 'admission_state_root');
-    const result = rules.executeNamedMove(starting, {
-      move, settings, settingsHistory, tip, counted, receiptPosition: sequence, history: this.history, hashAt: this.hashAt, craftCatalog: accepted,
+    const migration = rules.mergeCompoundCatalogV4(accepted, { network: settings.network, height: counted });
+    const prepared = rules.mergeCompoundCatalogV4(starting, { network: settings.network, height: counted }).state;
+    const result = rules.executeNamedMove(prepared, {
+      move, settings, settingsHistory, tip, counted, receiptPosition: sequence, history: this.history, hashAt: this.hashAt, craftCatalog: migration.state,
       provenance: { batch, receipt: rules.hashObject(receipt), agent: move.a, ruleset: move.ruleset, settingsHash: move.settingsHash }
     });
     const publicResult = { record: result.record ?? null, results: result.results ?? null, challenge: result.challenge ?? null,
@@ -109,7 +111,7 @@ export class NamedAdmission {
       // before issuing a receipt. These writes remain speculative until the
       // corresponding accepted batch commits them atomically.
       let accounts;
-      try { accounts = await buildCreditAccounts({ store: this.store, credits: [], crafts, transfers, document: settings, height: counted }); }
+      try { accounts = await buildCreditAccounts({ store: this.store, credits: [], crafts, transfers, compoundMerge: migration.merge, document: settings, height: counted }); }
       catch (error) { if (['account_operation', 'account_operation_bytes', 'account_proof_budget', 'account_leaf_budget'].includes(error.message)) error.status = 429; throw error; }
       check(Buffer.byteLength(rules.stableJSON(accounts.operations)) + s.batchEnvelopeReserveBytes <= s.batchBytes, 'next_batch_account_capacity', 429);
     }

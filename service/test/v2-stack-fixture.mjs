@@ -429,8 +429,10 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   assert.equal(store.count('feedEvents'), 0);
   assert.equal((await publicAPI.read('/patterns')).patterns.length, 9);
   const projectedCompound = store.get('catalogTypes', crafted.compound.id);
-  const { tierProgress, ...compoundRecord } = projectedCompound;
+  const { tierProgress, supply, madeReal, ...compoundRecord } = projectedCompound;
   assert.deepEqual(compoundRecord, store.get('compoundTypes', crafted.compound.id));
+  // Units on Trac copy the ledger's supply leaf; nothing of it was made real on TAP here.
+  assert.deepEqual([supply, madeReal], [store.get('publicSupply', crafted.compound.id)?.outstanding ?? '0', '0']);
   assert.deepEqual(tierProgress, store.get('compoundTiers', crafted.compound.id));
   assert.equal(tierProgress.value, refinement.tier);
   assert.equal(store.get('catalogAgents', maker.owner).craftCount, '2');

@@ -12,7 +12,7 @@ import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs
 // Explicit source adapter: it must reconstruct fees, rights, chain settlement,
 // permit recovery and exits from independent point reads. There is no fallback
 // that treats a gateway-supplied evidence object as a source verification.
-export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0, publicClaims, preparePublicMint }) {
+export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], compoundMerge = null, transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0, publicClaims, preparePublicMint }) {
   check(typeof reads.financialEvidence === 'function', 'financial_source_adapter_required');
   check(Array.isArray(transitions) && transitions.length <= document.values.mintOperationBudget, 'financial_batch_budget');
   if (reads.financialScope) {
@@ -24,7 +24,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
   const execution = new AccountExecution({ store, document, height, read: typeof reads.financialRecord === 'function' ? key => reads.financialRecord(key, at) : undefined });
   const reservations = new Map(store.financialReservations ?? []);
   const sources = reads.financialScope?.({ record: key => execution.getAsync(key), reservations }) ?? reads;
-  const actions = [...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
+  const actions = [...rules.compoundMergeAction(compoundMerge), ...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
   check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
   const creditOperations = [...execution.operations], inputs = [], deferred = [];
   let linkInputs = priorLinkInputs;

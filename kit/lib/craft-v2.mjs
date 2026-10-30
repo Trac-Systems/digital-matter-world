@@ -10,7 +10,7 @@ export async function previewCraftNamed(agent, { recipe, inputs }, context) {
   const head = await agent.trac.head(), height = decimalV2(head.counted), snapshot = { height, hash: await agent.trac.hashAt(height) };
   const ordered = [...inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   const proof = await agent.service.craftPreview({ recipe, inputs: ordered, snapshot }, context.settings.values.proofBytes);
-  return { height, snapshot, ordered, result: verifyCraftPreview(proof, { root: context.catalogRoot, recipe, inputs: ordered, snapshot, settings: context.settings }) };
+  return { height, snapshot, ordered, result: verifyCraftPreview(proof, { root: context.catalogRoot, recipe, inputs: ordered, snapshot, settings: context.settings, executionHeight: height }) };
 }
 export async function craftNamed(agent, { actionId, recipe, inputs }, context) {
   agent.actionId(actionId);
@@ -20,7 +20,7 @@ export async function craftNamed(agent, { actionId, recipe, inputs }, context) {
   let chosen = saved?.body;
   if (!chosen) {
     const { height, snapshot, ordered, result } = await previewCraftNamed(agent, { recipe, inputs }, context);
-    if (agent.dryRun) return { state: 'dry-run', action: 'craft-v2', signed: false, compound: result.record, amount: result.amount };
+    if (agent.dryRun) return { state: 'dry-run', action: 'craft-v2', signed: false, compound: result.record, amount: result.amount, existing: result.existing };
     const account = await agent.trac.accountRoot(agent.owner);
     check(account && typeof account.revision === 'string', 'No accepted matter account');
     const action = { type: 'craft', owner: agent.owner, revision: account.revision, nonce: nonce(),
@@ -29,7 +29,7 @@ export async function craftNamed(agent, { actionId, recipe, inputs }, context) {
     action.sig = signBytes(agent.wallet, craftActionDigest(agent.network, action));
     chosen = agent.journal.reserve(`${id}/v2-intent`, intent, { payload: { recipe, snapshot, action }, settings: context.settings, result }).body;
   }
-  return { ...await sendNamedMove(agent, id, 'craft-v2', chosen.payload, chosen.settings), compound: chosen.result.record, amount: chosen.result.amount };
+  return { ...await sendNamedMove(agent, id, 'craft-v2', chosen.payload, chosen.settings), compound: chosen.result.record, amount: chosen.result.amount, existing: chosen.result.existing };
 }
 export async function refineCompoundNamed(agent, { actionId, asset, steps }, context) {
   agent.actionId(actionId); const id = `compound-refine/${actionId}`, intent = { asset, steps: steps ?? null };

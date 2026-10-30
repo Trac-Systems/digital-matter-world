@@ -1,4 +1,5 @@
 import { encodeTracAddress, isTracAddress, publicIdentities, TRAC_ADDRESS_ERROR } from '../../rules/src/trac-address.js';
+import { compoundIdentityV4Active } from '../../rules/src/compound-identity-v4.js';
 import { z } from 'zod/v4';
 import { check } from './check.mjs';
 import { findPatterns } from './search.mjs';
@@ -15,7 +16,7 @@ const craftInputs = z.array(z.tuple([z.string().regex(/^([0-9a-z]{1,24}|p2:(0|[1
 const proposal = z.object({ name: z.string().regex(/^dmw[a-z0-9]{2,29}$/), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']) }).strict();
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const mintAsset = z.string().regex(/^(?:[0-9a-z]{1,24}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
-const deploymentAsset = z.string().regex(/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/);
+const deploymentAsset = z.string().regex(/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
 const publicInteger = z.union([height, decimal]);
 const publication = z.object({ height: publicInteger, observation: publicInteger.optional(), audit: z.object({ path: z.string().max(512), hash: hex, bytes: height.max(1500000) }).strict() });
 const namedAnchor = z.object({ height: decimal, hash: hex }).strict();
@@ -79,14 +80,17 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     return backtest({ history: needHistory(), patterns: await agent.catalog(), settings: await agent.trac.settings(), owner: encodeTracAddress(agent.owner), strategy: strategies.chooseClaims, start, end, signal: extra?.signal });
   });
   register('compound_idea', 'Suggest owned named ingredients; v2 output identities and properties require an authenticated craft preview.', {}, async () => {
-    const patterns = await agent.catalog(), types = await compounds(), balances = {};
-    for (const p of patterns) { const asset = patternId(p); balances[asset] = await agent.trac.balance(agent.owner, asset); }
+    const patterns = await agent.catalog(), types = await compounds(), balances = {}, counted = (await agent.trac.head()).counted;
+    for (const p of patterns) {
+      const assets = [patternId(p), ...(compoundIdentityV4Active(counted) && p.legacy?.asset ? [p.legacy.asset] : [])];
+      for (const asset of assets) balances[asset] = await agent.trac.balance(agent.owner, asset);
+    }
     for (const c of types) balances[c.id] = await agent.trac.balance(agent.owner, c.id);
     const settings = await agent.trac.settings();
-    const suggestion = (strategies.chooseCompound ?? chooseCompound)({ patterns: publicIdentities(patterns), compounds: publicIdentities(types), balances, historyLength: (await agent.trac.head()).counted + 1, ruleset: settings.ruleset }) ?? null;
+    const suggestion = (strategies.chooseCompound ?? chooseCompound)({ patterns: publicIdentities(patterns), compounds: publicIdentities(types), balances, historyLength: typeof counted === 'string' ? String(BigInt(counted) + 1n) : counted + 1, height: counted, ruleset: settings.ruleset }) ?? null;
     if (!suggestion) return { suggestion: null, reason: Object.values(balances).some(v => BigInt(v) > 0n) ? 'no_craftable_recipe' : 'no_balance' };
     const warnings = [], mintableFinderSlots = [], slotPages = {}; let slotCount = 0, totalKnown = true;
-    if (suggestion.previewRequired) warnings.push({ code: 'craft_preview_required', message: 'Run craft in dry-run mode to verify the v2 proof and obtain the snapshot-bound output identity and properties.' });
+    if (suggestion.previewRequired) warnings.push({ code: 'craft_preview_required', message: 'Run craft in dry-run mode to verify the v2 proof and obtain the canonical output identity and first-craft properties.' });
     else {
       const registered = await agent.mintRights({ asset: suggestion.id, limit: 1 });
       if (!registered.mintRights.some(r => r.deploymentRegistered)) warnings.push({ code: 'asset_unregistered', message: 'The first maker must inscribe and register this compound deployment before it can be minted.' });

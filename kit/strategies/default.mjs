@@ -6,7 +6,7 @@
 // test your own variety with search_patterns before committing. That is where
 // stronger agents can beat weaker models. This is a starting point, not a sweep.
 import { wireIdentities } from '../../rules/src/trac-address.js';
-import { patternCount, CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW, compound, patternProperties, mintRight } from '../../rules/src/index.js';
+import { compoundIdentityV4Active, patternCatalogId, patternCount, CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW, compound, patternProperties, mintRight } from '../../rules/src/index.js';
 import { analyzePattern, PATTERN_LIMITS } from '../../rules/src/patterns.js';
 import { namePatterns, patternName } from '../lib/pattern-names.mjs';
 import { patternId, readInteger } from '../lib/api-values.mjs';
@@ -67,11 +67,16 @@ export function* searchPatterns({ history, patterns = [], settings } = {}) {
   ranked.sort((a, b) => Number(b.eligible) - Number(a.eligible) || a.rarity - b.rarity || a.order - b.order);
   for (const { proposal } of ranked) yield { ...proposal };
 }
-export function chooseCompound({ patterns, compounds = [], balances, historyLength, ruleset }) {
+export function chooseCompound({ patterns, compounds = [], balances, historyLength, ruleset, height = 0 }) {
   if (ruleset === 'dmw-v2' || patterns.some(p => patternId(p).startsWith('p2:')) || compounds.some(p => p.id.startsWith('c2:'))) {
-    const assets = [...patterns.map(patternId), ...compounds.map(p => p.id)].filter(asset => /^(p2:|c2:)/.test(asset) && BigInt(balances[asset] ?? '0') > 0n).sort();
-    // V2 identities bind accepted parent revisions and a snapshot. Only the
-    // authenticated craft preview may supply the output ID/properties.
+    const active = compoundIdentityV4Active(height), seen = new Set();
+    const assets = [...patterns.filter(p => patternId(p).startsWith('p2:')).flatMap(p => [patternId(p), ...(active && p.legacy?.asset && patternCatalogId(p.legacy.asset) === patternId(p) ? [p.legacy.asset] : [])]),
+      ...compounds.filter(p => p.id.startsWith('c2:') && !p.retired).map(p => p.id)].filter(asset => BigInt(balances[asset] ?? '0') > 0n).sort().filter(asset => {
+        const id = patternCatalogId(asset) ?? asset;
+        if (seen.has(id)) return false; seen.add(id); return true;
+      });
+    // The authenticated preview proves the canonical identity and whether its
+    // first-craft properties already exist in the accepted catalog.
     return assets.length < 2 ? null : { recipe: 'fusion', inputs: assets.slice(0, 2).map(asset => [asset, '1']), previewRequired: true };
   }
   const inputs = [...patterns.map(p => ({ asset: patternId(p), properties: patternProperties(p) })), ...compounds.map(p => ({ asset: p.id, properties: p.properties }))]

@@ -22,9 +22,9 @@ export class AccountBatchOverlay {
   }
 }
 
-export async function buildCreditAccounts({ store, credits, crafts = [], transfers = [], document, height }) {
-  const execution = new AccountExecution({ store, document, height });
-  const actions = [...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
+export async function buildCreditAccounts({ store, credits, crafts = [], transfers = [], compoundMerge = null, document, height, executionHeight = height, mergeManifest }) {
+  const execution = new AccountExecution({ store, document, height, executionHeight, mergeManifest });
+  const actions = [...rules.compoundMergeAction(compoundMerge), ...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]; if (actions.length) await execution.accounts(actions);
   return execution.result();
 }
 
@@ -32,8 +32,8 @@ export async function buildCreditAccounts({ store, credits, crafts = [], transfe
 // produced by its predecessors, including funding usage. Nothing becomes
 // visible until Pipeline commits the accepted batch and its availability nodes.
 export class AccountExecution {
-  constructor({ store, document, height, read }) {
-    Object.assign(this, { store, document, height, read }); this.settings = accountSettings(document); this.accepted = new Map();
+  constructor({ store, document, height, read, executionHeight = height, mergeManifest }) {
+    Object.assign(this, { store, document, height, read, executionHeight, mergeManifest }); this.settings = accountSettings(document); this.accepted = new Map();
     this.availability = new AccountAvailability(store); this.changed = new Map(); this.balances = new Map(); this.operations = []; this.assetTouches = 0;
   }
   get(key) { return this.changed.has(key) ? this.changed.get(key) : this.store.get('accountRecords', key); }
@@ -54,7 +54,11 @@ export class AccountExecution {
     const balance = (owner, asset, supply = false) => { this.balances.set(owner + '/' + asset, { owner, asset }); touch(owner, 'balance', asset); if (supply) supplyKeys.add(accountKey('supply', asset)); };
     for (const a of actions) {
       if (['transfer', 'craft', 'reserve', 'lock'].includes(a.type)) touch(a.owner, 'nonce', a.nonce);
-      if (a.type === 'credits') for (const [asset] of a.assets) balance(a.owner, asset, true);
+      if (a.type === 'compound-merge') {
+        const manifest = rules.compoundMergeManifest(this.document.network, this.executionHeight, this.mergeManifest);
+        if (!manifest) throw Error('compound_merge_authorization');
+        for (const row of manifest.rows) { balance(row.holder, row.oldId, true); balance(row.holder, row.newId, true); }
+      } else if (a.type === 'credits') for (const [asset] of a.assets) balance(a.owner, asset, true);
       else if (a.type === 'craft') for (const [asset] of [...a.in, ...a.out]) balance(a.owner, asset, true);
       else if (['credit', 'transfer', 'reserve', 'lock'].includes(a.type)) {
         balance(a.owner, a.asset, a.type === 'credit'); if (a.type === 'transfer') balance(a.to, a.asset);
@@ -77,7 +81,7 @@ export class AccountExecution {
     const operation = { op: 'ar', v: 2, actions, accounts, supply: { revision: supply.revision,
       proof: supplyKeys.size ? this.availability.prove(supply.root, [...supplyKeys]) : { leaves: [], nodes: [] } },
       availability: rules.hashObject(['dmw-account-availability-v2', actions, accounts]) };
-    const applied = await applyRootAccounts(this.adapter(), operation, { network: this.document.network, height: this.height, settings: this.settings,
+    const applied = await applyRootAccounts(this.adapter(), operation, { network: this.document.network, height: this.height, executionHeight: this.executionHeight, mergeManifest: this.mergeManifest, settings: this.settings,
       capture: (_, root, proof, replacements) => this.availability.update(root, proof, replacements, this.settings) });
     this.assetTouches += applied.assetTouches;
     this.operations.push(operation); return operation;

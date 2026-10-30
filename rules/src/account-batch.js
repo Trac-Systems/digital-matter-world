@@ -1,5 +1,6 @@
 import { assert, stableJSON } from './core.js';
 import { merkleRoot } from './merkle.js';
+import { compoundMergeAction } from './compound-merge-v4.js';
 import { encodeBinary } from './binary.js';
 
 export function creditActions(operations) {
@@ -14,8 +15,8 @@ export function creditActions(operations) {
     assets: [...assets].sort(([a], [b]) => a < b ? -1 : 1).map(([asset, n]) => [asset, String(n)]) }));
 }
 export const accountOperationsRoot = operations => merkleRoot(operations.filter(o => ['ar', 'fp'].includes(o.op)).map(encodeBinary));
-export function verifyCreditOperations(credits, operations, crafts = [], transfers = []) {
+export function verifyCreditOperations(credits, operations, crafts = [], transfers = [], compoundMerge = null) {
   assert(Array.isArray(operations) && operations.every(o => o.op === 'ar' && o.v === 2 && Array.isArray(o.actions)), 'account_operations');
-  assert(stableJSON([...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]) === stableJSON(operations.flatMap(o => o.actions)), 'account_credit_derivation');
+  assert(stableJSON([...compoundMergeAction(compoundMerge), ...creditActions(credits), ...crafts.map(c => c.action), ...transfers.map(t => t.action)]) === stableJSON(operations.flatMap(o => o.actions)), 'account_credit_derivation');
   return operations;
 }

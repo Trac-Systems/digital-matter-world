@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { buildInscription, mintContent, missingItems, transferItems, ensure, digest, feeItemKey, deploymentContent, checkSavedFee } from './inscription-core.mjs';
+import { buildInscription, mintContent, missingItems, transferItems, ensure, digest, feeItemKey, deploymentContent, checkDeployer, checkSavedFee } from './inscription-core.mjs';
 
 export class PlayerMint {
   constructor({ service, journal, wallet, owner, dryRun = true }) {
@@ -111,6 +111,7 @@ export class PlayerMint {
         job.asset === 'p' + BigInt(asset.slice(3)).toString(36), 'Deployment asset mismatch');
       asset = job.asset;
       if (job.state === 'registered') return { state: 'registered', asset, inscriptionId: job.entry?.id, sent: false };
+      checkDeployer(job, { owner: this.owner, address: this.wallet.address });
       const { text, attemptId, phase } = deploymentContent(job);
       if (job.kind === 'compound') ensure(this.owner && job.definition?.firstMaker === this.owner, 'Only this compound’s first maker may inscribe its deployment');
       ensure(!job.receiver || job.receiver === this.wallet.address, 'Use the wallet that inscribed this pattern’s element');

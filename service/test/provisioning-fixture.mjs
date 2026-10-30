@@ -26,6 +26,9 @@ export async function provisioningFixture(t, { secret = Buffer.alloc(32, 73) } =
       if (path.startsWith('getDeployment/')) return deployments.get(decodeURIComponent(path.slice(14))) ?? null;
       throw Error('unexpected_route');
     } };
+  // The finder-week clock: public minting active from height 0 with a 1008 block finder window.
+  const context = { ready: true, settings: { values: { finderWindow: 1008, publicMintActivationHeight: '0', publicMintLegacyFinderWindow: 1008 } } };
+  reads.rulesContext = async () => context;
   reads.privilegeAuthority = async id => id === privilege ? { ins: privilege } : null;
   reads.element = async id => elements.find(e => e.ins === id) ?? null;
   reads.elementByDefinition = async (pat, fld) => elements.find(e => e.pat === pat && Number(e.fld) === fld) ?? null;
@@ -48,7 +51,7 @@ export async function provisioningFixture(t, { secret = Buffer.alloc(32, 73) } =
   const policy = { confirmations: 1, privilege, authorityKey: (await reads.authority()).committee, tapTreasury: 'treasury', ethereumTreasury: 'eth-treasury' };
   const args = { store, reads, inscriber, network: 'dmw-regtest', registryPath, policy }, operator = new Provisioner(args);
   const pattern = { number: 2, name: 'dmwexample', pat: '123', fld: 4, dt: 'n', discoverer: 'ab'.repeat(32) };
-  return { ...args, operator, pattern, elements, deployments, contents, packages, canonical, privilege,
+  return { ...args, operator, pattern, context, elements, deployments, contents, packages, canonical, privilege,
     index: (text, id = hash(String(contents.size)) + 'i0') => { index(text, id); return id; }, mine: (n = 1) => { tip += n; }, funds: n => { funds = n; }, hook: fn => { hook = fn; },
     async complete(asset = 'p2', definition = pattern, op = operator) { let job; for (let i = 0; i < 40; i++) {
       job = await op.advanceAsset(asset, definition); if (job.state === 'registered') return job;

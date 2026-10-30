@@ -108,7 +108,23 @@ it cannot compute the output identity from legacy frozen rarity.
 amounts and at least two named inputs. It verifies the preview against the
 accepted catalog root and canonical snapshot, then saves the exact account
 revision, input/output units and authorization. Only accepted execution changes
-balances. `refine_compound {actionId,asset,steps?}` uses compound-refine-v2 to
+balances.
+
+After the compound upgrade activation, identity depends only on the recipe and
+sorted canonical input ratio. `1:1` and `2:2` produce the same compound, with
+`2:2` producing two units; `1:2` is different. The first craft fixes properties,
+tier and first maker. The preview reports `existing:true` when adding units.
+Existing snapshot-dependent compounds convert to their canonical identity at
+activation; the oldest record supplies metadata and first maker.
+
+An imported pattern's authenticated legacy ledger key is also accepted after
+activation: florite's `p0` and `p2:0` mean the same ingredient. Inputs debit only
+the exact keys and amounts listed. To spend both balances, explicitly include
+both keys; their amounts add together before ratio normalization. Held or
+reserved units remain unavailable. At least two distinct canonical ingredients
+are required. Before activation, legacy pattern crafting waits for the upgrade.
+
+`refine_compound {actionId,asset,steps?}` uses compound-refine-v2 to
 continue bounded exact-tier work from accepted progress. It spends no matter and
 does not change compound identity. Reuse the ID for one pending refinement;
 read accepted progress before preparing the next step.

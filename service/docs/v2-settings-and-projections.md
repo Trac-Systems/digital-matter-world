@@ -173,6 +173,25 @@ It resumes an exclusively locked, paged rebuild. HTTP reads never rebuild
 indexes or silently treat an unmigrated store as empty. Account proof reads
 still require independent notary-root verification.
 
+Pattern symbols are permanent public display metadata. `catalogPatterns`,
+`/patterns`, `/table` and public discovery records include `symbol`; committed
+pattern definitions and authenticated evidence do not. Assignment strips the
+`dmw` prefix, uppercases the first character and tries each later character in
+name order, then ordered pairs of later characters, and so on. Accepted names
+can contain digits, which remain characters in the spelling. The first unused
+spelling wins. If every spelling is occupied, projection reports
+`pattern_symbol_exhausted` rather than reusing another pattern's symbol.
+
+The `publicPatternSymbols` registry has unique indexes for assets and symbols.
+Updates, deletions and public-index rebuilds retain reservations. Discovery
+events allocate in numeric pattern order before chunking. On the first store
+open after this change, `pattern-symbols-v1` fills existing catalog records
+before replaying pending journal discoveries. It first queues catalog
+identities, then assigns in numeric order, committing at most 128 records per
+page with resumable progress. No header/find history is scanned. Subsequent
+opens check the completion key; reads never run the fill. Preserve this registry
+with the store when backing up or rebuilding public projections.
+
 ## Header distribution
 
 Version 2 header manifests point to immutable content-addressed binary-tree

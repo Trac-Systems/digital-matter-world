@@ -2,12 +2,14 @@ import { assert, hashObject, hex, stableJSON, utf8 } from './core.js';
 import { uintV2, compareUint, nextUint, patternAssetV2 } from './integers-v2.js';
 import { validateSettingsDocument } from './settings-v2.js';
 import { namedGet, namedSet } from './named-index.js';
+import { compoundIdentityV4Active, compoundIdentityV4, compoundRecordCommitment } from './compound-identity-v4.js';
+import { patternCatalogId } from './public-claims.js';
 
 // Positive integer masses and rational known-match fractions are immutable
 // arithmetic circuits. Each recipe adds O(inputs) bytes and references its
 // parents; generation and expanded digit counts never gate another craft.
 // Fixed-point intervals are certificates for display/tier evaluation only.
-// The exact expression root, not its approximation, defines the asset.
+// Property expressions stay exact; v4 identity uses only recipe and ratio.
 export const emptyExactCompounds = () => ({ version: 2, nodes: null, certificates: null, assets: null });
 // Activated execution keeps every expression and certificate under the same
 // authenticated named root as the catalog. Standalone previews use local trees.
@@ -93,17 +95,46 @@ export function pinPatternPropertiesV2(state, record, snapshot, settings) {
 // lookup(asset) must return an independently accepted input record. Raw
 // client-supplied properties cannot override it. Each input pins its exact
 // catalog/compound revision through the complete property commitment.
-export function compoundV2(state, { recipe, inputs, snapshot, settings, lookup }) {
+export function compoundV2(state, { recipe, inputs, snapshot, settings, lookup, executionHeight = snapshot.height }) {
   const s = policy(settings); uintV2(snapshot.height); assert(hex(snapshot.hash, 32), 'compound_snapshot');
   assert(['fusion', 'resonance'].includes(recipe) && Array.isArray(inputs) && inputs.length >= 2 && inputs.length <= s.compoundInputs && typeof lookup === 'function', 'recipe');
   assert(inputs.every(p => Array.isArray(p) && p.length === 2), 'compound_inputs');
   assert(utf8(stableJSON({ recipe, inputs, snapshot })).length <= s.moveBytes, 'compound_bytes');
+  const active = compoundIdentityV4Active(executionHeight);
+  if (active) {
+    const raw = new Set();
+    inputs = inputs.map(([asset, amount]) => {
+      assert(!raw.has(asset), 'compound_inputs'); raw.add(asset);
+      if (/^p[0-9a-z]{1,23}$/.test(asset)) {
+        const input = lookup(asset);
+        assert(input?.legacy?.asset === asset && patternAssetV2(input.number) === patternCatalogId(asset), 'compound_input_identity');
+        return [patternAssetV2(input.number), amount];
+      }
+      return [asset, amount];
+    });
+  }
+  const identity = active ? compoundIdentityV4(recipe, inputs) : null;
   const sorted = [...inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  assert(sorted.every(([a, n], i) => typeof a === 'string' && (a.startsWith('p2:') || /^c2:[0-9a-f]{64}$/.test(a)) && uintV2(n) !== '0' && (!i || a !== sorted[i - 1][0])), 'compound_inputs');
-  const scale = sorted.reduce((n, [, a]) => gcd(n, BigInt(a)), BigInt(sorted[0][1]));
-  const normalized = sorted.map(([asset, a]) => [asset, String(BigInt(a) / scale)]);
+  if (identity) inputs = identity.identity.inputs;
+  const ordered = identity ? inputs : sorted;
+  assert(ordered.every(([a, n], i) => typeof a === 'string' && (a.startsWith('p2:') || /^c2:[0-9a-f]{64}$/.test(a)) && uintV2(n) !== '0' && (!i || a !== ordered[i - 1][0])), 'compound_inputs');
+  const scale = identity ? BigInt(identity.amount) : sorted.reduce((n, [, a]) => gcd(n, BigInt(a)), BigInt(sorted[0][1]));
+  const normalized = identity ? identity.identity.inputs : sorted.map(([asset, a]) => [asset, String(BigInt(a) / scale)]);
   const total = normalized.reduce((n, [, a]) => n + BigInt(a), 0n);
   assert(total <= BigInt(s.compoundRatio) && total <= BigInt(s.compoundWorkBudget), 'compound_ratio');
+  if (identity) {
+    const old = exactGet(state, 'assets', identity.id);
+    if (old) {
+      assert(old.v === 4 && old.commitment === identity.commitment && compoundRecordCommitment(old) === identity.commitment && !old.retired, 'compound_hash_collision');
+      // Validate accepted input identities even when reusing an existing asset.
+      for (const [asset] of normalized) {
+        const input = lookup(asset);
+        assert(input && (asset.startsWith('p2:') ? patternAssetV2(input.number) === asset :
+          input.id === asset && !input.retired && exactGet(state, 'assets', asset)?.commitment === input.commitment), 'compound_input_identity');
+      }
+      return { state: { ...state }, record: old, amount: String(scale), refinementNeeded: [], existing: true };
+    }
+  }
   let next = { ...state }, massResidue = 0n, charge = 0n, spectrum = 0, generation = '0';
   const parents = [];
   for (const [asset, amount] of normalized) {
@@ -113,7 +144,7 @@ export function compoundV2(state, { recipe, inputs, snapshot, settings, lookup }
       const pinned = pinPatternPropertiesV2(next, input, snapshot, settings); assert(pinned.asset === asset, 'compound_input_identity'); next = pinned.state; p = pinned.properties;
     } else {
       const accepted = exactGet(next, 'assets', asset);
-      assert(input.id === asset && input.commitment === asset.slice(3) && accepted?.commitment === input.commitment, 'compound_input_identity'); p = accepted.properties;
+      assert((!active || !input.retired) && input.id === asset && input.commitment === asset.slice(3) && accepted?.commitment === input.commitment, 'compound_input_identity'); p = accepted.properties;
     }
     assert(p.version === 2 && hex(p.mass, 32) && hex(p.rarity, 32), 'compound_properties'); uintV2(p.generation);
     const units = BigInt(amount); massResidue = (massResidue + BigInt(p.massResidue) * units) % 65521n;
@@ -126,11 +157,11 @@ export function compoundV2(state, { recipe, inputs, snapshot, settings, lookup }
   const rarity = putNode(next, { op: 'product', terms: parents.map(p => ({ root: p.properties.rarity, power: p.amount })), divisor: recipe === 'resonance' ? String(total) : '1' });
   const refinement = refineExactFraction(next, rarity, s.compoundPrecisionBits, settings); next = refinement.state;
   const properties = { version: 2, mass, massResidue: Number(massResidue), charge: Number(charge), spectrum, generation: nextUint(generation), rarity };
-  const body = { v: 3, recipe, inputs: parents, snapshot, settingsHash: hashObject(settings), properties };
-  const commitment = hashObject(body), id = `c2:${commitment}`, tier = exactTier(next, rarity, nextUint(snapshot.height), settings);
+  const body = { v: active ? 4 : 3, recipe, inputs: parents, snapshot, settingsHash: hashObject(settings), properties };
+  const commitment = identity?.commitment ?? hashObject(body), id = `c2:${commitment}`, tier = exactTier(next, rarity, nextUint(snapshot.height), settings);
   const record = { id, commitment, ...body, tier, modeledMatches: { op: 'ceil-fraction-times', fraction: rarity, multiplier: nextUint(snapshot.height) } };
   const old = exactGet(next, 'assets', id);
-  assert(!old || old.commitment === commitment && hashObject({ v: old.v, recipe: old.recipe, inputs: old.inputs, snapshot: old.snapshot, settingsHash: old.settingsHash, properties: old.properties }) === commitment, 'compound_hash_collision');
+  assert(!old || old.commitment === commitment && compoundRecordCommitment(old) === commitment, 'compound_hash_collision');
   exactSet(next, 'assets', id, old ?? record);
-  return { state: next, record: old ?? record, amount: String(scale), refinementNeeded: refinement.needed };
+  return { state: next, record: old ?? record, amount: String(scale), refinementNeeded: refinement.needed, existing: !!old };
 }

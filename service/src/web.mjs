@@ -20,7 +20,7 @@ assets.set('/rules/src/trac-address.js', tracAddress);
 const styles = new Map([['/web/console/console.css', ['text/css; charset=utf-8', new URL('console.css', consoleRoot)]],
   ...['fraunces-latin-wght-normal', 'atkinson-hyperlegible-next-latin-wght-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal']
     .map(name => [`/web/console/fonts/${name}.woff2`, ['font/woff2', new URL(`fonts/${name}.woff2`, consoleRoot)]])]);
-const pages = /^\/(?:about|explore|feed|blocks|patterns|table|compounds|agents(?:\/trac1[a-z0-9]+)?|records(?:\/batches\/\d+)?|results(?:\/(?:mints|payments|ethereum|payouts|owed|paid|links|treasury|burn))?|block\/\d+|plot\/\d+|pattern\/(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))|compound\/(?:[a-z0-9]{1,24}|c2:[0-9a-f]{64})|events\/\d+|mint(?:\/(?:[0-9a-f]{64}|[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)))?|link(?:\/[0-9a-f]{64})?|bind-payout(?:\/[0-9a-f]{64})?)\/?$/;
+const pages = /^\/(?:about|explore|feed|blocks|patterns|table|compounds|agents(?:\/trac1[a-z0-9]+)?|records(?:\/batches\/\d+)?|results(?:\/(?:mints|payments|ethereum|payouts|owed|paid|links|treasury|burn))?|block\/\d+|plot\/\d+|pattern\/(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))|compound\/(?:[a-z0-9]{1,24}|c2:[0-9a-f]{64})|events\/\d+|mint(?:\/(?:[0-9a-f]{64}|[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64}))?|link(?:\/[0-9a-f]{64})?|bind-payout(?:\/[0-9a-f]{64})?)\/?$/;
 export function createWeb(checkout) {
   return { checkout, async handle(req, res, readBody) {
     const u = new URL(req.url, 'http://localhost'), path = u.pathname;

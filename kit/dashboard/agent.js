@@ -4,6 +4,8 @@
 import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper } from '/web/console/js/dom.js';
 import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral } from '/web/console/js/words.js';
+import { store } from '/web/console/js/api.js';
+import { feePrice } from '/web/console/js/money.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
@@ -44,6 +46,10 @@ const SEND_WORDS = {
   transfer_intent_expired: 'This signed send expired before it was sent. Sign it again; nothing was sent.',
   transfer_v2_unavailable: 'Sending units is not open on the network yet. The send is saved; retry later.',
   transfer_account_changed: 'Your account changed while signing. Retry.',
+  compound_not_deployed: 'This compound’s TAP token is not deployed yet. Its first maker deploys it first.',
+  compound_over_available: 'More units than your agent has available of this compound.',
+  invalid_compound_mint: 'Enter a whole number of units, 1 or more.',
+  saved_payout_changed: 'Your payout wallet changed after the earlier request was signed. Let that request expire, then make the units real again.',
   sender_rate: 'The gateway paces sends. The rest waits a moment and continues by itself.',
   next_batch_work_capacity: 'The next batch is full. The rest waits for the next Bitcoin block and is sent by itself.',
   next_batch_byte_capacity: 'The next batch is full. The rest waits for the next Bitcoin block and is sent by itself.',
@@ -88,7 +94,7 @@ const spectrumText = n => Number.isSafeInteger(n) ? SPECTRUM.filter(([bit]) => n
 const softValue = text => h('span', { style: { font: '600 15px/1.35 var(--sans)' } }, text);
 const generationText = g => g === undefined || g === null ? '–' : g === '0' ? '0 · a pattern' : `${g} · crafted`;
 const CRAFT_WORDS = {
-  craft_legacy: 'Imported units can’t be crafted. Only units of patterns found under the current rules can.',
+  craft_upgrade_pending: 'These units become craftable at the compound upgrade activation height.',
   craft_two_inputs: 'Choose at least two different ingredients.',
   craft_too_many_inputs: 'Too many ingredients for one craft.',
   craft_amount: 'Enter a whole number of units, 1 or more.',
@@ -188,10 +194,17 @@ export function mount(el) {
       { key: 'name', label: 'Pattern', render: p => h('div', {}, h('strong', {}, matter(p.asset, p.name)),
         h('div.small.muted', {}, h('span.mono', {}, p.asset), ' ', p.tier ? tierBadge(p.tier) : null), p.discovered ? h('div.small.muted', {}, 'discovered by your agent') : null) },
       // Each next step sits under its state, so a phone shows it without scrolling sideways.
-      { key: 'token', label: 'Token', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-        pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), TOKEN_NOTE[p.token] ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
-        p.deploymentLink ? h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
-          p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null) },
+      // During the discoverer's week only the discoverer deploys; the deploy inscription stays with whoever deploys.
+      { key: 'token', label: 'Token', render: p => { const week = p.deployer?.onlyDiscoverer ? p.deployer : null, waits = week && !p.ownWeek && p.token !== 'unknown';
+        return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+          pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, p.ticker)) : null,
+          TOKEN_NOTE[p.token] && !waits ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
+          week ? h('div.small.muted', {}, p.ownWeek ? `Only you, its discoverer, can deploy it until block ${week.until}. After that anyone can.` : `Only its discoverer can deploy it until block ${week.until}. After that you can.`)
+            : p.deployer ? h('div.small.muted', {}, 'Anyone can deploy it now.') : null,
+          p.deploymentLink ? waits ? h('button.btn.sm', { disabled: true, title: `Only its discoverer, until block ${week.until}` }, 'Deploy pattern')
+            : h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
+              p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null,
+          p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
         h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null) },
     ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
@@ -518,7 +531,7 @@ export function mount(el) {
         h('span', { style: { minWidth: 0 } },
           h('span', { style: { fontWeight: 700 } }, h('span.swatch', { style: { background: mineral(i.asset) } }), i.name), ' ', i.tier ? tierBadge(i.tier) : null,
           h('span.small.muted', {}, ' · ', `${i.available} available`),
-          h('div.small.muted', {}, i.craftable ? propLine(i) : 'Imported — can’t be crafted. Only units of patterns found under the current rules can.'))),
+          h('div.small.muted', {}, i.craftable ? propLine(i) : craftWords(i.reason)))),
       usable ? h('div.row', { style: { flexWrap: 'nowrap', gap: '6px', opacity: on ? '1' : '0.45' } }, amount, max) : h('span'));
   };
   const recipeChoice = () => {
@@ -544,7 +557,7 @@ export function mount(el) {
     if (!preview?.result) return frame(head, h('div.empty', { style: { padding: '18px 0' } }, 'Working out the result…'));
     const r = preview.result;
     return frame(head, h('div', { style: { opacity: preview.loading ? '0.55' : '1', transition: 'opacity .15s' } },
-      h('div', { style: { fontFamily: 'var(--serif)', fontSize: '18px', marginBottom: '8px' } }, r.label),
+      h('div', { style: { fontFamily: 'var(--serif)', fontSize: '18px', marginBottom: '8px' } }, `${r.existing ? `Adds ${r.amount} units to` : 'Creates'} ${r.label}`),
       figures([['You get', `${r.amount} unit${r.amount === '1' ? '' : 's'}`], ['Tier', r.tier ? tierBadge(r.tier) : pill('settles later', 'warn'), r.tier ? null : 'Refine sets it after crafting'],
         ['Charge', String(r.properties.charge)], ['Spectrum', softValue(spectrumText(r.properties.spectrum))]]),
       h('div.small.muted', { style: { marginTop: '8px' } }, `Generation ${r.properties.generation}: ${r.properties.generation === '1' ? 'made straight from patterns' : `its newest ingredient is generation ${BigInt(r.properties.generation) - 1n}`}. `, 'Uses ', preview.inputs.map(i => `${i.amount} ${i.name} (${i.left} left)`).join(' + '), '.'),
@@ -602,7 +615,7 @@ export function mount(el) {
     const go = h('button.btn.primary', { onclick: () => confirmCraft(go) }, 'Craft now');
     const risky = p.warnings.filter(w => w.code !== 'craft_mint_units_ok');
     clear(craftBody,
-      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `Craft ${p.inputs.map(i => `${i.amount} ${i.name}`).join(' + ')} into ${r.amount} unit${r.amount === '1' ? '' : 's'} of ${r.label}?`),
+      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `${r.existing ? `Adds ${r.amount} units to ${r.label}` : `Creates ${r.label} with ${r.amount} units`} from ${p.inputs.map(i => `${i.amount} ${i.name}`).join(' + ')}?`),
       h('p.muted.small', { style: { margin: '0 0 12px' } }, `Your agent signs this ${RECIPES[p.recipe][0].toLowerCase()} craft. It is free. The ${p.inputs.reduce((n, i) => n + BigInt(i.amount), 0n)} units you put in are used up, and the compound arrives with the next batch on Trac. A craft cannot be undone.`),
       table(p.inputs, [
         { key: 'name', label: 'Ingredient', render: i => matter(i.asset, i.name) },
@@ -611,7 +624,7 @@ export function mount(el) {
       h('div', { style: { marginTop: '10px' } }, figures([['You get', `${r.amount} unit${r.amount === '1' ? '' : 's'}`], ['Tier', r.tier ? tierBadge(r.tier) : pill('settles later', 'warn')],
         ['Charge', String(r.properties.charge)], ['Spectrum', softValue(spectrumText(r.properties.spectrum))]])),
       risky.length ? warningsBox().filter((_, n) => p.warnings[n].code !== 'craft_mint_units_ok') : null,
-      h('p.small.muted', { style: { margin: '10px 0 0' } }, 'The result is checked again when your agent signs; if the next batch moved in between, the tier can differ slightly.'),
+      h('p.small.muted', { style: { margin: '10px 0 0' } }, 'The result is checked again when your agent signs. An existing compound keeps its original tier; a new compound receives its tier on the first craft.'),
       h('div.row', { style: { marginTop: '14px' } }, back, go));
   };
   const confirmCraft = button => act('', async () => {
@@ -651,18 +664,54 @@ export function mount(el) {
             ? h('button.btn.sm', { title: 'Sends the same saved craft again; it cannot happen twice.', onclick: event => retryCraft(c, event.currentTarget) }, 'Retry') : null) },
       ], { sortable: false })] : h('div.empty', {}, 'No crafts yet. Crafts appear here with their progress.'));
   };
+  // A compound's next step on TAP: its first maker deploys the token once; then holders make units real.
+  const COMPOUND_TOKEN = { deployed: ['token deployed', 'good'], not_deployed: ['not deployed', 'warn'], unknown: ['unknown', ''] };
+  const compoundToken = c => {
+    const [label, kind] = COMPOUND_TOKEN[c.token] ?? COMPOUND_TOKEN.unknown, stack = (...items) => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(label, kind), ...items);
+    if (c.token === 'deployed') {
+      const amount = input({ value: c.available, inputmode: 'numeric', 'aria-label': 'Units to make real', style: { width: '72px', height: '30px' } });
+      const fee = c.tier ? feePrice(store.status?.feePolicy, 'compound', c.tier) : 'the compound fee';
+      return stack(c.ticker ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, c.ticker)) : null, h('div.row', { style: { gap: '6px' } }, amount,
+        h('button.btn.sm.primary', { disabled: c.available === '0', onclick: event => mintCompound(c, amount.value.trim(), event.currentTarget) }, 'Make real on TAP')),
+        h('div.small.muted', {}, `Fee ${fee} per mint from your TAP Wallet; the units leave your agent and arrive as TAP tokens at your payout wallet.`));
+    }
+    if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
+      h('button.btn.sm', { disabled: true, title: 'Refine its tier first.' }, 'Deploy its TAP token'),
+      h('div.small.muted', {}, 'You made it first, so you deploy its TAP token once. Refine its tier first; then deploy it here.'));
+    if (c.token === 'not_deployed' && c.firstMaker && c.deploymentLink) return stack(
+      h('a.btn.sm.primary', { href: localPath(c.deploymentLink) }, 'Deploy its TAP token'),
+      h('div.small.muted', {}, 'You made it first, so you deploy its TAP token once with your TAP Wallet (one inscription; it costs only Bitcoin network fees). Then holders can make units real.'));
+    if (c.token === 'not_deployed') return stack(h('div.small.muted', {}, 'Its first maker deploys its TAP token first. Then you can make your units real here.'));
+    return stack(h('div.small.muted', {}, 'Could not read its token state. It is read again on the next refresh.'));
+  };
+  const mintCompound = (c, amount, button) => act('', async () => {
+    if (!/^[1-9][0-9]*$/.test(amount) || BigInt(amount) > BigInt(c.available)) { say(`Enter a whole number of units from 1 to ${c.available}.`, 'bad'); return; }
+    const status = toast({ what: `Making ${amount} ${c.name} real`, detail: 'Your agent is signing the mint request…', state: 'queued' });
+    button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy');
+    let result;
+    try { result = await api('/api/mint-compound', { asset: c.asset, amount }); }
+    catch (error) { status.set({ state: 'failed', detail: words(error.message) }); button.disabled = false; button.textContent = 'Make real on TAP'; button.classList.remove('busy'); throw error; }
+    if (result.requestId) {
+      status.set({ state: 'complete', detail: result.replayed ? `Your earlier request for ${result.amount} units is still open. Pay and inscribe it first.` : 'Request ready. Pay and inscribe with your wallet.' });
+      go('/mint/' + result.requestId); return;
+    }
+    status.set({ state: 'complete', detail: words(result.state ?? 'Request saved; it appears under Open requests.') });
+    say(words(result.state ?? 'Request is being prepared. It appears under Open requests.'));
+    await load();
+  });
   const REFINE_NOTE = 'The exact tier of this compound is not settled yet. Refine lets your agent finish that calculation on Trac: free, it uses no units, and the compound stays the same.';
   const drawCompounds = () => {
     const list = craft?.compounds ?? [];
     clear(compoundsBody, list.length ? table(list, [
-      { key: 'name', label: 'Compound', render: c => h('div', {}, h('strong', {}, h('span.swatch', { style: { background: mineral(c.asset) } }), c.name), h('div.small.faint', {}, h('span.mono', { title: c.asset }, short(c.asset, 10, 6)))) },
+      { key: 'name', label: 'Compound', render: c => h('div', {}, h('strong', {}, h('span.swatch', { style: { background: mineral(c.asset) } }), c.name), h('div.small.faint', {}, hashEl(c.asset, '#' + c.asset.slice(3, 11)))) },
       { key: 'tier', label: 'Tier', render: c => c.needsRefine ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill('not settled', 'warn', REFINE_NOTE),
         c.refine && ['crafting', 'received', 'waiting'].includes(c.refine.state) ? h('div.small.muted', {}, craftNote(c.refine))
           : h('button.btn.sm', { title: REFINE_NOTE, onclick: event => refine(c.asset, event.currentTarget) }, 'Refine'),
         c.refine?.state === 'failed' ? h('div.small', { style: { color: 'var(--bad)' } }, craftWords(c.refine.error)) : null) : tierBadge(c.tier) },
       { key: 'amount', label: 'Units', num: true, render: c => h('div', {}, h('span.mono', {}, c.amount), c.available !== c.amount ? h('div.small.faint', {}, `${c.available} available`) : null) },
-      { key: 'from', label: 'Made from', render: c => c.from.length ? h('div.small', {}, c.from.map(i => i.name).join(' + '),
-        h('div.muted', {}, [RECIPES[c.recipe]?.[0] ?? c.recipe, 'recipe ' + c.from.map(i => i.amount).join(' : ')].filter(Boolean).join(' · '))) : h('span.faint', {}, '–') },
+      { key: 'from', label: 'Made from', render: c => c.from.length ? h('div.small', {}, c.from.map(i => assetName(i.asset) === i.asset ? i.name : assetName(i.asset)).join(' + '),
+        h('div.muted', {}, [RECIPES[c.recipe]?.[0] ?? c.recipe, 'recipe ' + c.from.map(i => i.amount).join(' : '), c.generation === null || c.generation === undefined ? null : 'generation ' + c.generation].filter(Boolean).join(' · '))) : h('span.faint', {}, '–') },
+      { key: 'token', label: 'On TAP', render: compoundToken },
     ], { sortable: false }) : h('div.empty', {}, 'No compounds yet. Craft one above; it appears here and under Send units.'));
     if (list.some(c => c.needsRefine)) compoundsBody.append(h('p.small.muted', { style: { margin: 0, padding: '10px 14px', borderTop: '1px solid var(--rule-2)' } }, REFINE_NOTE));
   };

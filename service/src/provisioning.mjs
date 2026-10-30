@@ -4,13 +4,20 @@ import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { rules } from './rules.mjs';
 import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementByDefinition, elementByName } from './deployments.mjs';
 import { updateRegistryAsset } from './registry.mjs';
-import { mintAssetDefinition } from './mint-assets.mjs';
+import { mintAssetDefinition, patternCatalogId } from './mint-assets.mjs';
+import { encodeTracAddress, isTracAddress } from '../../rules/src/trac-address.js';
 import { lifecycleSignal } from './lifecycle.mjs';
 
 // Background pacing: a failed step retries after RETRY_MS; a registered deployment is re-verified
 // every RECHECK_MS. Source verification runs independently for each asset.
 const RETRY_MS = 30000, RECHECK_MS = 600000;
 const stopping = error => error?.name === 'AbortError' || /^[a-z_]+_stopping$/.test(error?.message ?? '') || lifecycleSignal()?.aborted === true;
+const tracId = id => isTracAddress(id) ? id : encodeTracAddress(id);
+// A name already packaged for an attempt keeps it (an older job may use an earlier fallback form).
+const packagedName = (job, phase, attempt) => {
+  const text = job.attempts.find(a => a.phase === phase && a.attempt === attempt)?.text;
+  return phase === 'element' ? (typeof text === 'string' ? text.split('.')[0] : undefined) : text?.tick;
+};
 const TRANSIENT = new Set(['tap_snapshot_changed', 'tap_quorum_unavailable', 'tap_lookup_index_catching_up', 'http_timeout', 'http_unavailable', 'http_capacity']);
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy, concurrency = 4 }) {
@@ -35,12 +42,38 @@ export class Provisioner {
   async state(asset) {
     const resolved = await mintAssetDefinition(this.store, asset);
     const job = this.store.get('provisioning', resolved.asset);
-    return { ...(job ?? { asset: resolved.asset, definition: resolved.definition, kind: resolved.asset.startsWith('p') ? 'dmt' : 'compound',
-      displayLabel: resolved.definition.name ?? resolved.asset, state: 'not_started' }), catalogAsset: resolved.catalogAsset };
+    const shown = job ?? { asset: resolved.asset, definition: resolved.definition, kind: resolved.asset.startsWith('p') ? 'dmt' : 'compound',
+      displayLabel: resolved.definition.name ?? resolved.asset, state: 'not_started' };
+    return { ...shown, catalogAsset: resolved.catalogAsset, ...await this.deployerView(shown) };
+  }
+  // During the discoverer's week only the discoverer's bound TAP wallet may deploy
+  // a pattern's token; after it anyone may. The week is the finder-week clock.
+  async deployer(job) {
+    if (job.kind !== 'dmt' || !job.definition?.discoverer) return null;
+    const catalog = patternCatalogId(job.asset), pattern = catalog && this.store.get('patternsByAsset', catalog);
+    if (!pattern) return null;
+    const context = await this.reads.rulesContext?.();
+    check(context?.settings, 'deployment_week_settings');
+    // A network without a release clock (public minting never activated) has no discoverer's week.
+    let until;
+    try { until = rules.discovererWeekEnd(pattern, context.settings); }
+    catch (error) { if (error.message === 'claim_policy_missing') return null; throw error; }
+    let address = null;
+    try { address = this.reads.bindings.resolve(job.definition.discoverer, 'tap', null, 'discoverer')?.request.address ?? null; }
+    catch (error) { if (!/^(?:discoverer_address_missing|binding_transition)$/.test(error.message)) throw error; }
+    return { until, discoverer: job.definition.discoverer, address };
+  }
+  // What deployment pages show before anyone pays for an inscription.
+  async deployerView(job) {
+    if (job.state === 'registered') return {};
+    const rule = await this.deployer(job);
+    if (!rule) return {};
+    const counted = rules.decimalV2(await this.reads.counted());
+    return { deployer: { ...rule, onlyDiscoverer: BigInt(counted) < BigInt(rule.until), counted } };
   }
   async request(asset, definition, { registeredAsIs = false } = {}) {
     const resolved = definition ? { asset, definition, catalogAsset: asset } : await mintAssetDefinition(this.store, asset);
-    const shown = job => definition ? job : { ...job, catalogAsset: resolved.catalogAsset };
+    const shown = async job => ({ ...(definition ? job : { ...job, catalogAsset: resolved.catalogAsset }), ...await this.deployerView(job) });
     // Mint quotes take a registered deployment as is; the background tick re-verifies it.
     const known = registeredAsIs && this.store.get('provisioning', resolved.asset);
     if (known?.state === 'registered' && same(known.definition, resolved.definition)) return shown(known);
@@ -70,13 +103,15 @@ export class Provisioner {
       if (v2) for (const row of named) { const r = await mintAssetDefinition(this.store, row.id); definitions.push([r.asset, r.definition]); }
       else for (let i = 0; i < Math.min(8, patterns.length); i++) { const p = patterns[(cursor.pattern + i) % patterns.length]; definitions.push([rules.patternAsset(p), p]); }
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
+      const compounds = v2 ? this.store.list('compoundTypes', { after: cursor.compound ?? '', limit: 8 }) : [];
+      definitions.push(...compounds.filter(r => !r.value.retired).map(r => [r.id, r.value]));
       await parallelPage(definitions, async ([asset, definition]) => {
         const job = await this.enqueue(asset, definition);
         // A job waiting for the player's inscription advances when the player submits it.
         if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
       }, this.concurrency);
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
-        ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '' } : {}) };
+        ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '', compound: compounds.length === 8 ? compounds.at(-1).id : '' } : {}) };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
     })().finally(() => { this.ticking = null; });
     return this.ticking;
@@ -104,6 +139,8 @@ export class Provisioner {
     return this.work.run(asset, async () => {
       let job = this.store.get('provisioning', asset);
       check(job && ['element', 'deployment'].includes(phase) && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(inscription), 'deployment_submission');
+      // A job opened before its compound was merged into the deterministic id stays closed.
+      check(job.kind !== 'compound' || !this.store.get('compoundTypes', job.asset)?.retired, 'compound_retired');
       const attempt = phase === 'element' ? job.elementAttempt : job.tickerAttempt;
       const item = job.attempts.find(a => a.phase === phase && a.attempt === attempt);
       check(item && same(await this.reads.content(inscription), item.text), 'deployment_content');
@@ -120,6 +157,13 @@ export class Provisioner {
     if (job.kind === 'compound') {
       const maker = this.reads.bindings.resolve(job.definition.firstMaker, 'tap', null, 'firstMaker');
       check(receiver === maker.request.address, 'first_maker_receiver');
+    } else {
+      // An inscription included during the discoverer's week counts only in the discoverer's wallet.
+      const rule = await this.deployer(job);
+      if (rule) {
+        const height = (await this.reads.included(inscription))?.height ?? await this.reads.counted();
+        if (BigInt(rules.decimalV2(height)) < BigInt(rule.until)) check(rule.address !== null && receiver === rule.address, 'discoverer_receiver');
+      }
     }
     if (job.receiver) check(receiver === job.receiver, 'deployment_receiver');
     return receiver;
@@ -160,7 +204,8 @@ export class Provisioner {
           check(inclusion?.confirmations >= this.policy.confirmations, 'element_confirmations');
           job = await this.save(job, { elementId: element.ins, elementName: element.tick, reused: !job.attempts.some(a => a.inscription === element.ins), state: 'inscribed' });
         } else {
-          const name = job.elementAttempt === 0 ? job.displayLabel.toLowerCase() : candidate(job, 'element', job.elementAttempt);
+          const name = job.elementAttempt === 0 ? job.displayLabel.toLowerCase() : packagedName(job, 'element', job.elementAttempt) ??
+            candidate(job, 'element', job.elementAttempt, job.displayLabel.toLowerCase());
           if (await elementByName(this.reads, name)) return this.save(job, { elementAttempt: job.elementAttempt + 1, state: 'retrying-collision', reason: 'element_name_occupied', nextRetry: 0 });
           const sent = await this.package(job, 'element', `${name}.${job.definition.pat}.${job.definition.fld}.element`);
           if (!sent) return this.store.get('provisioning', job.asset);
@@ -169,7 +214,8 @@ export class Provisioner {
           return this.save(sent.job, { state: 'resolving-element', reason: 'element_index_pending', nextRetry: Date.now() + 1000 });
         }
       }
-      const tick = job.tickerAttempt === 0 ? (job.kind === 'dmt' ? job.displayLabel.toLowerCase() : rules.compoundTicker(job.asset)) : candidate(job, job.kind === 'dmt' ? 'dmt-ticker' : 'compound-ticker', job.tickerAttempt);
+      const first = job.kind === 'dmt' ? job.displayLabel.toLowerCase() : rules.compoundTicker(job.asset);
+      const tick = job.tickerAttempt === 0 ? first : packagedName(job, 'deployment', job.tickerAttempt) ?? candidate(job, job.kind === 'dmt' ? 'dmt-ticker' : 'compound-ticker', job.tickerAttempt, first);
       const indexTick = job.kind === 'dmt' ? 'dmt-' + tick : tick;
       const occupied = await this.reads.tap('getDeployment/' + encodeURIComponent(indexTick));
       let prior = job.attempts.find(a => a.phase === 'deployment' && a.attempt === job.tickerAttempt);
@@ -181,16 +227,18 @@ export class Provisioner {
         let receiver;
         try { receiver = await this.receiver(job, occupied.ins); }
         catch (error) {
-          if (!['deployment_receiver', 'first_maker_receiver'].includes(error.message)) throw error;
+          if (!['deployment_receiver', 'first_maker_receiver', 'discoverer_receiver'].includes(error.message)) throw error;
           return this.save(job, { tickerAttempt: job.tickerAttempt + 1, state: 'retrying-collision', reason: 'ticker_occupied', nextRetry: 0 });
         }
         prior = { ...prior, inscription: occupied.ins };
         job = await this.save(job, { receiver, attempts: job.attempts.map(a => a.id === prior.id ? prior : a) });
       }
       if (occupied && occupied.ins !== prior?.inscription) return this.save(job, { tickerAttempt: job.tickerAttempt + 1, state: 'retrying-collision', reason: 'ticker_occupied', nextRetry: 0 });
+      // A package made before deploys carried prov keeps its exact text.
+      const prov = prior ? prior.text?.prov : tracId(job.kind === 'dmt' ? job.definition.discoverer : job.definition.firstMaker);
       let entry = { network: this.network, asset: job.asset, generation: job.generation, kind: job.kind, displayLabel: job.displayLabel, tick, indexTick,
         privilege: this.policy.privilege, authorityKey: this.policy.authorityKey, options: deploymentOptions(job.kind),
-        receiver: job.receiver,
+        receiver: job.receiver, ...(prov === undefined ? {} : { prov }),
         ...(job.kind === 'dmt' ? { elementId: job.elementId, elementName: job.elementName, dt: job.definition.dt, pattern: job.definition } : { firstMaker: job.definition.firstMaker }),
         tap: { treasury: this.policy.tapTreasury }, ethereum: { treasury: this.policy.ethereumTreasury } };
       if (prior && !same(prior.text, deploymentPayload(entry))) return this.save(job, { tickerAttempt: job.tickerAttempt + 1,

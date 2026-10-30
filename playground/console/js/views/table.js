@@ -1,6 +1,6 @@
 import { h, clear, table, kv, pill, hashEl, fmtInt, seg, inspectBtn, tierBadge, cell, panel } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
-import { mineral, title, symbol, fieldName, FIELDS, who, assetName } from '../words.js';
+import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText } from '../words.js';
 import { compoundMintFlow, wallet } from '../flows.js';
 import { pagedTable } from '../paged.js';
 import { feePrice } from '../money.js';
@@ -55,7 +55,7 @@ export function mount(root, params = {}) {
     return h('button.el', { type: 'button', onclick: () => choose(p, null), style: on ? { outline: '2px solid #1F2328', outlineOffset: '-1px' } : {},
       'data-tip': `${title(p.name)} · ${fieldName(p)}\nRule ${p.pat}\n${fmtInt(p.rarity)} blocks · tier ${p.tier}` },
       h('div.top', {}, h('span', {}, String(p.number)), tierBadge(p.tier)),
-      h('div.sym', {}, h('i', { style: { background: mineral(p.asset ?? p.number) } }), symbol(p.name)),
+      h('div.sym', {}, h('i', { style: { background: mineral(p.asset ?? p.number) } }), symbol(p)),
       h('div', {}, h('div.nm', {}, title(p.name)), h('div.pat', {}, p.pat)),
       h('div.foot', {}, h('span', {}, fmtInt(p.rarity)), h('span', {}, p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'seed')),
       Number(mintedOf(p)) > 0 ? h('span.hmk', { 'aria-label': 'minted' }) : null);
@@ -72,13 +72,13 @@ export function mount(root, params = {}) {
       empty: site.public ? 'No compound crafted yet.' : 'No compound crafted yet. Craft one from My player → Craft.',
       ...(site.public ? { onRow: c => choose(null, c), selected: c => pickC && c.id === pickC.id } : {}),
       columns: [
-        { key: 'id', label: 'Compound', render: c => h('span', {}, h('span.swatch', { style: { background: mineral(c.id ?? c.asset) } }), assetName(c.id ?? c.asset)) },
+        { key: 'id', label: 'Compound', render: c => compoundLabel(rememberCompound(c)) },
         { key: 'tier', label: 'Tier', render: c => tierBadge(c.tier) },
-        { key: 'mass', label: 'Mass', num: true, render: c => h('span.mono', {}, fmtInt(c.mass ?? c.properties?.mass)) },
+        { key: 'generation', label: 'Generation', num: true, render: c => h('span.mono', {}, c.properties?.generation ?? '–') },
         { key: 'firstMaker', label: 'First maker', render: c => c.firstMaker ? hashEl(c.firstMaker, who(c.firstMaker)) : h('span.faint', {}, '–') },
         { key: 'supply', label: 'Units on Trac', num: true, render: c => h('span.mono', {}, fmtInt(c.supply ?? c.units)) },
-        { key: 'token', label: 'On Bitcoin', render: c => c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet') },
-        { key: 'act', label: '', render: c => h('button.btn.sm', { onclick: () => compoundMintFlow(c.id ?? c.asset) }, 'Mint On-Chain') },
+        { key: 'token', label: 'On Bitcoin', render: c => site.token ? tokenStatus(c.id ?? c.asset, { lazy: true, action: false, none: 'not yet' }) : c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet') },
+        { key: 'act', label: '', render: c => h('button.btn.sm', { onclick: e => { e.stopPropagation(); compoundMintFlow(c.id ?? c.asset); } }, site.public ? 'Make real on TAP' : 'Mint On-Chain') },
       ],
     });
     return { el: h('div', { style: { marginTop: '18px' } }, panel('Compounds', t.el, { flush: true, id: 'compounds', tip: 'Crafted from pattern units. Any compound type can be made real as its own TAP token.' })), reload: t.reload };
@@ -102,7 +102,7 @@ export function mount(root, params = {}) {
         ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],
-        site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'Whoever mints this pattern first inscribes it and deploys its token, once, from their own TAP Wallet. Normally its discoverer.'] : null,
+        site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'During its first week only its discoverer can inscribe it and deploy its token, once, from their own TAP Wallet. After that anyone can. Whoever deploys holds the deploy inscription and can add art to it later.'] : null,
       ]),
       h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
     if (seq !== rowsSeq) return;
@@ -123,19 +123,12 @@ export function mount(root, params = {}) {
     }).el);
   }
   function compoundPanel(c) {
-    const id = c.id ?? c.asset;
+    rememberCompound(c);
+    const id = c.id ?? c.asset, name = assetName(id);
     return h('section.panel', {},
-      h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, assetName(id)), tierBadge(c.tier), h('div.grow'), inspectBtn(assetName(id), c)),
-      kv([
-        ['Recipe', c.recipe ? title(c.recipe) : null],
-        ['Inputs', (c.inputs ?? []).map(([a, n]) => `${fmtInt(n)} ${assetName(a)}`).join(' + ') || null],
-        ['Mass', h('span.mono', {}, fmtInt(c.mass ?? c.properties?.mass))],
-        ['First maker', c.firstMaker ? hashEl(c.firstMaker, who(c.firstMaker)) : null],
-        ['Units on Trac', h('span.mono', {}, fmtInt(c.supply ?? c.units))],
-        ['Made real', h('span.mono', {}, fmtInt(c.madeReal))],
-        ['On Bitcoin', c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet')],
-      ]),
-      h('div.row', { style: { padding: '10px 14px' } }, h('button.btn.sm.primary', { onclick: () => compoundMintFlow(id) }, 'Mint On-Chain')));
+      h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, name), tierBadge(c.tier), h('div.grow'), inspectBtn(name, c)),
+      compoundFacts(c),
+      h('div.row', { style: { padding: '10px 14px' } }, h('button.btn.sm.primary', { onclick: () => compoundMintFlow(id) }, site.public ? 'Make real on TAP' : 'Mint On-Chain')));
   }
   // A pattern or compound named in the address opens beside the table.
   async function open(asset, compound) {
@@ -158,14 +151,18 @@ export function mount(root, params = {}) {
   return () => { selectionSeq++; off(); };
 }
 // A pattern's token on Bitcoin (public pages): its status and, until it is deployed, the way to inscribe the
-// pattern and deploy its token. The agent is the connected wallet's player, else `owner`.
-export function tokenStatus(asset, { owner, lazy = false, action = true } = {}) {
+// pattern and deploy its token. The agent is the connected wallet's player, else `owner`. A deployed token shows
+// its ticker; during the discoverer's week only the discoverer gets the deploy button. `none` replaces the
+// not-deployed pill with quiet text.
+export function tokenStatus(asset, { owner, lazy = false, action = true, none = null } = {}) {
   const el = h('span.row', { style: { gap: '8px' } }, h('span.faint', {}, lazy ? '–' : 'Loading…'));
   const load = () => site.token(asset).then(t => {
-    if (!t) { clear(el); return; }
-    const agent = wallet?.player?.()?.agent ?? owner;
-    clear(el, pill(t.label, t.kind), action && ['none', 'inscribed'].includes(t.step)
-      ? h('a.btn.sm.primary', { href: site.deployHref(asset, agent) }, t.step === 'none' ? 'Inscribe & deploy' : 'Deploy token') : null);
+    if (!t) { clear(el, none ? h('span.faint', {}, none) : null); return; }
+    if (none && t.step === 'none') { clear(el, h('span.faint', {}, none)); return; }
+    const agent = wallet?.player?.()?.agent ?? owner, week = t.deployer?.onlyDiscoverer ? t.deployer : null;
+    clear(el, pill(t.label, t.kind), t.tick ? h('span.mono', {}, t.tick) : null, action && ['none', 'inscribed'].includes(t.step) && (!week || agent === week.discoverer)
+      ? h('a.btn.sm.primary', { href: site.deployHref(asset, agent) }, t.step === 'none' ? 'Inscribe & deploy' : 'Deploy token') : null,
+      action && week ? h('span.small.faint', {}, `Only its discoverer can deploy it until block ${week.until}.`) : null);
   }, () => clear(el, h('span.faint', {}, 'unavailable')));
   if (lazy && typeof IntersectionObserver === 'function') {
     // Only rows on screen read their token.
@@ -173,4 +170,28 @@ export function tokenStatus(asset, { owner, lazy = false, action = true } = {}) 
     seen.observe(el);
   } else load();
   return el;
+}
+// A compound's name, with its short key as a small copyable detail.
+export function compoundLabel(c) {
+  const id = c.id ?? c.asset;
+  return h('div', {}, h('span', {}, h('span.swatch', { style: { background: mineral(id) } }), assetName(id)),
+    h('div.small.faint', {}, hashEl(id, '#' + compoundKey(id))));
+}
+// What a person can read about a compound: never its mass commitment or other hashes.
+export function compoundFacts(c) {
+  const id = c.id ?? c.asset, p = c.properties ?? {}, tier = tierOf(c.tier);
+  return kv([
+    ['Recipe', c.recipe ? title(c.recipe) : null],
+    ['Ingredients', compoundInputs(c).map(i => `${fmtInt(i.amount)} ${assetName(i.asset)}`).join(' + ') || null],
+    ['Tier', tier ? `${tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'compound', tier)} per mint` : null, 'Rarer compounds have higher tiers and cost more to make real.'],
+    ['Charge', p.charge ?? null],
+    ['Spectrum', p.spectrum === undefined ? null : spectrumText(p.spectrum), 'The block header fields its ingredients were found in.'],
+    ['Generation', p.generation === undefined ? null : generationText(p.generation), 'How many crafting steps it is away from plain patterns.'],
+    ['First maker', c.firstMaker ? hashEl(c.firstMaker, who(c.firstMaker)) : null],
+    ['Units on Trac', h('span.mono', {}, fmtInt(c.supply ?? c.units))],
+    ['Made real', h('span.mono', {}, fmtInt(c.madeReal))],
+    ['On Bitcoin', site.token ? tokenStatus(id, { action: false, none: 'not yet' }) : c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet'),
+      'Its first maker deploys its TAP token once; then whoever holds its units can make them real as TAP tokens.'],
+    ['Key', hashEl(id, '#' + compoundKey(id))],
+  ]);
 }

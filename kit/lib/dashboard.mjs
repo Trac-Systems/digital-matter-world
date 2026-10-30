@@ -109,9 +109,10 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       if (req.method === 'GET' && path === '/api/tnk-sends') { keys([]); json(await state.tnkSends()); return; }
       if (req.method === 'GET' && path === '/api/craft') { keys([]); json(await state.craft()); return; }
       if (req.method === 'GET' && path === '/api/wallet') { keys(['key']); json({ value: state.walletGet(url.searchParams.get('key')) }); return; }
-      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock', '/api/send-review', '/api/send', '/api/send-retry', '/api/send-resign', '/api/tnk-review', '/api/tnk-send', '/api/tnk-retry', '/api/craft-preview', '/api/craft', '/api/craft-retry', '/api/craft-refine'].includes(path)) {
+      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock', '/api/send-review', '/api/send', '/api/send-retry', '/api/send-resign', '/api/tnk-review', '/api/tnk-send', '/api/tnk-retry', '/api/craft-preview', '/api/craft', '/api/craft-retry', '/api/craft-refine', '/api/mint-compound'].includes(path)) {
         keys([]); const value = await body(req);
         if (path === '/api/mint') json(await state.mint(value));
+        if (path === '/api/mint-compound') json(await state.mintCompound(value));
         if (path === '/api/link') json(await state.link(value));
         if (path === '/api/mint-all') { dashboardCheck(Object.keys(value).length === 0, 'invalid_request'); json(state.mintAll(), 202); }
         if (path === '/api/payment') json(await state.payment(value));

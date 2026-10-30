@@ -59,6 +59,9 @@ export async function claimedEventsV2(feeds) {
     const phases = ['occurrences', 'finds', 'discoveries', 'types', 'agents', 'links', 'refinements', 'crafts', 'financial', 'transfers'];
     const cursor = store.get('feedEventCursor', id) ?? { phase: 0, offset: 0 }, phase = phases[cursor.phase];
     const source = event[phase] ?? [], rows = Array.isArray(source) ? source : Object.values(source);
+    // Events are bounded by the audit budget. Sort before slicing so chunk
+    // boundaries and retries cannot change discovery-time symbol priority.
+    if (phase === 'discoveries') rows.sort((a, b) => rules.compareUint(rules.decimalV2(a.record.number), rules.decimalV2(b.record.number)));
     const operations = new Map(), key = (space, id) => `${space}\0${id}`;
     const put = (space, id, value) => operations.set(key(space, id), { space, id, ...(value === undefined ? {} : { value }) });
     const get = (space, id) => operations.has(key(space, id)) ? operations.get(key(space, id)).value : store.get(space, id);
@@ -76,6 +79,14 @@ export async function claimedEventsV2(feeds) {
         at: time == null ? null : rules.safeNumberV2(String(BigInt(time) * 1000n)),
         provenance: provenance ?? { observation: event.observation ?? id, batch: event.batch ?? null } });
       put('publicEventKeys', eventId, sequence); put('meta', 'publicSequence', sequence); return true;
+    };
+    // Units on Trac follow the ledger's supply leaf for the compound (holds
+    // included); made real adds each landed TAP mint. Only touched compounds change.
+    const compoundTotals = (asset, minted = '0') => {
+      const row = typeof asset === 'string' && asset.startsWith('c2:') && get('catalogTypes', asset);
+      if (!row) return;
+      put('catalogTypes', asset, { ...row, supply: get('publicSupply', asset)?.outstanding ?? row.supply ?? '0',
+        madeReal: String(BigInt(row.madeReal ?? '0') + BigInt(minted)) });
     };
     const chunk = rows.slice(cursor.offset, cursor.offset + s.feedEventRows);
     for (const row of chunk) {
@@ -113,7 +124,11 @@ export async function claimedEventsV2(feeds) {
       }
       if (phase === 'types') {
         const previous = get('catalogTypes', row.id);
-        put('catalogTypes', row.id, { ...row, ...(previous?.tierProgress ? { tierProgress: previous.tierProgress } : {}) });
+        // A retired compound (merged into its deterministic id) leaves the
+        // public lists; its units were reissued under the new id.
+        put('catalogTypes', row.id, row.retired ? undefined : { ...row, ...(previous?.tierProgress ? { tierProgress: previous.tierProgress } : {}),
+          ...(previous?.supply ? { supply: previous.supply } : {}), ...(previous?.madeReal ? { madeReal: previous.madeReal } : {}) });
+        compoundTotals(row.id);
       }
       if (phase === 'refinements') {
         const previous = get('catalogTypes', row.asset);
@@ -128,6 +143,7 @@ export async function claimedEventsV2(feeds) {
         const owner = row.action?.owner ?? row.agent;
         if (emit('craft', { agent: owner, owner, asset: row.id, amount: row.amount, firstMaker: row.firstMaker },
           'craft/' + (row.move ?? rules.hashObject([id, row.action])))) score(owner, 'craftCount', 1);
+        for (const asset of new Set([row.id, ...(row.action?.in ?? []).map(([asset]) => asset)])) compoundTotals(asset);
       }
       if (phase === 'transfers') {
         const a = row.action;
@@ -137,6 +153,7 @@ export async function claimedEventsV2(feeds) {
       if (phase === 'financial' && emit(row.type, row.data, row.id, row.provenance)) {
         if (row.type === 'mint_complete' && row.data.owner) score(row.data.owner, 'mintCount', 1);
         if (row.type === 'link' && row.data.owner) score(row.data.owner, 'linkCount', 1);
+        compoundTotals(row.data.asset, row.type === 'mint_complete' ? row.data.amount ?? '0' : '0');
       }
     }
     let next = { phase: cursor.phase, offset: cursor.offset + chunk.length };
@@ -154,6 +171,14 @@ export async function claimedEventsV2(feeds) {
     // A later small event must not publish its catalog/attribution changes
     // ahead of an earlier event whose occurrence phase needs more pages.
     if (next.phase < phases.length) break;
+  }
+  // Compounds projected before units and made real were kept: fill them once, one page per tick.
+  const fill = store.get('meta', 'compoundTotalsFill') ?? { after: '' };
+  if (!fill.done) {
+    const rows = store.list('catalogTypes', { after: fill.after, limit: s.feedEventRows });
+    await store.transact([...rows.filter(r => r.id.startsWith('c2:') && (r.value.supply === undefined || r.value.madeReal === undefined)).map(r => ({
+      space: 'catalogTypes', id: r.id, value: { ...r.value, supply: store.get('publicSupply', r.id)?.outstanding ?? '0', madeReal: r.value.madeReal ?? '0' } })),
+    { space: 'meta', id: 'compoundTotalsFill', value: rows.length === s.feedEventRows ? { after: rows.at(-1).id } : { done: true } }]);
   }
   for (const { id, value } of store.list('feedLinkedBlocks2', { limit: s.feedEventsPerTick })) {
     const rows = store.list('claimedAt2/' + id, { after: value.after, limit: s.feedEventRows });

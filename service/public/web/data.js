@@ -47,7 +47,7 @@ export const catalogColumns = ['asset', 'number', 'name', 'tier', 'rarity', 'sup
 export function route(path) {
   const p = path.replace(/\/$/, '') || '/';
   let m;
-  if ((m = /^\/mint\/([pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.exec(p))) return { kind: 'money', type: 'mint', id: m[1] };
+  if ((m = /^\/mint\/([pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.exec(p))) return { kind: 'money', type: 'mint', id: m[1] };
   if ((m = /^\/(mint|link|bind-payout)(?:\/([0-9a-f]{64}))?$/.exec(p))) return { kind: 'money', type: m[1], id: m[2] };
   if ((m = /^\/(?:block|plot)\/(\d+)$/.exec(p))) return { kind: 'block', height: Number(m[1]) };
   if ((m = /^\/(pattern|compound)\/([a-z0-9]{1,24}|[pc]2:[0-9a-f]+)$/.exec(p))) return { kind: m[1], asset: m[2] };

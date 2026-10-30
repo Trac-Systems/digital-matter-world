@@ -215,12 +215,12 @@ export class Pipeline {
             const publicReaders = publicClaimsActive ? publicClaimReaders({ input, store: accountStore, claimNodes, publicMintRead }) : undefined;
             const publicClaims = publicReaders && rules.publicClaimProjection(output, input, publicReaders.readers);
             const accounts = this.financial && !renewal && !anchored && clock.compare(execution, observation.counted) === 0
-              ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, height: observation.counted, at: { counted: execution, last }, accountStore,
+              ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, compoundMerge: output.file.compoundMerge, height: observation.counted, at: { counted: execution, last }, accountStore,
                 ...(publicClaims ? { publicClaims, preparePublicMint: publicReaders.prepare } : {}),
                 priorLinkInputs: items.reduce((n, i) => n + (i.output.file.financialOperations ?? []).filter(f => f.transition.action?.type?.startsWith('link-')).length, 0),
                 excluded: financialIncluded, remaining: settings.document.values.mintOperationBudget - financialIncluded.size, priorOperations: input.priorOperations,
                 priorAssetTouches: items.reduce((n, i) => n + (i.output.accountAssetTouches ?? 0), 0) })
-              : await buildCreditAccounts({ store: accountStore, credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, document: settings.document, height: observation.counted });
+              : await buildCreditAccounts({ store: accountStore, credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, compoundMerge: output.file.compoundMerge, document: settings.document, height: observation.counted, executionHeight: execution });
             input.accountOperations = accounts.creditOperations ?? accounts.operations;
             if (accounts.inputs?.length) input.financialOperations = accounts.inputs;
             if (!entries.length && !accounts.operations.length && !output.file.settlements.length && !output.file.closures.length && !output.file.closureProgress?.length &&
@@ -431,6 +431,14 @@ export class Pipeline {
           if (!this.store.get('typeProvenance', craft.id)) operations.push({ space: 'typeProvenance', id: craft.id, value: draft.proposal.batch.n });
           if (file.v === 5) operations.push({ space: 'compoundTypes', id: craft.id, value: { ...craft.record, firstMaker: craft.firstMaker } });
         }
+        for (const type of file.compoundMerge?.types ?? []) {
+          operations.push({ space: 'compoundTypes', id: type.id, value: type });
+          if (!type.retired) operations.push({ space: 'typeProvenance', id: type.id, value: draft.proposal.batch.n });
+        }
+        if (file.compoundMerge) for (const row of rules.COMPOUND_IDENTITY_V4_MERGES.rows) {
+          operations.push({ space: 'agentAssets/' + row.holder, id: row.oldId },
+            { space: 'agentAssets/' + row.holder, id: row.newId, value: true });
+        }
         for (const refinement of file.refinements ?? []) operations.push({ space: 'compoundTiers', id: refinement.asset, value: refinement.progress });
         operations.push(...(item.output.namedWrites ?? []));
         operations.push(...(item.output.claimWrites ?? []));
@@ -439,7 +447,7 @@ export class Pipeline {
           ...(move.v === 2 ? [{ space: 'namedAccepted', id: rules.moveIdV2(move), value: { receipt: rules.hashObject(receipt), batch: draft.proposal.batch.n } }]
             : [{ space: 'dedupe', id: rules.moveId(move) }]));
         operations.push({ space: 'blocks', id: heightKey(file.height), value: item.publication }, { space: 'publishedObservations', id: heightKey(file.observation), value: item.publication },
-          { space: 'feedEvents', id: heightKey(file.observation), value: { height: file.height, tip: file.tip, finds: Object.fromEntries(file.settlements.flatMap(s => s.winners).map(w => [w.id, finds[w.id]])), types: Object.fromEntries(file.crafts.map(c => [c.id, file.v === 5 ? { ...c.record, firstMaker: c.firstMaker } : rules.recordGet(state.types, c.id)])), crafts: file.crafts, discoveries: file.discoveries, ...(file.transfers ? { transfers: file.transfers } : {}),
+          { space: 'feedEvents', id: heightKey(file.observation), value: { height: file.height, tip: file.tip, finds: Object.fromEntries(file.settlements.flatMap(s => s.winners).map(w => [w.id, finds[w.id]])), types: Object.fromEntries([...file.crafts.map(c => [c.id, file.v === 5 ? { ...c.record, firstMaker: c.firstMaker } : rules.recordGet(state.types, c.id)]), ...(file.compoundMerge?.types ?? []).map(c => [c.id, c])]), crafts: file.crafts, discoveries: file.discoveries, ...(file.transfers ? { transfers: file.transfers } : {}),
             ...(file.v === 5 ? { occurrences: file.occurrences, observation: rules.decimalV2(file.observation), batch: rules.decimalV2(draft.proposal.batch.n), ...(file.refinements ? { refinements: file.refinements } : {}) } : {}),
             links: file.linkOperations.filter((_, i) => file.linkOutcomes[i].reason === 'accepted').map(i => i.request.height),
             agents: [...file.ops.filter(o => o.op === 'xc').map(o => ({ owner: o.request.owner, assets: [...o.request.in, ...o.request.out].map(p => p[0]) })),

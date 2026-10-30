@@ -49,3 +49,7 @@ export * from './claim-state.js';
 
 export * from './runtime-capabilities.js';
 export * from './receipt-cutoff-pages.js';
+
+export * from './compound-identity-v4.js';
+export * from './compound-merge-manifest.js';
+export * from './compound-merge-v4.js';

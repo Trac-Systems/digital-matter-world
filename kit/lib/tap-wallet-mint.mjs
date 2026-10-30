@@ -1,5 +1,5 @@
 import * as btc from '@scure/btc-signer';
-import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent, networkFor } from './inscription-core.mjs';
+import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent, checkDeployer, networkFor } from './inscription-core.mjs';
 import { ensureTapAuthority, noAuthority, GLOBAL_AUTHORITY_NOTICE, tapWalletCapabilities } from './tap-wallet-actions.mjs';
 import { checkTapFunds, checkBitcoinFunds, cardinalCoins, bitcoinFeeRate, readFunds, displayAmount } from './wallet-funds.mjs';
 export { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, GLOBAL_AUTHORITY_NOTICE, noAuthority, TAP_WALLET_MIN_VERSION, TAP_WALLET_TOO_OLD, versionAtLeast, tapWalletCapabilities } from './tap-wallet-actions.mjs';
@@ -209,6 +209,7 @@ export class TapWalletMint {
     } else ensure(typeof owner === 'string' && (job.kind !== 'compound' || job.definition?.firstMaker === owner)
       && binding?.request?.agent === owner && binding.request.address === this.address && (!job.receiver || job.receiver === this.address),
       'Connect the deploying player’s bound TAP Wallet');
+    checkDeployer(job, { owner: publicRequest ? undefined : owner, address: this.address });
     const { text, attemptId, phase } = deploymentContent(job);
     return { ...await this.inscribeContent(attemptId, text, 'deploy', options), asset: job.asset, phase };
   }
@@ -269,3 +270,4 @@ export class TapWalletMint {
 }
 
 export { EthereumMint } from './ethereum-mint.mjs';
+export { discovererOnly } from './inscription-core.mjs';

@@ -70,7 +70,7 @@ export async function acceptedAssetProvenance({ store, reads, asset, block }) {
     return finish({ pattern, find, maker: find?.finder ?? null, tier: pattern.tier, ...(publicClaims ? { publicClaims } : {}) });
   }
   const compound = await namedRead('compound/assets/' + asset), maker = await namedRead('compound/maker/' + asset);
-  check(compound?.id === asset && rules.hex(maker?.owner, 32), 'asset_provenance_compound');
+  check(compound?.id === asset && !compound.retired && rules.hex(maker?.owner, 32), 'asset_provenance_compound');
   const progress = await namedRead('compound/tiers/' + asset), tier = progress?.value ?? compound.tier?.value;
   check(Number.isSafeInteger(tier) && tier >= 1 && tier <= 5, 'compound_tier_pending');
   return finish({ compound, maker: maker.owner, tier, find: null, pattern: null });

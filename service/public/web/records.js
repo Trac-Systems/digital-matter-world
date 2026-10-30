@@ -2,13 +2,13 @@
 import { h, clear, kv, pill, hashEl, fmtInt, panel, figures, inspectBtn, tierBadge, short } from './console/js/dom.js';
 import { get, site } from './console/js/api.js';
 import { pagedTable } from './console/js/paged.js';
-import { mineral, assetName, title, fieldName } from './console/js/words.js';
+import { mineral, assetName, title, fieldName, rememberCompound, compoundName } from './console/js/words.js';
 
 export function mount(root, params = {}) {
   const top = h('div'), batch = h('div');
   root.append(h('div.page', {},
     h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Records'),
-      h('p', {}, 'Rarest finds today (UTC), over the last seven days, and ever. Rarity uses each pattern’s recorded history. Biggest compound means greatest mass.'))),
+      h('p', {}, 'Rarest finds today (UTC), over the last seven days, and ever. Rarity uses each pattern’s recorded history. The top compound has the highest tier; ties go to the higher generation, then the newest.'))),
     batch, top, h('div', { style: { height: '16px' } }),
     h('div.grid.cols-2', {},
       panel('Rarest pattern types', pagedTable({
@@ -26,9 +26,9 @@ export function mount(root, params = {}) {
         path: '/compounds', key: 'compounds', limit: 10, sorts: [['tier:desc', 'Highest tier'], ['supply:desc', 'Most units'], ['madeReal:desc', 'Most made real']],
         empty: 'No compound crafted yet.',
         columns: [
-          { key: 'id', label: 'Compound', render: c => h('a', { href: site.href('table', { c: c.id }) }, h('span.swatch', { style: { background: mineral(c.id) } }), assetName(c.id)) },
+          { key: 'id', label: 'Compound', render: c => h('a', { href: site.href('table', { c: c.id }) }, h('span.swatch', { style: { background: mineral(c.id) } }), assetName(rememberCompound(c).id)) },
           { key: 'tier', label: 'Tier', render: c => tierBadge(c.tier) },
-          { key: 'mass', label: 'Mass', num: true, render: c => h('span.mono', {}, fmtInt(c.mass ?? c.properties?.mass)) },
+          { key: 'generation', label: 'Generation', num: true, render: c => h('span.mono', {}, c.properties?.generation ?? '–') },
           { key: 'supply', label: 'Units on Trac', num: true },
           { key: 'madeReal', label: 'Made real', num: true },
         ],
@@ -75,12 +75,13 @@ export function mount(root, params = {}) {
 
   get('/records/highlights').then(r => {
     const find = f => f ? [assetName(f.asset), `block ${fmtInt(f.block)} · ${fmtInt(f.rarity?.numerator)} of ${fmtInt(f.rarity?.denominator)} blocks`] : ['–', 'none yet'];
-    const c = r.biggestCompound;
+    const c = r.highestTierCompound;
     clear(top, figures([
       ['Rarest find today', ...find(r.rarestFinds?.today)],
       ['Rarest find this week', ...find(r.rarestFinds?.week)],
       ['Rarest find ever', ...find(r.rarestFinds?.ever)],
-      ['Biggest compound', c ? assetName(c.asset) : '–', c ? `mass ${fmtInt(c.mass)}` : 'none yet'],
+      ['Highest-tier compound', c ? h('a', { href: site.href('table', { c: c.asset }) }, compoundName({ ...c, id: c.asset })) : '–',
+        c ? `tier ${c.tier ?? '–'} · generation ${c.generation ?? '–'}` : 'none yet'],
     ]));
   }).catch(e => clear(top, h('div.note.bad', {}, `Records did not load: ${e.message}`)));
 

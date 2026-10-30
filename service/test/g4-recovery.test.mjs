@@ -35,7 +35,7 @@ test('v2 projections resume bounded phases and preserve decimal heights, counts 
   const path = await temp(), files = new Files(join(path, 'static')), owner = agent(3).address, replacement = agent(4).address;
   let store = await Store.open(path);
   const number = '9007199254740993', asset = r.patternAssetV2(number), block = '9223372036854775808';
-  const record = { number, key: r.hash('pattern'), discoverer: owner, knownMatchCount: '3', catalogRevision: '1' };
+  const record = { number, name: 'dmwdecimalite', key: r.hash('pattern'), discoverer: owner, knownMatchCount: '3', catalogRevision: '1' };
   const event = { height: block, tip: block, occurrences: Array.from({ length: 3 }, (_, i) => ({ block: r.addUint(block, String(i)), pattern: number, asset, hash: r.hash(String(i)), count: '1', agent: owner })),
     discoveries: [{ record }], finds: {}, types: {} };
   const options = { files, history: { get() { throw Error('history_scan'); } }, reads: {}, settings: { feedEventRows: 1 } };

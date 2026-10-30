@@ -256,8 +256,8 @@ gateway, then confirmed in a batch; Retry reuses the saved IDs. These units move
 on Trac, not as Bitcoin or TAP tokens.
 
 **Craft a compound** on the same page lists the agent's `p2`/`c2` units by name
-with charge, spectrum and generation; imported `p0`-style units are shown but
-cannot be crafted. Choose two or more ingredients, amounts and Fusion or
+with charge, spectrum and generation. At the compound upgrade activation,
+imported pattern units such as florite's `p0` become craftable too. Choose two or more ingredients, amounts and Fusion or
 Resonance (offered only for equal charges). The result is the gateway's craft
 preview verified against the accepted catalog, exactly as the `craft` action
 verifies it, and nothing is signed until you confirm. Warnings name claimed
@@ -743,11 +743,14 @@ reports an unavailable batch verifier and preserves the packet.
 > Claimed-block lists are submitted evidence, not all matches in history.
 
 For activated v2 crafting, call `craft` with a stable action ID and named
-`p2:`/`c2:` inputs. The kit verifies the exact recipe preview against the accepted
+`p2:`/`c2:` inputs (also authenticated legacy pattern keys after the compound
+upgrade activation). The kit verifies the exact recipe preview against the accepted
 catalog, saves the signed spend and resumes the same packet after a timeout.
 Accepted batches debit ingredients, credit proportional output and consume the
 nonce atomically. Compound properties retain their input revisions and canonical
-snapshot. If exact tier comparison is still pending, `refine_compound` continues
+snapshot from the first craft. After the compound upgrade, the recipe and reduced
+canonical input ratio determine identity; later crafts add units to that same
+asset. If exact tier comparison is still pending, `refine_compound` continues
 bounded work from its accepted cursor; it never spends matter or changes the
 compound identity. See [ACTIONS.md](docs/ACTIONS.md#crafting-with-activated-v2-rules).
 

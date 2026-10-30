@@ -73,7 +73,7 @@ test('units are labelled for people: pattern name and tier, imported pattern nam
   assert.deepEqual([unit('p2:1').name, unit('p2:1').kind, unit('p2:1').tier, unit('p2:1').available], ['dmwtest', 'pattern', 3, '100']);
   assert.deepEqual([unit('p2:2').name, unit('p2:2').tier], ['dmwmuffinite', 2]);
   assert.deepEqual([unit('p0').name, unit('p0').kind], ['dmwflorite', 'legacy']);
-  assert.deepEqual([unit(COMPOUND).name, unit(COMPOUND).kind], ['Compound · resonance of dmwmuffinite + dmwtest', 'compound']);
+  assert.deepEqual([unit(COMPOUND).name, unit(COMPOUND).kind], ['Muffinite + Test resonance', 'compound']);
   assert.ok(body.units.every(u => !/^(p2:|c2:|p0)/.test(u.name)));
 });
 
@@ -95,7 +95,7 @@ test('review checks every row before signing: checksum, own address, unit, amoun
   assert.equal(transfers.length, 0);
   const ok = (await call('/api/send-review', { rows: [{ to: address(1), unit: 'p2:2', amount: '2' }, { to: address(1), unit: 'dmwflorite', amount: '5' }, { to: address(2), unit: 'abababab', amount: '1' }] })).body;
   assert.equal(ok.ok, true);
-  assert.deepEqual(ok.groups.map(g => [g.to, g.assets, g.labels]), [[address(1), [['p2:2', '2'], ['p0', '5']], ['dmwmuffinite', 'dmwflorite']], [address(2), [[COMPOUND, '1']], ['Compound · resonance of dmwmuffinite + dmwtest']]]);
+  assert.deepEqual(ok.groups.map(g => [g.to, g.assets, g.labels]), [[address(1), [['p2:2', '2'], ['p0', '5']], ['dmwmuffinite', 'dmwflorite']], [address(2), [[COMPOUND, '1']], ['Muffinite + Test resonance']]]);
   assert.equal((await call('/api/send', { rows: [{ to: bad, unit: 'p2:2', amount: '1' }] })).status, 400);
   assert.equal(transfers.length, 0);
 });

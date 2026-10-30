@@ -158,9 +158,18 @@ export function mintContent(status, address) {
   return text;
 }
 
+// During the discoverer's week only the discoverer's bound wallet deploys a pattern's
+// token. The gateway refuses any other inscription; this says so before anyone pays.
+export const discovererOnly = until => `Only the discoverer can deploy this token until block ${until}. After that anyone can, and the deployer keeps its art rights.`;
+export function checkDeployer(job, { owner, address } = {}) {
+  const rule = job?.kind === 'dmt' && job.state !== 'registered' ? job.deployer : null;
+  if (!rule?.onlyDiscoverer) return;
+  ensure(/^(0|[1-9][0-9]*)$/.test(rule.until ?? '') && typeof rule.address === 'string' && address === rule.address &&
+    (owner === undefined || owner === rule.discoverer), discovererOnly(rule.until), 'discoverer_receiver');
+}
 export function deploymentContent(job) {
   const pattern = job?.kind === 'dmt';
-  ensure((pattern ? /^(?:p[0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(job.asset) : job?.kind === 'compound' && /^c[0-9a-z]{1,23}$/.test(job.asset)) &&
+  ensure((pattern ? /^(?:p[0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(job.asset) : job?.kind === 'compound' && /^(?:c[0-9a-z]{1,23}|c2:[0-9a-f]{64})$/.test(job.asset)) &&
     job.state === 'awaiting_player_deploy' && (job.phase === 'deployment' || pattern && job.phase === 'element'), 'Deployment is not ready for the player');
   const attempt = job.attempts?.find(a => a.phase === job.phase && a.attempt === (job.phase === 'element' ? job.elementAttempt : job.tickerAttempt));
   ensure(attempt && /^[0-9a-f]{64}$/.test(attempt.id), 'Missing deployment attempt');
@@ -173,8 +182,10 @@ export function deploymentContent(job) {
     let payload; try { payload = JSON.parse(text); } catch { ensure(false, 'Invalid deployment content'); }
     ensure(payload?.p === 'tap' && payload.op === (pattern ? 'dmt-deploy' : 'token-deploy') && /^dmw[a-z0-9]{2,29}$/.test(payload.tick) &&
       /^[0-9a-f]{64}i[0-9]+$/.test(payload.prv) && (!job.privilege || payload.prv === job.privilege), 'Invalid mint authority or ticker');
+    // prov names the pattern's discoverer or the compound's first maker.
+    ensure(payload.prov === undefined || payload.prov === (pattern ? job.definition?.discoverer : job.definition?.firstMaker), 'Deployment names another discoverer or first maker');
     if (pattern) ensure(payload.elem === job.elementId && /^[0-9a-f]{64}i[0-9]+$/.test(payload.elem) && payload.dt === job.definition?.dt &&
-      Object.keys(payload).sort().join(',') === 'dt,elem,op,p,prv,tick', 'Deployment differs from the indexed element');
+      ['dt,elem,op,p,prv,tick', 'dt,elem,op,p,prov,prv,tick'].includes(Object.keys(payload).sort().join(',')), 'Deployment differs from the indexed element');
     else ensure(payload.dec === '0' && typeof payload.max === 'string', 'Invalid compound supply');
     const ordered = value => JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))));
     ensure(ordered(payload) === ordered(attempt.text) && ordered(payload) === ordered(job.content), 'Content differs from its deployment attempt');

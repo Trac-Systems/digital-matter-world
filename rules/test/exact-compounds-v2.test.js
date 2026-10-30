@@ -26,7 +26,8 @@ test('exact compound chains cross generation, mass and rational digit ceilings w
   assert.ok(63n ** 350n > 10n ** 600n);
 });
 test('accepted parent properties cannot be replaced; input revisions and snapshots are committed', () => {
-  const options = { recipe: 'fusion', inputs: [['p2:1', '1'], ['p2:2', '1']], snapshot, settings, lookup: asset => pattern(asset.slice(3)) };
+  // Before the v4 activation height, identities still commit input revisions and snapshots.
+  const options = { recipe: 'fusion', inputs: [['p2:1', '1'], ['p2:2', '1']], snapshot, settings, executionHeight: '0', lookup: asset => pattern(asset.slice(3)) };
   const one = compoundV2(emptyExactCompounds(), options);
   const changed = compoundV2(emptyExactCompounds(), { ...options, lookup: asset => ({ ...pattern(asset.slice(3)), catalogRevision: '2', knownMatchCount: '4' }) });
   assert.notEqual(one.record.id, changed.record.id);

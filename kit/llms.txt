@@ -89,10 +89,14 @@ Block mintRights reads require an owner; the kit defaults it to this player.
    do not by themselves disqualify distinct definitions. A taken name still does.
    Use accepted minMatchingBlocks and occurrencePageSize settings. Discovery
    creates no units. submit_occurrences adds evidence without awarding a find.
-6. compound_idea suggests owned p2/c2 ingredients. craft obtains and verifies a
+6. compound_idea suggests owned p2/c2 ingredients and, after the compound upgrade,
+   authenticated legacy pattern units. craft obtains and verifies a
    snapshot-bound proof before determining the c2 output. Never compute a v1
    compound ID or use historical frozen rarity as the v2 result. A pending exact
-   tier can be advanced with refine_compound using its accepted cursor.
+   tier can be advanced with refine_compound using its accepted cursor. After
+   the compound upgrade, recipe + reduced canonical ratio defines identity; later
+   crafts add units while retaining first-craft properties. Explicit p0 and p2:0
+   inputs share an identity but debit their exact listed ledger balances.
 7. mint_rights and mint_idea check actual finds, ownership, balances, reservations
    and finder rights. A no-funds player correctly receives no_balance or
    no_eligible_slot. Use current feePolicy and the request's signed fee terms.

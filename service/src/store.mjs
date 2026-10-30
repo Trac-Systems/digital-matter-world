@@ -13,6 +13,7 @@ import { rules } from './rules.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { projectionSchema, projectRevision, flushProjectionRevisions } from './projection-state.mjs';
 import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset, consumesPublicRecord, flushPublicItems } from './public-projection-index.mjs';
+import { patternSymbolFillSchema, fillPatternSymbols } from './pattern-symbol-fill.mjs';
 const run = promisify(execFile);
 const identity = async pid => (await run('ps', ['-p', String(pid), '-o', 'lstart='])).stdout.trim();
 export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096 });
@@ -56,6 +57,7 @@ export class Store {
     readIndexSchema(this.db);
     projectionSchema(this.db);
     publicProjectionSchema(this.db);
+    patternSymbolFillSchema(this.db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS staged_transactions (tx TEXT NOT NULL,part INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(tx,part)) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS record_counts (space TEXT PRIMARY KEY,n INTEGER NOT NULL) WITHOUT ROWID;
       CREATE TRIGGER IF NOT EXISTS record_insert_count AFTER INSERT ON records BEGIN INSERT INTO record_counts VALUES(NEW.space,1) ON CONFLICT(space) DO UPDATE SET n=n+1; END;
@@ -114,6 +116,10 @@ export class Store {
     this.evidencePutStmt = this.db.prepare('INSERT OR REPLACE INTO evidence_values VALUES(?,?,?)');
     this.decimalProgressStmt = this.db.prepare('INSERT OR REPLACE INTO journal_progress VALUES(1,?)');
     this.progressStmt = this.db.prepare('UPDATE progress SET sequence=? WHERE id=1');
+    // Reserve old symbols before pending journal discoveries can claim them.
+    // Startup holds the exclusive writer lock; each fill page commits its own
+    // progress and yields, and subsequent opens check only the completion key.
+    await fillPatternSymbols(this);
     this.path = join(this.directory, 'pending.log'); this.fd = await open(this.path, 'a+', 0o600);
     const size = (await this.fd.stat()).size; let offset = 0, previous = null;
     const header = Buffer.alloc(36);
@@ -157,6 +163,16 @@ export class Store {
         this.db.exec("INSERT INTO public_projection_fixes VALUES('public-mint-request-privacy'); COMMIT");
       } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     }
+    // Compound sort keys written before v2 tiers ({ value, expression }) and the rank sort existed.
+    if (this.publicProjectionActive && !this.db.prepare("SELECT 1 FROM public_projection_fixes WHERE name='compound-v2-sorts'").get()) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const r of this.db.prepare("SELECT id,value FROM records WHERE space='catalogTypes'").iterate()) {
+          projectPublicRecord(this, { space: 'catalogTypes', id: r.id, value: JSON.parse(r.value) }, null, { rebuild: true });
+        }
+        this.db.exec("INSERT INTO public_projection_fixes VALUES('compound-v2-sorts'); COMMIT");
+      } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    }
   }
   get(space, id) { const row = this.getStmt.get(space, String(id)); return row ? JSON.parse(row.value) : null; }
   list(space, { after = '', limit = this.defaultPageRows } = {}) {
@@ -170,7 +186,7 @@ export class Store {
     if (op.space === 'meta' && op.id === 'ruleState') this.publicProjectionActive = op.value?.batchVersion === 2;
     if (this.publicProjectionActive) {
       projectRevision(this, op);
-      if (consumesPublicRecord(op.space)) projectPublicRecord(this, op, this.get(op.space, op.id));
+      if (consumesPublicRecord(op.space)) op = projectPublicRecord(this, op, this.get(op.space, op.id));
     }
     if (this.evidenceReady) this.indexEvidence(op);
     if (op.value === undefined) this.delStmt.run(op.space, String(op.id));

@@ -1,10 +1,12 @@
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { patternCatalogId } from '../../rules/src/public-claims.js';
+import { acceptedAssetProvenance } from './asset-provenance.mjs';
 export { patternCatalogId };
 
+export const compoundAssetV2 = asset => typeof asset === 'string' && /^c2:[0-9a-f]{64}$/.test(asset);
 export const deploymentAssetId = asset => typeof asset === 'string' &&
-  (/^[pc][0-9a-z]{1,23}$/.test(asset) || /^p2:(0|[1-9][0-9]*)$/.test(asset));
+  (/^[pc][0-9a-z]{1,23}$/.test(asset) || /^p2:(0|[1-9][0-9]*)$/.test(asset) || compoundAssetV2(asset));
 
 // Imported finds and balances keep the v1 ledger key. The p2 catalog key is
 // only an alias for those patterns, never a second pool of mintable units.
@@ -27,8 +29,20 @@ export async function mintAssetDefinition(store, requestedAsset) {
       ['number', 'name', 'pat', 'fld', 'dt', 'discoverer'].filter(k => pattern[k] !== undefined).map(k => [k, pattern[k]]));
     return { asset, catalogAsset, definition };
   }
+  // v2 crafts are stored under compoundTypes, with their first maker.
   const definition = requestedAsset.startsWith('p2:') ? null : requestedAsset.startsWith('p') ?
-    (await store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === requestedAsset) : await store.get('types', requestedAsset);
+    (await store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === requestedAsset) :
+    await store.get(compoundAssetV2(requestedAsset) ? 'compoundTypes' : 'types', requestedAsset);
   check(definition, 'asset_unknown');
+  // A compound merged into its deterministic id is never deployed or minted again.
+  check(!definition.retired, 'compound_retired');
   return { asset: requestedAsset, catalogAsset: requestedAsset, definition };
+}
+
+// Signers take a v2 compound and its first maker from the notarized named state,
+// the same proof mint signing reads, not from a gateway store row.
+export async function acceptedCompoundDefinition(reads, asset) {
+  check(compoundAssetV2(asset), 'deployment_asset');
+  const { compound, maker } = await acceptedAssetProvenance({ store: reads.store, reads, asset });
+  return { ...compound, firstMaker: maker };
 }

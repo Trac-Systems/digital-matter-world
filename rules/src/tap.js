@@ -33,7 +33,10 @@ export function tapTransfer({ amount: atoms, data }) {
 }
 const MAX = 18446744073709551615n;
 function ticker(tick) { assert(typeof tick === 'string' && /^[a-z0-9]{3,32}$/.test(tick), 'compound_ticker'); return tick; }
-export const compoundTicker = asset => ticker(`dmw${asset}`);
+// v2 compounds (c2:<64 hex>): dmwc and the first 8 hex of the commitment. A taken ticker
+// falls back to the provisioner's collision candidates.
+export const compoundTickerV2 = commitmentHex => { assert(hex(commitmentHex, 32), 'compound_ticker'); return ticker('dmwc' + commitmentHex.slice(0, 8)); };
+export const compoundTicker = asset => typeof asset === 'string' && asset.startsWith('c2:') ? compoundTickerV2(asset.slice(3)) : ticker(`dmw${asset}`);
 export function compoundDeploy({ tick, authority, max = MAX.toString() }) {
   ticker(tick); assert(/^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(authority) && amount(max) && BigInt(max) <= MAX, 'tap_deploy');
   const payload = { p: 'tap', op: 'token-deploy', tick, max, dec: '0', prv: authority };

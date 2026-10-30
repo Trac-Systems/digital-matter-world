@@ -34,6 +34,8 @@ export async function firstMintStack(t, { store, contract, document, network, se
   const bitcoinSecret = new Uint8Array(32).fill(44), bitcoinPublic = Buffer.from(secp256k1.getPublicKey(bitcoinSecret)).toString('hex');
   const receiver = fundingAddress(bitcoinPublic, 'regtest');
   f.reads.inscription = async () => ({ address: receiver });
+  // The player deploys from the discoverer's bound TAP wallet, as the discoverer's week requires.
+  f.reads.bindings = { resolve: () => ({ request: { address: receiver } }) };
   const audits = async n => {
     const row = store.get('batches', heightKey(n)); assert.equal(row.batch.root, contract.db.get('bt/' + n));
     const bytes = await Promise.all(row.publications.map(p => readFile(join(store.directory, 'static', p.audit.path.slice(1)))));

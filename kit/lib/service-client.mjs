@@ -10,7 +10,7 @@ import { KIT_UPGRADE_CODE } from '../../rules/src/kit-release.js';
 import { readInteger, nextCursor } from './api-values.mjs';
 const GATEWAY_BUSY = new Set(['request_pending', 'service_busy', 'http_capacity', 'resource_busy', 'financial_snapshot_changed', 'read_snapshot_changed', 'read_not_ready']);
 const moveId = move => move.v === 2 ? moveIdV2(move) : legacyMoveId(move);
-const deploymentAsset = asset => typeof asset === 'string' && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(asset);
+const deploymentAsset = asset => typeof asset === 'string' && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(asset);
 
 // All gateway HTTP routes live here. No private key or wallet enters this client.
 export class ServiceClient {

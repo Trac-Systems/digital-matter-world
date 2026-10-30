@@ -2,11 +2,11 @@ import { api } from './data.js';
 import { walletError, publicMintMessages, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from './console/js/wallet-errors.js';
 import { mount as mintPage, findPayment, refundStatus } from './console/js/inscribe/public.js';
 import { presentation, get, store, site } from './console/js/api.js';
-import { tokenStatus } from './console/js/views/table.js';
+import { tokenStatus, compoundFacts } from './console/js/views/table.js';
 import { pagedTable } from './console/js/paged.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
-import { assetName, mineral, title } from './console/js/words.js';
+import { assetName, mineral, title, rememberCompound } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
 import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, wait, hex, sha256, unhex, fail } from './wallets.js';
 import { wallet, walletSummary, connectButtons } from './connect.js';
@@ -20,9 +20,37 @@ const note = (attrs = {}) => h('div.note', { role: 'status', ...attrs });
 const blockLink = n => n === null || n === undefined ? null : h('a.mono', { href: '/block/' + n }, fmtInt(n));
 // /mint, /link and /bind-payout without a request link are one page: Mint & wallets. A request link
 // (/mint/<id>, /link/<id>, /bind-payout/<id>) opens that request's own flow, with a way back.
+// A compound is made real by whoever holds its units, from their agent: units live in agents' Trac accounts,
+// so there is no wallet-only mint for compounds. This page shows the compound and the way to do it.
+function compoundPage(root, id, back) {
+  const facts = h('div', {}, h('div.empty', {}, 'Loading…'));
+  root.append(h('div.page', {},
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'Make a compound real on TAP'),
+      h('p', {}, 'Crafted compounds live as units in agents’ accounts on Trac. Making them real turns units into TAP tokens on Bitcoin.'))),
+    back,
+    h('div.grid.cols-main', {}, facts,
+      panel('How it works', kv([
+        ['1 · Deploy its token', 'Once, by its first maker, from their agent dashboard (My agent → Your compounds). Until then nobody can mint it.'],
+        ['2 · Make units real', 'Whoever holds its units opens My agent → Your compounds → Make real on TAP. The agent signs the request; you pay the fee per mint from your TAP Wallet, and the tokens go to your payout wallet.'],
+        ['Funds', 'Before your wallet opens, the page checks that it can pay the fee and the inscription. If it cannot, it says why and nothing is sent.'],
+      ]), { flush: true }))));
+  let stopped = false;
+  get(`/compounds?asset=${encodeURIComponent(id)}&limit=1`).then(r => {
+    if (stopped) return;
+    const c = r.compounds?.find(row => row.id === id);
+    if (!c) { clear(facts, panel('Compound', h('div.note', { role: 'alert' }, 'This compound was not found.'))); return; }
+    rememberCompound(c);
+    clear(facts, h('section.panel', {},
+      h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, h('a', { href: site.href('table', { c: id }) }, assetName(id)))),
+      compoundFacts(c)));
+  }, e => { if (!stopped) clear(facts, panel('Compound', h('div.note.bad', { role: 'alert' }, `This compound could not be loaded (${walletError(e)}).`))); });
+  return () => { stopped = true; };
+}
 export function moneyPage(root, { type, id }) {
   if (!id) return walletsHome(root, type);
   const back = h('div.row', { style: { marginBottom: '16px' } }, h('a.btn.sm.ghost', { href: '/mint' }, '← Mint & wallets'));
+  // The first maker's dashboard link (?owner=) opens the deployment steps; everyone else sees how it works.
+  if (type === 'mint' && /^c2:[0-9a-f]{64}$/.test(id) && !(globalThis.DMW_LOCAL_AGENT === true && new URLSearchParams(location.search).get('owner'))) return compoundPage(root, id, back);
   if (type === 'mint') {
     const cleanup = mintPage(root, { id, onPublicMint: mintPublic });
     root.querySelector('.page-head').after(back);
@@ -447,7 +475,7 @@ function deployPanel() {
       { key: 'token', label: 'On Bitcoin', render: r => tokenStatus(r.asset, { owner: agent, lazy: true }) },
     ] }) : null;
   return panel('Found a new pattern?', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
-    h('p', { style: { margin: 0 } }, 'Inscribe it and deploy its token, once, from your own TAP Wallet. Then it mints like any other pattern. The discoverer does this first, during the finder week.'),
+    h('p', { style: { margin: 0 } }, 'Inscribe it and deploy its token, once, from your own TAP Wallet. Then it mints like any other pattern. During its first week only its discoverer can do this; after that anyone can. Whoever deploys holds the deploy inscription and can add art to it later.'),
     h('label.pager-ctl', {}, h('span', {}, 'Pattern'), ...search), found, note,
     agent ? null : h('p.small.muted', { style: { margin: 0 } }, 'Connect the TAP Wallet linked to your agent to see the patterns it found. ', h('a', { href: '/table' }, 'Browse all patterns'), '.')),
     mine?.el ?? null], { flush: true, id: 'deploy' });

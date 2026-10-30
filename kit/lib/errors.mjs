@@ -71,6 +71,7 @@ export const errorMeanings = Object.freeze({
   insufficient_balance: 'The wallet lacks enough spendable units for this action.',
   holder_unavailable: 'Current Bitmap ownership could not be verified; minting waits for that evidence.',
   finder_address_missing: 'The finder must bind a payout wallet for this payment rail.',
+  discoverer_receiver: 'Only the discoverer can deploy this token during its first week. After that anyone can, and the deployer keeps its art rights.',
   first_maker_address_missing: 'The first maker must bind a payout wallet for this payment rail.',
   tap_burn_redeem_unsupported: 'TAP Wallet redeem items cannot carry a native burn item. Burn shares are paid as an address item to the burn address; ask for a fresh quote.',
   discoverer_address_missing: 'The discoverer must bind a payout wallet for this payment rail.',

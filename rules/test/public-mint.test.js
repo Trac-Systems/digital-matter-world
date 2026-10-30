@@ -42,6 +42,13 @@ test('activation preserves the finder week and subsequent Bitmap or unit-holder 
     }
   }
 });
+test('the discoverer\'s deploy week is the finder-week clock from the pattern\'s release', () => {
+  assert.equal(r.discovererWeekEnd({ releaseHeight: '200' }, document), '1208');
+  assert.equal(r.discovererWeekEnd({ releaseHeight: '200', releaseFinderWindow: 144 }, document), '344');
+  // An older catalog without its own release clock counts from public mint activation.
+  assert.equal(r.discovererWeekEnd({}, document), '1108');
+  assert.throws(() => r.discovererWeekEnd({}, old), /claim_policy_missing/);
+});
 test('claim deadline starts at immutable release or block, and rejects the exact boundary', () => {
   const pattern = { releaseHeight: '200' };
   assert.equal(r.claimDeadline(pattern, '1', document), '1208');

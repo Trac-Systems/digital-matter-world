@@ -7,12 +7,12 @@ import { validateCraftPayload } from './craft-v2.js';
 import { validateTransferPayload } from './transfer-v2.js';
 
 export const namedMoveTypes = Object.freeze(['discovery-commit-v2', 'discovery-reveal-v2', 'submit-occurrences-v2', 'challenge-count-v2']);
-export function validateNamedPayload(type, p, settings) {
+export function validateNamedPayload(type, p, settings, executionHeight = '0') {
   validateSettingsDocument(settings);
   const s = settings.values;
   // Preserve the original move_type outcome when replaying older documents.
   if (type === 'transfer-v2' && s.publicMintActivationHeight !== undefined) validateTransferPayload(p, settings);
-  else if (type === 'craft-v2') validateCraftPayload(p, settings);
+  else if (type === 'craft-v2') validateCraftPayload(p, settings, executionHeight);
   else if (type === 'compound-refine-v2') {
     assert(exactKeys(p, ['asset', 'cursor', 'steps']) && /^c2:[0-9a-f]{64}$/.test(p.asset), 'compound_refine_payload'); uintV2(p.cursor);
     assert(Number.isSafeInteger(p.steps) && p.steps > 0 && p.steps <= s.compoundWorkBudget, 'compound_work_budget');
@@ -49,22 +49,22 @@ export function validateNamedPayload(type, p, settings) {
   } else throw Error('move_type');
   return p;
 }
-export function validateMoveV2(move, settings) {
+export function validateMoveV2(move, settings, executionHeight = move.b) {
   validateSettingsDocument(settings);
   assert(exactKeys(move, ['v', 'ruleset', 'settingsRevision', 'settingsHash', 'network', 'a', 't', 'b', 'h', 'p', 'w', 'sig']), 'move_shape');
   assert(move.v === 2 && move.ruleset === 'dmw-v2' && move.network === settings.network && move.settingsRevision === settings.revision && move.settingsHash === hashObject(settings), 'move_settings');
   uintV2(move.b);
   assert(hex(move.a, 32) && hex(move.h, 32) && typeof move.w === 'string' && /^(0|[1-9a-f][0-9a-f]*)$/.test(move.w) && hex(move.sig, 64), 'move_fields');
-  validateNamedPayload(move.t, move.p, settings);
+  validateNamedPayload(move.t, move.p, settings, executionHeight);
   assert(new TextEncoder().encode(stableJSON(move)).length <= settings.values.moveBytes, 'move_bytes'); return move;
 }
 export const unsignedMoveV2 = ({ sig, ...body }) => body;
 export const moveDigestV2 = move => digest('dmw-move-v2', move.network, unsignedMoveV2(move));
 export const moveIdV2 = move => bytesToHex(moveDigestV2(move));
 export const puzzleHashV2 = move => hash(`dmw-puzzle-v2|${stableJSON(unsignedMoveV2(move))}`);
-export function checkMoveV2(move, { settings, tip, hashAt }) {
+export function checkMoveV2(move, { settings, tip, hashAt, executionHeight = tip }) {
   try {
-    validateMoveV2(move, settings); uintV2(tip);
+    validateMoveV2(move, settings, executionHeight); uintV2(tip);
     if (compareUint(move.b, tip) > 0 || BigInt(tip) - BigInt(move.b) > BigInt(settings.values.moveFreshnessTips) || hashAt(move.b) !== move.h) return 'stale';
     if (leadingZeroBits(puzzleHashV2(move)) < settings.values.puzzleBits) return 'puzzle';
     if (!ed25519.verify(hexToBytes(move.sig), moveDigestV2(move), hexToBytes(move.a), { zip215: false })) return 'signature';

@@ -1,8 +1,8 @@
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from '../dom.js';
 import { tap } from '../money.js';
-import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities } from './wallet.js';
+import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities, discovererOnly } from './wallet.js';
 import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from '../wallet-errors.js';
-import { PAYMENT_STATE } from '../words.js';
+import { PAYMENT_STATE, assetName, rememberCompound } from '../words.js';
 import { validateTracAddress } from '../../../../rules/src/trac-address.js';
 import { rememberRequester, requesterHeaders } from '../requester-storage.js';
 
@@ -54,7 +54,9 @@ function senderSteps(status, ms) {
 // A catalog/ledger asset link handles first deployment before a signed mint
 // request exists. Request links retain the payment and permanent-permit flow.
 export function mount(root, { id, onPublicMint }) {
-  const assetPage = /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(id);
+  const assetPage = /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(id);
+  // A v2 compound has no pattern to inscribe: its first maker deploys the token, then holders make units real.
+  const compound = /^c2:[0-9a-f]{64}$/.test(id);
   const params = new URLSearchParams(location.search);
   const publicMode = assetPage && params.get('public') === '1';
   const publicBlock = publicMode ? params.get('block') : null;
@@ -64,7 +66,7 @@ export function mount(root, { id, onPublicMint }) {
   const actions = h('div.row.actions'), extra = h('div.extra'), note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
   // Progress and errors show in the callout by the action buttons: busy while working, red on failure.
   const say = (text, kind = '') => { note.className = 'callout' + (kind ? ' ' + kind : ''); clear(note, text); };
-  const intro = h('p.lead-text', {}, assetPage ? 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet. After that, every mint of it works the normal way.' : 'Pay the fee items first. Once payment is final, your permanent permit is ready. You pay the Bitcoin inscription fees, including when paying with Ethereum.');
+  const intro = h('p.lead-text', {}, compound ? 'This compound has no token on Bitcoin yet. Its first maker deploys its token, once, from their own TAP Wallet. After that, holders make their units real from My agent.' : assetPage ? 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet. After that, every mint of it works the normal way.' : 'Pay the fee items first. Once payment is final, your permanent permit is ready. You pay the Bitcoin inscription fees, including when paying with Ethereum.');
   clear(root, h('div.page', {}, h('div.page-head', {}, h('h1', {}, 'Mint from your wallet')),
     intro, h('div.flow', {}, progress, h('div.grid.cols-main', {},
       h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions, extra)), body), side))));
@@ -111,6 +113,12 @@ export function mount(root, { id, onPublicMint }) {
     const receipt = receiptKey ? await journal.get(receiptKey) : null;
     if (stopped) return;
     const registered = job.state === 'registered', isPublic = publicMode || status?.publicMint === true;
+    // Who may deploy a pattern's token now: during its discoverer's week only the discoverer, after it anyone.
+    const week = !compound && !registered && job.deployer?.onlyDiscoverer ? job.deployer : null;
+    if (assetPage && !compound && !registered && job.deployer) intro.textContent = (week
+      ? `This pattern has no token on Bitcoin yet. Until block ${week.until} only its discoverer can inscribe the pattern and deploy its token, once, from their own TAP Wallet. After that anyone can.`
+      : 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet.')
+      + ' Whoever deploys holds the deploy inscription and can add art to it later. After that, every mint of it works the normal way.';
     // A sent inscription is registered by this page once it is in a block; until then the gateway cannot read it.
     const waiting = !registered && receipt;
     if (waiting && !registering && Date.now() - lastRegister > 30000) {
@@ -122,11 +130,18 @@ export function mount(root, { id, onPublicMint }) {
     const waitText = 'Sent. Waiting for the next Bitcoin block (about 10 minutes). This page registers it automatically; keep it open or come back to this link.';
     // Steps: inscribe the pattern, deploy its token (each in its own Bitcoin block), then mint as usual.
     const at = registered ? 2 : job.elementId || phase === 'deployment' ? 1 : 0;
-    clear(progress, stepper(['Inscribe pattern', 'Deploy token', isPublic ? 'Pay & mint' : 'Mint'], at));
+    clear(progress, compound ? stepper(['Deploy token', 'Make real'], registered ? 1 : 0) : stepper(['Inscribe pattern', 'Deploy token', isPublic ? 'Pay & mint' : 'Mint'], at));
     const done = text => h('span', {}, h('strong', {}, 'Done: '), text);
-    clear(lead, registered ? h('p.lead', {}, h('strong', {}, 'The token is deployed. '), isPublic ? 'Continue to review the public mint fee and pay from your TAP Wallet.' : 'Ask your agent to mint now, then open the payment link it gives you.')
+    clear(lead, registered ? h('p.lead', {}, h('strong', {}, 'The token is deployed. '), compound ? 'Make your units real from My agent → Your compounds.' : isPublic ? 'Continue to review the public mint fee and pay from your TAP Wallet.' : 'Ask your agent to mint now, then open the payment link it gives you.')
       : waiting ? h('div.callout.info', {}, waitText) : null);
-    clear(body, panel('Steps', h('ol.numbered', {},
+    if (compound && job.definition && Array.isArray(job.definition.inputs)) rememberCompound({ ...job.definition, id: job.asset });
+    clear(body, ...(compound ? [panel('Steps', h('ol.numbered', {},
+        h('li', {}, h('span', {}, 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent, the compound’s first maker. Your agent’s address is filled in below.')),
+        h('li', {}, h('span', {}, h('strong', {}, 'Deploy the token. '), registered ? done('the token is deployed.')
+          : waiting ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Deploy token” and approve it in TAP Wallet.')),
+        h('li', {}, h('span', {}, 'Make units real: My agent → Your compounds → Make real on TAP. You pay the fee per mint from your TAP Wallet; the tokens arrive at your payout wallet.'))),
+      ),
+      h('p.small.muted', { style: { margin: 0 } }, 'The inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page and open this same link again to continue.')] : [panel('Steps', h('ol.numbered', {},
         h('li', {}, h('span', {}, isPublic ? 'Connect the TAP Wallet receiving your public mint. No agent or payout binding is needed.' : 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent. Enter your agent’s address (trac1…) below.')),
         h('li', {}, h('span', {}, h('strong', {}, 'Inscribe the pattern. '), job.elementId ? done('the pattern is inscribed and in a block.')
           : waiting && phase === 'element' ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Inscribe pattern” and approve it in TAP Wallet.')),
@@ -134,8 +149,12 @@ export function mount(root, { id, onPublicMint }) {
           : waiting && phase === 'deployment' ? 'Sent. Waiting for the next Bitcoin block.' : job.elementId ? 'Press “Deploy token” and approve it in TAP Wallet.' : 'Once the pattern is in a block, press “Deploy token” and approve it.')),
         h('li', {}, h('span', {}, isPublic ? 'Continue to payment after the token is deployed. Review the public mint quote, pay every fee in one TAP payment, then inscribe your permit. Nothing is reserved.' : 'Mint as usual: ask your agent to mint a block of this pattern. It reserves your units and gives you a payment link. Open it, pay the fee in TAP, then inscribe the mint. The tokens arrive in your TAP Wallet.'))),
       ),
-      h('p.small.muted', { style: { margin: 0 } }, 'Each inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'));
-    clear(side, panel('Pattern', kv([['Pattern', job.displayLabel ?? job.asset], ['Asset', job.asset], ['Token', pill(registered ? 'deployed' : 'not deployed yet', registered ? 'good' : 'warn')],
+      h('p.small.muted', { style: { margin: 0 } }, 'Each inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'),
+      registered ? null : h('p.small.muted', { style: { margin: 0 } }, 'The deploy inscription stays in the wallet that deploys. Its holder can add art to it later.')]));
+    clear(side, panel(compound ? 'Compound' : 'Pattern', kv([compound ? ['Compound', assetName(job.asset)] : ['Pattern', job.displayLabel ?? job.asset], compound ? null : ['Asset', job.asset], ['Token', pill(registered ? 'deployed' : 'not deployed yet', registered ? 'good' : 'warn')],
+      registered && job.entry?.tick ? ['Ticker', h('span.mono', {}, job.entry.tick)] : null,
+      !compound && !registered && job.deployer ? ['Who can deploy', week ? `Only its discoverer, until block ${week.until}. After that, anyone.` : 'Anyone'] : null,
+      week ? ['Discoverer', hashEl(week.discoverer)] : null,
       job.receiver ? ['Your wallet', hashEl(job.receiver)] : null, receipt ? ['Your inscription', hashEl(receipt.inscriptionId)] : null,
       job.reason ? ['Status', job.reason.replace(/_/g, ' ')] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')];
@@ -163,6 +182,8 @@ export function mount(root, { id, onPublicMint }) {
       if (!isPublic) {
         if (!assetPage) owner = (await api('/web-api/mint/' + id)).owner;
         validateTracAddress(owner);
+        if (job.kind === 'compound' && job.definition?.firstMaker !== owner) throw Error('Only this compound’s first maker deploys its token. Enter the first maker’s agent address.');
+        if (week && week.discoverer !== owner) throw Error(discovererOnly(week.until));
         binding = (await api(`/payout-bindings/${encodeURIComponent(owner)}/tap`)).binding;
       }
       if (publicMode) {
@@ -202,7 +223,7 @@ export function mount(root, { id, onPublicMint }) {
     if (status.requesterRequired) intro.textContent = 'Open this request in the browser where you created it to review the block and pay. The block becomes public after the payment wins.';
     else if (status.publicMint) intro.textContent = 'Pay every quoted fee in one TAP payment. The first confirmed complete payment wins. No units are consumed. ' + (serverSends ? 'TAP Wallet asks once: our server sends your mint inscription when the permit is issued. If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.' : 'After your permanent permit is issued, inscribe the mint from your TAP Wallet.');
     else if (serverSends) intro.textContent = 'Pay the fee items. TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when your permanent permit is ready.';
-    if (/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(status.asset)) {
+    if (/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(status.asset)) {
       const deployment = await api('/mint/deployment-state/' + status.asset);
       if (deployment.state !== 'registered') return renderDeployment(deployment);
     }

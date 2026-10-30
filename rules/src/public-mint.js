@@ -25,6 +25,9 @@ export function claimDeadline(pattern, block, settings) {
   const start = BigInt(decimalV2(release));
   return ((height > start ? height : start) + BigInt(window)).toString();
 }
+// The discoverer's week for deploying a pattern's TAP token uses the same clock
+// as finder-week minting: the pattern's release height plus its finder window.
+export const discovererWeekEnd = (pattern, settings) => claimDeadline(pattern, 0, settings);
 export function assertClaimOpen({ pattern, block, height, settings }) {
   if (publicMintActive(settings, height) && !claimsNeverCloseActive(settings, height)) assert(BigInt(decimalV2(height)) < BigInt(claimDeadline(pattern, block, settings)), 'claim_deadline');
 }

@@ -19,7 +19,7 @@ import { temp, agent } from './helpers.mjs';
 const owner = agent(3).address, address = encodeTracAddress(owner), other = agent(4).address;
 const event = (number, block, discoverer = owner) => ({ height: String(block), tip: String(block),
   occurrences: [{ block: String(block), pattern: String(number), asset: 'p2:' + number, hash: rules.hash('header-' + block), count: '1', agent: discoverer }],
-  discoveries: [{ record: { number: String(number), key: rules.hash('pattern-' + number), discoverer, knownMatchCount: '1', anchor: { height: String(block) }, catalogRevision: '1' } }] });
+  discoveries: [{ record: { number: String(number), name: 'dmwpattern' + number, key: rules.hash('pattern-' + number), discoverer, knownMatchCount: '1', anchor: { height: String(block) }, catalogRevision: '1' } }] });
 async function setup() {
   const root = await temp(), store = await Store.open(root), files = new Files(join(root, 'static'));
   await store.put('meta', 'ruleState', { batchVersion: 2, counted: '100' });
