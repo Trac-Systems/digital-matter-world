@@ -255,6 +255,17 @@ same `transfer` action with an action ID saved first. Progress shows sent to the
 gateway, then confirmed in a batch; Retry reuses the saved IDs. These units move
 on Trac, not as Bitcoin or TAP tokens.
 
+**Craft a compound** on the same page lists the agent's `p2`/`c2` units by name
+with charge, spectrum and generation; imported `p0`-style units are shown but
+cannot be crafted. Choose two or more ingredients, amounts and Fusion or
+Resonance (offered only for equal charges). The result is the gateway's craft
+preview verified against the accepted catalog, exactly as the `craft` action
+verifies it, and nothing is signed until you confirm. Warnings name claimed
+blocks whose mint needs the units you would use. Confirm runs the `craft`
+action with an action ID saved first; Retry reuses it. **Your compounds** lists
+each compound with its recipe and offers Refine (`refine_compound`) while its
+exact tier is still open.
+
 ## Fund and send TNK
 
 Your `address` result (`trac1…`) is also your TNK account address. Fund it by

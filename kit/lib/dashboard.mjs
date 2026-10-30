@@ -107,8 +107,9 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       if (req.method === 'GET' && path === '/api/sends') { keys([]); json(await state.sends()); return; }
       if (req.method === 'GET' && path === '/api/tnk') { keys([]); json(await state.tnk()); return; }
       if (req.method === 'GET' && path === '/api/tnk-sends') { keys([]); json(await state.tnkSends()); return; }
+      if (req.method === 'GET' && path === '/api/craft') { keys([]); json(await state.craft()); return; }
       if (req.method === 'GET' && path === '/api/wallet') { keys(['key']); json({ value: state.walletGet(url.searchParams.get('key')) }); return; }
-      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock', '/api/send-review', '/api/send', '/api/send-retry', '/api/send-resign', '/api/tnk-review', '/api/tnk-send', '/api/tnk-retry'].includes(path)) {
+      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock', '/api/send-review', '/api/send', '/api/send-retry', '/api/send-resign', '/api/tnk-review', '/api/tnk-send', '/api/tnk-retry', '/api/craft-preview', '/api/craft', '/api/craft-retry', '/api/craft-refine'].includes(path)) {
         keys([]); const value = await body(req);
         if (path === '/api/mint') json(await state.mint(value));
         if (path === '/api/link') json(await state.link(value));
@@ -127,6 +128,12 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
         if (path === '/api/tnk-review') json(await state.tnkReview(value));
         if (path === '/api/tnk-send') json(await state.tnkSend(value), 202);
         if (path === '/api/tnk-retry') json(await state.tnkRetry(value), 202);
+        // Craft: the preview signs nothing; craft, retry and refine save each
+        // action ID before the kit's craft or refine action runs.
+        if (path === '/api/craft-preview') json(await state.craftPreview(value));
+        if (path === '/api/craft') json(await state.craftStart(value), 202);
+        if (path === '/api/craft-retry') json(await state.craftRetry(value), 202);
+        if (path === '/api/craft-refine') json(await state.craftRefine(value), 202);
         return;
       }
       dashboardCheck(upstream && !path.startsWith('/api/') && !path.startsWith('/local/'), 'not_found', 404);

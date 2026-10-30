@@ -7,6 +7,7 @@ import { financialMintId } from '../../rules/src/financial-mint.js';
 import { wireIdentities, decodeTracAddress, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { verifyBinding } from '../../rules/src/payout-bindings.mjs';
 import { formatTnk } from './tnk-values.mjs';
+import { previewCraftNamed } from './craft-v2.mjs';
 
 export function dashboardCheck(ok, code, status = 400) {
   if (!ok) throw Object.assign(Error(code), { code, status });
@@ -83,6 +84,14 @@ const SEND_LATER = ['sender_rate', 'next_batch_work_capacity', 'next_batch_byte_
 const SEND_RECENT = 10, CONFIRM_PAGES = 2, CONFIRM_TTL = 10000;
 // TNK, the Trac network's own coin (gas): balance and fee reads are cached a
 // few seconds; each send keeps one action ID for every retry.
+// Craft: a pattern's charge is its number mod 65521 and its spectrum one bit
+// for the header field it matches (rules/src/compounds-v2.js).
+const CHARGE_MOD = 65521n, SPECTRUM_FIELD = { 4: 1, 10: 2, 11: 4 }, CRAFT_RECENT = 10, CRAFT_TTL = 60000;
+const tierValue = tier => tier && typeof tier === 'object' ? tier.value ?? null : Number.isSafeInteger(tier) ? tier : null;
+// A compound record's inputs: accepted records list {asset,amount}; older
+// projections list [asset, amount].
+const compoundInputs = row => (Array.isArray(row?.inputs) ? row.inputs : []).map(i => Array.isArray(i) ? i : [i?.asset, i?.amount])
+  .filter(([asset, amount]) => typeof asset === 'string' && integer(amount));
 const TNK_TTL = 5000, TNK_RECENT = 10, TNK_RESEND_AFTER = 120000;
 const TNK_LATER = ['tnk_validators', 'tnk_fee_unavailable', 'tnk_balance_unavailable', 'tnk_unavailable'];
 const tnkFailure = error => {
@@ -108,6 +117,8 @@ export class DashboardState {
     this.labels = new Map(); this.sendTail = Promise.resolve(); this.sending = new Set(); this.confirmCache = null;
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_tnk (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
     this.tnkCache = null; this.tnkTail = Promise.resolve(); this.tnkSending = new Set(); this.tnkStatus = new Map();
+    this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_crafts (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
+    this.craftTail = Promise.resolve(); this.crafting = new Set(); this.craftEvents = null; this.craftContext = null; this.craftReads = new Map();
   }
   activate() {
     const db = this.journal.db;
@@ -472,11 +483,11 @@ export class DashboardState {
     if (asset.startsWith('c2:')) {
       let row = null;
       try { row = (await this.service.compounds({ asset, limit: 1 })).compounds?.find(c => c.id === asset || c.asset === asset) ?? null; } catch { final = false; }
-      const inputs = Array.isArray(row?.inputs) ? row.inputs.filter(i => Array.isArray(i) && typeof i[0] === 'string' && i[0] !== asset).slice(0, 4) : [];
+      const all = compoundInputs(row), inputs = all.filter(i => i[0] !== asset).slice(0, 4);
       const names = [];
       for (const [input] of inputs) names.push((await this.unitLabel(input)).name);
-      label = { kind: 'compound', tier: row?.tier ?? null,
-        name: names.length ? `Compound · ${row.recipe === 'fusion' ? 'fusion' : 'resonance'} of ${names.join(' + ')}${row.inputs.length > inputs.length ? ' + …' : ''}` : 'Compound #' + asset.slice(3, 11) };
+      label = { kind: 'compound', tier: tierValue(row?.tierProgress?.value ?? row?.tier),
+        name: names.length ? `Compound · ${row.recipe === 'fusion' ? 'fusion' : 'resonance'} of ${names.join(' + ')}${all.length > inputs.length ? ' + …' : ''}` : 'Compound #' + asset.slice(3, 11) };
     } else {
       let p = null;
       try { p = await this.pattern(asset); } catch { final = false; }
@@ -793,6 +804,252 @@ export class DashboardState {
     this.tnkStatus.delete(actionId); this.tnkCache = null;
     this.saveTnk(saved);
   }
+  // Craft: the agent's units as ingredients with their properties, the
+  // gateway's verified preview, warnings for claimed blocks, then the kit's
+  // craft action with an action ID saved before it runs.
+  // The page refresh reuses the activated settings for a minute; a preview
+  // always reads them fresh with the accepted catalog root.
+  async craftSettings(fresh = false) {
+    if (fresh || !this.craftContext || Date.now() - this.craftContext.at >= CRAFT_TTL) {
+      const context = await this.agent.namedContext?.();
+      dashboardCheck(context?.settings, 'craft_unavailable', 409);
+      this.craftContext = { at: Date.now(), context };
+    }
+    const { context } = this.craftContext;
+    return { context, maxInputs: context.settings.values.compoundInputs, ratio: context.settings.values.compoundRatio };
+  }
+  // Catalog rows for ingredient properties and compound records, kept for a
+  // minute so the page refresh stays a few reads.
+  async craftRead(key, read) {
+    const hit = this.craftReads.get(key);
+    if (hit && Date.now() - hit.at < CRAFT_TTL) return hit.value;
+    const value = await read();
+    if (this.craftReads.size >= 200) this.craftReads.clear();
+    // A compound not readable yet (just crafted) is asked again next time.
+    if (value !== null) this.craftReads.set(key, { at: Date.now(), value });
+    return value;
+  }
+  compoundRecord(asset) {
+    return this.craftRead('c/' + asset, async () => (await this.service.compounds({ asset, limit: 1 })).compounds?.find(c => c.id === asset || c.asset === asset) ?? null);
+  }
+  // Each ingredient's properties as the rules pin them: a pattern's charge is
+  // its number mod 65521, its spectrum the header field it was found in, and
+  // generation 0; a compound carries the properties of its accepted record.
+  async ingredient(u) {
+    const base = { asset: u.asset, name: u.name, kind: u.kind, tier: u.tier, available: u.available, current: u.current };
+    if (u.kind === 'legacy') return { ...base, craftable: false, reason: 'craft_legacy' };
+    if (u.kind === 'pattern') {
+      let p = null;
+      try { p = await this.craftRead('p/' + u.asset, async () => (await this.service.patterns({ asset: u.asset, limit: 1 })).patterns?.[0] ?? null); } catch { /* properties unknown */ }
+      const number = /^p2:(0|[1-9][0-9]*)$/.exec(u.asset)[1];
+      return { ...base, craftable: true, properties: { charge: Number(BigInt(number) % CHARGE_MOD), spectrum: SPECTRUM_FIELD[p?.fld] ?? null, generation: '0',
+        matches: integer(p?.knownMatchCount) ? String(p.knownMatchCount) : null } };
+    }
+    let record = null;
+    try { record = await this.compoundRecord(u.asset); } catch { /* properties unknown */ }
+    const props = record?.properties;
+    return { ...base, craftable: true, properties: props ? { charge: props.charge, spectrum: Number.isSafeInteger(props.spectrum) ? props.spectrum : null, generation: String(props.generation), matches: null } : null };
+  }
+  // Units available to craft: available to send, minus units in crafts that
+  // have not confirmed yet.
+  async ingredients(units) {
+    const pending = this.craftPending(), owned = units.filter(u => BigInt(u.available) > 0n).map(u => {
+      const out = pending.get(u.asset) ?? 0n, left = BigInt(u.available) - out;
+      return { ...u, available: String(left > 0n ? left : 0n) };
+    }), ingredients = [];
+    for (let i = 0; i < owned.length; i += 4) ingredients.push(...await Promise.all(owned.slice(i, i + 4).map(u => this.ingredient(u))));
+    return ingredients;
+  }
+  async craft() {
+    const { maxInputs, ratio } = await this.craftSettings();
+    const { units, more } = await this.units(), ingredients = await this.ingredients(units);
+    const compounds = [];
+    for (const u of units.filter(u => u.kind === 'compound')) compounds.push(await this.compoundView(u));
+    const crafts = [];
+    for (const c of this.savedCrafts()) crafts.push(await this.craftView(c));
+    return { maxInputs, ratio, ingredients, compounds, crafts, more };
+  }
+  async compoundView(u) {
+    let record = null;
+    try { record = await this.compoundRecord(u.asset); } catch { /* shown without details */ }
+    const tier = record ? tierValue(record.tierProgress?.value ?? record.tier) : u.tier;
+    const from = [];
+    for (const input of compoundInputs(record).slice(0, 8)) from.push({ asset: input[0], amount: input[1], name: (await this.unitLabel(input[0])).name });
+    const refine = this.savedCrafts(CRAFT_RECENT * 3).find(c => c.kind === 'refine' && c.asset === u.asset);
+    return { asset: u.asset, name: u.name, amount: u.amount, available: u.available, tier, recipe: record?.recipe ?? null, from,
+      needsRefine: !!record && tier === null, refine: refine ? await this.craftView(refine) : null };
+  }
+  // Inputs as the craft action takes them: canonical pairs sorted by key.
+  craftInputs(value) {
+    dashboardCheck(value && ['fusion', 'resonance'].includes(value.recipe) && Array.isArray(value.inputs) && value.inputs.length <= 16, 'invalid_craft');
+    const inputs = value.inputs.map(row => {
+      dashboardCheck(Array.isArray(row) && row.length === 2 && typeof row[0] === 'string' && amountText(String(row[1])), 'craft_amount');
+      dashboardCheck(/^(p2:(0|[1-9][0-9]{0,77})|c2:[0-9a-f]{64})$/.test(row[0]), /^p[0-9a-z]/.test(row[0]) ? 'craft_legacy' : 'invalid_craft');
+      return [row[0], String(row[1]).trim()];
+    }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    dashboardCheck(inputs.length >= 2 && inputs.every(([a], i) => !i || a !== inputs[i - 1][0]), 'craft_two_inputs');
+    return { recipe: value.recipe, inputs };
+  }
+  // Read-only: the verified result before anything is signed, the units each
+  // ingredient keeps, and claimed blocks those units may be needed for.
+  async craftPreview(value) {
+    dashboardCheck(value && Object.keys(value).every(k => ['recipe', 'inputs'].includes(k)), 'invalid_craft');
+    const { recipe, inputs } = this.craftInputs(value), { context, maxInputs } = await this.craftSettings(true);
+    dashboardCheck(inputs.length <= maxInputs, 'craft_too_many_inputs');
+    const ingredients = await this.ingredients((await this.units()).units), rows = inputs.map(([asset, amount]) => {
+      const i = ingredients.find(i => i.asset === asset);
+      dashboardCheck(i?.craftable, 'craft_unit_unknown');
+      dashboardCheck(BigInt(amount) <= BigInt(i.available), 'craft_over_available');
+      return { asset, amount, name: i.name, available: i.available, left: String(BigInt(i.available) - BigInt(amount)) };
+    });
+    let result;
+    // A rules refusal (resonance_charge, compound_ratio, craft_preview_proof, …) is the player's answer, not a dashboard failure.
+    try { ({ result } = await this.preview({ recipe, inputs }, context)); }
+    catch (error) { if (error.status === undefined && /^[a-z][a-z0-9_]{0,80}$/.test(error.message)) error.status = 400; throw error; }
+    const record = result.record, names = rows.map(r => r.name);
+    return { recipe, inputs: rows,
+      result: { id: record.id, amount: result.amount, tier: tierValue(record.tier), label: `Compound · ${recipe} of ${names.join(' + ')}`,
+        properties: { charge: record.properties.charge, spectrum: record.properties.spectrum, generation: String(record.properties.generation) }, snapshot: record.snapshot?.height ?? null },
+      warnings: await this.craftWarnings(rows) };
+  }
+  preview(args, context) { return previewCraftNamed(this.agent, args, context); }
+  // Claimed blocks this agent may mint, per pattern ingredient, with the units
+  // they need. Bounded: two pages of mint rights per ingredient.
+  async craftWarnings(rows) {
+    const warnings = [];
+    for (const r of rows.filter(r => r.asset.startsWith('p2:'))) {
+      let page;
+      try { page = await this.collect(cursor => this.service.mintRights(this.agent.address, { asset: r.asset, minted: false, limit: 50, cursor }), 'mintRights', 2); }
+      catch { warnings.push({ code: 'craft_claims_unknown', asset: r.asset, name: r.name }); continue; }
+      const blocks = new Map();
+      for (const row of page.rows) if (!row.minted && !row.void && this.eligible(row) && integer(row.find?.count)) blocks.set(String(row.find.block ?? row.block), BigInt(row.find.count));
+      if (!blocks.size) continue;
+      const need = [...blocks.values()].reduce((n, v) => n + v, 0n);
+      warnings.push({ code: BigInt(r.left) < need ? 'craft_uses_mint_units' : 'craft_mint_units_ok', asset: r.asset, name: r.name, blocks: blocks.size, more: page.more,
+        units: String(need), left: r.left, available: r.available });
+    }
+    return warnings;
+  }
+  savedCrafts(limit = CRAFT_RECENT) {
+    return this.journal.db.prepare('SELECT value FROM dashboard_crafts WHERE scope=? ORDER BY rowid DESC LIMIT ?').all(this.journal.scope, limit).map(r => JSON.parse(r.value));
+  }
+  saveCraft(craft) {
+    this.journal.db.prepare('INSERT INTO dashboard_crafts(scope,id,value) VALUES(?,?,?) ON CONFLICT(scope,id) DO UPDATE SET value=excluded.value').run(this.journal.scope, craft.id, JSON.stringify(craft));
+  }
+  loadCraft(id) {
+    dashboardCheck(typeof id === 'string' && /^[0-9a-f]{12}$/.test(id), 'invalid_craft');
+    const row = this.journal.db.prepare('SELECT value FROM dashboard_crafts WHERE scope=? AND id=?').get(this.journal.scope, id);
+    dashboardCheck(row, 'craft_not_found', 404); return JSON.parse(row.value);
+  }
+  // Units going into crafts that have not confirmed yet.
+  craftPending() {
+    const out = new Map();
+    for (const c of this.savedCrafts(CRAFT_RECENT * 3)) {
+      if (c.kind === 'refine' || ['confirmed', 'failed'].includes(this.craftState(c).state)) continue;
+      for (const [asset, amount] of c.inputs) out.set(asset, (out.get(asset) ?? 0n) + BigInt(amount));
+    }
+    return out;
+  }
+  // A craft's state from the kit's journal: the signed intent, then the
+  // gateway receipt; the dashboard row only adds the last error and the
+  // public confirmation.
+  craftState(c) {
+    const key = c.kind === 'refine' ? `compound-refine/${c.actionId}` : `craft/${c.actionId}`;
+    const intent = this.journal.get(c.kind === 'refine' ? `${key}/intent` : `${key}/v2-intent`), move = this.journal.get(key);
+    const running = this.crafting.has(c.actionId), batch = move?.result?.batch ?? null, signed = !!intent;
+    if (c.confirmed) return { state: 'confirmed', batch: c.confirmed.batch ?? batch, signed };
+    if (c.complete) return { state: 'confirmed', batch, signed };
+    if (move?.state === 'rejected') return { state: 'failed', batch, error: 'craft_rejected', signed };
+    if (move && ['received', 'accepted'].includes(move.state)) return { state: 'received', batch, signed };
+    if (running) return { state: 'crafting', batch, signed };
+    if (move && ['sending', 'unknown'].includes(move.state)) return { state: 'uncertain', batch, error: c.error ?? null, signed };
+    if (c.error && SEND_LATER.includes(c.error)) return { state: 'queued', batch, error: c.error, signed };
+    if (c.error) return { state: signed ? 'uncertain' : 'failed', batch, error: c.error, signed };
+    return { state: c.tried ? 'uncertain' : 'waiting', batch, signed };
+  }
+  async craftConfirm(open) {
+    // The accepted craft's public event: its id from the receipt's move, or
+    // this agent's craft event of the snapshot-bound compound key.
+    const wanted = new Map(), made = new Map();
+    for (const c of open) {
+      const receipt = this.journal.get(`craft/${c.actionId}`)?.result, asset = this.journal.get(`craft/${c.actionId}/v2-intent`)?.body?.result?.record?.id;
+      if (typeof receipt?.move === 'string') wanted.set(digest('v2-event/craft/' + receipt.move), c);
+      if (typeof asset === 'string') made.set(asset, c);
+    }
+    if (!wanted.size) return;
+    let events = this.craftEvents && Date.now() - this.craftEvents.at < CONFIRM_TTL ? this.craftEvents.rows : null;
+    if (!events) {
+      events = (await this.collect(cursor => this.service.profile(this.agent.address, { collection: 'history', type: 'craft', limit: 50, cursor }), 'history', CONFIRM_PAGES)).rows;
+      this.craftEvents = { at: Date.now(), rows: events };
+    }
+    for (const event of events) {
+      const c = wanted.get(event?.id) ?? (event?.type === 'craft' && wireIdentities(event.data ?? {}).owner === this.agent.owner ? made.get(event.data.asset) : undefined);
+      if (c && !c.confirmed) { c.confirmed = { batch: event.provenance?.batch ?? null }; this.saveCraft(c); }
+    }
+  }
+  async craftView(c) {
+    if (c.kind !== 'refine' && !c.confirmed && this.journal.get(`craft/${c.actionId}`)?.result?.move) {
+      try { await this.craftConfirm([c]); } catch { /* shown as sent */ }
+    }
+    const intent = c.kind === 'refine' ? null : this.journal.get(`craft/${c.actionId}/v2-intent`);
+    const out = intent?.body?.result;
+    return { id: c.id, kind: c.kind ?? 'craft', createdAt: c.createdAt, recipe: c.recipe ?? null, label: c.label ?? null, asset: c.asset ?? out?.record?.id ?? null,
+      amount: out?.amount ?? null, inputs: await Promise.all((c.inputs ?? []).map(async ([asset, amount]) => ({ asset, amount, name: (await this.unitLabel(asset)).name }))),
+      ...this.craftState(c) };
+  }
+  // Save the action ID, then run the kit's craft action. The action itself
+  // verifies the same preview again and signs only what it shows.
+  async craftStart(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    const preview = await this.craftPreview(value);
+    const id = randomBytes(6).toString('hex');
+    const craft = { id, actionId: `dash-craft-${id}`, createdAt: Date.now(), recipe: preview.recipe, inputs: preview.inputs.map(r => [r.asset, r.amount]), label: preview.result.label };
+    this.saveCraft(craft); this.runCraft(id);
+    return this.craftView(craft);
+  }
+  async craftRetry(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 1, 'invalid_craft');
+    const craft = this.loadCraft(value.id);
+    dashboardCheck(['failed', 'uncertain', 'queued', 'waiting'].includes(this.craftState(craft).state) && this.craftState(craft).error !== 'craft_rejected' && !this.crafting.has(craft.actionId), 'craft_nothing_to_retry', 409);
+    this.runCraft(craft.id);
+    return this.craftView(craft);
+  }
+  // Exact tier work for a compound whose tier is still open; one saved
+  // action ID per step, reused until that step is answered.
+  async craftRefine(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 1 && /^c2:[0-9a-f]{64}$/.test(value.asset ?? ''), 'invalid_craft');
+    const { units } = await this.units();
+    dashboardCheck(units.some(u => u.asset === value.asset), 'craft_unit_unknown');
+    const open = this.savedCrafts(CRAFT_RECENT * 3).find(c => c.kind === 'refine' && c.asset === value.asset && !['confirmed', 'received'].includes(this.craftState(c).state));
+    const id = open?.id ?? randomBytes(6).toString('hex');
+    const refine = open ?? { id, kind: 'refine', actionId: `dash-refine-${id}`, createdAt: Date.now(), asset: value.asset, inputs: [] };
+    dashboardCheck(!this.crafting.has(refine.actionId), 'craft_running', 409);
+    this.saveCraft(refine); this.runCraft(id);
+    return this.craftView(refine);
+  }
+  runCraft(id) {
+    const task = this.craftTail.then(() => this.craftNow(id));
+    this.craftTail = task.catch(() => {});
+    return task;
+  }
+  async craftNow(id) {
+    if (this.closed) return;
+    const c = this.loadCraft(id);
+    this.crafting.add(c.actionId);
+    let error = null, complete = false;
+    try {
+      const result = c.kind === 'refine' ? await runTool(this.context, 'refine_compound', { actionId: c.actionId, asset: c.asset })
+        : await runTool(this.context, 'craft', { actionId: c.actionId, recipe: c.recipe, inputs: c.inputs });
+      complete = result?.state === 'complete';
+    } catch (e) { error = /^Saved packet outcome is unknown/.test(e?.message) ? 'craft_outcome_unknown' : dashboardError(e); }
+    finally { this.crafting.delete(c.actionId); }
+    const saved = this.loadCraft(id);
+    saved.tried = true; if (error) saved.error = error; else delete saved.error;
+    if (complete) saved.complete = true;
+    this.saveCraft(saved); this.labels.clear();
+  }
   walletKey(key) {
     dashboardCheck(typeof key === 'string' && key.length <= 300 && key.startsWith(this.agent.bitcoinNetwork + '/') && /^[a-zA-Z0-9/:-]+$/.test(key), 'invalid_wallet_key');
     return key;
@@ -827,7 +1084,7 @@ export class DashboardState {
   }
   async close() {
     this.closed = true; this.wakeSend?.();
-    try { await this.batchTask; await this.queue; await this.sendTail; await this.tnkTail; }
+    try { await this.batchTask; await this.queue; await this.sendTail; await this.tnkTail; await this.craftTail; }
     finally {
       if (this.active) this.journal.db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance);
       this.active = false;

@@ -76,6 +76,46 @@ const SEND_STATE = {
   queued: ['next block', 'warn'], uncertain: ['unclear', 'warn'], failed: ['not sent', 'bad'], stale: ['sign again', 'warn'], replaced: ['signed again', ''],
 };
 const unitText = units => units.map(u => `${u.amount} ${u.name}`).join(', ');
+// Craft: plain words for the recipe, the properties and every outcome.
+const CRAFT_NOTE = 'Crafting combines units of your patterns into a new compound. It uses up the units you put in, is free, and happens with the next batch on Trac.';
+const RECIPES = {
+  fusion: ['Fusion', 'Melts any ingredients together into one compound.'],
+  resonance: ['Resonance', 'Only for ingredients with the same charge. The result comes out rarer.'],
+};
+// A pattern's spectrum names the block header field it was found in; a compound keeps every field of its ingredients.
+const SPECTRUM = [[1, 'block height'], [2, 'nonce'], [4, 'difficulty bits']];
+const spectrumText = n => Number.isSafeInteger(n) ? SPECTRUM.filter(([bit]) => n & bit).map(([, w]) => w).join(' + ') || '–' : '–';
+const softValue = text => h('span', { style: { font: '600 15px/1.35 var(--sans)' } }, text);
+const generationText = g => g === undefined || g === null ? '–' : g === '0' ? '0 · a pattern' : `${g} · crafted`;
+const CRAFT_WORDS = {
+  craft_legacy: 'Imported units can’t be crafted. Only units of patterns found under the current rules can.',
+  craft_two_inputs: 'Choose at least two different ingredients.',
+  craft_too_many_inputs: 'Too many ingredients for one craft.',
+  craft_amount: 'Enter a whole number of units, 1 or more.',
+  craft_over_available: 'More than your agent has available of this ingredient.',
+  craft_unit_unknown: 'Your agent holds no craftable units of this kind.',
+  craft_unavailable: 'Crafting is not open for this agent yet.',
+  resonance_charge: 'Resonance needs ingredients with the same charge. Choose Fusion, or ingredients of equal charge.',
+  compound_ratio: 'This mix is too uneven. Amounts are reduced to their simplest ratio (like 2 : 3), and that ratio may add up to at most 64. Equal amounts always work.',
+  compound_input_unknown: 'One ingredient is not in the accepted catalog yet. Try again after the next batch.',
+  craft_preview_proof: 'The preview did not check out against the accepted catalog. Nothing was signed; try again in a minute.',
+  craft_preview_root: 'The preview did not check out against the accepted catalog. Nothing was signed; try again in a minute.',
+  craft_preview_value: 'The preview did not check out against the accepted catalog. Nothing was signed; try again in a minute.',
+  craft_inputs: 'Each ingredient may appear once, with 1 or more units.',
+  craft_rejected: 'The network did not accept this craft. Your units stay with your agent.',
+  craft_authorization: 'This signed craft expired before the network took it. Nothing was used; start a new craft.',
+  craft_output: 'The ingredients changed before the network took this craft. Nothing was used; start a new craft.',
+  craft_outcome_unknown: 'The gateway never answered and this craft is too old to repeat. If your units are unchanged after the next block, it did not happen; ask your agent to reconcile it.',
+  craft_nothing_to_retry: 'Nothing left to retry in this craft.',
+  craft_running: 'Your agent is already working on this.',
+  insufficient_units: 'Not enough units available. Units set aside for a mint request cannot be crafted.',
+};
+const craftWords = code => CRAFT_WORDS[code] ?? sendWords(code);
+const CRAFT_STATE = {
+  waiting: ['waiting', ''], crafting: ['signing…', 'info'], received: ['sent', 'info'], confirmed: ['confirmed', 'good'],
+  queued: ['next block', 'warn'], uncertain: ['unclear', 'warn'], failed: ['not crafted', 'bad'],
+};
+const CRAFT_STEPS = ['Signed', 'Sent to the gateway', 'Confirmed in a batch'];
 
 export function mount(el) {
   let stopped = false, cursor, next, offset = 0, busy = false;
@@ -206,7 +246,7 @@ export function mount(el) {
   async function load() {
     info = await api('/api/info'); if (stopped) return; drawProfile(); drawReceive();
     await loadPatterns(); await loadClaims(); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
-    await loadSends(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadRequests(); await loadLinks();
+    await loadSends(); await loadCraft(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadRequests(); await loadLinks();
   }
   // Send units on Trac: rows or a pasted list → review of every row → one
   // confirm → one transfer per recipient, sent in turn by the agent.
@@ -447,14 +487,209 @@ export function mount(el) {
   }
   async function loadTnkSends() { const data = await api('/api/tnk-sends'); if (!stopped) { tnkSends = data; drawTnkSends(); } }
   const tnkActive = () => tnkSends?.sends.some(s => ['sending', 'sent', 'pending'].includes(s.state));
+  // Craft: pick ingredients → recipe → live preview from the gateway's
+  // verified proof → review in plain words → the agent signs → progress.
+  let craft = null, craftKey = '', picked = new Map(), recipe = 'fusion', craftReview = false, preview = null, previewError = null, previewTicket = 0, previewTimer = null;
+  const craftBody = h('div'), compoundsBody = h('div'), craftsBody = h('div'), craftsPanel = h('div', { style: { scrollMarginTop: '72px' } });
+  const ingredientOf = asset => craft?.ingredients.find(i => i.asset === asset);
+  const craftable = () => (craft?.ingredients ?? []).filter(i => i.craftable && BigInt(i.available) > 0n);
+  const chosen = () => [...picked].filter(([asset]) => ingredientOf(asset)?.craftable).map(([asset, amount]) => [asset, amount.trim()]);
+  const amountOk = v => /^[1-9][0-9]*$/.test(v);
+  // Resonance is offered only while every chosen ingredient has the same known charge.
+  const resonance = () => {
+    const list = chosen().map(([asset]) => ingredientOf(asset));
+    if (list.length < 2) return { ok: false, why: 'Choose two ingredients first.' };
+    const charges = list.map(i => i.properties?.charge);
+    if (charges.some(c => !Number.isSafeInteger(c))) return { ok: true };
+    return new Set(charges).size === 1 ? { ok: true } : { ok: false, why: 'Not possible here: ' + list.map(i => `${i.name} has charge ${i.properties.charge}`).join(', ') + '. Resonance needs the same charge on every ingredient.' };
+  };
+  const propLine = i => i.properties ? [`Charge ${i.properties.charge}`, `Spectrum: ${spectrumText(i.properties.spectrum)}`, `Generation ${generationText(i.properties.generation)}`,
+    i.properties.matches ? `${i.properties.matches} known blocks` : null].filter(Boolean).join(' · ') : 'Properties are read from the catalog.';
+  const ingredientRow = (i, n) => {
+    const on = picked.has(i.asset), usable = i.craftable && BigInt(i.available) > 0n;
+    const amount = h('input.input.mono', { value: on ? picked.get(i.asset) : '1', inputmode: 'numeric', disabled: !on, 'aria-label': `Units of ${i.name} to use`, style: { width: '88px' },
+      oninput: e => { picked.set(i.asset, e.target.value); schedulePreview(); } });
+    const max = h('button.btn.sm.ghost', { type: 'button', disabled: !on, 'aria-label': `Use all ${i.available} ${i.name}`, onclick: () => { picked.set(i.asset, i.available); amount.value = i.available; schedulePreview(); } }, 'Max');
+    const box = h('input', { type: 'checkbox', id: 'craft-use-' + i.asset, checked: on, disabled: !usable,
+      onchange: e => { if (e.target.checked) picked.set(i.asset, amount.value.trim() || '1'); else picked.delete(i.asset); schedulePreview(); } });
+    return h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '6px 12px', alignItems: 'center', padding: '10px 0',
+      borderTop: n ? '1px solid var(--rule-2)' : '0', opacity: usable ? '1' : '0.55' } },
+      h('label.check', { for: 'craft-use-' + i.asset, style: { alignItems: 'flex-start', cursor: usable ? 'pointer' : 'not-allowed', minWidth: 0 } }, box,
+        h('span', { style: { minWidth: 0 } },
+          h('span', { style: { fontWeight: 700 } }, h('span.swatch', { style: { background: mineral(i.asset) } }), i.name), ' ', i.tier ? tierBadge(i.tier) : null,
+          h('span.small.muted', {}, ' · ', `${i.available} available`),
+          h('div.small.muted', {}, i.craftable ? propLine(i) : 'Imported — can’t be crafted. Only units of patterns found under the current rules can.'))),
+      usable ? h('div.row', { style: { flexWrap: 'nowrap', gap: '6px', opacity: on ? '1' : '0.45' } }, amount, max) : h('span'));
+  };
+  const recipeChoice = () => {
+    const res = resonance();
+    if (recipe === 'resonance' && !res.ok) recipe = 'fusion';
+    return h('fieldset', { style: { border: 0, margin: 0, padding: 0, minWidth: 0 } }, h('legend.small', { style: { fontWeight: 700, color: 'var(--ink-2)', padding: 0, marginBottom: '6px' } }, '2 · Recipe'),
+      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px' } }, Object.entries(RECIPES).map(([id, [label, line]]) => {
+        const disabled = id === 'resonance' && !res.ok;
+        return h('label.check', { style: { alignItems: 'flex-start', padding: '10px 12px', border: `1px solid ${recipe === id ? 'var(--ink)' : 'var(--rule)'}`, borderRadius: 'var(--radius)',
+          background: 'var(--sheet)', opacity: disabled ? '0.6' : '1', cursor: disabled ? 'not-allowed' : 'pointer' } },
+          h('input', { type: 'radio', name: 'craft-recipe', id: 'craft-recipe-' + id, value: id, checked: recipe === id, disabled, onchange: () => { recipe = id; schedulePreview(); } }),
+          h('span', {}, h('strong', {}, label), h('div.small.muted', {}, disabled ? res.why : line)));
+      })));
+  };
+  // The preview box keeps its size while it updates, so nothing below jumps.
+  const previewBox = () => {
+    const inputs = chosen(), ready = inputs.length >= 2 && inputs.every(([, a]) => amountOk(a));
+    const frame = (...children) => h('div', { 'aria-live': 'polite', style: { minHeight: '196px', border: '1px dashed var(--rule)', borderRadius: 'var(--radius)', background: 'var(--paper)', padding: '12px 14px' } }, ...children);
+    const head = h('div.row', { style: { justifyContent: 'space-between', marginBottom: '8px' } }, h('span.small', { style: { fontWeight: 700, color: 'var(--ink-2)' } }, '3 · Result'),
+      pill(preview?.loading ? 'updating preview…' : 'preview — nothing signed', preview?.loading ? 'info' : ''));
+    if (!ready) return frame(head, h('div.empty', { style: { padding: '18px 0' } }, inputs.length < 2 ? 'Choose at least two ingredients to see what you would get.' : 'Enter a whole number of units, 1 or more, for every ingredient.'));
+    if (previewError && !preview?.result) return frame(head, h('div.callout.bad', {}, craftWords(previewError)));
+    if (!preview?.result) return frame(head, h('div.empty', { style: { padding: '18px 0' } }, 'Working out the result…'));
+    const r = preview.result;
+    return frame(head, h('div', { style: { opacity: preview.loading ? '0.55' : '1', transition: 'opacity .15s' } },
+      h('div', { style: { fontFamily: 'var(--serif)', fontSize: '18px', marginBottom: '8px' } }, r.label),
+      figures([['You get', `${r.amount} unit${r.amount === '1' ? '' : 's'}`], ['Tier', r.tier ? tierBadge(r.tier) : pill('settles later', 'warn'), r.tier ? null : 'Refine sets it after crafting'],
+        ['Charge', String(r.properties.charge)], ['Spectrum', softValue(spectrumText(r.properties.spectrum))]]),
+      h('div.small.muted', { style: { marginTop: '8px' } }, `Generation ${r.properties.generation}: ${r.properties.generation === '1' ? 'made straight from patterns' : `its newest ingredient is generation ${BigInt(r.properties.generation) - 1n}`}. `, 'Uses ', preview.inputs.map(i => `${i.amount} ${i.name} (${i.left} left)`).join(' + '), '.'),
+      previewError ? h('div.small', { style: { color: 'var(--bad)', marginTop: '6px' } }, craftWords(previewError)) : null));
+  };
+  const warningsBox = () => (preview?.warnings ?? []).map(w => w.code === 'craft_uses_mint_units'
+    ? h('div.callout.warn', { style: { marginTop: '10px' } }, `You have ${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of ${w.name} waiting to mint that need ${w.units} units. After this craft ${w.left} are left, so some of those blocks could not be minted.`)
+    : w.code === 'craft_mint_units_ok' ? h('div.small.muted', { style: { marginTop: '8px' } }, `${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of ${w.name} waiting to mint need ${w.units} units; ${w.left} are left after this craft — enough.`)
+    : h('div.callout.warn', { style: { marginTop: '10px' } }, `Could not check your claimed blocks of ${w.name}. Look under Claimed blocks before you craft.`));
+  const drawCraft = () => {
+    if (!craft) { clear(craftBody, h('div.empty', {}, 'Loading your ingredients…')); return; }
+    if (craftReview && preview?.result) { drawCraftReview(); return; }
+    const lead = h('p.muted', { style: { margin: '0 0 12px' } }, CRAFT_NOTE);
+    const list = craft.ingredients, usable = craftable();
+    if (!list.length) { clear(craftBody, lead, h('div.empty', { style: { padding: '4px 0' } }, 'Your agent holds no units yet. Claim blocks of two patterns, then craft them here.')); return; }
+    const few = usable.length < 2 ? h('div.callout.info', { style: { marginBottom: '10px' } }, 'You need units of at least two patterns to craft — claim blocks of another pattern first.') : null;
+    const inputs = chosen(), ready = inputs.length >= 2 && inputs.every(([, a]) => amountOk(a)) && preview?.result && !preview.loading && !previewError;
+    const over = inputs.length > craft.maxInputs;
+    const review = h('button.btn.primary', { disabled: !ready || over, onclick: () => { craftReview = true; drawCraft(); } }, 'Review craft');
+    clear(craftBody, lead, few,
+      h('div', { role: 'group', 'aria-label': 'Ingredients' }, h('div.small', { style: { fontWeight: 700, color: 'var(--ink-2)' } }, `1 · Ingredients`, h('span.muted', { style: { fontWeight: 400 } }, ` — choose 2 to ${craft.maxInputs}, and how many units of each`)),
+        list.map((i, n) => ingredientRow(i, n))),
+      over ? h('div.small', { style: { color: 'var(--bad)' } }, `At most ${craft.maxInputs} ingredients in one craft.`) : null,
+      h('div', { style: { margin: '14px 0' } }, recipeChoice()),
+      previewBox(), warningsBox(),
+      h('p.small.muted', { style: { margin: '10px 0 0' } }, 'Equal amounts give that many compound units (3 + 3 makes 3). Uneven amounts are a recipe ratio: 2 + 3 makes 1 unit.'),
+      h('div.row', { style: { marginTop: '14px' } }, review, inputs.length ? h('button.btn.ghost', { type: 'button', onclick: () => { picked.clear(); preview = null; previewError = null; drawCraft(); } }, 'Clear') : null));
+  };
+  // Debounced: one preview request per pause in typing; older answers are dropped.
+  const schedulePreview = () => {
+    clearTimeout(previewTimer); previewError = null;
+    const inputs = chosen();
+    if (inputs.length < 2 || !inputs.every(([, a]) => amountOk(a))) { preview = null; refreshPreview(); return; }
+    if (preview) preview.loading = true; refreshPreview();
+    const ticket = ++previewTicket;
+    previewTimer = setTimeout(async () => {
+      let result = null, error = null;
+      try { result = await api('/api/craft-preview', { recipe, inputs }); } catch (e) { error = e.message; }
+      if (ticket !== previewTicket || stopped) return;
+      if (result) { preview = result; previewError = null; } else { preview = null; previewError = error; }
+      refreshPreview();
+    }, 400);
+  };
+  // Redraw only the preview, warnings and button, never the inputs being typed in.
+  const refreshPreview = () => {
+    if (craftReview) return;
+    const focus = craftBody.contains(document.activeElement) ? document.activeElement : null, at = focus?.selectionStart;
+    const same = focus && (focus.id ? el => el.id === focus.id : focus.getAttribute('aria-label') ? el => el.getAttribute('aria-label') === focus.getAttribute('aria-label') : null);
+    drawCraft();
+    if (same) { const again = [...craftBody.querySelectorAll('input, button')].find(same); if (again) { again.focus(); if (at !== undefined && at !== null && again.setSelectionRange) try { again.setSelectionRange(at, at); } catch { /* not a text input */ } } }
+  };
+  const drawCraftReview = () => {
+    const p = preview, r = p.result;
+    const back = h('button.btn.ghost', { onclick: () => { craftReview = false; drawCraft(); } }, 'Back to edit');
+    const go = h('button.btn.primary', { onclick: () => confirmCraft(go) }, 'Craft now');
+    const risky = p.warnings.filter(w => w.code !== 'craft_mint_units_ok');
+    clear(craftBody,
+      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `Craft ${p.inputs.map(i => `${i.amount} ${i.name}`).join(' + ')} into ${r.amount} unit${r.amount === '1' ? '' : 's'} of ${r.label}?`),
+      h('p.muted.small', { style: { margin: '0 0 12px' } }, `Your agent signs this ${RECIPES[p.recipe][0].toLowerCase()} craft. It is free. The ${p.inputs.reduce((n, i) => n + BigInt(i.amount), 0n)} units you put in are used up, and the compound arrives with the next batch on Trac. A craft cannot be undone.`),
+      table(p.inputs, [
+        { key: 'name', label: 'Ingredient', render: i => matter(i.asset, i.name) },
+        { key: 'amount', label: 'Uses', num: true, render: i => h('span.mono', {}, i.amount) },
+        { key: 'left', label: 'Left after', num: true, render: i => h('span.mono', {}, i.left) }], { sortable: false }),
+      h('div', { style: { marginTop: '10px' } }, figures([['You get', `${r.amount} unit${r.amount === '1' ? '' : 's'}`], ['Tier', r.tier ? tierBadge(r.tier) : pill('settles later', 'warn')],
+        ['Charge', String(r.properties.charge)], ['Spectrum', softValue(spectrumText(r.properties.spectrum))]])),
+      risky.length ? warningsBox().filter((_, n) => p.warnings[n].code !== 'craft_mint_units_ok') : null,
+      h('p.small.muted', { style: { margin: '10px 0 0' } }, 'The result is checked again when your agent signs; if the next batch moved in between, the tier can differ slightly.'),
+      h('div.row', { style: { marginTop: '14px' } }, back, go));
+  };
+  const confirmCraft = button => act('', async () => {
+    button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy');
+    let started;
+    try { started = await api('/api/craft', { recipe: preview.recipe, inputs: preview.inputs.map(i => [i.asset, i.amount]) }); }
+    catch (error) { button.disabled = false; button.textContent = 'Craft now'; button.classList.remove('busy'); throw Error(craftWords(error.message)); }
+    craftReview = false; picked.clear(); preview = null;
+    toast({ what: 'Crafting', detail: `${started.label} — saved; your agent signs and sends it now.`, state: 'complete', ttl: 5000 });
+    await loadCraft(true);
+    craftsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const craftNote = c => ({
+    waiting: 'Saved; your agent signs and sends it in turn.',
+    crafting: c.kind === 'refine' ? 'Your agent is working out the tier…' : 'Your agent is signing and sending the craft…',
+    received: c.batch ? `Sent to the gateway. Confirms in batch ${c.batch}, normally with the next Bitcoin block.` : 'Sent to the gateway. Confirms with the next Bitcoin block.',
+    confirmed: c.kind === 'refine' ? 'Done.' : c.batch ? `Confirmed in batch ${c.batch}. The compound is in your units.` : 'Confirmed. The compound is in your units.',
+    uncertain: c.error && CRAFT_WORDS[c.error] ? craftWords(c.error) : 'No clear answer from the gateway. Retry sends this same signed craft again; it cannot happen twice.',
+  }[c.state] ?? craftWords(c.error));
+  const craftStep = c => c.state === 'confirmed' ? 3 : c.state === 'received' ? 2 : c.signed || c.state === 'uncertain' ? 1 : 0;
+  const retryCraft = (c, button) => act('', async () => { button.disabled = true; await api('/api/craft-retry', { id: c.id }); await loadCraft(true); });
+  const refine = (asset, button) => act('', async () => {
+    button.disabled = true; button.textContent = 'Refining…'; button.classList.add('busy');
+    try { await api('/api/craft-refine', { asset }); } catch (error) { button.disabled = false; button.textContent = 'Refine'; button.classList.remove('busy'); throw Error(craftWords(error.message)); }
+    await loadCraft(true);
+  });
+  const drawCrafts = () => {
+    const list = (craft?.crafts ?? []).filter(c => c.kind !== 'refine'), newest = list[0];
+    clear(craftsBody, list.length ? [
+      h('div', { style: { padding: '10px 14px 4px' } }, stepper(newest.state === 'confirmed' && newest.batch ? [...CRAFT_STEPS.slice(0, 2), `Confirmed in batch ${newest.batch}`] : CRAFT_STEPS,
+        craftStep(newest), { failed: ['failed', 'uncertain', 'queued'].includes(newest.state) })),
+      table(list, [
+        { key: 'label', label: 'Compound', render: c => h('div', {}, h('strong', {}, c.label ?? 'Compound'), h('div.small.faint', {}, new Date(c.createdAt).toLocaleString(), ' · ', RECIPES[c.recipe]?.[0] ?? c.recipe)) },
+        { key: 'inputs', label: 'Used', render: c => h('div.small', {}, c.inputs.map(i => `${i.amount} ${i.name}`).join(' + '), c.amount ? h('div.muted', {}, `→ ${c.amount} unit${c.amount === '1' ? '' : 's'}`) : null) },
+        { key: 'state', label: 'State', render: c => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(...(CRAFT_STATE[c.state] ?? [words(c.state), ''])), h('div.small.muted', {}, craftNote(c)),
+          ['failed', 'uncertain', 'queued', 'waiting'].includes(c.state) && c.error !== 'craft_rejected' && !['craft_authorization', 'craft_output', 'craft_outcome_unknown'].includes(c.error)
+            ? h('button.btn.sm', { title: 'Sends the same saved craft again; it cannot happen twice.', onclick: event => retryCraft(c, event.currentTarget) }, 'Retry') : null) },
+      ], { sortable: false })] : h('div.empty', {}, 'No crafts yet. Crafts appear here with their progress.'));
+  };
+  const REFINE_NOTE = 'The exact tier of this compound is not settled yet. Refine lets your agent finish that calculation on Trac: free, it uses no units, and the compound stays the same.';
+  const drawCompounds = () => {
+    const list = craft?.compounds ?? [];
+    clear(compoundsBody, list.length ? table(list, [
+      { key: 'name', label: 'Compound', render: c => h('div', {}, h('strong', {}, h('span.swatch', { style: { background: mineral(c.asset) } }), c.name), h('div.small.faint', {}, h('span.mono', { title: c.asset }, short(c.asset, 10, 6)))) },
+      { key: 'tier', label: 'Tier', render: c => c.needsRefine ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill('not settled', 'warn', REFINE_NOTE),
+        c.refine && ['crafting', 'received', 'waiting'].includes(c.refine.state) ? h('div.small.muted', {}, craftNote(c.refine))
+          : h('button.btn.sm', { title: REFINE_NOTE, onclick: event => refine(c.asset, event.currentTarget) }, 'Refine'),
+        c.refine?.state === 'failed' ? h('div.small', { style: { color: 'var(--bad)' } }, craftWords(c.refine.error)) : null) : tierBadge(c.tier) },
+      { key: 'amount', label: 'Units', num: true, render: c => h('div', {}, h('span.mono', {}, c.amount), c.available !== c.amount ? h('div.small.faint', {}, `${c.available} available`) : null) },
+      { key: 'from', label: 'Made from', render: c => c.from.length ? h('div.small', {}, c.from.map(i => i.name).join(' + '),
+        h('div.muted', {}, [RECIPES[c.recipe]?.[0] ?? c.recipe, 'recipe ' + c.from.map(i => i.amount).join(' : ')].filter(Boolean).join(' · '))) : h('span.faint', {}, '–') },
+    ], { sortable: false }) : h('div.empty', {}, 'No compounds yet. Craft one above; it appears here and under Send units.'));
+    if (list.some(c => c.needsRefine)) compoundsBody.append(h('p.small.muted', { style: { margin: 0, padding: '10px 14px', borderTop: '1px solid var(--rule-2)' } }, REFINE_NOTE));
+  };
+  // A refresh redraws the picker only when the ingredients changed and nobody types in it.
+  async function loadCraft(force = false) {
+    let data;
+    try { data = await api('/api/craft'); } catch (error) { if (!stopped && !craft) clear(craftBody, h('div.callout.bad', {}, 'Could not load crafting: ' + craftWords(error.message))); return; }
+    if (stopped) return;
+    craft = data; drawCrafts(); drawCompounds();
+    for (const asset of [...picked.keys()]) if (!ingredientOf(asset)?.craftable) picked.delete(asset);
+    const key = JSON.stringify(craft.ingredients);
+    if (force || key !== craftKey && !craftBody.contains(document.activeElement)) { craftKey = key; drawCraft(); }
+    if (force && (craft.crafts.some(c => c.state === 'confirmed') || craft.compounds.length)) await loadUnits(true).catch(() => {});
+  }
+  const craftActive = () => craft?.crafts.some(c => ['crafting', 'received', 'waiting'].includes(c.state));
   clear(claimsPanel, panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
     'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, claims, pager), { flush: true }));
   clear(el, h('div.page', {},
-    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s patterns and claimed blocks, with one click to deploy or mint, units to send on Trac, and its TNK. Everything else on this dashboard is the live site.'))),
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s patterns and claimed blocks, with one click to deploy or mint, compounds to craft, units to send on Trac, and its TNK. Everything else on this dashboard is the live site.'))),
     h('div.stack', {}, note, profile,
       panel('Your patterns', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
         'Patterns your agent discovered or holds claims in. A new pattern is minted only after its token is deployed: inscribe the pattern, then deploy the token, each with your TAP Wallet.'), patternList), { flush: true }),
       claimsPanel,
+      h('div.grid.cols-main', { style: { alignItems: 'start' } },
+        panel('Craft a compound', craftBody, { tip: CRAFT_NOTE }),
+        panel('Your compounds', compoundsBody, { flush: true })),
+      clear(craftsPanel, panel('Recent crafts', craftsBody, { flush: true })),
       h('div.grid.cols-main', { style: { alignItems: 'start' } },
         panel('Send units on Trac', sendBody, { tip: TRAC_NOTE }),
         panel('Your Trac address', receiveBody)),
@@ -473,6 +708,7 @@ export function mount(el) {
   const sendTimer = setInterval(() => {
     if (document.hidden) return;
     if (sendsActive()) loadSends().catch(() => {});
+    if (craftActive()) loadCraft().catch(() => {});
     if (tnkActive()) loadTnkSends().then(() => tnkActive() ? null : loadTnk()).catch(() => {});
   }, 4000);
   return () => { stopped = true; clearInterval(timer); clearInterval(sendTimer); };

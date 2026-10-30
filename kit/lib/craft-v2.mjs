@@ -3,6 +3,15 @@ import { sendNamedMove } from './named-discovery.mjs';
 import { signBytes } from './signing.mjs';
 import { check, nonce, sha256 } from './check.mjs';
 
+// The authenticated preview the craft action signs: the gateway's proof,
+// verified against the accepted catalog root at the current snapshot. Signs
+// and saves nothing; the local dashboard shows it before the owner confirms.
+export async function previewCraftNamed(agent, { recipe, inputs }, context) {
+  const head = await agent.trac.head(), height = decimalV2(head.counted), snapshot = { height, hash: await agent.trac.hashAt(height) };
+  const ordered = [...inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const proof = await agent.service.craftPreview({ recipe, inputs: ordered, snapshot }, context.settings.values.proofBytes);
+  return { height, snapshot, ordered, result: verifyCraftPreview(proof, { root: context.catalogRoot, recipe, inputs: ordered, snapshot, settings: context.settings }) };
+}
 export async function craftNamed(agent, { actionId, recipe, inputs }, context) {
   agent.actionId(actionId);
   const id = `craft/${actionId}`, intent = { recipe, inputs }, saved = agent.journal.get(`${id}/v2-intent`);
@@ -10,10 +19,7 @@ export async function craftNamed(agent, { actionId, recipe, inputs }, context) {
   if (saved) check(saved.fingerprint === sha256(stableJSON(intent)), 'Conflicting craft action ID');
   let chosen = saved?.body;
   if (!chosen) {
-    const head = await agent.trac.head(), height = decimalV2(head.counted), snapshot = { height, hash: await agent.trac.hashAt(height) };
-    const ordered = [...inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    const proof = await agent.service.craftPreview({ recipe, inputs: ordered, snapshot }, context.settings.values.proofBytes);
-    const result = verifyCraftPreview(proof, { root: context.catalogRoot, recipe, inputs: ordered, snapshot, settings: context.settings });
+    const { height, snapshot, ordered, result } = await previewCraftNamed(agent, { recipe, inputs }, context);
     if (agent.dryRun) return { state: 'dry-run', action: 'craft-v2', signed: false, compound: result.record, amount: result.amount };
     const account = await agent.trac.accountRoot(agent.owner);
     check(account && typeof account.revision === 'string', 'No accepted matter account');

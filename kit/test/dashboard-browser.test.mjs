@@ -329,3 +329,106 @@ test('My agent shows TNK apart from units: balance, fee and funding address; one
   assert.equal(msb.signed, 1);
   assert.deepEqual(errors, []);
 });
+
+// Craft on My agent: the owner's mix of two v2 patterns and imported units.
+async function craftPage(t, setup = () => {}) {
+  const f = await dashboardFixture(t, { http: true, site: true });
+  const { DashboardState } = await import('../lib/dashboard-state.mjs'), { createHash } = await import('node:crypto');
+  const sha = value => createHash('sha256').update(value).digest('hex'), made = 'c2:' + 'ef'.repeat(32);
+  f.patterns.length = 0;
+  f.patterns.push({ number: '0', asset: 'p2:0', name: 'dmwflorite', tier: 4, fld: 10, knownMatchCount: '571' },
+    { number: '1', asset: 'p2:1', name: 'dmwnullspar', tier: 3, fld: 10, knownMatchCount: '40' }, { number: '2', asset: 'p2:2', name: 'dmwmuffinite', tier: 2, fld: 4, knownMatchCount: '900' });
+  f.balances.set('p2:1', { amount: '92', current: true }); f.balances.set('p2:2', { amount: '100', current: true }); f.balances.set('p0', { amount: '99', current: true });
+  const events = [], previews = [], crafts = [], service = f.agent.service, profile = service.profile.bind(service);
+  const compounds = new Map([[made, { id: made, recipe: 'fusion', inputs: [{ asset: 'p2:1', amount: '1' }, { asset: 'p2:2', amount: '1' }], properties: { charge: 3, spectrum: 3, generation: '1' }, tier: { value: null } }]]);
+  service.compounds = async ({ asset }) => ({ compounds: compounds.has(asset) ? [compounds.get(asset)] : [] });
+  service.profile = async (owner, options) => options.collection === 'history' ? { history: events, nextCursor: null } : profile(owner, options);
+  setup(f);
+  const state = new DashboardState(f.context);
+  // The verified preview and the kit craft action, observed.
+  state.preview = async ({ recipe, inputs }) => { previews.push({ recipe, inputs });
+    return { result: { amount: inputs[0][1] === inputs[1][1] ? inputs[0][1] : '1', record: { id: made, snapshot: { height: '20' }, tier: { value: 4 }, properties: { charge: 3, spectrum: 3, generation: '1' } } } }; };
+  f.agent.craft = async ({ actionId, recipe, inputs }) => {
+    crafts.push({ actionId, recipe, inputs });
+    f.journal.reserve(`craft/${actionId}/v2-intent`, { recipe, inputs }, { result: { record: { id: made }, amount: '2' } });
+    f.journal.reserve(`craft/${actionId}`, { type: 'craft-v2' }, { v: 2 });
+    f.journal.mark(`craft/${actionId}`, 'received', { move: sha('m' + actionId), batch: '51' });
+    for (const [asset, amount] of inputs) f.balances.set(asset, { amount: String(BigInt(f.balances.get(asset).amount) - BigInt(amount)), current: true });
+    f.balances.set(made, { amount: '2', current: true });
+    return { state: 'received' };
+  };
+  const dashboard = await serveDashboard(f.context, { state }); cleanup(t, () => dashboard.close());
+  const width = Number(process.env.DMW_DASHBOARD_WIDTH ?? 1280), shots = process.env.DMW_DASHBOARD_SHOTS;
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  // Screenshots use a tall window so the site's fixed bars never cover the card.
+  const page = await browser.newPage({ viewport: { width, height: shots ? 2400 : 900 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const section = name => page.locator('section.panel').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  const shot = async (name, locator) => { if (shots) { await locator.evaluate(el => el.scrollIntoView({ block: 'center' })); await locator.screenshot({ path: `${shots}/craft-${name}-${width}.png` }); } };
+  return { f, page, errors, section, shot, previews, crafts, events, sha, state, made };
+}
+
+test('My agent: with units of one pattern only, Craft explains that a second pattern is needed', async t => {
+  const { page, errors, section, shot } = await craftPage(t, f => f.balances.delete('p2:2'));
+  const craft = section('Craft a compound');
+  await craft.getByText('You need units of at least two patterns to craft — claim blocks of another pattern first.').waitFor();
+  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true);
+  await craft.getByText('Imported — can’t be crafted.', { exact: false }).waitFor();
+  await shot('empty', craft);
+  assert.equal(await page.getByRole('button', { name: 'Review craft' }).isDisabled(), true);
+  assert.deepEqual(errors, []);
+});
+
+test('My agent crafts: ingredients by name, Resonance explained, preview before review, warning, one confirm, progress to the batch, compounds with Refine', async t => {
+  const { page, errors, section, shot, previews, crafts, events, sha, state } = await craftPage(t);
+  const craft = section('Craft a compound');
+  await craft.getByRole('checkbox', { name: /dmwnullspar/ }).waitFor();
+  await craft.getByText('Charge 1 · Spectrum: nonce · Generation 0 · a pattern · 40 known blocks').waitFor();
+  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true, 'imported units cannot be crafted');
+  await craft.getByRole('checkbox', { name: /dmwnullspar/ }).check();
+  await craft.getByRole('checkbox', { name: /dmwmuffinite/ }).check();
+  await shot('picker', craft);
+  // Charges 1 and 2: Resonance is disabled and says why.
+  assert.equal(await craft.getByRole('radio', { name: /Resonance/ }).isDisabled(), true);
+  await craft.getByText('dmwnullspar has charge 1, dmwmuffinite has charge 2', { exact: false }).waitFor();
+  await craft.getByText('Compound · fusion of dmwnullspar + dmwmuffinite').waitFor();
+  await craft.getByText('preview — nothing signed').waitFor();
+  assert.equal(crafts.length, 0);
+  await craft.getByRole('textbox', { name: 'Units of dmwnullspar to use' }).fill('2');
+  await craft.getByRole('textbox', { name: 'Units of dmwmuffinite to use' }).fill('2');
+  await craft.getByText('2 dmwnullspar (90 left) + 2 dmwmuffinite (98 left)', { exact: false }).waitFor();
+  await shot('preview', craft);
+  // Using almost all dmwnullspar leaves too few for its two claimed blocks (3 units each).
+  await craft.getByRole('button', { name: 'Use all 92 dmwnullspar' }).click();
+  await craft.getByText('You have 2 claimed blocks of dmwnullspar waiting to mint that need 6 units.', { exact: false }).waitFor();
+  await shot('warning', craft);
+  await craft.getByRole('textbox', { name: 'Units of dmwnullspar to use' }).fill('2');
+  await craft.getByText('2 dmwnullspar (90 left)', { exact: false }).waitFor();
+  await assertEventually(async () => !await craft.getByRole('button', { name: 'Review craft' }).isDisabled());
+  await craft.getByRole('button', { name: 'Review craft' }).click();
+  await craft.getByText('Craft 2 dmwnullspar + 2 dmwmuffinite into 2 units of Compound · fusion of dmwnullspar + dmwmuffinite?').waitFor();
+  await shot('confirm', craft);
+  assert.ok(previews.length > 0); assert.equal(crafts.length, 0, 'review signs nothing');
+  await craft.getByRole('button', { name: 'Craft now' }).click();
+  const recent = section('Recent crafts');
+  await recent.getByText('Confirms in batch 51', { exact: false }).waitFor();
+  assert.equal(crafts.length, 1);
+  assert.deepEqual(crafts[0].inputs, [['p2:1', '2'], ['p2:2', '2']]);
+  assert.match(crafts[0].actionId, /^dash-craft-[0-9a-f]{12}$/);
+  state.craftEvents = null;
+  events.push({ id: sha('v2-event/craft/' + sha('m' + crafts[0].actionId)), type: 'craft', provenance: { batch: '52' } });
+  await recent.getByText('Confirmed in batch 52. The compound is in your units.').waitFor({ timeout: 15000 });
+  await shot('progress', recent);
+  const mine = section('Your compounds');
+  await mine.getByRole('button', { name: 'Refine' }).waitFor({ timeout: 20000 });
+  await mine.getByText('2 dmwnullspar', { exact: false }).count();
+  await shot('compounds', mine);
+  // The new compound is offered under Send units with its label.
+  const unit = section('Send units on Trac').getByRole('combobox', { name: 'Units, row 1' });
+  await assertEventually(async () => (await unit.locator('option').allTextContents()).some(o => o.startsWith('Compound · fusion of dmwnullspar + dmwmuffinite')));
+  assert.equal(crafts.length, 1);
+  assert.deepEqual(errors, []);
+});
