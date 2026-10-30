@@ -171,3 +171,19 @@ test('a replaced payment outpoint can be rediscovered before any mint spend is s
   assert.equal(f.row.state, 'sent'); assert.equal(f.row.plan.inputs[0].txid, '44'.repeat(32));
   assert.throws(() => f.sender.journal.save({ ...f.row, coin: { ...f.row.coin, txid: '55'.repeat(32) } }), /coin_immutable/);
 });
+
+test('successful ticker registration returns each fee payment set-aside with the original funding key', async t => {
+  const f = await fixture(t, { state: 'minted' }), reference = '22'.repeat(32) + 'i0', id = 'ef'.repeat(32);
+  const status = { ...f.status, requestId: id, tickerReturn: true, fundingId: f.id, fundingReference: reference, counted: '2100000000' };
+  delete status.mintContent;
+  f.gateway.list = async () => ({ keyId: f.sender.keyId, rows: [], next: null, tickerReturns: true });
+  f.gateway.tickerReturns = async () => ({ keyId: f.sender.keyId, rows: [status], next: null });
+  f.gateway.tickerReturnStatus = async value => { assert.equal(value, id); return status; };
+  f.bitcoin.paymentFunding = async (address, value) => { assert.equal(address, f.key.address); assert.equal(value, reference); return f.coins; };
+  await f.tick();
+  const row = f.journal.get(id); assert.equal(row.state, 'returning'); assert.equal(row.plan, undefined);
+  const tx = btc.Transaction.fromRaw(unhex(row.returnPlan.hex)); assert.equal(tx.outputsLength, 1);
+  assert.equal(hex(tx.getOutput(0).script), hex(btc.OutScript.encode(btc.Address(networkFor('regtest')).decode(f.payer.address))));
+  f.transactions.set(tx.id, { confirmed: true }); await f.restart(); await f.tick();
+  assert.equal(f.sender.journal.get(id).state, 'returned'); assert.equal(f.reports.length, 0);
+});

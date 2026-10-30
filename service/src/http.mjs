@@ -45,7 +45,17 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       if (req.method === 'GET' && operatorURL.pathname === '/internal/mint-sender/requests') {
         check(mints?.mintSender && mints.mintSender.authorized(req.headers.authorization), 'not_found', 404);
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-        res.end(JSON.stringify(mints.mintSender.page(mints, operatorURL.searchParams))); return;
+        const page = mints.mintSender.page(mints, operatorURL.searchParams);
+        if (operator?.provisioner?.tickers && rules.multiTickerActive(await operator.provisioner.reads.counted())) page.tickerReturns = true;
+        res.end(JSON.stringify(page)); return;
+      }
+      if (req.method === 'GET' && /^\/internal\/mint-sender\/ticker-returns(?:\/[0-9a-f]{64})?$/.test(operatorURL.pathname)) {
+        check(mints?.mintSender?.authorized(req.headers.authorization) && operator?.provisioner?.tickers, 'not_found', 404);
+        const tickers = operator.provisioner.tickers, id = operatorURL.pathname.split('/').at(-1);
+        check([...operatorURL.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_return_page');
+        const result = id === 'ticker-returns' ? await tickers.fundingReturns({ after: operatorURL.searchParams.get('after') ?? '',
+          limit: Number(operatorURL.searchParams.get('limit') ?? mints.mintSender.settings.pageSize) }) : await tickers.fundingReturn(id);
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(result)); return;
       }
       if (mints?.public && ['GET', 'HEAD'].includes(req.method) && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) {
         const result = mints.public(req.url.slice(6), req.headers['x-mint-requester-secret']);
@@ -159,6 +169,24 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       else if (links?.quote && req.method === 'POST' && req.url === '/link/quote') result = await links.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (links?.public && req.method === 'GET' && /^\/link-status\/[0-9a-f]{64}$/.test(req.url)) result = await links.public(req.url.split('/').at(-1));
       else if (links && req.method === 'POST' && req.url === '/link/payment') result = await links.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
+      else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/(?:api\/)?assets\/[^/?#]+\/tickers(?:\?|$)/.test(req.url)) {
+        const url = new URL(req.url, 'http://local'), asset = decodeURIComponent(url.pathname.split('/').at(-2));
+        check([...url.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_query');
+        result = await operator.provisioner.tickers.list(asset, { after: url.searchParams.get('after') ?? '',
+          ...(url.searchParams.has('limit') ? { limit: Number(url.searchParams.get('limit')) } : {}) });
+      }
+      else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/mint\/ticker-state\/[^/?#]+(?:\?|$)/.test(req.url)) {
+        const url = new URL(req.url, 'http://local');
+        check([...url.searchParams.keys()].every(k => k === 'selector') && url.searchParams.has('selector'), 'ticker_query');
+        result = await operator.provisioner.tickers.state(decodeURIComponent(url.pathname.split('/').at(-1)), url.searchParams.get('selector'));
+      }
+      else if (operator?.provisioner?.tickers && req.method === 'POST' && ['/mint/ticker-payment', '/api/ticker-payment'].includes(req.url)) {
+        result = await operator.provisioner.tickers.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
+      }
+      else if (operator?.provisioner?.tickers && req.method === 'POST' && ['/mint/deploy-ticker', '/api/deploy-ticker'].includes(req.url)) {
+        const input = JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096));
+        result = input.inscription ? await operator.provisioner.tickers.submit(input.asset, input) : await operator.provisioner.tickers.request(input.asset, input);
+      }
       else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment-state\/[^/?#]+$/.test(req.url)) {
         const asset = decodeURIComponent(req.url.split('/').at(-1)); check(deploymentAssetId(asset), 'deployment_asset');
         result = await operator.provisioner.state(asset);

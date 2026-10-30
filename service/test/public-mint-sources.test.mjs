@@ -22,12 +22,12 @@ const { identifyFinancialFees } = await import('../src/financial-fee-identity.mj
 const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url))).changes;
 const flatSettings = { tierMultipliers: flat.tierMultipliers, compoundMinimum: flat.compoundMinimum, link: flat.link };
 
-function fixture({ baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false, bitcoinNetwork = 'regtest', legacyElement } = {}) {
+function fixture({ deployerShareBps, baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false, bitcoinNetwork = 'regtest', legacyElement } = {}) {
   const network = 'test', key = new Uint8Array(32).fill(44), publicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
   const address = fundingAddress(publicKey, bitcoinNetwork), asset = legacyAsset ? 'p0' : 'p2:0', block = '100';
   const registry = { feePolicy: createFeePolicy(baseFee, 0, feeSettings) };
   const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: {
-    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, ...(legacyElement ? { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } : {}), publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
+    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, ...(deployerShareBps === undefined ? {} : { deployerShareBps }), ...(legacyElement ? { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } : {}), publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
     linkMultiplier: feeSettings?.link ?? r.FEE_DEFAULTS.link, finderWindow: 2, publicMintLegacyFinderWindow: 2, ...(!legacyPolicy ? { claimsNeverCloseHeight: '100' } : {}),
     ...(bitmapMintOpenHeight ? { bitmapMintOpenHeight } : {}), ...(publicPaymentV2Height ? { publicPaymentV2Height } : {}), ...(moveBytes ? { moveBytes } : {}) } });
   const feeQuotes = new FeeQuotes({ network, secret: Buffer.alloc(32, 9), registry: async () => registry, now: () => 1000 }); feeQuotes.document = document;
@@ -434,4 +434,76 @@ for (const opaque of [false, true]) test(`public pattern quotes and independentl
   assert.equal(finished.inputs[0].evidence.commissions.length, 156);
   await verifyFinancialExecution({ files: [{ ops: finished.operations, financialOperations: finished.inputs }],
     reads: reader, document: f.document, network: 'test', height, at: { counted: height } });
+});
+
+for (const opaque of [false, true]) test(`public deployer share retains rewards and verifies the chosen inscription holder; opaque=${opaque}`, async () => {
+  const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
+  const f = fixture({ deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
+    ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
+  f.setHeight(String(BigInt(r.LEGACY_DEPLOY_SHARE_HEIGHT) - 1n));
+  const before = await f.reads.publicMintQuote(f.input);
+  assert.equal(before.split.legacyDeploy, undefined);
+  assert.equal(before.split.deployer, undefined);
+  f.setHeight(r.LEGACY_DEPLOY_SHARE_HEIGHT);
+  const legacy = await f.reads.publicMintQuote(f.input), allocated = BigInt(flat.baseFee) / 10n / 156n * 156n;
+  assert.equal(legacy.split.legacyDeploy, String(allocated));
+  assert.equal(legacy.split.deployer, undefined);
+  assert.equal(BigInt(legacy.split.burn), BigInt(before.split.burn) - allocated);
+  f.setHeight(String(BigInt(r.MULTI_TICKER_HEIGHT) - 1n));
+  assert.deepEqual((await f.reads.publicMintQuote(f.input)).split, legacy.split);
+  f.setHeight(r.MULTI_TICKER_HEIGHT);
+  const quote = await f.reads.publicMintQuote(f.input);
+  assert.equal(quote.price, before.price); assert.equal(quote.split.legacyDeploy, String(allocated));
+  assert.equal(quote.split.treasury, before.split.treasury);
+  assert.equal(quote.split.deployer, String(BigInt(flat.baseFee) * 500n / 10000n));
+  assert.equal(BigInt(quote.split.burn), BigInt(before.split.burn) - allocated - BigInt(flat.baseFee) * 500n / 10000n);
+  if (opaque) { await f.register(quote); f.setHeight(r.nextUint(r.MULTI_TICKER_HEIGHT)); }
+  const payment = f.pay(quote);
+  if (opaque) await f.reveal(quote, payment);
+  const result = await f.settle(), winner = result.payments.find(p => p.complete);
+  assert.equal(winner.source.legacyDeploy.element, element);
+  assert.equal(winner.source.legacyDeploy.amount, String(allocated));
+  assert.equal(winner.source.legacyDeploy.count, 156);
+  assert.equal(winner.source.legacyDeploy.payoutMinAtoms, '1000000000000000000');
+  assert.equal(winner.source.feeItems.some(f => f.role === 'legacyDeploy'), false);
+  assert.equal(winner.source.legacyDeploy.authority, f.context.deployment.privilege);
+  const { installCapacitySources } = await import('../src/financial-capacity-sources.mjs');
+  const source = f.records.get('fi/source/' + winner.id), funding = f.records.get('fp/' + winner.id), height = await f.reads.counted();
+  const reader = { ...f.reads, deploymentHolders: async ids => ids.map(id => ({ id, address: '1BitcoinEaterAddressDontSendf59kuE' })),
+    mint: async () => ({ accepted: true, fail: false, confirmations: 1, permitHash: winner.permitHash,
+      deployment: source.deployment.id, amount: source.amount, receiver: source.receiver, tick: source.deployment.tick,
+      committee: source.deployment.privilegePublicKey, block: source.request.block, inscription: r.hash('public-mint') + 'i0' }) };
+  installCapacitySources(reader, { network: 'test', bitcoinNetwork: 'mainnet', accepted: async () => ({ source, funding,
+    row: { request: source.request, receiver: source.receiver, permit: { prv: { hash: winner.permitHash } } } }) });
+  reader.financialEvidence = (transition, at) => reader.financialCapacityEvidence(transition.action, at);
+  const transition = { type: 'lifecycle', id: winner.id, action: { type: 'capacity-finish', id: winner.id, permitHash: winner.permitHash } };
+  const finished = await buildFinancialExecution({ store: { get: (space, id) => space === 'accountRecords' ? f.records.get(id) ?? null : null },
+    reads: reader, transitions: [transition], document: f.document, height, at: { counted: height } });
+  assert.equal(finished.inputs[0].evidence.commissions.length, 157);
+  const commission = finished.inputs[0].evidence.commissions.find(c => c.role === 'deployer');
+  assert.equal(commission.deployment, source.deployment.id);
+  assert.equal(commission.amount, String(BigInt(flat.baseFee) * 500n / 10000n));
+  await verifyFinancialExecution({ files: [{ ops: finished.operations, financialOperations: finished.inputs }],
+    reads: reader, document: f.document, network: 'test', height, at: { counted: height } });
+});
+
+for (const opaque of [false, true]) test(`public selected ticker binds its deployment and shares the permanent asset occurrence; opaque=${opaque}`, async () => {
+  const f = fixture({ ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
+  f.setHeight(r.MULTI_TICKER_HEIGHT);
+  const official = f.context.deployment, extra = { ...official, id: r.hash('public-extra') + 'i0', tick: 'chosen', officialDeployment: official.id };
+  f.records.set('fd/extra', { asset: f.input.asset, deployment: extra.id, official: 'generation', minted: '0', reserved: '0', maximum: '1000000' });
+  f.records.set('fd/external/' + r.hashObject(extra.id), 'extra');
+  f.reads.assetContext = async (_a, _b, _at, quote, _admitted, selection) => {
+    const selected = selection ?? quote?.deploymentId, deployment = !selected || selected === official.id ? official : [extra.id, extra.tick].includes(selected) ? extra : null;
+    assert.ok(deployment, 'asset_unregistered'); return { ...f.context, deployment };
+  };
+  const quote = await f.reads.publicMintQuote({ ...f.input, deployment: extra.tick });
+  assert.equal(quote.intent.deployment, extra.id); assert.equal(quote.feeQuote.deploymentId, extra.id);
+  await assert.rejects(f.reads.publicMintQuote({ ...f.input, deployment: r.hash('forged') + 'i0' }), /asset_unregistered/);
+  if (opaque) { await f.register(quote); f.setHeight(r.nextUint(r.MULTI_TICKER_HEIGHT)); }
+  const payment = f.pay(quote); if (opaque) await f.reveal(quote, payment);
+  const result = await f.settle(), winner = result.payments.find(p => p.complete);
+  assert.equal(winner.source.deployment.id, extra.id); assert.equal(winner.source.generation, 'extra');
+  await assert.rejects(f.reads.publicMintQuote(f.input), /already_minted/);
+  await assert.rejects(f.reads.publicMintQuote({ ...f.input, deployment: extra.id }), /already_minted/);
 });

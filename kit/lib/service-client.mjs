@@ -27,7 +27,7 @@ export class ServiceClient {
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
-    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/link/payment'].includes(path));
+    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
     const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: this.origin, route: path, method, status, code, reason, submission });
     let response;
     for (let attempt = 0; ; attempt++) try {
@@ -143,8 +143,9 @@ export class ServiceClient {
     check(value && financialAsset(value.asset) && (value.block === undefined || integer(value.block) || typeof value.block === 'string' && /^(0|[1-9][0-9]*)$/.test(value.block)) &&
       (value.amount === undefined || typeof value.amount === 'string' && /^[1-9][0-9]{0,77}$/.test(value.amount)) &&
       (value.kind === undefined || ['tap', 'ethereum'].includes(value.kind)) &&
+      (value.deployment === undefined || typeof value.deployment === 'string' && value.deployment.length > 0) &&
       [value.payer, value.receiver].every(x => x === undefined || typeof x === 'string' && x.length > 0 && x.length <= 128) &&
-      Object.keys(value).every(k => ['asset', 'block', 'amount', 'kind', 'payer', 'receiver'].includes(k)), 'Invalid quote');
+      Object.keys(value).every(k => ['asset', 'block', 'amount', 'kind', 'payer', 'receiver', 'deployment'].includes(k)), 'Invalid quote');
     const result = await this.quote(value);
     if (result.deploymentNeeded) {
       result.deploymentLink = this.deploymentLink(result.catalogAsset ?? result.asset ?? value.asset);
@@ -229,6 +230,10 @@ export class ServiceClient {
   mintPaymentPlan(id) { check(hex32(id), 'Invalid mint ID'); return this.request('/web-api/mint/' + id); }
   reportMintPayment(value) { return this.request('/mint/payment', { value }); }
   deployment(asset) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/deployment/' + asset, { limit: 1500000 }); }
+  assetTickers(asset, { after, limit } = {}) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/assets/' + asset + '/tickers', { query: { ...(after ? { after } : {}), ...(limit ? { limit: String(limit) } : {}) } }); }
+  tickerPayment(value) { return this.request('/mint/ticker-payment', { value }); }
+  deployTicker(value) { return this.request('/mint/deploy-ticker', { value }); }
+  tickerState(asset, selector) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/ticker-state/' + asset, { query: { selector } }); }
   deploymentState(asset) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/deployment-state/' + asset, { limit: 1500000 }); }
   deploymentLink(asset, owner, origin = this.origin) {
     check(deploymentAsset(asset), 'Invalid deployment asset');

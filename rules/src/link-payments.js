@@ -1,6 +1,8 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { assert, integer, hex, hash, digest, networkId, bytesToHex, hexToBytes, stableJSON, exactKeys } from './core.js';
-import { feeFor, splitFee } from './fees.js';
+import { feeFor } from './fees.js';
+import { linkPaymentSplit } from './financial-fees.js';
+import { multiTickerActive } from './multi-ticker-activation.js';
 import { tapPaymentAllocations } from './tap.js';
 
 export function paymentDigest(network, request) {
@@ -10,7 +12,7 @@ export function paymentDigest(network, request) {
 }
 export const linkId = (network, request) => bytesToHex(paymentDigest(network, request));
 export const signLink = (network, request, secret) => { assert(bytesToHex(ed25519.getPublicKey(secret)) === request.owner, 'link_signer'); return bytesToHex(ed25519.sign(paymentDigest(network, request), secret)); };
-export function verifyLinkInput(input, network, counted) {
+export function verifyLinkInput(input, network, counted, options = {}) {
   assert(exactKeys(input, ['request', 'sig', 'terms', 'payment']), 'link_input');
   const { request: r, sig, terms: t, payment: p } = input, id = bytesToHex(paymentDigest(network, r));
   assert(hex(sig, 64) && ed25519.verify(hexToBytes(sig), paymentDigest(network, r), hexToBytes(r.owner), { zip215: false }), 'link_signature');
@@ -18,7 +20,9 @@ export function verifyLinkInput(input, network, counted) {
     typeof p.payer === 'string' && p.payer.length > 0 && integer(p.confirmations) && p.confirmations >= 1 && typeof p.consumed === 'boolean' &&
     integer(p.verifiedHeight) && p.verifiedHeight <= counted && p.verifiedHeight <= r.until && integer(p.eventIndex), 'link_payment');
   assert(t?.payer === p.payer && typeof t.treasury === 'string' && t.treasury.length > 0 && hex(t.hash, 32), 'link_terms');
-  const total = feeFor('link', t.baseFee, 1, t.feeSettings), split = splitFee(total, { kind: 'link' });
+  const executionHeight = options?.executionHeight ?? counted, document = options?.document;
+  if (multiTickerActive(executionHeight)) assert(document?.network === network && t.settingsHash === hash(stableJSON(document)), 'link_settings');
+  const total = feeFor('link', t.baseFee, 1, t.feeSettings), split = linkPaymentSplit(total, document, executionHeight);
   assert(p.total === total && BigInt(total) > 0n, 'link_price');
   if (p.kind === 'tap') {
     const allocations = tapPaymentAllocations(split, {}, 'link');

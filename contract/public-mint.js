@@ -1,3 +1,4 @@
+import { multiTickerActive } from '../rules/src/multi-ticker-activation.js';
 import { publicMintActive, publicPlotId, paymentOrder, settlePublicPayments, claimsNeverCloseActive } from '../rules/src/public-mint.js';
 import { validatePublicScanClaim } from '../rules/src/public-claims.js';
 import { hashObject, hex, stableJSON } from '../rules/src/core.js';
@@ -43,7 +44,7 @@ export async function applyPublicScan(store, op, { network, height, settings }) 
     const generation = await store.get('fd/' + source.generation), amount = BigInt(source.amount), plot = 'dc/plot/' + op.asset + '/' + op.block;
     await financialUnfrozen(store, ['fd/' + source.generation, 'dc/' + winner.id, plot]);
     check(generation?.deployment === source.deployment.id && generation.asset === op.asset &&
-      await store.get('fd/asset/' + op.asset) === source.generation && !await store.get(plot) &&
+      (await store.get('fd/asset/' + op.asset) === source.generation || multiTickerActive(height) && generation.official && (await store.get('fd/' + generation.official))?.asset === op.asset) && !await store.get(plot) &&
       BigInt(generation.minted) + BigInt(generation.reserved) + amount <= BigInt(generation.maximum), 'financial_capacity');
     writes.push(['fd/' + source.generation, { ...generation, reserved: String(BigInt(generation.reserved) + amount) }],
       ['dc/' + winner.id, { publicMint: true, state: 'issued', deployment: source.generation, asset: op.asset, amount: source.amount,

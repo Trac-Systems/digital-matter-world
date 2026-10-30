@@ -91,7 +91,10 @@ export function feeTerms(kind) {
   const multiplier = store.status?.feePolicy?.feeSettings?.link;
   if (!Number.isSafeInteger(multiplier) || multiplier < 1) return null;
   const total = (BigInt(baseFee) * BigInt(multiplier)).toString();
-  const burn = (BigInt(total) * 50n / 100n).toString();
+  // The service exposes the pinned split only after the shared activation.
+  const bps = store.status?.feePolicy?.linkBurnBps;
+  if (bps !== undefined && (!Number.isSafeInteger(bps) || bps < 0 || bps > 10000)) return null;
+  const burn = (bps === undefined ? BigInt(total) * 50n / 100n : BigInt(total) * BigInt(bps) / 10000n).toString();
   return { total, multiplier, split: { burn, treasury: (BigInt(total) - BigInt(burn)).toString() } };
 }
 export async function linkFlow(height) {

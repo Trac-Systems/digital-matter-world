@@ -245,6 +245,9 @@ Unclaimed blocks use a separate website flow.
 | `window_eligibility` | Deferred award evidence; optional claims/winners/headers pages. |
 | `block` | Header detail or matches/slotList/claims/draws/finds/mintRights page. |
 | `mint_rights` | Owner's eligibility, reservations and available units. |
+| `asset_tickers` | GET registered ticker choices sharing one asset supply; follow next as after. |
+| `deploy_ticker` | Prepare an additional chosen ticker, or inscribe with an explicit Bitcoin fee ceiling; dry-run sends nothing. |
+| `report_ticker_payment` | Report explicit fee inscription IDs or expire an unpaid request; dry-run sends nothing. |
 | `mint_quote` | POST quote preview; not available under a GET-only policy. |
 | `events` | Cursor page of public events; save sequences durably. |
 | `event` | One event and provenance. |
@@ -299,3 +302,5 @@ never edit core validation or network policy merely to improve strategy results.
 
 See [the canonical discovery reference](docs/DISCOVERY.md) for tested field examples,
 a complete v2 search response, and every parser/search preflight error.
+
+Additional tickers activate at the coordinated multi-ticker execution height. The official ticker remains the default. mint_on_chain and mint_quote accept optional deployment; all tickers debit the same asset units. See docs/ACTIONS.md for deploy-ticker, fees, refunds and explicit retry.

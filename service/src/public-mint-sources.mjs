@@ -53,10 +53,11 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const context = await reads.rulesContext(), height = rules.decimalV2(at?.counted ?? await reads.counted());
     check(rules.publicMintActive(context.settings, height), 'public_mint_inactive'); return { document: context.settings, height };
   };
-  reads.publicMintContext = async (asset, block, at, feeQuote, { settled = false, scanning = false } = {}) => {
-    const { document, height } = await active(at), context = await reads.assetContext(asset, block, at ?? 'tap', feeQuote);
+  reads.publicMintContext = async (asset, block, at, feeQuote, { settled = false, scanning = false, deployment } = {}) => {
+    const { document, height } = await active(at), context = await reads.assetContext(asset, block, at ?? 'tap', feeQuote, undefined, deployment);
     check(context.pattern && context.publicClaims && context.deployment?.active && context.deployment.kind === 'dmt', 'public_index_warming', 503);
-    const minted = await reads.isMinted(context.deployment.id, context.deployment.tick, block, at);
+    const shared = rules.multiTickerActive(at?.executionHeight ?? height) && !settled && (await reads.financialRecord('dc/plot/' + asset + '/' + rules.decimalV2(block), at) || await reads.financialRecord(plotKey(asset, block), at));
+    const minted = !!shared || await reads.isMinted(context.deployment.id, context.deployment.tick, block, at);
     const rightInput = { pattern: context.pattern, block, height, settings: document, find: context.find,
       reserved: context.publicClaims.reservation, headerAward: context.publicClaims.headerAward, minted: !settled && minted };
     let right = rules.publicBlockRight(rightInput);
@@ -76,9 +77,9 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     return { context, document, height, amount, ...right };
   };
   const terms = async (input, at, { settled = false } = {}) => {
-    const { asset, block, tapAddress, feeQuote } = input;
+    const { asset, block, tapAddress, feeQuote, deployment } = input;
     payoutAddress('tap', tapAddress, bitcoinNetwork);
-    const resolved = await reads.publicMintContext(asset, block, at, feeQuote, { settled }), { context: c, document } = resolved;
+    const resolved = await reads.publicMintContext(asset, block, at, feeQuote, { settled, deployment }), { context: c, document } = resolved;
     const holder = c.link ? c.bitmapHolder ?? await reads.bitmap(block, at) : null;
     if (rules.bitmapMintOpenActive(document, resolved.height) && c.link) check(typeof holder?.address === 'string' && holder.address.length > 0, 'bitmap_missing');
     check(rules.bitmapMintOpenActive(document, resolved.height) || !c.link || holder?.address === tapAddress, 'bitmap_holder_only', 409);
@@ -88,15 +89,15 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     check(rules.publicMintActive(original, q.validFrom) && q.deploymentId === c.deployment.id && same(q.payouts, c.payouts), 'public_quote_binding');
     const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings), baseSplit = financialSplit(price,
       { kind: 'find', publicMint: true, linked: !!holder, discovered: !!(c.beneficiaries?.discoverer ?? c.discoverer) }, original);
-    const { split, legacyDeploy } = rules.legacyDeployFee(price, baseSplit, { kind: 'find', deployment: c.deployment,
+    const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind: 'find', deployment: c.deployment,
       document: original, height: at?.executionHeight ?? resolved.height, bitcoinNetwork });
     const destinations = { treasury: c.treasury, finder: null, firstMaker: null, landowner: holder?.address ?? null, discoverer: c.discoverer ?? null };
     const plan = reads.financialFeePlan({ split, destinations, beneficiaries: c.beneficiaries, id: null, payer: tapAddress, rail: 'tap' });
-    return { ...resolved, feeQuote: q, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), destinations, beneficiaries: c.beneficiaries, plan };
+    return { ...resolved, feeQuote: q, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}), destinations, beneficiaries: c.beneficiaries, plan };
   };
   reads.publicMintQuote = async (input, at) => {
     const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document, height } = result;
-    const body = { network, asset: input.asset, block: rules.decimalV2(input.block), tapAddress: input.tapAddress, amount, feeQuote,
+    const body = { network, ...(input.deployment ? { deployment: c.deployment.id } : {}), asset: input.asset, block: rules.decimalV2(input.block), tapAddress: input.tapAddress, amount, feeQuote,
       price, split, fees: plan.fees, custody: plan.custody, ...(claimDeadline === undefined ? {} : { claimDeadline }), settingsHash: rules.hashObject(document),
       ...(rules.publicPaymentV2Active(document, height) ? { paymentVersion: 2, paymentSalt: randomBytes(32).toString('hex') } : {}) };
     const intent = reads.feeQuotes.sign(DOMAIN, body), id = rules.publicRequestId(network, intent);
@@ -140,11 +141,11 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
         paymentVersion: v2 ? 2 : 1, paymentCreated: signed.feeQuote.validFrom, ...(v2 ? { commitment: rules.publicPaymentCommitment(intent) } : {}) } : {}) };
     if (!complete) return value;
     const d = result.context.deployment, request = { asset: signed.asset, block: signed.block, amount: signed.amount };
-    const generation = await reads.financialRecord('fd/asset/' + signed.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
+    const generation = await reads.financialRecord(d.officialDeployment ? 'fd/external/' + rules.hashObject(d.id) : 'fd/asset/' + signed.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
     check(registered?.deployment === d.id, 'financial_deployment_pending');
     const source = { publicMint: true, requestId: id, owner: null, request, asset: signed.asset, amount: signed.amount, receiver: signed.tapAddress,
       payer: signed.tapAddress, rail: 'tap', deployment: d, quote: signed.feeQuote, intent, feeItems, fees: financialFees(feeItems),
-      ...(result.legacyDeploy ? { legacyDeploy: result.legacyDeploy } : {}),
+      ...(result.legacyDeploy ? { legacyDeploy: result.legacyDeploy } : {}), ...(result.deployer ? { deployer: result.deployer } : {}),
       custody: signed.custody.map(c => ({ ...c, requestId: id })), settingsHash: signed.settingsHash, generation,
       capacity: { deployment: d.id, asset: signed.asset, block: signed.block, amount: signed.amount, remaining: d.remaining, limit: d.limit ?? '0' } };
     const paymentHash = rules.paymentCommitment(progress.allocations), plan = permit(network, request, d, signed.tapAddress, id, paymentHash);

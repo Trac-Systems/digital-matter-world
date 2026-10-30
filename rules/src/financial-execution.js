@@ -1,3 +1,4 @@
+import { multiTickerActive } from './multi-ticker-activation.js';
 import { ordinalCodec } from './integers-v2.js';
 import { assert, hex, hashObject, stableJSON, exactKeys } from './core.js';
 import { financialLifecyclePlan, reserveCapacity, terminalCapacity } from './financial-lifecycle.js';
@@ -49,6 +50,7 @@ async function financialEffects(input, { read, height, document }) {
   const fp = fields => ({ op: 'fp', v: 2, id: t.id, ...fields });
   const ar = actions => ({ op: 'ar', actions });
   if (t.type === 'reserve') {
+    assert(!input.evidence.request?.deployment || multiTickerActive(height), 'multi_ticker_inactive');
     assert(exactKeys(t, ['type', 'id', 'action', 'fees']) && t.action?.type === 'reserve' && t.action.id === t.id &&
       t.action.terms === evidence && Array.isArray(t.fees) && t.fees.length <= document.values.paymentPage &&
       stableJSON(t.fees) === stableJSON(input.evidence.fees), 'financial_reservation');

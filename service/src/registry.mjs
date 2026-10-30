@@ -45,10 +45,22 @@ export class KeyedRegistry {
     } finally { db.close(); }
   }
   asset(asset, deploymentId) { return this.read(db => deploymentId ? get(db, 'generations/' + asset, deploymentId) : get(db, 'assets', asset)); }
+  deployment(asset, selector) {
+    if (!selector) return this.asset(asset);
+    return this.read(db => {
+      const current = get(db, 'assets', asset);
+      if ([current?.id, current?.tick?.toLowerCase(), current?.indexTick?.toLowerCase()].includes(selector.toLowerCase())) return current;
+      const key = /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(selector) ? selector :
+        get(db, 'tickerByAsset/' + asset, selector.toLowerCase());
+      const selected = key ? get(db, 'deployments/' + asset, key) : null;
+      return selected ?? (['official', '1'].includes(selector.toLowerCase()) ? current : null);
+    });
+  }
+  officialName(name) { return this.read(db => get(db, 'officialNames', name.toLowerCase())); }
   feeRevision(id) { return this.read(db => get(db, 'fees', id)); }
   currentFee() { const fee = this.feeRevision(this.metadata.feeCurrent); validateFeePolicy({ feePolicy: { current: fee?.id, revisions: [fee] } }); return fee; }
   page(space, { after = '', limit = this.settings.pageRows } = {}) {
-    check(typeof after === 'string' && Number.isSafeInteger(limit) && limit > 0 && limit <= this.settings.pageRows && (['assets','fees','treasury/tap','treasury/ethereum'].includes(space) || space.startsWith('generations/')), 'registry_page');
+    check(typeof after === 'string' && Number.isSafeInteger(limit) && limit > 0 && limit <= this.settings.pageRows && (['assets','fees','treasury/tap','treasury/ethereum'].includes(space) || space.startsWith('generations/') || space.startsWith('deployments/')), 'registry_page');
     return this.read(db => {
       const rows = db.prepare('SELECT id,value FROM registry_records WHERE space=? AND id>? ORDER BY id LIMIT ?').all(space, after, limit);
       check(rows.reduce((n, r) => n + Buffer.byteLength(r.value) + Buffer.byteLength(r.id), 0) <= this.settings.pageBytes, 'registry_page_bytes');
@@ -76,6 +88,11 @@ export function* registryPages(registry, space = 'assets') {
   let after = '';
   for (;;) { const page = registry.page(space, { after }); yield page; if (page.length < registry.settings.pageRows) return; after = page.at(-1).id; }
 }
+function officialNames(db, asset, entry, settings) {
+  for (const name of [entry.tick, entry.indexTick, entry.pattern?.name, entry.displayLabel].filter(n => typeof n === 'string'))
+    put(db, 'officialNames', name.toLowerCase(), asset, settings);
+}
+
 function treasury(db, entry, settings) {
   for (const rail of ['tap', 'ethereum']) if (entry?.[rail]?.treasury) put(db, 'treasury/' + rail, entry[rail].treasury, true, settings);
 }
@@ -96,7 +113,7 @@ export async function migrateRegistry(path, settings = {}) {
       const { assets = {}, generations = {}, feePolicy, ...fields } = current;
       for (const [asset, entries] of Object.entries(generations)) for (const entry of entries) put(db, 'generations/' + asset, entry.id, entry, limits, true);
       for (const [asset, entry] of Object.entries(assets)) {
-        put(db, 'assets', asset, entry, limits);
+        put(db, 'assets', asset, entry, limits); officialNames(db, asset, entry, limits);
         // Older registries may retain the first observation of a generation;
         // preserve it exactly rather than replace it with mutable liveness.
         if (!get(db, 'generations/' + asset, entry.id)) put(db, 'generations/' + asset, entry.id, entry, limits, true);
@@ -128,7 +145,7 @@ export async function updateRegistryAsset(path, asset, update, settings = {}) {
     return mutateKeyed(path, settings, (db, limits) => {
       const old = get(db, 'assets', asset), next = update(old); check(next && !next.then && typeof next.id === 'string' && !Object.hasOwn(next, 'baseFee'), 'registry_asset');
       for (const entry of [old, next].filter(Boolean)) if (!get(db, 'generations/' + asset, entry.id)) put(db, 'generations/' + asset, entry.id, entry, limits, true);
-      put(db, 'assets', asset, next, limits); treasury(db, next, limits); return next;
+      put(db, 'assets', asset, next, limits); officialNames(db, asset, next, limits); treasury(db, next, limits); return next;
     });
   } finally { await lock.close(); }
 }
@@ -165,5 +182,60 @@ export async function updateRegistry(path, update) {
     check(current.version !== 2, 'registry_keyed_update_required');
     const next = await update(current);
     await atomicWrite(path, JSON.stringify(next) + '\n'); return next;
+  } finally { await lock.close(); }
+}
+
+// Additional tickers never overwrite assets/<asset> or its retained generation.
+// The same SQLite transaction selects the next ordinal and claims the ticker.
+export async function registerAdditionalDeployment(path, asset, candidate, settings = {}) {
+  const lock = await Store.open(path + '.fee-update');
+  try {
+    check(JSON.parse(await readFile(path, 'utf8')).version === 2, 'registry_migration_required');
+    return await mutateKeyed(path, settings, (db, limits) => {
+      const official = get(db, 'assets', asset), parent = get(db, 'generations/' + asset, candidate.officialDeployment), tick = (candidate.indexTick ?? candidate.tick).toLowerCase();
+      check(official && !official.suspended && parent && !parent.officialDeployment && candidate.asset === asset &&
+        candidate.officialDeployment === parent.id && same(candidate.options, parent.options) &&
+        candidate.kind === official.kind && candidate.privilege === official.privilege && candidate.authorityKey === official.authorityKey &&
+        (candidate.elementId ?? null) === (official.elementId ?? null), 'additional_deployment_binding');
+      const old = get(db, 'deployments/' + asset, candidate.id), winner = get(db, 'tickerOwners', tick);
+      check(!winner || winner.asset === asset && winner.deployment === candidate.id, 'ticker_registered');
+      if (old) { check(old.approval === candidate.approval, 'deployment_submission_conflict'); return old; }
+      const lastOrdinal = BigInt(get(db, 'deploymentOrdinal', asset) ?? '1');
+      const ordinal = candidate.ordinal ?? String(lastOrdinal + 1n);
+      check(typeof ordinal === 'string' && /^[1-9][0-9]*$/.test(ordinal) && BigInt(ordinal) > 1n, 'deployment_ordinal');
+      const ordinalOwner = get(db, 'deploymentOrdinals/' + asset, ordinal);
+      check(!ordinalOwner || ordinalOwner === candidate.id, 'deployment_ordinal_conflict');
+      put(db, 'deploymentOrdinals/' + asset, ordinal, candidate.id, limits, true);
+      const entry = { ...candidate, ordinal };
+      put(db, 'deployments/' + asset, entry.id, entry, limits, true);
+      put(db, 'generations/' + asset, entry.id, entry, limits, true);
+      for (const name of [entry.tick, entry.indexTick].filter(Boolean)) put(db, 'tickerByAsset/' + asset, name.toLowerCase(), entry.id, limits);
+      put(db, 'tickerOwners', tick, { asset, deployment: entry.id }, limits, true);
+      put(db, 'deploymentOrdinal', asset, String(BigInt(ordinal) > lastOrdinal ? BigInt(ordinal) : lastOrdinal), limits); treasury(db, entry, limits);
+      return entry;
+    });
+  } finally { await lock.close(); }
+}
+
+// Named lookups only. The legacy fallback can resolve the current official;
+// additional deployments require the keyed registry migration.
+export function selectedDeployment(registry, asset, selector) {
+  if (typeof registry.deployment === 'function') return registry.deployment(asset, selector);
+  const current = registry.assets?.[asset];
+  return !selector || selector === 'official' || selector === '1' ||
+    [current?.id, current?.tick, current?.indexTick].includes(selector) ? current : null;
+}
+
+// Explicit offline maintenance for registries that were already keyed before
+// multi-ticker admission. Never called by gateway/signer request processing.
+export async function rebuildRegistryOfficialNames(path, settings = {}) {
+  const lock = await Store.open(path + '.fee-update');
+  try {
+    check(JSON.parse(await readFile(path, 'utf8')).version === 2, 'registry_migration_required');
+    await mutateKeyed(path, settings, (db, limits) => {
+      for (const row of db.prepare("SELECT id,value FROM registry_records WHERE space='assets' ORDER BY id").iterate())
+        officialNames(db, row.id, JSON.parse(row.value), limits);
+      put(db, 'meta', 'officialNamesReady', true, limits);
+    });
   } finally { await lock.close(); }
 }

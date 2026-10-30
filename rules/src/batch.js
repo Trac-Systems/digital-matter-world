@@ -117,7 +117,7 @@ export function processLegacyBlock({ height, blockHash, tip, tipHash, network, g
   };
   const linkOutcomes = [];
   for (const input of linkOperations) {
-    const { bitmap, previous, ...paid } = input, verified = verifyLinkInput(paid, network, height);
+    const { bitmap, previous, ...paid } = input, verified = verifyLinkInput(paid, network, height, { executionHeight, document: settings.document });
     assert(bitmap?.agent === paid.request.owner && previous === null && !recordGet(next.links, paid.request.height), 'link_owner');
     assert(!recordGet(next.linkPayments, verified.paymentKey), 'link_payment');
     if (!withinBudget([bitmapLinkOp(paid.request.height, executionHeight)])) { linkOutcomes.push({ reason: 'operation_budget' }); continue; }

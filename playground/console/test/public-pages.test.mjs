@@ -1,5 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { serve } from '../../../service/src/http.mjs';
 import { createWeb } from '../../../service/src/web.mjs';
 import { encodeTracAddress } from '../../../rules/src/trac-address.js';
@@ -45,6 +46,34 @@ async function open(t, path) {
   if (path) await page.goto(server.url + path);
   return page;
 }
+
+test('link fee preview follows the activated settings split without changing the legacy preview', async t => {
+  const p = await open(t, '/about');
+  // Public pages replace the playground's action module; load the actual
+  // playground modules under a separate local namespace for this preview.
+  await p.route('**/preview-console/*.js', async route => {
+    const name = new URL(route.request().url()).pathname.split('/').at(-1);
+    assert.match(name, /^[a-z-]+\.js$/);
+    await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../js/' + name, import.meta.url), 'utf8') });
+  });
+  const values = await p.evaluate(async () => {
+    const { store } = await import('/preview-console/api.js');
+    const { feeTerms } = await import('/preview-console/flows.js');
+    const previous = store.status;
+    try {
+      const result = [];
+      for (const linkBurnBps of [undefined, 0, 1234, 10000, -1, '5000']) {
+        store.status = { feePolicy: { baseFee: '101', feeSettings: { link: 3 }, ...(linkBurnBps === undefined ? {} : { linkBurnBps }) } };
+        result.push(feeTerms('link'));
+      }
+      return result;
+    } finally { store.status = previous; }
+  });
+  assert.deepEqual(values.map(value => value?.split ?? null), [
+    { burn: '151', treasury: '152' }, { burn: '0', treasury: '303' },
+    { burn: '37', treasury: '266' }, { burn: '303', treasury: '0' }, null, null,
+  ]);
+});
 const panel = (p, name) => p.locator('section.panel').filter({ has: p.getByRole('heading', { name, exact: true }) });
 
 test('shared fragment links open About and follow hash changes alongside public paths', async t => {

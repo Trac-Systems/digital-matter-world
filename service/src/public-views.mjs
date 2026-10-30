@@ -204,7 +204,8 @@ export class PublicViews {
         shareBps: document.values.legacyDeployShareBps ?? 0, payoutMinAtoms: document.values.legacyDeployPayoutMinAtoms ?? '0', cutoff: rules.LEGACY_DEPLOY_MANIFEST.cutoff },
       catchingUp: tip !== bitcoinTip || batch.to !== counted,
       // Quotes stay authoritative; the site shows the pinned revision's current prices.
-      feePolicy: await this.feePolicyV2(document),
+      feePolicy: { ...await this.feePolicyV2(document),
+        ...(rules.multiTickerActive(counted) ? { linkBurnBps: document.values.linkBurnBps } : {}) },
       settings: document, settingsHash: context.settingsHash, scheduledSettings: context.scheduledSettings ?? null,
       publicIndex: { processedObservation: projected?.observation ?? null, latestObservation: latest ? rules.decimalV2(latest.observation) : null,
         processedBatch: projected?.batch ?? null, latestBatch: batch.n, pendingEvents: String(pending),

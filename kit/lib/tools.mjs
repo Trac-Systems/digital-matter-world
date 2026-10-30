@@ -123,11 +123,23 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     return { suggestion, reason: suggestion ? null : 'no_eligible_slot' };
   });
   register('mint_on_chain', 'Reserve units with a signed quote. Then use pay_mint, poll_mint and inscribe_mint; the player pays and inscribes from their own wallet.', {
-    actionId, asset: mintAsset, amount: units, block: z.union([height, decimal]).optional(), receiver: z.string().min(1).max(128).optional(), payer: z.string().min(1).max(128).optional(), kind: z.enum(['tap', 'ethereum']).default('tap'), compound: z.boolean().default(false)
+    actionId, asset: mintAsset, amount: units, deployment: z.string().min(1).optional(), block: z.union([height, decimal]).optional(), receiver: z.string().min(1).max(128).optional(), payer: z.string().min(1).max(128).optional(), kind: z.enum(['tap', 'ethereum']).default('tap'), compound: z.boolean().default(false)
   }, async args => {
     const addresses = agent.paymentAddresses(args);
     return agent.makeReal({ ...args, ...addresses, candidate: args.compound ? undefined : (await candidates(args.asset, { block: args.block, kind: args.kind })).find(c => c.find && String(c.find.block) === String(args.block)) });
   }, false);
+  register('asset_tickers', 'List registered tickers sharing one asset supply. Omitted mint choices use its official ticker.',
+    { asset: deploymentAsset, after: z.string().optional(), limit: z.number().int().positive().optional() }, ({ asset, ...page }) => agent.service.assetTickers(asset, page));
+  register('report_ticker_payment', 'Report explicit confirmed TAP payment inscriptions for an additional ticker; never broadcasts a payment.',
+    { id: hex, paymentIds: z.array(z.string().regex(/^[0-9a-f]{64}i[0-9]+$/)), expire: z.boolean().optional() }, args =>
+      agent.dryRun ? { state: 'dry-run', ...args, sent: false } : agent.service.tickerPayment(args), false);
+  register('deploy_ticker', 'Prepare an additional chosen ticker after the official deployment. Review its fee, then inscribe with an explicit Bitcoin fee ceiling.',
+    { asset: deploymentAsset, ticker: z.string().min(1), retry: z.boolean().optional(), feeRate: z.number().positive().optional(), maxFeeSats: z.string().regex(/^[1-9][0-9]*$/).optional() }, async args => {
+      const receiver = agent.bitcoinWallet?.address ?? agent.paymentAddresses({}).receiver;
+      if (agent.dryRun) return { state: 'dry-run', asset: args.asset, ticker: args.ticker, receiver, signed: false, sent: false };
+      if (args.maxFeeSats) { check(agent.bitcoinWallet, 'Configure the local Bitcoin signer'); return agent.playerMint.deploy(args); }
+      return agent.service.deployTicker({ asset: args.asset, ticker: args.ticker, ...(args.retry ? { retry: true } : {}), receiver });
+    }, false);
   register('bitcoin_wallet', 'Read the local Bitcoin signer address and derivation path. Fund only with cardinal BTC and bind this payout wallet before quoting.', {}, () => {
     check(agent.bitcoinWallet, 'Configure the local Bitcoin signer');
     const { address, publicKey, network, path } = agent.bitcoinWallet;

@@ -42,11 +42,11 @@ export class FinancialMints extends Mints {
         const job = this.store.get('financialDeploymentJobs', asset);
         if ((job?.nextRetry ?? 0) > Date.now()) return;
         try {
-          const generation = await this.reads.financialDeployment(asset, await this.reads.batchStamp());
+          const generation = await this.reads.financialDeployment(job?.asset ?? asset, await this.reads.batchStamp(), job?.deployment);
           if (!generation.existing) await this.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
-          await this.store.put('financialDeploymentJobs', asset, { nextRetry: Date.now() + 30000 });
+          await this.store.put('financialDeploymentJobs', asset, { ...job, nextRetry: Date.now() + 30000 });
         } catch (error) {
-          await this.store.put('financialDeploymentJobs', asset, { nextRetry: Date.now() + 30000,
+          await this.store.put('financialDeploymentJobs', asset, { ...job, nextRetry: Date.now() + 30000,
             reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_deployment_unavailable' });
         }
       }, { join: true }));
@@ -81,9 +81,11 @@ export class FinancialMints extends Mints {
     const resolved = this.provisioner && provisionable ? await mintAssetDefinition(this.store, input.asset) : null;
     if (resolved) input = { ...input, asset: resolved.asset };
     if (this.reads.financialDeployment) {
-      const generation = await this.reads.financialDeploymentState?.(input.asset, await this.reads.batchStamp());
+      const generation = await this.reads.financialDeploymentState?.(input.asset, await this.reads.batchStamp(), input.deployment);
       if (!generation?.existing) {
-        if (!this.store.get('financialDeploymentJobs', input.asset)) await this.store.put('financialDeploymentJobs', input.asset, { nextRetry: 0 });
+        const selected = generation?.entry?.officialDeployment ? generation.entry.id : undefined;
+        const key = selected ? input.asset + '/' + selected : input.asset;
+        if (!this.store.get('financialDeploymentJobs', key)) await this.store.put('financialDeploymentJobs', key, { asset: input.asset, ...(selected ? { deployment: selected } : {}), nextRetry: 0 });
         return { requestId: null, asset: input.asset, state: 'deployment_pending', financialVersion: 2, payable: false,
           reservation: 'none', fees: [], missing: [], blocked: ['financial_deployment_pending'],
           message: 'The Bitcoin deployment is registered. Wait for its financial registration, then quote again.' };
@@ -124,7 +126,7 @@ export class FinancialMints extends Mints {
       check(!this.financial.admissionReady || await this.financial.admissionReady(), 'financial_admission_fenced', 503);
       check(rules.compareOrdinal(counted, r.until) <= 0 && body.feeQuote, 'financial_request_expired');
       check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
-      const quote = await this.quote({ asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote });
+      const quote = await this.quote({ ...(r.deployment ? { deployment: r.deployment } : {}), asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote });
       if (quote.deploymentNeeded || quote.state === 'deployment_pending') return quote;
       check(quote.asset === r.asset, 'mint_asset_use_ledger');
       if (this.reads.financialFeePlan && quote.feeQuote.settingsHash) {

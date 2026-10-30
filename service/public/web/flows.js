@@ -9,4 +9,16 @@ export const mintFlow = ({ asset, block }) => open('/mint', { asset, ...(block =
 export const compoundMintFlow = asset => { go('/mint/' + asset); return false; };
 export const linkFlow = height => open('/link', { block: height });
 export { wallet } from '../../connect.js';
+import { wallet as connected } from '../../connect.js';
+// Deploy your own ticker: the connected TAP Wallet requests it (on the agent dashboard, the agent's payout
+// wallet), then the request's page takes the fee and the deploy inscription.
+export async function tickerRequest(asset, ticker) {
+  if (globalThis.DMW_LOCAL_AGENT !== true) {
+    if (!connected.tap) await connected.connect('tap');
+    if (!connected.tap?.address) throw Error('Connect TAP Wallet to deploy a ticker.');
+  }
+  const { requestTicker } = await import('../../ticker-deploy.js');
+  return requestTicker(asset, ticker, connected.tap?.address);
+}
+export const tickerOpen = (asset, job) => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id }));
 export function run() { return Promise.reject(new Error('read_only')); }

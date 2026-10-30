@@ -157,7 +157,7 @@ export class DashboardState {
       payoutAddress, payoutError, batch: this.batch };
   }
   async candidate(slot) {
-    dashboardCheck(assetId(slot.asset) && integer(slot.block), 'invalid_claim');
+    dashboardCheck(assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
     const rows = await this.context.candidates(slot.asset, { block: slot.block, kind: 'tap' });
     const candidate = rows.find(row => row.find && sameSlot(row.find, slot));
     dashboardCheck(candidate, 'mint_right_unavailable', 403);
@@ -394,7 +394,7 @@ export class DashboardState {
   }
   mint(slot) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
-    dashboardCheck(slot && Object.keys(slot).every(k => ['asset', 'block'].includes(k)) && assetId(slot.asset) && integer(slot.block), 'invalid_claim');
+    dashboardCheck(slot && Object.keys(slot).every(k => ['asset', 'block', 'deployment'].includes(k)) && assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
     const key = canonicalAsset(slot.asset) + '/' + slot.block;
     if (this.inflight.has(key)) return this.inflight.get(key);
     const task = this.queue.then(() => this.mintNow(slot));
@@ -408,13 +408,14 @@ export class DashboardState {
     const assets = [...new Set([slot.asset, r.asset, canonicalAsset(r.asset)])];
     const blocks = [r.block, ...(Number.isSafeInteger(Number(r.block)) ? [Number(r.block)] : [])];
     for (const asset of assets) for (const block of blocks) {
-      const intent = { asset, block, amount: r.amount, receiver: body.receiver, payer: body.payer, kind: body.kind, compound: false };
+      const intent = { asset, block, amount: r.amount, ...(r.deployment === undefined ? {} : { deployment: r.deployment }), receiver: body.receiver, payer: body.payer, kind: body.kind, compound: false };
       if (digest(stableJSON(intent)) === row.fingerprint) return { ...intent, actionId: row.id.slice(5) };
     }
     dashboardCheck(false, 'saved_mint_intent_unavailable', 409);
   }
   async mintNow(slot) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    if (slot.deployment !== undefined) dashboardCheck(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(slot.deployment), 'invalid_deployment');
     const c = await this.candidate(slot);
     dashboardCheck(!c.minted && !c.void, 'already_minted', 409);
     const payout = await this.payout(), old = this.savedSlot(slot);
@@ -436,7 +437,7 @@ export class DashboardState {
     dashboardCheck(!body || body.receiver === payout && body.payer === payout && body.kind === 'tap', 'saved_payout_changed', 409);
     const args = old ? this.savedArguments(old, slot) : {
       actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + canonicalAsset(slot.asset) + '/' + slot.block).slice(0, 48),
-      asset: slot.asset, block: String(slot.block), amount: String(c.find.count), receiver: payout, payer: payout, kind: 'tap', compound: false };
+      asset: slot.asset, block: String(slot.block), ...(slot.deployment === undefined ? {} : { deployment: slot.deployment }), amount: String(c.find.count), receiver: payout, payer: payout, kind: 'tap', compound: false };
     const result = await runTool(this.context, 'mint_on_chain', args);
     const saved = this.savedSlot(slot), id = saved ? this.idOf(saved) : result.request?.id ?? result.request?.requestId;
     if (!requestId(id)) return { state: result.state, signed: result.signed === true, deploymentLink: result.deploymentLink ?? null };
@@ -912,10 +913,10 @@ export class DashboardState {
   // payment and inscription continue on the request page with the wallet checks there.
   mintCompound(value) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
-    dashboardCheck(value && Object.keys(value).sort().join(',') === 'amount,asset' && /^c2:[0-9a-f]{64}$/.test(value.asset) && amountText(String(value.amount)) && BigInt(value.amount) > 0n, 'invalid_compound_mint');
+    dashboardCheck(value && Object.keys(value).sort().join(',') === (value.deployment === undefined ? 'amount,asset' : 'amount,asset,deployment') && (value.deployment === undefined || typeof value.deployment === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(value.deployment)) && /^c2:[0-9a-f]{64}$/.test(value.asset) && amountText(String(value.amount)) && BigInt(value.amount) > 0n, 'invalid_compound_mint');
     const key = 'compound/' + value.asset;
     if (this.inflight.has(key)) return this.inflight.get(key);
-    const task = this.queue.then(() => this.mintCompoundNow(value.asset, String(value.amount).trim()));
+    const task = this.queue.then(() => this.mintCompoundNow(value.asset, String(value.amount).trim(), value.deployment));
     this.queue = task.catch(() => {});
     this.inflight.set(key, task);
     task.finally(() => this.inflight.delete(key)).catch(() => {});
@@ -927,11 +928,11 @@ export class DashboardState {
   }
   // The saved action exactly as it was signed: same action ID, same intent.
   savedCompoundArguments(row) {
-    const body = row.body, intent = { asset: body.request.asset, amount: body.request.amount, receiver: body.receiver, payer: body.payer, kind: body.kind, compound: true };
+    const body = row.body, intent = { asset: body.request.asset, amount: body.request.amount, ...(body.request.deployment === undefined ? {} : { deployment: body.request.deployment }), receiver: body.receiver, payer: body.payer, kind: body.kind, compound: true };
     dashboardCheck(digest(stableJSON(intent)) === row.fingerprint, 'saved_mint_intent_unavailable', 409);
     return { ...intent, actionId: row.id.slice(5) };
   }
-  async mintCompoundNow(asset, amount) {
+  async mintCompoundNow(asset, amount, deployment) {
     const payout = await this.payout(), old = this.savedCompoundMint(asset);
     let args;
     if (old) {
@@ -950,7 +951,7 @@ export class DashboardState {
       const held = (await this.units()).units.find(u => u.asset === asset);
       dashboardCheck(held && BigInt(amount) <= BigInt(held.available), 'compound_over_available', 409);
       args = { actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + asset + '/' + amount + '/' + Date.now()).slice(0, 48),
-        asset, amount, receiver: payout, payer: payout, kind: 'tap', compound: true };
+        asset, amount, ...(deployment === undefined ? {} : { deployment }), receiver: payout, payer: payout, kind: 'tap', compound: true };
     }
     const result = await runTool(this.context, 'mint_on_chain', args);
     const saved = this.journal.get('mint/' + args.actionId), id = saved?.body?.request ? this.idOf(saved) : result.request?.id ?? result.request?.requestId;

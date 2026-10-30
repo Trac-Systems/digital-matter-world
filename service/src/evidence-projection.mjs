@@ -6,7 +6,7 @@ const projections = {
   linkRequests: ['id','request','sig','terms','paymentId'],
   payoutBindings: ['id','request','agentSignature','walletSignature','acceptedAt','attestations'], payoutTransitions: ['id','acceptedAt']
 };
-const plain = new Set(['activeMints','paymentRequests','receiptCertificates','receiptCutoffPages','finds','findProvenance','patternProvenance','typeProvenance','types','payoutCurrent','mintAdmissions','financialAdmissions','financialRecordProvenance','financialCustodyPayments','assetCheckpoint','evidenceContexts','patternsByAsset']);
+const plain = new Set(['activeMints','paymentRequests','receiptCertificates','receiptCutoffPages','finds','findProvenance','patternProvenance','typeProvenance','types','payoutCurrent','mintAdmissions','financialAdmissions','financialRecordProvenance','financialCustodyPayments','assetCheckpoint','evidenceContexts','patternsByAsset','officialCatalogNames','officialCatalogNameIndex','tickerPayments']);
 export function exportableSpace(space) { return Object.hasOwn(projections, space) || plain.has(space) || ['meta', 'ceremonies'].includes(space) || /^payoutHistory\/[0-9a-f]{64}\/(tap|ethereum)$/.test(space) || /^payoutOwners\/[0-9a-f]{64}$/.test(space); }
 export function projectEvidence(space, id, row) {
   check(exportableSpace(space), 'evidence_space');

@@ -11,7 +11,7 @@ export class Payouts {
       const commissions = [...file.commissions ?? [], ...(file.financialOperations ?? []).flatMap(input =>
         input.transition.action?.type === 'capacity-finish' ? input.evidence.commissions ?? [] : [])];
       for (const commission of commissions) {
-        const legacy = commission.role === 'legacyDeploy';
+        const legacy = ['legacyDeploy', 'deployer'].includes(commission.role);
         const id = `${commission.id}/${commission.role}${legacy ? '/' + commission.deployment : ''}`;
         if (seen.has(id) || this.store.get('commissionOwed', id)) continue;
         seen.add(id);
@@ -19,14 +19,15 @@ export class Payouts {
         total.accrued = (BigInt(total.accrued) + BigInt(commission.amount)).toString();
         if (legacy) {
           check(BigInt(commission.payoutMinAtoms) > 0n, 'legacy_deploy_threshold');
-          total.legacyDeploy = true;
+          if (commission.role === 'legacyDeploy') total.legacyDeploy = true;
+          else total.deployer = true;
           total.payoutMinAtoms = String(BigInt(total.payoutMinAtoms ?? '0') > BigInt(commission.payoutMinAtoms) ? total.payoutMinAtoms : commission.payoutMinAtoms);
         }
         totals.set(key, total);
         operations.push({ space: 'commissionOwed', id, value: { ...commission,
           rail: legacy ? 'tap' : this.store.get('mints', commission.id)?.kind ?? null,
           batch: draft.proposal.batch.n, observation: file.observation,
-          ...(legacy ? { source: 'accepted_legacy_deploy_liability', inscription: file.financialOperations.find(input => input.transition.id === commission.id && input.transition.action?.type === 'capacity-finish')?.evidence.inscription } : {}) } });
+          ...(legacy ? { source: commission.role === 'deployer' ? 'accepted_deployer_liability' : 'accepted_legacy_deploy_liability', inscription: file.financialOperations.find(input => input.transition.id === commission.id && input.transition.action?.type === 'capacity-finish')?.evidence.inscription } : {}) } });
       }
     }
     return [...operations, ...[...totals].map(([id, value]) => ({ space: 'payoutTotals', id, value }))];
@@ -44,7 +45,7 @@ export class Payouts {
     check(typeof beneficiary === 'string' && beneficiary.length > 0 && beneficiary.length <= 128 && /^[1-9][0-9]{0,77}$/.test(amount) && /^[0-9a-f]{64}$/.test(txid) && typeof reference === 'string' && reference.length > 0 && reference.length <= 128, 'payout_input');
     const key = hash(beneficiary), total = this.store.get('payoutTotals', key);
     const id = hash(reference), old = this.store.get('payoutPaid', id), value = { beneficiary, amount, txid, reference,
-      ...(total?.legacyDeploy ? { role: 'legacyDeploy', rail: 'tap', to: beneficiary, state: 'paid', evidence: 'operator_recorded_transaction' } : {}) };
+      ...(total?.legacyDeploy || total?.deployer ? { role: total.deployer ? 'deployer' : 'legacyDeploy', rail: 'tap', to: beneficiary, state: 'paid', evidence: 'operator_recorded_transaction' } : {}) };
     if (old) { check(['beneficiary', 'amount', 'txid', 'reference'].every(key => old[key] === value[key]), 'payout_reference_conflict'); return; }
     check(total && BigInt(total.accrued) - BigInt(total.paid) >= BigInt(amount), 'payout_exceeds_owed');
     const minimum = payoutMinimum(this.store, total);

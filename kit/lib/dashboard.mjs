@@ -103,6 +103,13 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       }
       const mint = /^\/api\/requests\/([0-9a-f]{64})(\/plan)?$/.exec(path);
       if (req.method === 'GET' && mint) { keys([]); json(await (mint[2] ? state.plan(mint[1]) : state.status(mint[1]))); return; }
+      if (req.method === 'GET' && path === '/api/tickers') { keys(['asset', 'after', 'limit']); json(await state.service.assetTickers(url.searchParams.get('asset'), {
+        ...(url.searchParams.has('after') ? { after: url.searchParams.get('after') } : {}), ...(url.searchParams.has('limit') ? { limit: Number(url.searchParams.get('limit')) } : {}) })); return; }
+      if (req.method === 'POST' && path === '/api/ticker-payment') { keys([]); json(await state.service.tickerPayment(await body(req))); return; }
+      if (req.method === 'POST' && path === '/api/deploy-ticker') {
+        keys([]); const value = await body(req); dashboardCheck(value && Object.keys(value).every(k => ['asset', 'ticker', 'retry'].includes(k)), 'invalid_ticker_request');
+        json(await state.service.deployTicker({ ...value, receiver: await state.payout() })); return;
+      }
       if (req.method === 'GET' && path === '/api/units') { keys([]); json(await state.units()); return; }
       if (req.method === 'GET' && path === '/api/sends') { keys([]); json(await state.sends()); return; }
       if (req.method === 'GET' && path === '/api/tnk') { keys([]); json(await state.tnk()); return; }

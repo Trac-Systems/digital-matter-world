@@ -61,7 +61,7 @@ export class PublicMints {
     return { v: 3, asset, rows, mintRights: rows, total: null, next: page.nextCursor, nextCursor: page.nextCursor };
   }
   async quote(input, start = false, { clientIP, requesterSecret } = {}) {
-    this.active(); check(rules.exactKeys(input, ['asset', 'block', 'tapAddress']), 'public_mint_input');
+    this.active(); check(rules.exactKeys(input, ['asset', 'block', 'tapAddress', ...(input.deployment === undefined ? [] : ['deployment'])]), 'public_mint_input');
     const ipHash = start ? await this.admission.start(clientIP) : null;
     const resolved = await mintAssetDefinition(this.store, input.asset), block = rules.decimalV2(input.block);
     const state = this.state(resolved.catalogAsset, block);
@@ -71,13 +71,13 @@ export class PublicMints {
     payoutAddress('tap', input.tapAddress, this.parent.bitcoinNetwork);
     const needed = await Mints.prototype.deploymentNeeded.call(this.parent, resolved.asset, { block, receiver: input.tapAddress, kind: 'tap' });
     if (needed) return { ...needed, publicMint: true, reservation: 'none' };
-    const generation = await this.reads.financialDeployment(resolved.asset, await this.reads.batchStamp());
+    const generation = await this.reads.financialDeployment(resolved.asset, await this.reads.batchStamp(), input.deployment);
     if (!generation.existing) {
       await this.parent.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
       return { id: null, requestId: null, asset: resolved.catalogAsset, block, receiver: input.tapAddress, kind: 'tap', publicMint: true,
         state: 'deployment_pending', payable: false, reservation: 'none', fees: [], missing: [] };
     }
-    const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress }, await this.reads.batchStamp());
+    const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress, ...(input.deployment ? { deployment: input.deployment } : {}) }, await this.reads.batchStamp());
     const row = { id: q.id, publicMint: true, catalogAsset: resolved.catalogAsset, intent: q.intent, receiver: input.tapAddress, payer: input.tapAddress, kind: 'tap',
       ...(q.registration ? { paymentRegistration: q.registration } : {}),
       request: { asset: resolved.asset, block, amount: q.amount, expires: q.feeQuote.validUntil }, expiry: q.feeQuote.validUntil, created: q.feeQuote.validFrom,
@@ -266,6 +266,11 @@ export class PublicMints {
 }
 
 export function publicMintAcceptedWrites(store, input, accepted = store) {
+  if (input.transition.action?.type === 'ticker-refund') {
+    const id = input.transition.id, refund = accepted.get('accountRecords', 'fp/public-refund/' + id);
+    return refund ? ['publicMintRefunds', 'publicMintRefundsByRequest/' + refund.id, 'publicMintRefundsByAddress/' + rules.hash(refund.tapAddress)]
+      .map(space => ({ space, id, value: refund })) : [];
+  }
   if (input.transition.type !== 'public-scan') return [];
   const key = publicScanKey(input.transition.id), prior = store.get('accountRecords', key);
   const winner = accepted.get('accountRecords', key)?.winner, writes = [];

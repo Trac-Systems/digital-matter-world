@@ -86,6 +86,7 @@ const ROLE = {
   firstMaker: ['First maker', '#6F9A3E', 'Whoever first made this compound type.'],
   legacyDeploy: ['Older deploy holders', '#5A5E66', 'Taken from burn, split equally per qualifying older deployment, and owed to its current Bitcoin holder in the payout ledger.'],
   discoverer: ['Discoverer', '#9A72C8', 'Paid directly to the pattern discoverer.'],
+  deployer: ['Ticker deployer', '#3E7F86', 'Taken from burn and owed to the current holder of the minted ticker\'s deploy inscription in the payout ledger.'],
 };
 // Deferred shares use the same split rows; treasury holds their payout backing.
 export function splitTable(split, destinations = {}, kind = 'tap', unit) {
@@ -98,7 +99,7 @@ export function splitTable(split, destinations = {}, kind = 'tap', unit) {
     { key: 'role', label: 'Goes to', render: r => h('span', { 'data-tip': ROLE[r.role][2] }, h('span.swatch', { style: { background: ROLE[r.role][1] } }), ROLE[r.role][0]), sortable: false },
     { key: 'pct', label: 'Share', num: true, render: r => h('span.mono', {}, percent(r.amount, total)), sortable: false },
     { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, fee(r.amount, kind, unit)), sortable: false },
-    { key: 'to', label: 'Address', render: r => r.to ? hashEl(r.to) : h('span.faint', {}, r.role === 'burn' ? 'burn' : r.role === 'legacyDeploy' ? 'payout ledger' : '–'), sortable: false },
+    { key: 'to', label: 'Address', render: r => r.to ? hashEl(r.to) : h('span.faint', {}, r.role === 'burn' ? 'burn' : ['legacyDeploy', 'deployer'].includes(r.role) ? 'payout ledger' : '–'), sortable: false },
   ], { sortable: false }));
 }
 
@@ -109,7 +110,16 @@ export function legacyDeployPolicyText(status) {
   return `${share} % of each qualifying pattern mint fee comes from the burn and is split equally among deployments before block ${policy.cutoff}, excluding the DMW authority. Their current Bitcoin holders accrue TAP in the public payout ledger, paid by the operator once an address is owed at least ${tap(policy.payoutMinAtoms, status.unit)}. With no qualifying deployment, that share stays in the burn.`;
 }
 
+// Every pattern and compound mint, whichever ticker it goes to, also pays the minted ticker's deploy holder.
+export function deployerSharePolicyText(status) {
+  const bps = status?.settings?.values?.deployerShareBps;
+  if (!Number.isSafeInteger(bps) || bps <= 0) return 'Each pattern and compound can have several tokens on TAP. They share its units, and every mint pays the same rewards whichever ticker it goes to.';
+  const share = String(Math.floor(bps / 100)) + (bps % 100 ? '.' + String(bps % 100).padStart(2, '0').replace(/0+$/, '') : '');
+  return `Each pattern and compound can have several tokens on TAP. They share its units, and every mint pays the same rewards whichever ticker it goes to; ${share} % of each mint fee comes from the burn and goes to the holder of the minted ticker's deploy inscription, through the public payout ledger.`;
+}
+
 export function legacyDeployPaymentText(status) {
-  const amount = status?.split?.legacyDeploy;
-  return amount ? ` ${tap(amount, status.unit)} from this mint's burn is held in treasury for older deploy holders and paid through the payout ledger.` : '';
+  const amount = status?.split?.legacyDeploy, deployer = status?.split?.deployer;
+  return (amount ? ` ${tap(amount, status.unit)} from this mint's burn is held in treasury for older deploy holders and paid through the payout ledger.` : '')
+    + (deployer && BigInt(deployer) > 0n ? ` ${tap(deployer, status.unit)} from this mint's burn is held in treasury for the holder of the minted ticker's deploy inscription and paid through the payout ledger.` : '');
 }

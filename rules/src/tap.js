@@ -44,8 +44,12 @@ export function compoundDeploy({ tick, authority, max = MAX.toString() }) {
 }
 // ord-tap hashes raw ticker/amount/address/data/salt strings separated by '-'.
 // This digest is signed directly, not as an Ethereum or Bitcoin signed message.
-export function compoundMintPermit({ tick, quantity, address, salt, data }) {
-  ticker(tick); assert(amount(quantity) && BigInt(quantity) <= MAX && typeof address === 'string' && address.length > 0 && address.length <= 128 &&
+export function compoundMintPermit({ tick, quantity, address, salt, data }, { validateTicker } = {}) {
+  // Additional deployments have already passed execution-height admission.
+  // Their caller supplies the coordinated TAP grammar; legacy callers retain
+  // the original grammar and exact signing bytes.
+  if (validateTicker) assert(validateTicker(tick) === tick, 'compound_ticker'); else ticker(tick);
+  assert(amount(quantity) && BigInt(quantity) <= MAX && typeof address === 'string' && address.length > 0 && address.length <= 128 &&
     typeof salt === 'string' && /^[0-9a-f]{64}$/.test(salt), 'tap_mint');
   assert(data === undefined || (typeof data === 'string' && utf8(data).length <= 512), 'tap_data');
   const fields = ['tap', 'token-mint', tick, quantity, address]; if (data !== undefined) fields.push(data); fields.push(salt);

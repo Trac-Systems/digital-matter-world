@@ -1,3 +1,4 @@
+import { multiTickerActive } from '../rules/src/multi-ticker-activation.js';
 import { releaseFinancialCapacity } from './financial-capacity.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
 import { financialRecoveryKey } from './financial-records.js';
@@ -29,7 +30,7 @@ export async function financialUnfrozen(store, records) {
 // timeout revokes a permit or proves an external transfer/refund.
 export async function applyFinancialLifecycle(store, op, { network, height, limits }) {
   const a = op.action, clock = ordinalCodec(typeof height === 'string');
-  check(keys(op, ['op', 'v', 'id', 'type', 'action', 'evidence']) && hex(op.evidence) && a?.id === op.id && typeof a.type === 'string', 'lifecycle_operation');
+  check(keys(op, ['op', 'v', 'id', 'type', 'action', 'evidence', ...(a?.type === 'ticker-refund' ? ['refund'] : [])]) && hex(op.evidence) && a?.id === op.id && typeof a.type === 'string', 'lifecycle_operation');
   const exact = names => check(keys(a, ['type', 'id', ...names]), 'lifecycle_fields');
   const writes = new Map(), get = key => writes.has(key) ? writes.get(key) : store.get(key);
   const put = (key, value) => writes.set(key, value);
@@ -37,7 +38,16 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
     typeof a.sig === 'string' && /^[0-9a-f]{128}$/.test(a.sig) && ed25519.verify(a.sig, lifecycleDigest(network, a), owner, { zip215: false }), 'lifecycle_signature');
   if (!a.type.startsWith('recovery-')) await financialUnfrozen(store, ['fp/' + a.id, 'fl/' + a.id, 'bc/' + a.id, 'dc/' + a.id]);
 
-  if (a.type === 'legacy-link-complete' || a.type === 'legacy-link-exit') {
+  if (a.type === 'ticker-refund') {
+    exact(['request', 'reference', 'reason']);
+    const r = op.refund, key = 'fp/public-refund/' + a.id;
+    check(multiTickerActive(height) && hex(a.request) && a.id === hash([a.request, a.reference]) &&
+      r?.id === a.request && r.reference === a.reference && r.reason === a.reason && r.refundId === a.id && r.state === 'owed' &&
+      typeof r.tapAddress === 'string' && Array.isArray(r.fees) && r.fees.length > 0 && r.fees.length <= limits.paymentPage &&
+      r.fees.every(f => positive(f.amount) && f.ticker === 'tap') && !await get(key), 'ticker_refund_binding');
+    await financialUnfrozen(store, [key, 'fp/ticker-refused/' + a.request]);
+    put(key, r); put('fp/ticker-refused/' + a.request, { reason: a.reason });
+  } else if (a.type === 'legacy-link-complete' || a.type === 'legacy-link-exit') {
     exact([]);
     const source = await get('fi/source/' + a.id), funding = await get('fp/' + a.id), complete = a.type === 'legacy-link-complete';
     check(source?.legacy?.kind === 'link' && source.requestId === a.id && funding?.terms === hash(source) &&
@@ -123,12 +133,23 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
     put('fd/' + a.id, { asset: a.asset, deployment: a.deployment, generation: a.generation, previous: a.previous,
       maximum: a.maximum, limit: a.limit, reserved: '0', minted: '0', evidence: op.evidence });
     put('fd/asset/' + a.asset, a.id); put('fd/external/' + hash(a.deployment), a.id);
+  } else if (a.type === 'deployment-add') {
+    exact(['asset', 'deployment', 'official', 'maximum', 'limit']);
+    check(multiTickerActive(height), 'multi_ticker_inactive');
+    const official = await get('fd/' + a.official);
+    await financialUnfrozen(store, ['fd/' + a.official]);
+    check(official?.asset === a.asset && !official.official && hex(a.official) &&
+      typeof a.deployment === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(a.deployment) && positive(a.maximum) && uint(a.limit) &&
+      !await get('fd/' + a.id) && !await get('fd/external/' + hash(a.deployment)), 'deployment_identity');
+    put('fd/' + a.id, { asset: a.asset, deployment: a.deployment, official: a.official, generation: '0', previous: null,
+      maximum: a.maximum, limit: a.limit, reserved: '0', minted: '0', evidence: op.evidence });
+    put('fd/external/' + hash(a.deployment), a.id);
   } else if (a.type === 'capacity-reserve') {
     exact(['deployment', 'plot']);
     const d = await get('fd/' + a.deployment), obligation = await get('ao/' + a.id);
     await financialUnfrozen(store, ['fd/' + a.deployment, 'ao/' + a.id]);
     check(hex(a.deployment) && d && obligation?.state === 'reserved' && obligation.asset === d.asset && !await get('dc/' + a.id) &&
-      await get('fd/asset/' + d.asset) === a.deployment && (a.plot === null || uint(a.plot)), 'capacity_identity');
+      (await get('fd/asset/' + d.asset) === a.deployment || multiTickerActive(height) && d.official && (await get('fd/' + d.official))?.asset === d.asset) && (a.plot === null || uint(a.plot)), 'capacity_identity');
     check(BigInt(d.reserved) + BigInt(d.minted) + BigInt(obligation.amount) <= BigInt(d.maximum) &&
       (d.limit === '0' || BigInt(obligation.amount) <= BigInt(d.limit)), 'capacity_exhausted');
     const plot = a.plot === null ? null : 'dc/plot/' + d.asset + '/' + a.plot;

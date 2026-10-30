@@ -139,7 +139,7 @@ The base split for making a found pattern real, before any older deployment shar
 | Making a compound real | 30 % | 35 % | 35 % |
 | Bitmap link | – | 50 % | 50 % |
 
-For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`. {{legacy-deploy-share}} Several tokens can use the same DMT discovery; DMW manages its own one-to-one provenance while recognizing holders of older deployments.
+For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`. {{legacy-deploy-share}} {{deployer-share}} Several tokens can use the same DMT discovery; DMW manages its own one-to-one provenance while recognizing holders of older deployments.
 
 When you are also one of the recipients, for example a finder minting their own find, that share simply stays with you.
 

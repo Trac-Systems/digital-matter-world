@@ -1,4 +1,6 @@
 import { assert, integer } from './core.js';
+import { multiTickerActive } from './multi-ticker-activation.js';
+import { TICKER_DEPLOY_SETTINGS } from './settings-v2.js';
 // All fee math, indexed payments, escrow amounts and payouts use this unit.
 export const TAP_DECIMALS = 18;
 export const TAP_UNIT = Object.freeze({ currency: 'TAP', denomination: 'atomic', decimals: TAP_DECIMALS });
@@ -22,7 +24,12 @@ export function formatTapAmount(value) {
 // Keep these values stable so pre-configuration quotes and installed kits agree.
 export const FEE_DEFAULTS = Object.freeze({ tierMultipliers: Object.freeze([1, 3, 10, 30, 100]), compoundMinimum: 10, link: 20 });
 function amount(v) { assert(typeof v === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(v), 'amount'); return BigInt(v); }
-export function feeFor(kind, base, tier = 1, settings = {}) {
+export function feeFor(kind, base, tier = 1, settings = {}, executionHeight = '0') {
+  if (kind === 'ticker' && multiTickerActive(executionHeight)) {
+    const multiplier = settings.tickerDeployMultiplier ?? TICKER_DEPLOY_SETTINGS.tickerDeployMultiplier;
+    assert(Number.isSafeInteger(multiplier) && multiplier >= 0, 'fee_settings');
+    return tapAtoms((amount(base) * BigInt(multiplier)).toString()).toString();
+  }
   const s = { ...FEE_DEFAULTS, ...settings };
   assert(integer(tier) && tier >= 1 && tier <= 5 && s.tierMultipliers.length === 5 &&
     [...s.tierMultipliers, s.compoundMinimum, s.link].every(n => integer(n) && n > 0), 'fee_settings');
@@ -47,7 +54,7 @@ export function splitFee(total, { kind = 'find', linked = false, discovered = fa
 }
 
 // Commissions are liabilities of the treasury, paid in the public payout ledger.
-export const treasuryPayment = split => (BigInt(split.treasury) + BigInt(split.discoverer) + BigInt(split.legacyDeploy ?? '0')).toString();
+export const treasuryPayment = split => (BigInt(split.treasury) + BigInt(split.discoverer) + BigInt(split.legacyDeploy ?? '0') + BigInt(split.deployer ?? '0')).toString();
 export function commissionOwed(id, split, destinations, kind = 'tap') {
   return ['discoverer', ...(kind === 'ethereum' ? ['landowner'] : [])].filter(role => split[role] !== '0').map(role => {
     assert(typeof destinations[role] === 'string' && destinations[role].length > 0, 'commission_destination');

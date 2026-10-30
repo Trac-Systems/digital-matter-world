@@ -2,6 +2,12 @@ import * as rules from '../../rules/src/index.js';
 import { requestDigest } from '../../contract/signing.js';
 import { check, equal, hex, sha256 } from './crypto.mjs';
 
+// The naming component arrives with the coordinated release. Its absence
+// preserves legacy permit reconstruction; it never relaxes the old grammar.
+const chosenTickers = await import('../../rules/src/ticker-names.js').catch(error => {
+  if (error.code === 'ERR_MODULE_NOT_FOUND') return null; throw error;
+});
+
 export { rules };
 export const requestID = (network, request) => hex(requestDigest(network, 'rq', request));
 export async function pendingRecord(reads, network, request, signature, counted) {
@@ -56,7 +62,8 @@ export function permit(network, request, deployment, receiver, id, paymentHash) 
   const data = `dmw-mint-v1|${network}|${id}|${sha256(deployment.id)}|${paymentHash}`;
   const salt = sha256(`dmw-mint-salt-v1|${network}|${id}`);
   if (deployment.kind === 'compound') {
-    const p = rules.compoundMintPermit({ tick: deployment.tick, quantity: request.amount, address: receiver, salt, data });
+    const p = rules.compoundMintPermit({ tick: deployment.tick, quantity: request.amount, address: receiver, salt, data },
+      deployment.officialDeployment && chosenTickers ? { validateTicker: chosenTickers.validateChosenTicker } : {});
     return { payload: p.payload, digest: hex(p.signingDigest), address: receiver, salt };
   }
   const payload = { p: 'tap', op: 'dmt-mint', tick: deployment.tick, blk: String(request.block), dep: deployment.id, dta: data };

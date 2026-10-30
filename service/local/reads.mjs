@@ -1,3 +1,5 @@
+import { officialName } from '../src/official-ticker-names.mjs';
+import { selectedDeployment } from '../src/registry.mjs';
 import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
 import { BitmapIndex } from '../prod/bitmap-index.mjs';
 import { installFinancialSources, acceptedFinancialReservation } from '../src/financial-sources.mjs';
@@ -158,9 +160,18 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
       const histories = []; for (const input of context.inputs) histories.push(await views.view(input.tip, input.tipHash));
       return { ...context, history: histories[0], hashAt: histories[0].hashAt, views: histories.map(history => ({ history, hashAt: history.hashAt })) };
     },
-    async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId) {
+    officialName: name => officialName(reads, store, name),
+    async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId, selection) {
       const registrations = await registry(), current = registrations.assets[asset];
-      const registered = payoutSnapshot?.deploymentId ? current?.id === payoutSnapshot.deploymentId ? current : typeof registrations.asset === 'function' ? registrations.asset(asset, payoutSnapshot.deploymentId) : (registrations.generations?.[asset] ?? []).find(e => e?.id === payoutSnapshot.deploymentId) : current; check(registered, 'asset_unregistered');
+      const chosen = selection || payoutSnapshot?.deploymentId;
+      const registered = selectedDeployment(registrations, asset, chosen) ?? (payoutSnapshot?.deploymentId && typeof registrations.asset === 'function' ? registrations.asset(asset, payoutSnapshot.deploymentId) : payoutSnapshot?.deploymentId ? (registrations.generations?.[asset] ?? []).find(e => e.id === payoutSnapshot.deploymentId) : null);
+      check(registered, 'asset_unregistered');
+      if (selection || registered.officialDeployment) {
+        check(rules.multiTickerActive(viewOrKind?.executionHeight ?? viewOrKind?.counted ?? await reads.counted()), 'multi_ticker_inactive');
+        check(!payoutSnapshot || payoutSnapshot.deploymentId === registered.id, 'financial_deployment_binding');
+        if (registered.officialDeployment) check(registered.asset === asset && registered.privilege === current?.privilege &&
+          registered.kind === current.kind && (registered.elementId ?? null) === (current.elementId ?? null), 'additional_deployment_binding');
+      }
       const provenance = /^(p2:|c2:)/.test(asset) ? await acceptedAssetProvenance({ store, reads, asset, block }) : null;
       if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]) &&
         (registered.pattern?.amountMode ?? 'count') === (provenance.pattern.amountMode ?? 'count'), 'asset_provenance_deployment');
@@ -201,7 +212,7 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
       const holder = link ? admission ? admission.bitmap : await reads.bitmap(block) : null;
       if (payoutSnapshot?.mintOwnershipHash) check(mintOwnershipMatches(payoutSnapshot, { bitmap: holder, link, assetRevision: provenance?.revision }), 'quote_recipient_changed');
       const landownerAddress = holder ? kind === 'ethereum' ? payout(holder.agent, 'landowner') : holder.address : null;
-      return { ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
+      return { ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, ...(registered.officialDeployment ? { officialDeployment: registered.officialDeployment } : {}), generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
         remaining: await tap('getMintTokensLeft/' + indexTick), limit: deployment.lim ?? '0' }, find: found, link, bitmapHolder: holder,
         landownerAddress, displayLabel: registered.displayLabel ?? registered.pattern?.name ?? asset, discoverer, payouts, ...(provenance ? { assetRevision: provenance.revision } : {}), tier: provenance?.tier ?? registered.pattern?.tier ?? 1, treasury: destinations.treasury,
         beneficiaries: { finder: found?.finder ?? null, firstMaker: registered.kind === 'compound' ? maker : null, discoverer: pattern?.discoverer ?? null, landowner: holder?.agent ?? null },

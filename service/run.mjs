@@ -129,6 +129,7 @@ async function startGateway(config, controller) {
     const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', rosterHistory: config.rosterHistory, members: config.committee.map(s => s.peer), committee });
     operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
     if (mints) mints.provisioner = operator.provisioner;
+    if (operator.provisioner) { operator.provisioner.financial = v2?.financial; if (mintSender) operator.provisioner.mintSender = mintSender; }
     const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);

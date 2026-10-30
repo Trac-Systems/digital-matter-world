@@ -10,6 +10,8 @@ import { assetName, mineral, title, rememberCompound } from './console/js/words.
 import { formatTap } from './amount-format.js';
 import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, wait, hex, sha256, unhex, fail } from './wallets.js';
 import { wallet, walletSummary, connectButtons } from './connect.js';
+import { tickerPage } from './ticker-deploy.js';
+import { tickerChoice } from './console/js/tickers.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted', 'credited', 'refunded']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -49,6 +51,13 @@ function compoundPage(root, id, back) {
 export function moneyPage(root, { type, id }) {
   if (!id) return walletsHome(root, type);
   const back = h('div.row', { style: { marginBottom: '16px' } }, h('a.btn.sm.ghost', { href: '/mint' }, '← Mint & wallets'));
+  // A chosen ticker's deployment request: its fee, then its deploy inscription.
+  const ticker = new URLSearchParams(location.search).get('ticker');
+  if (type === 'mint' && /^[0-9a-f]{64}$/.test(ticker ?? '') && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(id)) {
+    const cleanup = tickerPage(root, { asset: id, id: ticker });
+    root.querySelector('.page-head').after(back);
+    return cleanup;
+  }
   // The first maker's dashboard link (?owner=) opens the deployment steps; everyone else sees how it works.
   if (type === 'mint' && /^c2:[0-9a-f]{64}$/.test(id) && !(globalThis.DMW_LOCAL_AGENT === true && new URLSearchParams(location.search).get('owner'))) return compoundPage(root, id, back);
   if (type === 'mint') {
@@ -354,13 +363,14 @@ async function feeRate() {
   } catch { return null; }
 }
 // Mint one public block: TAP Wallet → quote (a preview, nothing reserved) → start → the request's payment page.
-async function mintPublic(row, notify) {
+// `deployment` is the chosen ticker's deploy inscription (named `ticker`); none mints into the official one.
+async function mintPublic(row, notify, { deployment = null, ticker = null } = {}) {
   if (!wallet.tap) await wallet.connect('tap');
   const tapAddress = wallet.tap?.address;
   if (!tapAddress) fail('Connect TAP Wallet to mint.');
   notify('Checking 1-TX Transfers in TAP Wallet…');
   await oneTxReady(tapAddress);
-  const body = { asset: row.asset, block: String(row.block), tapAddress };
+  const body = { asset: row.asset, block: String(row.block), tapAddress, ...(deployment ? { deployment } : {}) };
   notify('Getting the fee…');
   const [quote, rate] = await Promise.all([api('/public-mints/quote', body), feeRate()]);
   const matches = value => (value.asset === row.asset || value.catalogAsset === row.asset || (store.patterns?.patterns ?? []).some(p => p.asset === row.asset && p.legacy?.asset === value.asset))
@@ -384,8 +394,10 @@ async function mintPublic(row, notify) {
       ? 'Nothing is reserved. TAP Wallet asks once: on the next page it pays the fee and sets aside the Bitcoin for your mint inscription; our server then sends the mint. If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.'
       : 'Nothing is reserved: the next page asks TAP Wallet to pay, then to inscribe the mint.'),
     rows: [['Pattern', assetName(row.asset)], ['Block', fmtInt(row.block)], ['Units', fmtInt(quote.amount ?? row.amount)],
+      ticker ? ['Ticker', h('span.mono', {}, ticker)] : null,
       ['Fee', h('strong.mono', {}, formatTap(quote.price, decimals))],
       ...(quote.fees ?? []).map(f => [`· ${String(f.role ?? 'fee').replace(/_/g, ' ')}`, h('span.mono', {}, formatTap(f.amount, decimals))]),
+      quote.split?.deployer && BigInt(quote.split.deployer) > 0n ? ['· of the treasury item, for the ticker’s deploy holder', h('span.mono', {}, formatTap(quote.split.deployer, decimals))] : null,
       setAside !== null ? ['Bitcoin set aside for the mint inscription and a possible refund', h('span.mono', {}, `${fmtInt(setAside)} sats`)] : null,
       ['Bitcoin fee rate', rate ?? 'TAP Wallet shows the network fee before you approve'],
       ['Receiver', hashEl(quote.receiver ?? tapAddress)]],
@@ -515,7 +527,7 @@ function walletsHome(root, type) {
   let list;
   const mintButton = row => h('button.btn.sm.primary', { type: 'button', onclick: async e => {
     const b = e.currentTarget; b.disabled = true; b.classList.add('busy');
-    try { await mintPublic(row, text => say(text, text.endsWith('…') ? 'busy' : 'info')); }
+    try { await mintPublic(row, text => say(text, text.endsWith('…') ? 'busy' : 'info'), row.asset === selectedAsset ? { deployment: choice.value(), ticker: choice.label() } : {}); }
     catch (error) {
       say(error.code === 4001 ? 'Wallet request cancelled. You can retry.' : publicError(error), error.code === 4001 ? 'warn' : 'bad');
       if (['someone_paid_first', 'already_minted', 'claimed', 'claimed_first', 'public_minted'].includes(error.message)) list?.reload();
@@ -529,8 +541,11 @@ function walletsHome(root, type) {
     pick => { selectedAsset = pick.asset; drawToken(); list.reset(); });
   const picker = h('label.pager-ctl', {}, h('span', {}, 'Pattern'), ...search);
   // The picked pattern's token on Bitcoin; until it is deployed, the way to inscribe and deploy it.
+  // With several tickers, the one its mints go to (Official unless chosen).
+  // The choice stays hidden (no gap in the stack) until there are several tickers.
   const tokenLine = h('div');
-  const drawToken = () => clear(tokenLine, tokenStatus(selectedAsset));
+  let choice, choiceLine = h('div', { hidden: true });
+  const drawToken = () => { clear(tokenLine, tokenStatus(selectedAsset)); choice = tickerChoice(selectedAsset); choiceLine.replaceWith(choice.el); choiceLine = choice.el; };
   drawToken();
   list = pagedTable({ path: () => '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25, skipEmpty: true,
     empty: () => `No public blocks of ${assetName(selectedAsset)} right now. ${PUBLIC_MINT_COPY}`,
@@ -546,7 +561,7 @@ function walletsHome(root, type) {
     ] });
   list.el.classList.add('public-mints');
   const publicPanel = panel('Public blocks', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
-    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, tokenLine, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
+    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, tokenLine, choiceLine, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
   // A block opened from elsewhere (/mint?asset=…&block=…): its current state from the point read.
   const bigger = b => { b.classList.remove('sm'); b.classList.add('cta'); return b; };
   let chosenBox = null;

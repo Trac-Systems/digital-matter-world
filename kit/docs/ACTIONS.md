@@ -455,3 +455,34 @@ uses the same operator-set TAP amount. The reference target is US $0.50; the
 amount is fixed in TAP until the operator updates the settings. Bitcoin TAP and
 bridged TAP share the same price; Bitcoin fees and Ethereum gas are additional.
 Old requests, refunds and credits retain their recorded amounts across revisions.
+
+## Additional TAP tickers
+
+After multi-ticker activation, `dmw deploy-ticker <asset> <ticker> --config FILE`
+previews the receiver and choice without sending. Add `--live` to prepare the
+request. The `deploy_ticker` MCP/action tool accepts `{asset,ticker,retry?,feeRate?,maxFeeSats?}`.
+The official deployment must already be registered. Review the returned fee
+view; pay its exact TAP wallet items, then use `report_ticker_payment` with
+`{id,paymentIds:[inscriptionId,...]}`. No payment is broadcast by this report.
+When paid, rerun the same deploy command with an explicit `--max-fee-sats` ceiling
+to use the local Bitcoin signer for the exact supplied deployment inscription.
+The chosen ticker shares the official pattern's element and mint authority.
+
+`report_ticker_payment` also accepts `expire:true` with an empty paymentIds array
+to expire an unpaid request. After its fee state is terminal, `--retry` (or
+`retry:true`) creates a fresh fee request; the previous refund obligation remains.
+Paid requests do not expire. Keep the local inscription journal across retries.
+
+`mint_on_chain` accepts optional `deployment` (registered ticker or inscription
+ID). Its signed v2 request binds the canonical inscription ID returned by the
+quote. Omission selects the official ticker. This works for patterns and
+compounds on either payment rail. Choosing another ticker never creates another
+balance or lets the same asset/block occurrence be minted twice.
+
+If the fee includes `refundFunding`, include its exact Bitcoin output in the
+same payment commit transaction (wallet `extraOutputs`). It reserves Bitcoin
+for a possible fee refund. On successful registration the sender returns it,
+minus the return transaction fee. Each payment reference has its own reserve;
+without it the accepted refund may require operator recovery.
+
+Use `asset_tickers` to read the registered choices before preparing a deployment or mint.

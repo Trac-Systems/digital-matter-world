@@ -148,6 +148,52 @@ export class TapWalletMint {
       return { ...await this.status(id), localState: 'payment_submitted', ...(extra ? { mintFunded: true } : {}) };
     });
   }
+  // The deploy fee of an additional ticker: the request's own wallet items in
+  // one TAP transfer, with its refund set-aside when the request names one.
+  // The same journal rules as pay(): an uncertain send is never repeated blindly.
+  async payTickerFee(job, { retry = false } = {}) {
+    const capabilities = await tapWalletCapabilities(this.provider);
+    await this.checkAccount();
+    ensure(/^[0-9a-f]{64}$/.test(job?.id ?? '') && job.officialDeployment, 'Invalid ticker request');
+    return this.journal.lock(this.key('ticker/' + job.id), async () => {
+      const fee = job.fee;
+      ensure(job.receiver === this.address, 'Connect the TAP Wallet that requested this ticker');
+      ensure(fee?.payable === true && ['awaiting_payment', 'partly_paid'].includes(fee.state), 'This ticker fee is not accepting a payment');
+      const items = fee.redeem?.items;
+      ensure(Array.isArray(items) && items.length > 0 && items.every(i => typeof i?.address === 'string' && i.tick === 'tap' && /^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$/.test(i.amt ?? '') && typeof i.dta === 'string'),
+        'Invalid ticker fee items. Nothing was paid.');
+      const extra = capabilities?.singleTxTransferExtraOutputs === true && fee.refundFunding ? mintFundingOutput(fee.refundFunding, this.network) : null;
+      const key = this.key('ticker/' + job.id), saved = await this.journal.get(key) ?? {};
+      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at);
+      if (saved.payment && !(retry && saved.payment.state === 'sending')) return { localState: 'payment_pending', payment: saved.payment, retryable: saved.payment.state === 'sending',
+        message: saved.payment.state === 'sending' ? 'TAP Wallet returned no receipt for the last payment attempt. If your wallet shows no sent payment for this ticker, retry the payment.' : 'The fee was already paid from this browser. Wait for it to be confirmed.' };
+      await ensureTapAuthority(this.provider, this.address, null, { checkAccount: () => this.checkAccount() });
+      await this.checkAccount();
+      await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
+        items, extraOutputs: extra ? [extra] : [], fetchImpl: this.fetchImpl });
+      await this.checkAccount();
+      await this.journal.put(key, { ...saved, payment: { state: 'sending', items, ...(extra ? { extraOutputs: [extra] } : {}), at: Date.now() } });
+      let result;
+      try { result = await (extra ? this.provider.singleTxTransfer(items, { extraOutputs: [extra] }) : this.provider.singleTxTransfer(items)); }
+      catch (error) {
+        if (noAuthority(error)) { await this.journal.put(key, saved); throw Error(GLOBAL_AUTHORITY_NOTICE); }
+        if (refusedBeforeSigning(error)) {
+          await this.journal.put(key, saved);
+          throw Error(`TAP Wallet refused the payment before signing: ${error.message.replace(/\s+/g, ' ').trim()}. Nothing was sent.`);
+        }
+        throw Error('TAP Wallet did not return a payment receipt. If your wallet shows no sent payment for this ticker, press Pay deploy fee again and confirm the retry; another payment is never sent automatically.');
+      }
+      await this.journal.put(key, { ...saved, payment: { state: 'submitted', items, ...(extra ? { extraOutputs: [extra] } : {}), result } });
+      return { localState: 'payment_submitted', result, paymentId: typeof result === 'string' ? result : result?.inscriptionId ?? null };
+    });
+  }
+  // An additional ticker's deploy: the exact registered content, inscribed to the wallet that requested it.
+  async inscribeTickerDeployment(job, { validateTicker, ...options } = {}) {
+    await this.checkAccount();
+    ensure(job?.officialDeployment && job.receiver === this.address, 'Connect the TAP Wallet that requested this ticker');
+    const { text, attemptId, phase } = deploymentContent(job, { validateTicker });
+    return { ...await this.inscribeContent(attemptId, text, 'deploy', options), asset: job.asset, phase };
+  }
   // A retry without a wallet receipt is allowed only when Bitcoin shows that
   // this wallet sent nothing since the attempt: no unconfirmed transaction and
   // no confirmed one newer than the attempt (or the last six hours, if older

@@ -1,6 +1,7 @@
 import { rules } from './rules.mjs';
 import { check, serial, heightKey } from './util.mjs';
 import { assetResources } from './asset-resources.mjs';
+import { linkFeePlan, linkFeePolicy } from './link-fees.mjs';
 
 // Links are paid before publication. The payer supplies the hash and arranges
 // release; the gateway never receives or holds the payment preimage.
@@ -48,8 +49,8 @@ export class Links {
       await this.store.transact([{ space: 'linkIntents', id, value: row }, { space: 'activeLinks', id, value: true }, { space: this.ownerSpace(request.owner), id, value: true }]);
     }
     check(row.terms.payer === payer && row.terms.hash === paymentHash, 'link_terms_conflict');
-    const price = rules.feeFor('link', row.terms.baseFee, 1, row.terms.feeSettings);
-    return { id, price, unit: rules.TAP_UNIT, split: rules.splitFee(price, { kind: 'link' }), terms: row.terms, state: this.store.get('linkStatus', id)?.state ?? 'waiting_payment' };
+    const { price, split } = await linkFeePlan(this.reads, row.terms);
+    return { id, price, unit: rules.TAP_UNIT, split, terms: row.terms, state: this.store.get('linkStatus', id)?.state ?? 'waiting_payment' };
   }); }
   payment({ id, paymentId }) { return this.gate(async () => {
     const row = this.store.get('linkIntents', id); check(row && typeof paymentId === 'string' && paymentId.length <= 160, 'link_intent');
@@ -59,7 +60,9 @@ export class Links {
     const funded = { ...row, paymentId };
     await this.reads.validateFeeTerms('link', funded);
     const payment = await this.reads.linkPaymentFor(funded);
-    rules.verifyLinkInput({ request: row.request, sig: row.sig, terms: row.terms, payment }, this.network, await this.reads.counted());
+    const counted = await this.reads.counted();
+    rules.verifyLinkInput({ request: row.request, sig: row.sig, terms: row.terms, payment }, this.network, counted,
+      await linkFeePolicy(this.reads, row.terms, { counted }));
     funded.paymentEvidence = payment;
     if ((await this.reads.bitmap(row.request.height)).agent !== row.request.owner || await this.reads.link(row.request.height) !== null) {
       await this.preservePaid(funded, 'link_owner_or_existing', payment); check(false, 'link_owner');
@@ -92,7 +95,7 @@ export class Links {
         if (heights.has(row.request.height)) continue;
         const terms = await this.reads.linkTerms(id, row.request, view), payment = await this.reads.linkPayment(id, view);
         const paid = { request: row.request, sig: row.sig, terms, payment };
-        rules.verifyLinkInput(paid, this.network, view.height);
+        rules.verifyLinkInput(paid, this.network, view.height, await linkFeePolicy(this.reads, terms, view));
         inputs.push({ ...paid, bitmap, previous }); heights.add(row.request.height);
         if (inputs.length === 4) break;
       } catch (e) {

@@ -1,3 +1,4 @@
+import { selectedDeployment } from './registry.mjs';
 import { legacyDeployMintCommissions } from './legacy-deploy-sources.mjs';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
@@ -7,19 +8,20 @@ import { capacityKey } from '../../contract/financial-capacity.js';
 export const financialGenerationId = (network, asset, deployment) => rules.hashObject(['dmw-financial-generation-v2', network, asset, deployment]);
 
 export function installCapacitySources(reads, { network, bitcoinNetwork = 'mainnet', accepted }) {
-  reads.financialDeploymentState = async (asset, at) => {
-    await reads.ensureRegistryAsset?.(asset);
-    const registry = await reads.registry(), entry = registry.assets[asset];
+  reads.financialDeploymentState = async (asset, at, selection) => {
+    await reads.ensureRegistryAsset?.(asset, selection);
+    const registry = await reads.registry(), entry = selectedDeployment(registry, asset, selection);
     check(entry?.id, 'financial_deployment_missing');
+    if (entry.officialDeployment) check(rules.multiTickerActive(at?.executionHeight ?? at?.counted ?? await reads.counted()), 'multi_ticker_inactive');
     const id = financialGenerationId(network, asset, entry.id), existing = await reads.financialRecord('fd/' + id, at);
     if (existing) {
-      check(existing.asset === asset && existing.deployment === entry.id && await reads.financialRecord('fd/asset/' + asset, at) === id, 'financial_deployment_generation');
+      check(existing.asset === asset && existing.deployment === entry.id && await reads.financialRecord(entry.officialDeployment ? 'fd/external/' + rules.hashObject(entry.id) : 'fd/asset/' + asset, at) === id, 'financial_deployment_generation');
       return { id, existing, entry };
     }
     return { id, entry };
   };
-  reads.financialDeployment = async (asset, at) => {
-    const { id, existing, entry } = await reads.financialDeploymentState(asset, at);
+  reads.financialDeployment = async (asset, at, selection) => {
+    const { id, existing, entry } = await reads.financialDeploymentState(asset, at, selection);
     if (existing) return { id, existing };
     const verified = await verifyDeployment(reads, entry, { view: at }), d = verified.deployment;
     check(verified.authorityKey === (await reads.authority()).committee, 'financial_deployment_authority');
@@ -28,14 +30,21 @@ export function installCapacitySources(reads, { network, bitcoinNetwork = 'mainn
     const outstanding = BigInt(await reads.financialRecord(capacityKey(entry.id), at) ?? '0') + BigInt(await reads.financialRecord('fi/deployment/' + entry.id, at) ?? '0');
     check(outstanding === 0n, 'financial_deployment_outstanding');
     const previous = await reads.financialRecord('fd/asset/' + asset, at), prior = previous && await reads.financialRecord('fd/' + previous, at);
+    if (entry.officialDeployment) {
+      const official = financialGenerationId(network, asset, entry.officialDeployment), acceptedOfficial = await reads.financialRecord('fd/' + official, at);
+      check(acceptedOfficial?.asset === asset && acceptedOfficial.deployment === entry.officialDeployment, 'official_deployment_required');
+      const deployment = { asset, deployment: entry.id, official, maximum, limit: d.lim ?? '0' };
+      return { id, action: { type: 'deployment-add', id, ...deployment }, evidence: { requestId: id, state: 'deployed', confirmations: 1,
+        deployment, minted: '0', outstanding: '0', remaining } };
+    }
     check(!previous || prior && prior.minted === prior.maximum && prior.reserved === '0', 'financial_deployment_unexhausted');
     const deployment = { asset, deployment: entry.id, generation: prior ? rules.nextUint(prior.generation) : '0', previous, maximum, limit: d.lim ?? '0' };
     return { id, action: { type: 'deployment-open', id, ...deployment }, evidence: { requestId: id, state: 'deployed',
       confirmations: 1, deployment, minted: '0', outstanding: '0', remaining } };
   };
   reads.financialCapacityEvidence = async (a, at) => {
-    if (a.type === 'deployment-open') {
-      const result = await reads.financialDeployment(a.asset, at);
+    if (['deployment-open', 'deployment-add'].includes(a.type)) {
+      const result = await reads.financialDeployment(a.asset, at, a.type === 'deployment-add' ? a.deployment : undefined);
       check(result.action && rules.stableJSON(result.action) === rules.stableJSON(a), 'financial_deployment_terms');
       return result.evidence;
     }

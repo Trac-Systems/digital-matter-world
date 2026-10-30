@@ -163,3 +163,20 @@ test('site TAP Wallet actions need 1.0.49 or newer and stop before any other wal
   globalThis.window = { tapprotocol: { getCapabilities: async () => ({ version: '1.0.100' }), getNetwork: async () => 'mainnet', requestAccounts: async () => ['bc1p' + 'q'.repeat(58)] } };
   assert.equal((await tapAccount(target)).address, 'bc1p' + 'q'.repeat(58));
 });
+
+test('activated Bitmap checkout and lock verification agree with the settings split', async () => {
+  const s = store(), who = agent(931), id = 'ac'.repeat(32), paymentId = 'bd'.repeat(32) + 'i0:0', counted = Number(rules.MULTI_TICKER_HEIGHT);
+  const document = rules.settingsRevision({ network: config.network, effectiveBatch: '0', effectiveBitcoinWindow: '0', values: { ...rules.SETTINGS_PROFILE, linkBurnBps: 1234 } });
+  const row = { id, request: { owner: who.address, height: 2, until: counted + 100 }, terms: { payer: 'bcrt1ppayer', treasury: 'bcrt1ptreasury', baseFee: '100', hash: 'ce'.repeat(32), settingsHash: rules.hashObject(document) } };
+  await s.put('linkIntents', id, row);
+  const price = rules.feeFor('link', '100'), split = rules.financialSplit(price, { kind: 'link' }, document);
+  const payment = { id: paymentId, requestId: id, payer: row.terms.payer, kind: 'tap', tick: 'tap', lockKind: 'htlc', conditionType: 'hashlock', hash: row.terms.hash, refund: row.terms.payer, claim: row.terms.treasury, total: price, base: split.treasury, allocations: rules.tapPaymentAllocations(split, {}, 'link', 'regtest'), refundAfter: row.request.until + 144, confirmations: 1, verifiedHeight: counted, eventIndex: 0, consumed: false };
+  const reads = { counted: async () => counted, financialSettings: async hash => { assert.equal(hash, row.terms.settingsHash); return document; }, linkLockPayment: async () => payment };
+  const checkout = new WebCheckout({ store: s, config, reads });
+  const plan = await checkout.plan('link', id);
+  assert.deepEqual(plan.split, split);
+  assert.equal(plan.redeem.actions[0].al[0].amt, rules.formatTapAmount(split.burn));
+  assert.equal((await checkout.linkLock(id, paymentId)).ready, true);
+  payment.base = rules.splitFee(price, { kind: 'link' }).treasury;
+  await assert.rejects(checkout.linkLock(id, paymentId), /link_tap/);
+});

@@ -103,6 +103,11 @@ export class MintSenderGateway {
     const page = await this.http.request('/internal/mint-sender/refunds?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
     check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
   }
+  async tickerReturns(after, limit) {
+    const page = await this.http.request('/internal/mint-sender/ticker-returns?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
+    check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
+  }
+  tickerReturnStatus(id) { return this.http.request('/internal/mint-sender/ticker-returns/' + id, { authorization: this.authorization }); }
   async refund(id) {
     const result = await this.http.request('/internal/mint-sender/refunds/' + id, { authorization: this.authorization });
     check(result?.record?.refundId === id, 'mint_sender_gateway_unavailable'); return result;

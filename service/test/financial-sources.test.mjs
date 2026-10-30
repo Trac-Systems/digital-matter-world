@@ -53,17 +53,20 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
   const authSig = secp256k1.sign(auth.hash, signerSecret, { lowS: true, prehash: false });
   auth.sig = { r: String(authSig.r), s: String(authSig.s), v: String(authSig.recovery) };
   const entry = { ...d, asset: asset, privilege, authorityKey: publicKey, options: { max: '100', dec: '0' }, ...(options.legacyElement ? { pattern: { pat: '123', fld: 4, dt: 'n' } } : {}) };
-  const registry = { feePolicy, link: { treasury: 'regtest-treasury' }, assets: { [asset]: entry } }, accepted = new Map(), transfers = new Map();
+  const extra = { ...entry, id: r.hash('second-deploy') + 'i0', tick: options.chosenTicker ?? 'second', officialDeployment: d.id };
+  const entries = [entry, ...(options.twoTickers ? [extra] : [])];
+  const chosen = selection => { const found = entries.find(e => !selection ? e.id === d.id : [e.id, e.tick].includes(selection)); assert.ok(found, 'asset_unregistered'); return found; };
+  const registry = { ...(options.twoTickers ? { deployment: (_, selection) => chosen(selection), asset: (_, selection) => chosen(selection) } : {}), feePolicy, link: { treasury: 'regtest-treasury' }, assets: { [asset]: entry } }, accepted = new Map(), transfers = new Map();
   let counted = initialCounted, confirmations = 1, revision = 0, signCount = 0, minted = null, holder = { agent: owner.address, address: 'regtest-payer' }, paymentHeight = initialCounted;
   let legacyHolder = bitcoinAddress('mainnet', 10);
   const escrow = { chainId: '31337', address: '0x' + 'a'.repeat(40), token: '0x' + 'b'.repeat(40) }, ethereum = {};
   const settings = new Map([[r.hashObject(document), document]]);
   const stamp = async () => ({ counted, last: { n: revision, to: counted }, revision, tip: counted, tipHash: r.hash('tip') });
   const base = { isMinted: async () => false, element: async () => ({ ins: options.legacyElement, pat: '123', fld: 4, tick: 'existing' }),
-    deploymentHolders: async ids => ids.map(id => ({ id, address: legacyHolder })), bitmap: async () => holder, link: async block => { const value = store.get('accountRecords', 'k/link/' + BigInt(block).toString(36)); return value ? JSON.parse(value) : null; }, mint: async () => structuredClone(minted), settingsByHash: async hash => settings.get(hash), counted: async () => counted, batchStamp: stamp, authority: async () => ({ network, committee: publicKey, epoch: 0 }), assetContext: async () => structuredClone(context),
+    deploymentHolders: async ids => ids.map(id => ({ id, address: legacyHolder })), bitmap: async () => holder, link: async block => { const value = store.get('accountRecords', 'k/link/' + BigInt(block).toString(36)); return value ? JSON.parse(value) : null; }, mint: async () => structuredClone(minted), settingsByHash: async hash => settings.get(hash), counted: async () => counted, batchStamp: stamp, authority: async () => ({ network, committee: publicKey, epoch: 0 }), assetContext: async (_asset, _block, _at, quote, _admitted, selection) => structuredClone(options.twoTickers ? { ...context, deployment: chosen(selection ?? quote?.deploymentId) } : context),
     registry: async () => registry, included: async () => confirmations ? { confirmations, height: paymentHeight } : null,
-    content: async id => id === privilege ? auth : id === options.legacyElement ? 'existing.123.4.element' : id === d.id ? deploymentPayload(entry) : ({ p: 'tap', op: 'token-auth', redeem: { items: transfers.get(id).map(x => ({ dta: x.dta, address: x.taddr, tick: x.tick, amt: r.formatTapAmount(x.amt) })) } }),
-    tap: async key => key.startsWith('getDeployment/') ? { ins: d.id, prv: privilege, tick: d.tick, ...(options.legacyElement ? { elem: options.legacyElement, dt: 'n' } : {}), dec: '0', max: '100', lim: '0' } : key.startsWith('getPrivilegeAuthCancelled/') ? false : '100',
+    content: async id => id === privilege ? auth : id === options.legacyElement ? 'existing.123.4.element' : entries.some(e => e.id === id) ? deploymentPayload(entries.find(e => e.id === id)) : ({ p: 'tap', op: 'token-auth', redeem: { items: transfers.get(id).map(x => ({ dta: x.dta, address: x.taddr, tick: x.tick, amt: r.formatTapAmount(x.amt) })) } }),
+    tap: async key => key.startsWith('getDeployment/') ? { ins: chosen(decodeURIComponent(key.slice('getDeployment/'.length))).id, prv: privilege, tick: chosen(decodeURIComponent(key.slice('getDeployment/'.length))).tick, ...(options.legacyElement ? { elem: options.legacyElement, dt: 'n' } : {}), dec: '0', max: '100', lim: '0' } : key.startsWith('getPrivilegeAuthCancelled/') ? false : '100',
     privilegeAuthority: async () => ({ ins: privilege }),
     escrowDeposit: async () => structuredClone(ethereum.snapshot), escrowSettled: async () => structuredClone(ethereum.event),
     paymentTransfers: async id => transfers.get(id).map((value, index) => ({ index, value })),
@@ -76,7 +79,7 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
   const reads = makeReads(), independent = makeReads();
   if (options.custody) for (const reader of [reads, independent]) installFinancialChain(reader, { bitcoinHash: async () => r.hash('tip') });
   const seed = new AccountExecution({ store, document, height: counted });
-  await seed.accounts([{ type: 'credit', owner: owner.address, asset: asset, amount: '100' }]); await store.transact(seed.result().writes);
+  await seed.accounts([{ type: 'credit', owner: owner.address, asset: asset, amount: options.initialUnits ?? '100' }]); await store.transact(seed.result().writes);
   const financial = new FinancialExecution({ store, reads, document });
   const policy = new Policy({ network, publicKey, reads: independent });
   const committee = { signature: async (_key, proposal) => {
@@ -95,10 +98,10 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
     const pending = await links.request(body), action = pending.reservationAction;
     return { body, id: pending.id, action: { ...action, sig: Buffer.from(ed25519.sign(lifecycleDigest(network, action), owner.secret)).toString('hex') } };
   };
-  const prepare = async (nonce = 'first', kind = 'tap', who = owner) => {
+  const prepare = async (nonce = 'first', kind = 'tap', who = owner, selection) => {
     if (kind === 'ethereum') { context.finderAddress = '0x' + 'f'.repeat(40); context.treasury = '0x' + 'c'.repeat(40); context.firstMakerAddress = '0x' + 'd'.repeat(40); }
-    const quote = await mints.quote({ asset, ...(options.legacyElement ? { block: '42' } : {}), amount: '3', kind });
-    const request = { v: 2, owner: who.address, asset, ...(options.legacyElement ? { block: '42' } : {}), amount: '3', receive: r.hash('regtest-receiver'), nonce: r.hash(nonce), until: r.ordinalCodec(typeof counted === 'string').add(counted, 20), expires: r.ordinalCodec(typeof counted === 'string').add(counted, 432), settingsHash: quote.feeQuote.settingsHash };
+    const quote = await mints.quote({ asset, ...(options.legacyElement ? { block: '42' } : {}), amount: '3', kind, ...(selection ? { deployment: selection } : {}) });
+    const request = { v: 2, owner: who.address, asset, ...(selection ? { deployment: quote.feeQuote.deploymentId } : {}), ...(options.legacyElement ? { block: '42' } : {}), amount: '3', receive: r.hash('regtest-receiver'), nonce: r.hash(nonce), until: r.ordinalCodec(typeof counted === 'string').add(counted, 20), expires: r.ordinalCodec(typeof counted === 'string').add(counted, 432), settingsHash: quote.feeQuote.settingsHash };
     const body = { request, signature: Buffer.from(ed25519.sign(financialMintDigest(network, request), who.secret)).toString('hex'), receiver: 'regtest-receiver', payer: kind === 'tap' ? 'regtest-payer' : '0x' + 'e'.repeat(40), kind, feeQuote: quote.feeQuote };
     body.authorization = Buffer.from(ed25519.sign(payerDigest(network, body), who.secret)).toString('hex');
     const pending = await mints.request(body), action = pending.reservationAction;
@@ -115,7 +118,7 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
   const generation = await reads.financialDeployment(asset, await stamp());
   await financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action }); await execute();
   return { get store() { return store; }, reads, independent, financial, mints, links, prepare, prepareLink, execute, context, transfers, accepted, document, owner, stamp, escrow, ethereum,
-    makeReads, legacyHolder: value => legacyHolder = value, holder: value => holder = value, paymentHeight: value => paymentHeight = value,
+    additional: extra, makeReads, legacyHolder: value => legacyHolder = value, holder: value => holder = value, paymentHeight: value => paymentHeight = value,
     minted: observation => minted = observation,
     settingsDocuments: settings, useSettings: next => { settings.set(r.hashObject(next), next); document = financial.document = mints.document = links.document = next; mints.pendingBlocks = next.values.pendingBlocks; },
     amend: next => { settings.set(r.hashObject(next), next); reads.feeQuotes.settings = independent.feeQuotes.settings = () => next; links.document = mints.document = financial.document = next; },
@@ -431,7 +434,9 @@ test('a native canonical mint finishes both capacity ledgers only through accept
   await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
   const payment = r.hash('terminal-pay') + 'i0', row = f.store.get('mints', p.id);
   f.transfers.set(payment, row.quote.fees.map(fee => ({ ins: payment, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
-  await f.mints.payment({ id: p.id, paymentId: payment }); await f.execute(); await f.mints.tick(); await f.execute(); await f.mints.tick();
+  await f.mints.payment({ id: p.id, paymentId: payment }); await f.execute(); await f.mints.tick();
+  assert.equal(f.store.get('mints', p.id).lastError, undefined, JSON.stringify(f.mints.public(p.id)));
+  await f.execute(); await f.mints.tick();
   const permit = f.mints.public(p.id).permit, c = f.store.get('accountRecords', 'dc/' + p.id);
   assert.equal(c.state, 'issued'); assert.equal(f.store.get('accountRecords', capacityKey(row.context.deployment.id)), '3');
   f.counted('10000000000000000000000000000000000000000'); await f.mints.tick();
@@ -960,4 +965,116 @@ test('a pattern with no qualifying deployment has identical accepted financial b
   const run = height => buildFinancialExecution({ store: f.store, transitions: [transition], reads: f.reads, document: f.document, height, at });
   const old = await run(before), active = await run(r.LEGACY_DEPLOY_SHARE_HEIGHT);
   for (const key of ['inputs', 'operations', 'writes']) assert.equal(r.stableJSON(active[key]), r.stableJSON(old[key]), key);
+});
+
+test('new financial admission requires settings-bound splits at multi-ticker execution activation', async t => {
+  const { Mints } = await import('../src/mints.mjs');
+  const before = Number(BigInt(r.MULTI_TICKER_HEIGHT) - 1n), f = await setup(t, {}, before);
+  const oldQuotes = new FeeQuotes({ network, secret, registry: f.reads.registry, now: () => 1000 });
+  const old = new Mints({ network, store: f.store, reads: { ...f.reads, feeQuotes: oldQuotes }, bitcoinNetwork: 'regtest' });
+  const quote = await old.quote({ asset: 'c1', amount: '3' });
+  f.reads.feeQuotes.now = () => 1000;
+  assert.equal((await f.mints.quote({ asset: 'c1', amount: '3', feeQuote: quote.feeQuote })).price, quote.price);
+  f.counted(Number(r.MULTI_TICKER_HEIGHT));
+  await assert.rejects(f.mints.quote({ asset: 'c1', amount: '3', feeQuote: quote.feeQuote }), /financial_settings_required/);
+  assert.ok((await f.mints.quote({ asset: 'c1', amount: '3' })).feeQuote.settingsHash);
+});
+
+for (const kind of ['find', 'compound']) for (const rail of ['tap', 'ethereum']) test(`deployer share binds current holder through the complete ${kind} ${rail} mint lifecycle`, async t => {
+  const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
+  const f = await setup(t, { deployerShareBps: 500, legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1' }, r.MULTI_TICKER_HEIGHT,
+    { ...(kind === 'find' ? { legacyElement: element } : {}), baseFee: flat.baseFee, feeSettings: flatSettings });
+  const p = await f.prepare('legacy-deploy/' + rail, rail), row = f.store.get('mints', p.id);
+  const gross = BigInt(flat.baseFee), each = gross / 10n / 156n;
+  assert.equal(row.quote.price, flat.baseFee); assert.equal(row.quote.split.deployer, String(gross * 500n / 10000n));
+  assert.equal(row.quote.split.legacyDeploy ?? '0', kind === 'find' ? String(each * 156n) : '0');
+  assert.equal(BigInt(row.quote.split.burn), (kind === 'find' ? gross * 2000n / 10000n + gross * 1500n / 10000n - each * 156n : gross * 3500n / 10000n) - gross * 500n / 10000n);
+  assert.equal(row.quote.fees.some(f => f.role === 'legacyDeploy'), false);
+  assert.equal(row.quote.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n), gross);
+  await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
+  assert.equal(f.store.count('commissionOwed'), 0);
+  const reference = r.hash('legacy-deploy-payment/' + rail);
+  if (rail === 'tap') {
+    f.transfers.set(reference + 'i0', row.quote.fees.map(fee => ({ ins: reference + 'i0', fail: false, int: true,
+      addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+    await f.mints.payment({ id: p.id, paymentId: reference + 'i0' });
+  } else {
+    f.ethereum.snapshot = { ...f.escrow, confirmations: 1, requestId: p.id, payer: row.payer,
+      deposit: { payer: row.payer, amount: row.quote.payableAmount, status: 2, split: escrowSplitForItems(row.quote.fees) } };
+    f.ethereum.event = { kind: 'claim', confirmations: 1, requestId: p.id, payer: row.payer,
+      transactionHash: '0x' + reference, blockNumber: '0x64', blockHash: '0x' + r.hash('ethereum-block') };
+    await f.mints.payment({ id: p.id, paymentId: '0x' + reference });
+  }
+  await f.execute(); await f.mints.tick(); await f.execute(); await f.mints.tick();
+  assert.equal(f.store.count('commissionOwed'), 0, 'no liability before a confirmed mint');
+  const minted = f.mints.public(p.id).permit, address = bitcoinAddress(kind === 'find' ? 'mainnet' : 'regtest', 11);
+  f.legacyHolder(address); // transferred after quote/payment/permit
+  const inscription = r.hash('legacy-confirmed-mint/' + rail) + 'i0';
+  f.minted({ accepted: true, fail: false, confirmations: 1, inscription, deployment: row.context.deployment.id,
+    tick: row.context.deployment.tick, receiver: row.receiver, amount: row.request.amount, block: '42',
+    dta: minted.dta, permitHash: minted.prv.hash, committee: row.context.deployment.privilegePublicKey });
+  await f.mints.payment({ id: p.id, inscription }); await f.mints.tick();
+  const at = await f.stamp(), result = await f.financial.build({ height: at.counted, at });
+  assert.equal(result.deferred.length, 0, JSON.stringify(result.deferred));
+  const input = result.inputs.find(i => i.transition.action?.type === 'capacity-finish');
+  assert.equal(input.evidence.commissions.length, kind === 'find' ? 157 : 1);
+  assert.ok(input.evidence.commissions.every(c => c.to === address && c.amount === String(c.role === 'deployer' ? gross * 500n / 10000n : each)));
+  const file = { observation: at.counted, ops: result.operations, financialOperations: result.inputs };
+  for (let signer = 0; signer < 5; signer++) await verifyFinancialExecution({ files: [file], reads: f.makeReads(), document: f.document, network, height: at.counted, at });
+  for (const mutate of [c => c.pop(), c => c[0].amount = '1', c => c[0].to = bitcoinAddress(kind === 'find' ? 'mainnet' : 'regtest', 12), c => c[0].deployment = r.hash('invented') + 'i0']) {
+    const changed = structuredClone(file); mutate(changed.financialOperations.find(i => i.transition.action?.type === 'capacity-finish').evidence.commissions);
+    await assert.rejects(verifyFinancialExecution({ files: [changed], reads: f.makeReads(), document: f.document, network, height: at.counted, at }), /financial_evidence_read/);
+  }
+  f.legacyHolder(bitcoinAddress(kind === 'find' ? 'mainnet' : 'regtest', 13));
+  await assert.rejects(verifyFinancialExecution({ files: [file], reads: f.makeReads(), document: f.document, network, height: at.counted, at }), /financial_evidence_read/);
+  f.legacyHolder(address);
+  const { Payouts } = await import('../src/payouts.mjs'), ledger = new Payouts({ store: f.store, files: { json: async () => {} } });
+  const draft = { proposal: { batch: { n: '50' } }, items: [{ output: { file } }] };
+  await f.store.transact(ledger.accruals(draft));
+  assert.deepEqual(ledger.accruals(draft), []);
+  assert.equal(ledger.prepare(address).amount, String((kind === 'find' ? each * 156n : 0n) + gross * 500n / 10000n));
+  assert.ok(f.store.list('commissionOwed', { limit: 200 }).every(row => row.value.rail === 'tap'));
+  await f.execute(); await f.reopen(); await f.mints.tick();
+  assert.equal(f.mints.public(p.id).state, 'minted');
+});
+
+for (const [kind, ticker] of [['find', 'second'], ['compound', 'second'], ['compound', '小币 🪙']])
+test(`registered chosen ${kind} ticker ${ticker} shares asset accounting and refuses forged or spent destinations`,
+  async t => {
+  const [element] = Object.keys(r.LEGACY_DEPLOY_MANIFEST.elements);
+  const f = await setup(t, {}, r.MULTI_TICKER_HEIGHT, { twoTickers: true, chosenTicker: ticker, initialUnits: kind === 'find' ? '100' : '3', ...(kind === 'find' ? { legacyElement: element } : {}) });
+  const asset = f.additional.asset, generation = await f.reads.financialDeployment(asset, await f.stamp(), f.additional.id);
+  await f.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action }); await f.execute();
+  await assert.rejects(f.mints.quote({ asset, ...(kind === 'find' ? { block: '42' } : {}), amount: '3', deployment: r.hash('forged') + 'i0' }), /asset_unregistered/);
+  const p = await f.prepare('chosen', 'tap', f.owner, f.additional.id), row = f.store.get('mints', p.id);
+  assert.equal(row.request.deployment, f.additional.id); assert.equal(row.context.deployment.tick, ticker);
+  const at = await f.stamp(), source = await f.reads.financialReservation(row, at);
+  assert.equal(source.deployment.officialDeployment, f.context.deployment.id);
+  const forgedReads = f.makeReads(), original = forgedReads.assetContext;
+  forgedReads.assetContext = async (...args) => { const value = await original(...args); value.deployment.id = r.hash('forged') + 'i0'; return value; };
+  await assert.rejects(forgedReads.financialReservation(row, at), /financial_deployment_choice|financial_deployment_binding/);
+  await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
+  const payment = r.hash('chosen-payment') + 'i0';
+  f.transfers.set(payment, row.quote.fees.map(fee => ({ ins: payment, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  await f.mints.payment({ id: p.id, paymentId: payment }); await f.execute(); await f.mints.tick();
+  assert.equal(f.store.get('mints', p.id).lastError, undefined, JSON.stringify(f.mints.public(p.id)));
+  await f.execute(); await f.mints.tick();
+  const minted = f.mints.public(p.id).permit, inscription = r.hash('chosen-mint') + 'i0';
+  assert.equal(minted.tick, ticker);
+  f.minted({ accepted: true, fail: false, confirmations: 1, inscription, deployment: f.additional.id, tick: ticker, receiver: row.receiver,
+    amount: '3', block: '42', dta: minted.dta, permitHash: minted.prv.hash, committee: row.context.deployment.privilegePublicKey });
+  await f.mints.payment({ id: p.id, inscription }); await f.mints.tick(); await f.execute(); await f.mints.tick();
+  assert.equal(f.mints.public(p.id).state, 'minted');
+  assert.equal(f.store.get('accountRecords', 'fd/' + generation.id).minted, '3');
+  await assert.rejects(async () => { const again = await f.prepare('other-ticker'); await f.mints.request({ ...again.body, reserve: again.action }); await f.execute(); }, /financial_plot|capacity_plot|financial_capacity|account_balance|balance|insufficient|financial_request_conflict|financial_already/);
+});
+
+test('deployer share admission follows execution height even with an older quote and observation', async t => {
+  const before = String(BigInt(r.MULTI_TICKER_HEIGHT) - 1n);
+  const f = await setup(t, { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' }, before);
+  const p = await f.prepare('deployer-height'), row = f.store.get('mints', p.id), at = await f.stamp();
+  const transition = { type: 'reserve', id: p.id, action: p.action, fees: row.quote.fees.map(fee => ({ key: financialFeeKey(fee), amount: fee.amount })) };
+  const old = await buildFinancialExecution({ store: f.store, transitions: [transition], reads: f.reads, document: f.document, height: before, at });
+  assert.equal(old.inputs[0].evidence.deployer, undefined);
+  await assert.rejects(buildFinancialExecution({ store: f.store, transitions: [transition], reads: f.reads, document: f.document, height: r.MULTI_TICKER_HEIGHT, at }), /financial_fee_destinations/);
 });

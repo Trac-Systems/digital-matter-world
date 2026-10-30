@@ -9,7 +9,7 @@ export function publicFinancialTerms(id, evidence, action) {
     amount: evidence.amount ?? action?.amount, block: evidence.request?.block ?? evidence.block ?? evidence.capacity?.block ?? evidence.capacity?.plot ?? null,
     kind: evidence.rail ?? null, receiver: evidence.receiver ?? null, payer: evidence.payer ?? null,
     expiry: evidence.expiry ?? action?.until ?? null, deployment: evidence.deployment?.id ?? null,
-    price: sum(evidence.fees ?? []), ...(evidence.legacyDeploy ? { legacyDeploy: evidence.legacyDeploy } : {}), fees: (evidence.feeItems ?? []).map(f => clean({ key: financialFeeKey(f),
+    price: sum(evidence.fees ?? []), ...(evidence.legacyDeploy ? { legacyDeploy: evidence.legacyDeploy } : {}), ...(evidence.deployer ? { deployer: evidence.deployer } : {}), fees: (evidence.feeItems ?? []).map(f => clean({ key: financialFeeKey(f),
       role: f.role, to: f.to, ticker: f.ticker, amount: f.amount, beneficiary: f.financialIdentity?.beneficiary ?? null })) });
 }
 

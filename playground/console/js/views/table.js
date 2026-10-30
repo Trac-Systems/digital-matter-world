@@ -2,6 +2,8 @@ import { h, clear, table, kv, pill, hashEl, fmtInt, seg, inspectBtn, tierBadge, 
 import { get, bus, store, site } from '../api.js';
 import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText } from '../words.js';
 import { compoundMintFlow, wallet } from '../flows.js';
+import * as flows from '../flows.js';
+import { tickerList, deployTickerForm } from '../tickers.js';
 import { pagedTable } from '../paged.js';
 import { feePrice } from '../money.js';
 
@@ -104,6 +106,7 @@ export function mount(root, params = {}) {
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],
         site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'During its first week only its discoverer can inscribe it and deploy its token, once, from their own TAP Wallet. After that anyone can. Whoever deploys holds the deploy inscription and can add art to it later.'] : null,
       ]),
+      tickerList(p.asset), ownTicker(p.asset),
       h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
     if (seq !== rowsSeq) return;
     clear(blocks, pagedTable({
@@ -127,8 +130,13 @@ export function mount(root, params = {}) {
     const id = c.id ?? c.asset, name = assetName(id);
     return h('section.panel', {},
       h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, name), tierBadge(c.tier), h('div.grow'), inspectBtn(name, c)),
-      compoundFacts(c),
+      compoundFacts(c), tickerList(id), ownTicker(id, true),
       h('div.row', { style: { padding: '10px 14px' } }, h('button.btn.sm.primary', { onclick: () => compoundMintFlow(id) }, site.public ? 'Make real on TAP' : 'Mint On-Chain')));
+  }
+  // Deploy your own ticker, where the pages have a wallet flow for it.
+  function ownTicker(asset, compound = false) {
+    if (!flows.tickerRequest) return null;
+    return deployTickerForm(asset, { compound, toggle: true, padded: true, request: ticker => flows.tickerRequest(asset, ticker), open: job => flows.tickerOpen(asset, job) });
   }
   // A pattern or compound named in the address opens beside the table.
   async function open(asset, compound) {

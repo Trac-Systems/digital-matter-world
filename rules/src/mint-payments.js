@@ -7,7 +7,7 @@ import { tapAtoms, formatTapAmount } from './fees.js';
 export function mintFeeItems(split, destinations, requestId = null, payer = null, rail = 'tap', bitcoinNetwork = 'mainnet') {
   // Deferred deploy-holder shares are funded in the existing treasury item.
   // No holder receives a transfer inside the mint payment.
-  if (split.legacyDeploy) split = { ...split, treasury: String(BigInt(split.treasury) + BigInt(split.legacyDeploy)) };
+  if (split.legacyDeploy || split.deployer) split = { ...split, treasury: String(BigInt(split.treasury) + BigInt(split.legacyDeploy ?? '0') + BigInt(split.deployer ?? '0')) };
   return ['finder', 'firstMaker', 'discoverer', 'landowner', 'treasury', 'burn']
     .filter(role => BigInt(split[role] ?? '0') > 0n).map(role => {
       const to = role === 'burn' ? (rail === 'tap' ? tapBurnAddress(bitcoinNetwork) : null) : destinations[role];

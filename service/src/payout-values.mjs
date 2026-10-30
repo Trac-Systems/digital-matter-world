@@ -8,7 +8,7 @@ function payoutSettings(store) {
 }
 export const payoutPolicyHash = store => payoutSettings(store).hash;
 export function payoutMinimum(store, total) {
-  if (total.legacyDeploy !== true) return null;
+  if (total.legacyDeploy !== true && total.deployer !== true) return null;
   const configured = payoutSettings(store).minimum;
   // Retained liabilities keep their positive minimum if a successor disables
   // new accruals. No history enumeration is needed to resolve this address.

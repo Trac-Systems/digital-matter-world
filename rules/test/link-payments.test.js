@@ -33,3 +33,18 @@ test('Ethereum link evidence with a removed recipient field is refused', () => {
   const paid = input('ethereum'); paid.payment.split.charterer = zero; paid.payment.split.chartererAmount = '0';
   assert.throws(() => r.verifyLinkInput(paid, network, 95), /link_ethereum/);
 });
+
+for (const kind of ['tap', 'ethereum']) test(`activated link verification uses pinned settings and execution height on ${kind}`, () => {
+  const height = r.MULTI_TICKER_HEIGHT, before = (BigInt(height) - 1n).toString();
+  const document = r.settingsRevision({ network, effectiveBatch: '0', effectiveBitcoinWindow: '0', values: { ...r.SETTINGS_PROFILE, linkBurnBps: 1234 } });
+  const paid = input(kind); paid.terms.settingsHash = r.hashObject(document);
+  assert.doesNotThrow(() => r.verifyLinkInput(paid, network, 95, { executionHeight: before, document }));
+  assert.throws(() => r.verifyLinkInput(paid, network, 95, { executionHeight: height, document }), /link_tap|link_ethereum/);
+  const split = r.financialSplit(paid.payment.total, { kind: 'link' }, document);
+  if (kind === 'tap') { paid.payment.base = split.treasury; paid.payment.allocations = r.tapPaymentAllocations(split, {}, 'link'); }
+  else { paid.payment.split.treasuryAmount = split.treasury; paid.payment.split.burnAmount = split.burn; }
+  assert.doesNotThrow(() => r.verifyLinkInput(paid, network, 95, { executionHeight: height, document }));
+  assert.throws(() => r.verifyLinkInput(paid, network, 95, { executionHeight: height }), /link_settings/);
+  assert.throws(() => r.verifyLinkInput(paid, network, 95, { executionHeight: height, document: { ...document, values: { ...document.values, linkBurnBps: 5000 } } }), /link_settings/);
+  assert.throws(() => r.verifyLinkInput(paid, network, 95, { executionHeight: before, document }), /link_tap|link_ethereum/);
+});

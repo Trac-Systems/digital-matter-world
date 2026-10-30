@@ -102,13 +102,13 @@ export function mount(root, params = {}) {
       { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit()) + (r.legacyDeploy ? ` · ${r.eligible ? 'ready for payout' : 'payout from ' + tap(r.payoutMinAtoms, unit())}` : '')) },
     ],
     owed: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'to', label: 'Paid to', render: r => hashEl(r.to), sortable: false },
       { key: 'inscription', label: 'From mint', render: r => hashEl(r.inscription), sortable: false },
     ],
     paid: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'agent', label: 'Agent', render: r => hashEl(r.agent ?? r.beneficiary), sortable: false },
       { key: 'address', label: 'Paid to', render: r => hashEl(r.address ?? r.to), sortable: false },

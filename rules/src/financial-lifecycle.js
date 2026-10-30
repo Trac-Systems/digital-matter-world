@@ -1,3 +1,4 @@
+import { multiTickerActive } from './multi-ticker-activation.js';
 import { ordinalCodec } from './integers-v2.js';
 import { assert, exactKeys, hashObject, stableJSON, hex } from './core.js';
 
@@ -12,6 +13,12 @@ export async function financialLifecyclePlan({ transition: t, evidence: e }, { r
   assert(exactKeys(t, ['type', 'id', 'action']) && t.action?.id === t.id && e?.requestId === t.id, 'lifecycle_input');
   const clock = ordinalCodec(typeof height === 'string');
   const a = t.action, commitment = hashObject(e), op = lifecycleOperation(a, commitment);
+  if (a.type === 'ticker-refund') {
+    assert(multiTickerActive(height) && exactKeys(a, ['type', 'id', 'request', 'reference', 'reason']) && e.state === 'ticker_refund' &&
+      e.refund?.id === a.request && e.refund.reference === a.reference && e.refund.reason === a.reason &&
+      a.id === hashObject([a.request, a.reference]), 'ticker_refund_binding');
+    return [{ ...op, refund: e.refund }];
+  }
   if (a.type === 'legacy-link-complete' || a.type === 'legacy-link-exit') {
     const source = await read('fi/source/' + a.id), funding = await read('fp/' + a.id);
     assert(source?.legacy?.kind === 'link' && funding?.state === 'open' && e.terms === funding.terms && e.owner === funding.owner &&
@@ -73,7 +80,8 @@ export async function financialLifecyclePlan({ transition: t, evidence: e }, { r
       e.destination === row.destination, 'financial_payout_binding');
     if (a.type === 'custody-settle') assert(e.state === 'paid' && e.receipt === a.receipt && landed(e), 'financial_payout_unsettled');
     else assert(e.state === 'revoked_unpaid' && hex(e.revocation, 32) && landed(e), 'financial_payout_not_revoked');
-  } else if (a.type === 'deployment-open') {
+  } else if (a.type === 'deployment-open' || a.type === 'deployment-add') {
+    assert(a.type !== 'deployment-add' || multiTickerActive(height), 'multi_ticker_inactive');
     const { type, id, ...deployment } = a;
     assert(e.state === 'deployed' && landed(e) && same(e.deployment, deployment) && e.minted === '0' && e.outstanding === '0' &&
       e.remaining === a.maximum, 'financial_deployment_evidence');

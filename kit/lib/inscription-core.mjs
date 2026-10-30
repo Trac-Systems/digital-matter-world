@@ -168,7 +168,7 @@ export function checkDeployer(job, { owner, address } = {}) {
   ensure(/^(0|[1-9][0-9]*)$/.test(rule.until ?? '') && typeof rule.address === 'string' && address === rule.address &&
     (owner === undefined || owner === rule.discoverer), discovererOnly(rule.until), 'discoverer_receiver');
 }
-export function deploymentContent(job) {
+export function deploymentContent(job, { validateTicker } = {}) {
   const pattern = job?.kind === 'dmt';
   ensure((pattern ? /^(?:p[0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*))$/.test(job.asset) : job?.kind === 'compound' && /^(?:c[0-9a-z]{1,23}|c2:[0-9a-f]{64})$/.test(job.asset)) &&
     job.state === 'awaiting_player_deploy' && (job.phase === 'deployment' || pattern && job.phase === 'element'), 'Deployment is not ready for the player');
@@ -181,7 +181,7 @@ export function deploymentContent(job) {
       text === job.content && text === attempt.text, 'Element differs from the accepted pattern');
   } else {
     let payload; try { payload = JSON.parse(text); } catch { ensure(false, 'Invalid deployment content'); }
-    ensure(payload?.p === 'tap' && payload.op === (pattern ? 'dmt-deploy' : 'token-deploy') && typeof payload.tick === 'string' && (pattern ? /^[a-z0-9]{3,32}$/ : /^dmw[a-z0-9]{2,29}$/).test(payload.tick) &&
+    ensure(payload?.p === 'tap' && payload.op === (pattern ? 'dmt-deploy' : 'token-deploy') && typeof payload.tick === 'string' && (job.officialDeployment ? typeof validateTicker === 'function' && payload.tick === job.ticker && validateTicker(payload.tick) === payload.tick : (pattern ? /^[a-z0-9]{3,32}$/ : /^dmw[a-z0-9]{2,29}$/).test(payload.tick)) &&
       /^[0-9a-f]{64}i[0-9]+$/.test(payload.prv) && (!job.privilege || payload.prv === job.privilege), 'Invalid mint authority or ticker');
     // prov names the pattern's discoverer or the compound's first maker.
     ensure(payload.prov === undefined || payload.prov === (pattern ? job.definition?.discoverer : job.definition?.firstMaker), 'Deployment names another discoverer or first maker');

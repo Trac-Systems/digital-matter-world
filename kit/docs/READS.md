@@ -133,3 +133,12 @@ batch verifier; direct legacy TNK transfer and legacy backtest refuse v2 use.
 `GET /mint/deployment-state/ASSET` reads a pattern's token deployment state without
 side effects; p2:N and an imported pattern's ledger asset (p0) both resolve. See
 [ACTIONS.md](ACTIONS.md) for recovery and supported action arguments.
+
+## Registered tickers
+
+`asset_tickers` accepts `{asset,after?,limit?}` and returns `{asset,catalogAsset,rows,next}`.
+Each row contains `ticker`, bare `tick`, string `ordinal`, `deploymentId`,
+`element`, `deployer`, `holder` and `unitsMinted`. Ordinal 1 is official.
+Unknown current holder/capacity is null; these fields do not trigger history
+queries. Follow `next` as `after` to read further pages.
+`mint_quote` accepts optional `deployment`; omitted choices stay official.

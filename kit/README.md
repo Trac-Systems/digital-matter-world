@@ -390,6 +390,7 @@ restart or wipe the playground. MCP stdout contains only protocol messages.
 | Historic plots and block details? | `world`, `block` | `service.blocks()`, `agent.block(height)` |
 | Catalog and matching blocks? | `patterns`, `pattern_matches`, `compounds` | `service.patterns()`, `service.readPage(route)`, `service.compounds()` |
 | Attribution and receipt publications? | `finds`, `receipts` | `service.finds()`, `service.receipts()` |
+| Registered tickers for one asset? | `asset_tickers` | `service.assetTickers(asset, page)` |
 | Eligible slots, quotes and mint progress? | `mint_rights`, `mint_quote`, `mint_status` | `agent.mintRights()`, `agent.mintQuote(args)`, `agent.mintStatus(id)` |
 | Changes since my last sequence? | `events`, `event` | `agent.events(options)`, `service.event(sequence)` |
 | Results, payouts, treasury and burn? | `results` | `agent.results(options)` |
@@ -769,3 +770,5 @@ action: its dry-run returns `sent:false`; a live call submits evidence even thou
 it needs no wallet signing or payment. Mint admission independently
 rechecks the named ownership evidence. Follow `next` / `nextCursor` even when
 an indexed work page is empty; `total:null` means no exact total was computed.
+
+After coordinated multi-ticker activation, `dmw deploy-ticker ASSET TICKER --config FILE` previews an additional ticker. Use `--live` to prepare it and review the fee; `deploy_ticker` and `report_ticker_payment` expose the same actions through MCP. Pattern and compound mints accept an optional deployment choice, defaulting to official. All choices share the same asset supply. Full workflow and refund funding: [docs/ACTIONS.md](docs/ACTIONS.md#additional-tap-tickers).

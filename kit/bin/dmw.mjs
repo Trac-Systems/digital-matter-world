@@ -28,6 +28,7 @@ const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, 
   network: { type: 'string' }, 'network-file': { type: 'string' }, import: { type: 'boolean' }, 'skip-addresses': { type: 'boolean' },
   headers: { type: 'string' }, source: { type: 'string' }, independent: { type: 'string' }, output: { type: 'string' },
   start: { type: 'string' }, end: { type: 'string' }, patterns: { type: 'string' }, strategy: { type: 'string' }, help: { type: 'boolean' },
+  'max-fee-sats': { type: 'string' }, retry: { type: 'boolean' }, 'fee-rate': { type: 'string' },
   cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }
 } });
 const print = value => process.stdout.write(JSON.stringify(publicIdentities(value)) + '\n');
@@ -60,7 +61,7 @@ async function main() {
   const live = opts.live || command === 'dashboard';
   if (command === 'dashboard') check(opts.port === undefined || /^(0|[1-9][0-9]{0,4})$/.test(opts.port) && Number(opts.port) <= 65535, 'Invalid dashboard port');
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
@@ -120,6 +121,7 @@ async function main() {
     const agent = new Agent({ wallet, network: config.network, service, trac: adapter.trac, journal: command === 'dashboard' ? dashboardJournal(journal) : journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
       powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork });
     let name, input = {};
+    if (command === 'deploy-ticker') { check(args.length === 3, 'Usage: deploy-ticker <asset> <ticker>'); name = 'deploy_ticker'; input = { asset: args[1], ticker: args[2], ...(opts.retry ? { retry: true } : {}), ...(opts['max-fee-sats'] ? { maxFeeSats: opts['max-fee-sats'] } : {}), ...(opts['fee-rate'] ? { feeRate: Number(opts['fee-rate']) } : {}) }; }
     if (command === 'read' || command === 'action') {
       check(args[1], 'Pass a tool name or action JSON file');
       if (command === 'action' && args[1].endsWith('.json')) {
@@ -142,7 +144,7 @@ async function main() {
     }
     const strategies = (session || strategyTool) && (opts.strategy ?? config.strategy) ? await import(pathToFileURL(resolve(opts.strategy ?? config.strategy))) : {};
     const context = { agent, history, historySync, source, strategies, candidates: adapter.candidates, compounds: adapter.compounds };
-    if (command === 'read' || command === 'action') {
+    if (command === 'read' || command === 'action' || command === 'deploy-ticker') {
       print(await runTool(context, name, { ...input, ...(opts.limit === undefined ? {} : { limit: Number(opts.limit) }), ...(opts.cursor === undefined ? {} : { cursor: opts.cursor }) }, { readOnly: command === 'read' }));
       return;
     }

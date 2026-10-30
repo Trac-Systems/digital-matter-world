@@ -1,3 +1,4 @@
+import { installTickerPaymentSources } from './ticker-payment-sources.mjs';
 import { installLinkSources } from './financial-link-sources.mjs';
 import { installCreditSources } from './financial-credit-sources.mjs';
 import { installCustodySources } from './financial-custody-sources.mjs';
@@ -25,7 +26,7 @@ import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const feeKey = financialFeeKey;
 export const financialFees = fees => fees.map(f => ({ key: feeKey(f), amount: f.amount }));
-const immutableDeployment = d => Object.fromEntries(['id', 'generation', 'privilege', 'elementId', 'dt', 'options', 'approval', 'kind', 'tick', 'privilegePublicKey', 'decimals'].map(k => [k, d[k] ?? null]));
+const immutableDeployment = d => Object.fromEntries(['id', 'generation', 'privilege', 'elementId', 'dt', 'options', 'approval', 'kind', 'tick', 'privilegePublicKey', 'decimals'].map(k => [k, d[k] ?? null]).concat(d.officialDeployment ? [['officialDeployment', d.officialDeployment]] : []));
 
 export async function acceptedFinancialReservation({ store, audits, id }) {
   const location = await store.get('financialAdmissions', id);
@@ -40,6 +41,7 @@ export async function acceptedFinancialReservation({ store, audits, id }) {
 export function installFinancialSources(reads, options) {
   const { network, document, bitcoinNetwork = 'mainnet', escrow, suspense = {}, ethereumRPC, payout = async () => null, lookupSettings, recoveryVersion, request, reservation, record } = options;
   check(document?.network === network && typeof request === 'function' && typeof reservation === 'function' && typeof record === 'function', 'financial_source_config');
+  installTickerPaymentSources(reads, options);
   reads.feeQuotes.document = document;
   reads.identifyFinancialFees = (fees, rail, custody = []) => identifyFinancialFees(fees, { network, rail, bitcoinNetwork, escrow, custody });
   for (const [rail, address] of Object.entries(suspense)) payoutAddress(rail, address, bitcoinNetwork);
@@ -95,11 +97,14 @@ export function installFinancialSources(reads, options) {
     check(same(row.requestedFeeQuote, row.quote.feeQuote), 'financial_quote_binding');
     const terms = await reads.feeQuotes.accepted(row.feeAuthorization, mintFeeScope(r.asset, r.block, row.kind), id, r.expires);
     const counted = at?.counted ?? await reads.counted(), original = await reads.financialSettings(r.settingsHash ?? rules.hashObject(document)), v = original.values;
+    check(!rules.multiTickerActive(at?.executionHeight ?? counted) || row.quote.feeQuote.settingsHash, 'financial_settings_required');
     check((r.v !== 2 || r.settingsHash === rules.hashObject(original)) &&
       (!row.quote.feeQuote.settingsHash || row.quote.feeQuote.settingsHash === r.settingsHash && terms.settingsHash === r.settingsHash), 'financial_settings');
     check(rules.ordinalCodec(typeof counted === 'string').valid(r.until) && rules.compareOrdinal(counted, r.until) <= 0 && BigInt(r.expires) - BigInt(counted) >= BigInt(v.requestMinBlocks) && BigInt(r.expires) - BigInt(counted) <= BigInt(v.requestMaxBlocks), 'financial_request_expiry');
-    const context = await reads.assetContext(r.asset, r.block, at, row.quote.feeQuote), d = context?.deployment;
+    check(!r.deployment || rules.multiTickerActive(at?.executionHeight ?? counted), 'multi_ticker_inactive');
+    const context = await reads.assetContext(r.asset, r.block, at, row.quote.feeQuote, undefined, r.deployment), d = context?.deployment;
     check(d?.active && d.decimals === 0 && d.privilegePublicKey === (await reads.authority()).committee && ['dmt', 'compound'].includes(d.kind), 'financial_deployment');
+    check(!d.officialDeployment || r.deployment === d.id, 'financial_deployment_choice');
     check((d.kind === 'dmt') === Object.hasOwn(r, 'block') && d.id === row.quote.feeQuote.deploymentId, 'financial_deployment_binding');
     check(BigInt(d.remaining) >= BigInt(r.amount) && (!d.limit || d.limit === '0' || BigInt(r.amount) <= BigInt(d.limit)), 'financial_capacity');
     const holder = context.link ? context.bitmapHolder ?? await reads.bitmap(r.block, at) : null;
@@ -113,21 +118,21 @@ export function installFinancialSources(reads, options) {
     const price = rules.feeFor(kind, terms.baseFee, context.tier, terms.feeSettings);
     const options = { kind, linked: !!holder, discovered: !!(row.quote.feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
     const baseSplit = row.quote.feeQuote.settingsHash ? financialSplit(price, options, original) : rules.splitFee(price, options);
-    const { split, legacyDeploy } = rules.legacyDeployFee(price, baseSplit, { kind, deployment: d,
+    const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind, deployment: d,
       document: row.quote.feeQuote.settingsHash ? original : null, height: at?.executionHeight ?? counted, bitcoinNetwork });
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
       landowner: row.kind === 'ethereum' ? context.landownerAddress ?? null : holder?.address ?? null, discoverer: context.discoverer ?? null };
     const plan = row.quote.feeQuote.settingsHash ? reads.financialFeePlan({ split, destinations, beneficiaries: context.beneficiaries, id, payer: row.payer, rail: row.kind }) :
       { fees: reads.identifyFinancialFees(rules.mintFeeItems(split, destinations, id, row.payer, row.kind, bitcoinNetwork), row.kind), custody: [] }, items = plan.fees;
     check(same(items, row.quote.fees) && price === row.quote.price && same(context.payouts, row.quote.feeQuote.payouts), 'financial_fee_destinations');
-    const generation = await reads.financialRecord('fd/asset/' + r.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
+    const generation = await reads.financialRecord(d.officialDeployment ? 'fd/external/' + rules.hashObject(d.id) : 'fd/asset/' + r.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
     check(generation === financialGenerationId(network, r.asset, d.id) && registered?.deployment === d.id, 'financial_deployment_pending');
     // The quote pins this source snapshot. Accepted capacity counters enforce
     // competition between requests even when they share the same snapshot.
     return { version: 2, requestId: id, owner: r.owner, asset: r.asset, amount: r.amount, receiver: row.receiver, payer: row.payer, rail: row.kind,
       request: r, signature: row.signature, authorization: row.authorization, quote: row.quote.feeQuote, feeAuthorization: row.feeAuthorization,
       deployment: immutableDeployment(d), capacity: { deployment: d.id, asset: r.asset, amount: r.amount, block: r.block ?? null, remaining: d.remaining, limit: d.limit ?? '0' }, generationCapacity: { deployment: generation, plot: r.block === undefined ? null : rules.decimalV2(r.block) }, fees: financialFees(items), feeItems: items,
-      ...(legacyDeploy ? { legacyDeploy } : {}), custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
+      ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}), custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
   };
   const accepted = async (id, at) => {
     const publicSource = await reads.financialRecord('fi/source/' + id, at);
@@ -206,6 +211,7 @@ export function installFinancialSources(reads, options) {
     if (t.type === 'public-payment') return reads.publicMintPayment(t, at);
     if (t.type === 'beacon-recovery') return reads.financialBeaconEvidence(t.operation, at);
     if (t.type === 'lifecycle') {
+      if (t.action.type === 'ticker-refund') return reads.tickerRefundEvidence(t.action, at);
       if (t.action.type.startsWith('legacy-link-')) return reads.financialLegacyLinkEvidence(t.action, at);
       if (['credit-use', 'credit-transfer'].includes(t.action.type)) return reads.financialCreditEvidence(t.action, at);
       if (t.action.type.startsWith('custody-')) return reads.financialCustodyEvidence(t.action, at);

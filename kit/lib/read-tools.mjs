@@ -64,7 +64,7 @@ export function readTools(agent) {
       { height, collection: z.enum(['matches', 'slotList', 'claims', 'draws', 'finds', 'mintRights']).optional(), ...list }, ({ height, ...args }) => agent.block(height, options(args))),
     mint_rights: tool('Read your mintable slots and compound units, settlement-based finder deadlines, Bitmap fee recipients and balance/hold restrictions. Wallet-only public mints use the website.', list, args => agent.mintRights(options(args))),
     mint_quote: tool('Preview a quote without wallet signing: exact units used, TAP fee splits/destinations and a separate Bitcoin fee. Uses POST /mint/quote without a reservation; unavailable under a GET-only policy.',
-      { asset, block: height.optional(), amount: z.string().regex(/^[1-9][0-9]{0,77}$/).optional(), kind: z.enum(['tap', 'ethereum']).optional() }, args => agent.mintQuote(args)),
+      { asset, deployment: z.string().min(1).optional(), block: height.optional(), amount: z.string().regex(/^[1-9][0-9]{0,77}$/).optional(), kind: z.enum(['tap', 'ethereum']).optional() }, args => agent.mintQuote(args)),
     events: tool('Read public events forward from since (exclusive sequence), or continue with cursor and the same filters. Save sequences durably.',
       { since: height.optional(), ...list }, args => agent.events(options(args))),
     event: tool('Read one public event and its provenance by sequence.', { sequence: height }, ({ sequence }) => agent.service.event(sequence)),

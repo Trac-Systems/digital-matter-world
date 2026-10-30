@@ -109,3 +109,31 @@ test('local agent gate opens linked nonholder mints and retains the finder week'
   assert.equal((await makeFinancialMint(a, intent, 'week', candidate, context)).state, 'dry-run');
   assert.equal(journal.recent().length, 0);
 });
+
+test('selected ticker is quoted by choice and its immutable deployment is bound in the signed mint request', async t => {
+  const directory = await temp(t), network = 'dmw-kit-test', wallet = testWallet();
+  const settings = settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '20', values: SETTINGS_PROFILE });
+  const context = { settings, settingsHash: hashObject(settings) }, deployment = 'd'.repeat(64) + 'i0';
+  const journal = await Journal.open(directory, network, { intervalMs: 0 }); cleanup(t, () => journal.close());
+  let counted = '2099999999';
+  const service = { network, mintQuote: async input => { assert.equal(input.deployment, 'chosen'); return { feeQuote: { settingsHash: context.settingsHash, deploymentId: deployment } }; } };
+  const a = new Agent({ wallet, network, service, journal, dryRun: true, trac: { network, head: async () => ({ counted }) } });
+  const intent = { asset: 'c1', amount: '3', receiver: 'receiver', payer: 'payer', kind: 'tap', compound: true, deployment: 'chosen' };
+  await assert.rejects(makeFinancialMint(a, intent, 'choice', null, context), /multi_ticker_inactive/);
+  counted = '2100000000'; const preview = await makeFinancialMint(a, intent, 'choice', null, context);
+  assert.equal(preview.request.deployment, deployment);
+  assert.notEqual(financialMintId(network, preview.request), financialMintId(network, { ...preview.request, deployment: 'e'.repeat(64) + 'i0' }));
+  assert.equal(journal.recent().length, 0);
+});
+
+test('ticker tool dry run never requests a fee or inscribes and read choices use the new routes', async () => {
+  const calls = [], service = new ServiceClient({ fetchImpl: async (url, options) => { calls.push([new URL(url).pathname, options.method]); return new Response('{}', { headers: { 'content-type': 'application/json' } }); } });
+  await service.assetTickers('p2:1'); await service.tickerState('p2:1', 'chosen');
+  assert.deepEqual(calls, [['/assets/p2:1/tickers', 'GET'], ['/mint/ticker-state/p2:1', 'GET']]);
+  const agent = { dryRun: true, bitcoinWallet: { address: 'receiver' }, service: { deployTicker: () => assert.fail('dry run must not POST') } };
+  const tools = gameTools({ agent });
+  const tool = tools.deploy_ticker;
+  assert.ok(tool);
+  const result = await tool.run(tool.schema.parse({ asset: 'p2:1', ticker: 'chosen' }));
+  assert.equal(result.state, 'dry-run'); assert.equal(result.sent, false);
+});

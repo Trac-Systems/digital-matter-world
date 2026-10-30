@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { buildInscription, mintContent, missingItems, transferItems, ensure, digest, feeItemKey, deploymentContent, checkDeployer, checkSavedFee } from './inscription-core.mjs';
 
 export class PlayerMint {
@@ -98,13 +99,17 @@ export class PlayerMint {
       return this.broadcast(this.journal.reserve(key, intent, { requestId: id, plan: signed }));
     });
   }
-  deploy({ asset, feeRate, maxFeeSats }) {
+  deploy({ asset, ticker, retry, feeRate, maxFeeSats }) {
     return this.serial(async () => {
-      let job = await this.service.deployment(asset);
+      let job = ticker === undefined ? await this.service.deployment(asset) : await this.service.deployTicker({ asset, ticker, ...(retry ? { retry } : {}), receiver: this.wallet.address });
+      if (ticker !== undefined) {
+        ensure(job.ticker === ticker.toLowerCase() && job.officialDeployment, 'Chosen ticker mismatch');
+        if (job.state === 'awaiting_fee' || job.state === 'refused') return { ...job, sent: false };
+      }
       // The gateway prepares deployment content in the background and answers "queued" first.
       for (let waited = 0; job.state !== 'registered' && !job.content && waited < 120000; waited += 2000) {
         await new Promise(resolve => setTimeout(resolve, 2000));
-        job = { ...job, ...await this.service.deploymentState(job.catalogAsset ?? asset) };
+        job = { ...job, ...await (ticker === undefined ? this.service.deploymentState(job.catalogAsset ?? asset) : this.service.tickerState(job.catalogAsset ?? asset, job.id)) };
       }
       if (job.state !== 'registered' && !job.content) return { state: job.state ?? 'queued', asset, sent: false, notice: 'The gateway is still preparing this deployment. Retry inscribe_deployment in a minute.' };
       ensure(job.asset === asset || asset === job.catalogAsset && /^p2:(0|[1-9][0-9]*)$/.test(asset) &&
@@ -112,8 +117,13 @@ export class PlayerMint {
       asset = job.asset;
       if (job.state === 'registered') return { state: 'registered', asset, inscriptionId: job.entry?.id, sent: false };
       checkDeployer(job, { owner: this.owner, address: this.wallet.address });
-      const { text, attemptId, phase } = deploymentContent(job);
-      if (job.kind === 'compound') ensure(this.owner && job.definition?.firstMaker === this.owner, 'Only this compound’s first maker may inscribe its deployment');
+      let chosenNames;
+      if (job.officialDeployment) {
+        ensure(multiTickerActive(job.createdHeight), 'Additional tickers are not active');
+        chosenNames = await import('../../rules/src/ticker-names.js');
+      }
+      const { text, attemptId, phase } = deploymentContent(job, { validateTicker: chosenNames?.validateChosenTicker });
+      if (job.kind === 'compound' && !job.officialDeployment) ensure(this.owner && job.definition?.firstMaker === this.owner, 'Only this compound’s first maker may inscribe its deployment');
       ensure(!job.receiver || job.receiver === this.wallet.address, 'Use the wallet that inscribed this pattern’s element');
       const current = await this.service.payoutBinding(this.owner, 'tap');
       ensure(current.binding?.request?.address === this.wallet.address && current.binding.request.agent === this.owner,
@@ -129,7 +139,7 @@ export class PlayerMint {
       if (this.dryRun) return { state: 'dry-run', asset, attemptId, resume: true, signed: false };
       const result = await this.broadcast(row);
       try {
-        const registered = await this.service.submitDeployment({ asset, phase, inscription: result.inscriptionId });
+        const registered = job.officialDeployment ? await this.service.deployTicker({ asset, requestId: job.id, phase, inscription: result.inscriptionId }) : await this.service.submitDeployment({ asset, phase, inscription: result.inscriptionId });
         return { ...result, asset, phase, deploymentState: registered.state };
       } catch (error) {
         return { ...result, asset, phase, deploymentState: 'awaiting_verification', notice: 'Retry inscribe_deployment when the inscription lands in a Bitcoin block to submit this same inscription for verification.', verificationCode: error.code ?? 'verification_pending' };

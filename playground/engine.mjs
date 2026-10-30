@@ -11,6 +11,7 @@ import { rules } from '../service/src/rules.mjs';
 import { hash, heightKey } from '../service/src/util.mjs';
 import { reloadBaseFee } from '../service/scripts/base-fee.mjs';
 import { currentFee } from '../service/src/fees.mjs';
+import { linkFeePlan } from '../service/src/link-fees.mjs';
 import { redeem } from '../local/protocol.mjs';
 import { escrowSplitForItems } from '../committee/signer/escrow.mjs';
 import { calldata, TYPES } from '../committee/signer/escrow.mjs';
@@ -214,7 +215,9 @@ export class Engine {
       const result={id,paymentId:saved.paymentId,request:row};await checkpoint({state:'complete',result});this.emit('payment',result);return result;
     }
     const row=this.store.get('linkIntents',id);check(row,'payment_missing');
-    row.split=rules.splitFee(rules.feeFor(type,row.terms.baseFee,1),{kind:type});
+    const counted=await this.reads.counted();
+    row.split=rules.multiTickerActive(counted)?(await linkFeePlan(this.reads,row.terms,{counted})).split:
+      rules.splitFee(rules.feeFor(type,row.terms.baseFee,1),{kind:type});
     if(!saved){
       check((await this.trac('head')).counted+1<=row.request.until,'payment_window_too_short');
       check((await this.reads.bitmap(row.request.height)).agent===row.request.owner,'bitmap_holder_changed');

@@ -3,7 +3,7 @@ import { check } from './util.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
 const root = new URL('../public/web/', import.meta.url);
 const consoleRoot = new URL('../../playground/console/', import.meta.url), tracAddress = new URL('../../rules/src/trac-address.js', import.meta.url);
-const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'connect.js', 'money.js'].map(name => ['/web/' + name, new URL(name, root)]));
+const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'connect.js', 'money.js', 'ticker-deploy.js'].map(name => ['/web/' + name, new URL(name, root)]));
 assets.set('/web/amount-format.js', new URL('js/amount-format.js', consoleRoot));
 assets.set('/web/trac-address.js', tracAddress);
 assets.set('/playground/console/js/requester-storage.js', new URL('js/requester-storage.js', consoleRoot));
@@ -11,12 +11,14 @@ assets.set('/kit/lib/tap-wallet-actions.mjs', new URL('../../kit/lib/tap-wallet-
 assets.set('/kit/lib/wallet-funds.mjs', new URL('../../kit/lib/wallet-funds.mjs', import.meta.url));
 // The pages are the playground console's own CSS, components and views. Only its data module (api.js)
 // and its wallet flows (flows.js) are replaced by the public read adapter and the wallet-page links.
-for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'wallet-errors', 'requester-storage', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
+for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'wallet-errors', 'requester-storage', 'tickers', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
   assets.set(`/web/console/js/${name}.js`, new URL(`js/${name}.js`, consoleRoot));
 assets.set('/web/console/js/api.js', new URL('api.js', root));
 assets.set('/web/console/js/flows.js', new URL('flows.js', root));
 // dom.js imports ../../../rules/src/trac-address.js, which resolves here.
 assets.set('/rules/src/trac-address.js', tracAddress);
+// tickers.js imports ../../../rules/src/ticker-grammar.js (no dependencies).
+assets.set('/rules/src/ticker-grammar.js', new URL('../../rules/src/ticker-grammar.js', import.meta.url));
 const styles = new Map([['/web/console/console.css', ['text/css; charset=utf-8', new URL('console.css', consoleRoot)]],
   ...['fraunces-latin-wght-normal', 'atkinson-hyperlegible-next-latin-wght-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal']
     .map(name => [`/web/console/fonts/${name}.woff2`, ['font/woff2', new URL(`fonts/${name}.woff2`, consoleRoot)]])]);

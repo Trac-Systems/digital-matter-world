@@ -1,3 +1,4 @@
+import { TickerProvisioning } from './ticker-provisioning.mjs';
 import { randomBytes } from 'node:crypto';
 import { check, hash } from './util.mjs';
 import { KeyedWork, parallelPage } from './keyed-work.mjs';
@@ -22,6 +23,7 @@ const TRANSIENT = new Set(['tap_snapshot_changed', 'tap_quorum_unavailable', 'ta
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy, concurrency = 4 }) {
     Object.assign(this, { store, reads, network, registryPath, policy, concurrency });
+    this.tickers = new TickerProvisioning(this);
     this.work = new KeyedWork({ concurrency, capacity: Math.max(concurrency, 64) }); this.enqueues = new KeyedWork();
     check(Number.isSafeInteger(policy.confirmations) && policy.confirmations === 1, 'provisioning_confirmation_policy');
   }
@@ -90,7 +92,7 @@ export class Provisioner {
     return shown(job);
   }
   advanceAsset(asset, definition) { return this.work.run(asset, async () => this.advance(await this.enqueue(asset, definition)), { join: true }); }
-  async close() { await this.enqueues.drain(); await this.work.drain(); }
+  async close() { await this.tickers.work.drain(); await this.enqueues.drain(); await this.work.drain(); }
   async tick() {
     if (this.ticking) return this.ticking;
     this.ticking = (async () => {

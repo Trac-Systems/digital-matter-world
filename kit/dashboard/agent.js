@@ -6,6 +6,7 @@ import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral } from '/web/console/js/words.js';
 import { store } from '/web/console/js/api.js';
 import { feePrice } from '/web/console/js/money.js';
+import { tickerList, tickerChoice, deployTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
@@ -133,6 +134,23 @@ export function mount(el) {
   // claimAsset: the pattern filter above the claims table (the gateway's id for it); undefined shows all.
   let patterns = null, claimAsset;
   const patternList = h('div'), filter = h('div'), claimsPanel = h('div', { style: { scrollMarginTop: '72px' } });
+  // Tickers of one pattern or compound, opened from its row: its tokens on TAP, the ticker its mints go to
+  // and the way to deploy another. tickerPicks: the picked ticker per asset (Official unless picked).
+  const tickerPicks = new Map(), patternTickers = h('div'), compoundTickers = h('div');
+  let lastClaims = null;
+  const choiceOf = asset => {
+    if (!tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { single: 'Official ticker. ' + SAME_REWARDS, onChange: () => { if (lastClaims) drawClaims(lastClaims); drawCompounds(); } }));
+    return tickerPicks.get(asset);
+  };
+  const tickersButton = (asset, name, box, compound) => whenTickers(asset, h('button.btn.sm.ghost', { type: 'button', onclick: () => {
+    const choice = choiceOf(asset);
+    clear(box, h('div', { style: { borderTop: '1px solid var(--rule-2)' } },
+      h('div.section-label', {}, `${name} · Tokens on TAP`), tickerList(asset, { label: false }),
+      h('div.stack', { style: { gap: '12px', padding: '10px 14px 14px' } },
+        h('div', {}, h('div.small.muted', { style: { marginBottom: '4px' } }, compound ? 'Make real into' : 'Mint into'), choice.el),
+        deployTickerForm(asset, { compound, request: ticker => api('/api/deploy-ticker', { asset, ticker }), open: job => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id })) }))));
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } }, 'Tickers'));
   const act = async (label, fn) => {
     if (busy) return; busy = true; if (label) say(label, 'busy');
     try { await fn(); if (label && note.textContent === label) clear(note); } catch (error) { say(sendWords(error.message), 'bad'); } finally { busy = false; }
@@ -145,7 +163,8 @@ export function mount(el) {
     if (button) { button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy'); }
     say(`Minting ${label}: your agent is signing the mint request…`, 'busy');
     let result;
-    try { result = await api('/api/mint', { asset: row.asset, block: row.block }); }
+    const deployment = tickerPicks.get(row.asset)?.value();
+    try { result = await api('/api/mint', { asset: row.asset, block: row.block, ...(deployment ? { deployment } : {}) }); }
     catch (error) { status.set({ state: 'failed', detail: words(error.message) }); if (button) { button.disabled = false; button.textContent = idle; button.classList.remove('busy'); } throw error; }
     if (result.requestId) { status.set({ state: 'complete', detail: 'Request ready. Pay and inscribe with your wallet.' }); go('/mint/' + result.requestId); return; }
     status.set({ state: 'complete', detail: words(result.state ?? 'Request saved; it appears under Open requests.') });
@@ -164,12 +183,13 @@ export function mount(el) {
     info.payoutAddress ? null : h('div.callout.bad', {}, 'No payout TAP wallet bound yet. Ask your agent to bind one before minting.'),
     h('p.muted', { style: { margin: 0 } }, 'Mint requests are signed here by your agent. You pay and inscribe on the request page with the wallet connected in the header (TAP Wallet, or MetaMask for bridged TAP).'));
   const drawClaims = data => {
-    next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile();
+    lastClaims = data; next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile();
     clear(claims, data.claims.length ? table(data.claims, [
       { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', h('a.mono', { href: '/block/' + r.block }, String(r.block)))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${fmtInt(r.count)} / ${fmtInt(r.balance)}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
       { key: 'state', label: 'Who may mint', render: r => h('div', {}, pill(words(r.eligibility ?? r.state), r.canMint ? 'good' : r.reason ? 'warn' : ''), r.reason ? h('div.small.muted', {}, r.reason === 'insufficient_balance' ? `Needs ${fmtInt(r.count)} units, you hold ${fmtInt(r.balance)}` : words(r.reason)) : null) },
-      { key: 'action', label: '', render: r => r.canMint ? h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, 'Mint')
+      { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, 'Mint'),
+          tickerPicks.get(r.asset)?.label() ? h('div.small.muted', {}, 'into ', h('span.mono', {}, tickerPicks.get(r.asset).label())) : null)
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
     ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));
@@ -204,11 +224,13 @@ export function mount(el) {
           p.deploymentLink ? waits ? h('button.btn.sm', { disabled: true, title: `Only its discoverer, until block ${week.until}` }, 'Deploy pattern')
             : h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
               p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null,
-          p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null); } },
+          p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null,
+          p.token === 'deployed' ? tickersButton(p.asset, p.name ?? assetName(p.asset), patternTickers, false) : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
         h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null) },
     ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
     if (data.more) patternList.append(h('div.empty.small', {}, 'Showing the first patterns only.'));
+    patternList.append(patternTickers);
   };
   const requestPager = h('div.pager-foot');
   // Open requests: ten per page, newest first, with the page's range and Newest / Older buttons.
@@ -673,7 +695,9 @@ export function mount(el) {
       const fee = c.tier ? feePrice(store.status?.feePolicy, 'compound', c.tier) : 'the compound fee';
       return stack(c.ticker ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, c.ticker)) : null, h('div.row', { style: { gap: '6px' } }, amount,
         h('button.btn.sm.primary', { disabled: c.available === '0', onclick: event => mintCompound(c, amount.value.trim(), event.currentTarget) }, 'Make real on TAP')),
-        h('div.small.muted', {}, `Quoted fee ${fee} per mint from your TAP Wallet (all tiers share one amount under flat fees); the units leave your agent and arrive as TAP tokens at your payout wallet.`));
+        h('div.small.muted', {}, `Quoted fee ${fee} per mint from your TAP Wallet (all tiers share one amount under flat fees); the units leave your agent and arrive as TAP tokens at your payout wallet.`),
+        tickerPicks.get(c.asset)?.label() ? h('div.small.muted', {}, 'into ', h('span.mono', {}, tickerPicks.get(c.asset).label())) : null,
+        tickersButton(c.asset, c.name, compoundTickers, true));
     }
     if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
       h('button.btn.sm', { disabled: true, title: 'Refine its tier first.' }, 'Deploy its TAP token'),
@@ -689,7 +713,8 @@ export function mount(el) {
     const status = toast({ what: `Making ${amount} ${c.name} real`, detail: 'Your agent is signing the mint request…', state: 'queued' });
     button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy');
     let result;
-    try { result = await api('/api/mint-compound', { asset: c.asset, amount }); }
+    const deployment = tickerPicks.get(c.asset)?.value();
+    try { result = await api('/api/mint-compound', { asset: c.asset, amount, ...(deployment ? { deployment } : {}) }); }
     catch (error) { status.set({ state: 'failed', detail: words(error.message) }); button.disabled = false; button.textContent = 'Make real on TAP'; button.classList.remove('busy'); throw error; }
     if (result.requestId) {
       status.set({ state: 'complete', detail: result.replayed ? `Your earlier request for ${fmtInt(result.amount)} units is still open. Pay and inscribe it first.` : 'Request ready. Pay and inscribe with your wallet.' });
@@ -713,6 +738,7 @@ export function mount(el) {
         h('div.muted', {}, [RECIPES[c.recipe]?.[0] ?? c.recipe, 'recipe ' + c.from.map(i => i.amount).join(' : '), c.generation === null || c.generation === undefined ? null : 'generation ' + c.generation].filter(Boolean).join(' · '))) : h('span.faint', {}, '–') },
       { key: 'token', label: 'On TAP', render: compoundToken },
     ], { sortable: false }) : h('div.empty', {}, 'No compounds yet. Craft one above; it appears here and under Send units.'));
+    compoundsBody.append(compoundTickers);
     if (list.some(c => c.needsRefine)) compoundsBody.append(h('p.small.muted', { style: { margin: 0, padding: '10px 14px', borderTop: '1px solid var(--rule-2)' } }, REFINE_NOTE));
   };
   // A refresh redraws the picker only when the ingredients changed and nobody types in it.

@@ -1,4 +1,5 @@
 import { MintRefundSender } from './mint-refund-sender.mjs';
+import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { mintSenderError } from './mint-sender-errors.mjs';
 import { join } from 'node:path';
 import { requestKey, btc, validRequestId, validDestination } from './mint-sender-keys.mjs';
@@ -36,24 +37,33 @@ export class MintSender {
   async discover() {
     const page = await this.gateway.list(this.cursor, this.settings.pageSize);
     check(page.keyId === this.keyId && (page.next === null || validRequestId(page.next)), 'mint_sender_gateway_identity');
-    for (const status of page.rows) {
+    let returns;
+    if (page.tickerReturns && this.gateway.tickerReturns) {
+      returns = await this.gateway.tickerReturns(this.journal.meta('tickerReturnCursor') ?? '', this.settings.pageSize);
+      check(returns.keyId === this.keyId && (returns.next === null || validRequestId(returns.next)), 'mint_sender_gateway_identity');
+      check(returns.rows.every(r => r.tickerReturn === true && multiTickerActive(r.counted) && r.state === 'minted'), 'ticker_return_binding');
+    }
+    for (const status of [...page.rows, ...returns?.rows ?? []]) {
       const id = status.requestId;
       check(validRequestId(id) && status.payBy?.rail === 'tap' && validDestination(status.payer, this.network) && validDestination(status.receiver, this.network), 'mint_sender_gateway_binding');
-      const key = requestKey(this.seed, id, this.network); let address;
+      const key = requestKey(this.seed, status.tickerReturn ? status.fundingId : id, this.network); let address;
       try { address = key.address; } finally { key.privateKey.fill(0); }
       check(status.fundingAddress === address, 'mint_sender_funding_binding');
       const old = this.journal.get(id);
       check(!old || old.payer === status.payer && old.receiver === status.receiver && old.address === address, 'mint_sender_request_changed');
       // Existing work is never rewritten by a concurrent discovery response.
-      if (!old) this.journal.save({ id, payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted, fundingReference: status.fundingReference });
+      if (!old) this.journal.save({ id, ...(status.tickerReturn ? { tickerReturn: true, fundingId: status.fundingId } : {}), payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted, fundingReference: status.fundingReference });
       else if (!this.active.has(id) && (status.counted !== old.counted || status.fundingReference !== old.fundingReference)) this.journal.save({ ...old, counted: status.counted, fundingReference: status.fundingReference });
     }
+    if (returns) this.journal.meta('tickerReturnCursor', returns.next ?? '');
     this.cursor = page.next ?? ''; this.journal.meta('cursor', this.cursor); this.lastDiscovery = this.now();
   }
   save(row, change) { return this.journal.save({ ...row, ...change }); }
   async process(id) {
     let row = this.journal.get(id), status;
-    try { status = { ...await this.gateway.status(id), counted: row.counted }; }
+    try { status = { ...await (row.tickerReturn ? this.gateway.tickerReturnStatus(id) : this.gateway.status(id)), counted: row.counted };
+      if (row.tickerReturn) check(status.tickerReturn === true && status.state === 'minted' && status.fundingId === row.fundingId &&
+        status.fundingReference === row.fundingReference && multiTickerActive(status.counted), 'ticker_return_binding'); }
     catch (error) {
       // Once signed, the saved permit/transactions need no new gateway action.
       // Finish the reveal even if a gateway restart interrupts status reads.
@@ -82,7 +92,7 @@ export class MintSender {
     }
     if (this.settings.refundsEnabled && status.publicMint && status.state === 'permit_issued' && !row.fundingReference)
       return this.save(row, { message: 'Waiting for the accepted winning payment funding reference.' });
-    const coins = this.settings.refundsEnabled && row.fundingReference ? await this.bitcoin.paymentFunding(row.address, row.fundingReference) : await this.bitcoin.utxos(row.address);
+    const coins = (this.settings.refundsEnabled || row.tickerReturn) && row.fundingReference ? await this.bitcoin.paymentFunding(row.address, row.fundingReference) : await this.bitcoin.utxos(row.address);
     const available = coins.filter(c => !this.journal.coinOwner(c));
     const previous = row.coin && available.find(c => c.txid === row.coin.txid && c.vout === row.coin.vout);
     // A wallet fee bump can replace its payment before the permit arrives.
@@ -136,7 +146,7 @@ export class MintSender {
       ...(expired ? { returnReason: 'fee_spike' } : {}), message: expired ? 'Use your wallet to inscribe this mint. Bitcoin set-aside will be returned.' : 'Waiting for Bitcoin fees to fit the set-aside.' });
   }
   async returnFunding(row, reason) {
-    const feeRate = await this.bitcoin.feeRate(), key = requestKey(this.seed, row.id, this.network);
+    const feeRate = await this.bitcoin.feeRate(), key = requestKey(this.seed, row.fundingId ?? row.id, this.network);
     let plan;
     try { plan = buildMintReturn({ coin: row.coin, key, payer: row.payer, network: this.network, feeRate, settings: this.settings }); }
     catch (error) {

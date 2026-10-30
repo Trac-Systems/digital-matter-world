@@ -7,6 +7,7 @@ import { calldata, TYPES, expectedEscrowSplit, escrowSplitForItems } from '../..
 import { publicMint } from './mints.mjs';
 import { publicMintTargetVisible, privatePublicMintView } from './public-mint-privacy.mjs';
 import { createRecordHighlights } from './web-records.mjs';
+import { linkFeePlan } from './link-fees.mjs';
 
 export function webTarget(config) {
   check(['prod', 'regtest'].includes(config.mode), 'web_target_unavailable', 503);
@@ -70,7 +71,7 @@ export class WebCheckout {
       if (['payment_lock_missing', 'payment_unconfirmed', 'payment_consume_unconfirmed'].includes(error.message)) return { ready: false };
       throw error;
     }
-    const price = rules.feeFor('link', row.terms.baseFee, 1, row.terms.feeSettings), split = rules.splitFee(price, { kind: 'link' });
+    const { price, split } = await linkFeePlan(this.reads, row.terms);
     check(payment.id === paymentId && payment.requestId === id && payment.payer === row.terms.payer && payment.kind === 'tap' &&
       payment.tick === 'tap' && payment.lockKind === 'htlc' && payment.conditionType === 'hashlock' && payment.hash === row.terms.hash &&
       payment.refund === row.terms.payer && payment.claim === row.terms.treasury && payment.total === price && payment.base === split.treasury &&
@@ -111,7 +112,7 @@ export class WebCheckout {
     else { state = this.store.get('linkStatus', id)?.state ?? 'waiting_payment'; payment = this.store.get('linkRequests', id)?.paymentId; }
     if (state === 'waiting_payment' && counted > (mint ? row.expiry : row.request.until)) state = 'expired';
     const quote = mint ? row.quote : { price: rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), baseFee: row.terms.baseFee, feeSettings: row.terms.feeSettings ?? rules.FEE_DEFAULTS,
-      destinations: { treasury: row.terms.treasury }, split: rules.splitFee(rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), { kind: type }) };
+      destinations: { treasury: row.terms.treasury }, split: (await linkFeePlan(this.reads, row.terms, { counted })).split };
     const payer = mint ? row.payer : row.terms.payer, refundAfter = mint ? row.expiry + 144 : row.refundAfter ?? row.request.until + 144;
     const plan = { id, type, kind, state, payer, owner: row.request.owner, receiver: row.receiver ?? null,
       asset: row.request.asset ?? null, block: row.request.block ?? row.request.height ?? null, amount: row.request.amount ?? null,

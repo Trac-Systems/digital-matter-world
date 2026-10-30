@@ -33,7 +33,7 @@ export function deploymentPayload(entry) {
 }
 export function generationDigest(entry) {
   const keys = ['network', 'asset', 'generation', 'id', 'privilege', 'authorityKey', 'elementId', 'elementName', 'receiver', 'dt', 'kind', 'tick', 'indexTick', 'options'];
-  return hash(rules.stableJSON({ ...Object.fromEntries([...keys, ...(entry.prov === undefined ? [] : ['prov'])].map(k => [k, entry[k] ?? null])),
+  return hash(rules.stableJSON({ ...Object.fromEntries([...keys, ...(entry.prov === undefined ? [] : ['prov']), ...(entry.officialDeployment === undefined ? [] : ['officialDeployment']), ...(entry.tickerRequestId === undefined ? [] : ['tickerRequestId'])].map(k => [k, entry[k] ?? null])),
     ...(rules.fieldValueMode(entry.pattern ?? {}) ? { amountMode: 'field-value' } : {}) }));
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
@@ -41,7 +41,7 @@ export function generationDigest(entry) {
 export async function verifyDeployment(reads, entry, options = {}) {
   return reads.withTapSnapshot ? reads.withTapSnapshot(options.view, () => verifyDeploymentRecords(reads, entry, options)) : verifyDeploymentRecords(reads, entry, options);
 }
-async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view } = {}) {
+async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view, verifyReceiver } = {}) {
   check(entry && entry.suspended !== true, 'asset_provisioning');
   const d = await reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick));
   check(d?.ins === entry.id && d.prv === entry.privilege, 'deployment_binding');
@@ -74,7 +74,7 @@ async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view }
   check(key === (entry.authorityKey ?? (await reads.authority()).committee), 'privilege_binding');
   const inclusion = await reads.included(entry.id, view);
   check(inclusion?.confirmations >= confirmations, 'deployment_confirmations');
-  if (entry.receiver) check((await reads.inscription(entry.id, view))?.address === entry.receiver, 'deployment_receiver');
+  if (entry.receiver && (verifyReceiver ?? (!entry.inclusion || !rules.multiTickerActive(view?.executionHeight ?? view?.counted ?? await reads.counted())))) check((await reads.inscription(entry.id, view))?.address === entry.receiver, 'deployment_receiver');
   if (entry.approval) check(entry.approval === generationDigest(entry), 'deployment_approval');
   return { deployment: d, inclusion, authority, authorityKey: key, elementId, dt };
 }

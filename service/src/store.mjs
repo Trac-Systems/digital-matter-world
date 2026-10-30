@@ -1,3 +1,4 @@
+import { indexOfficialNames } from './official-ticker-names.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { openSync, closeSync, unlinkSync } from 'node:fs';
 import { readIndexSchema } from './read-index-storage.mjs';
@@ -188,6 +189,7 @@ export class Store {
       projectRevision(this, op);
       if (consumesPublicRecord(op.space)) op = projectPublicRecord(this, op, this.get(op.space, op.id));
     }
+    if (['patternsByAsset', 'compoundTypes', 'types'].includes(op.space) && this.get('officialCatalogNameIndex', 'ready')) indexOfficialNames(this, op);
     if (this.evidenceReady) this.indexEvidence(op);
     if (op.value === undefined) this.delStmt.run(op.space, String(op.id));
     else this.putStmt.run(op.space, String(op.id), JSON.stringify(op.value));

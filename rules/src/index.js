@@ -57,3 +57,7 @@ export * from './pattern-amount.js';
 export * from './pattern-names.js';
 export * from './legacy-deploy-share.js';
 export * from './legacy-deploy-manifest.js';
+export * from './multi-ticker-activation.js';
+export * from './ticker-names.js';
+export * from './financial-fees.js';
+export * from './deployer-share.js';

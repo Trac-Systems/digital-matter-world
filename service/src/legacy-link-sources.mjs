@@ -9,7 +9,11 @@ export function installLegacyLinkSources(reads, { network, accepted }) {
     check(!original.paymentId || original.paymentId === references[0], 'legacy_link_payment_identity');
     const payment = await reads.linkPaymentFor({ ...original, paymentId: references[0] }, at);
     if (!payment?.settlement?.accepted) return [];
-    const verified = r.verifyLinkInput({ request: original.request, sig: original.sig, terms: original.terms, payment }, network, r.safeNumberV2(r.decimalV2(at.counted)));
+    // Imported, accepted locks keep the split selected at their admission.
+    const executionHeight = source.legacy.executionHeight ?? '0';
+    const document = r.multiTickerActive(executionHeight) ? await reads.financialSettings(source.settingsHash) : undefined;
+    const verified = r.verifyLinkInput({ request: original.request, sig: original.sig, terms: original.terms, payment }, network,
+      r.safeNumberV2(r.decimalV2(at.counted)), { executionHeight, document });
     check(!await reads.financialRecord('fi/link-payment/' + verified.paymentKey, at), 'legacy_link_payment_used');
     return source.feeItems.map(f => ({ ...f, key: r.paymentItemKey('tap', ['legacy-link', verified.paymentKey, f.role].join('/')),
       accepted: true, confirmations: payment.settlement.confirmations, origin: id, reference: references[0], verifiedHeight: String(payment.verifiedHeight) }));

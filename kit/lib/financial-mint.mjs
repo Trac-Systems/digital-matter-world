@@ -1,4 +1,4 @@
-import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument } from '../../rules/src/index.js';
+import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument, multiTickerActive } from '../../rules/src/index.js';
 import { wireIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { financialMintDigest, financialMintId } from '../../rules/src/financial-mint.js';
 import { accountActionDigest } from '../../contract/root-accounts.js';
@@ -24,7 +24,8 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
   check(compound ? block === undefined : candidate?.find?.asset === asset && decimalV2(candidate.find.block) === block && String(candidate.find.count) === amount &&
     !candidate.void && !candidate.pending && !candidate.minted && mintRight({ find: candidate.find, owner, counted: head.counted,
       link: candidate.link, currentHolder: candidate.currentHolder, finderWindow: v.finderWindow, settings: policy }).allowed, 'Mint right unavailable');
-  const quoteInput = { asset, amount, ...(block === undefined ? {} : { block }), kind, payer, receiver };
+  check(intent.deployment === undefined || multiTickerActive(head.counted), 'multi_ticker_inactive');
+  const quoteInput = { ...(intent.deployment === undefined ? {} : { deployment: intent.deployment }), asset, amount, ...(block === undefined ? {} : { block }), kind, payer, receiver };
   const quote = old?.body.feeQuote ? { feeQuote: old.body.feeQuote } : await service.mintQuote(quoteInput);
   if (quote.deploymentNeeded || quote.state === 'deployment_pending') return { ...quote, signed: false,
     ...(quote.deploymentNeeded ? { deploymentLink: service.deploymentLink?.(quote.catalogAsset ?? asset, encodeTracAddress(owner), agent.paymentOrigin),
@@ -32,7 +33,7 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
       { next: [{ tool: 'mint_on_chain', arguments: { ...intent, actionId } }] }) };
   check(!quote.asset || quote.asset === asset, 'Mint ledger asset mismatch');
   check(quote.feeQuote?.settingsHash === policyHash, 'Financial quote settings mismatch');
-  const request = old?.body.request ?? { v: 2, owner, asset, amount, receive: sha256(receiver), ...(block === undefined ? {} : { block }), nonce: nonce(),
+  const request = old?.body.request ?? { v: 2, owner, asset, amount, ...(intent.deployment === undefined ? {} : { deployment: quote.feeQuote.deploymentId }), receive: sha256(receiver), ...(block === undefined ? {} : { block }), nonce: nonce(),
     until: addUint(decimalV2(head.counted), String(v.moveFreshnessTips)), expires: addUint(decimalV2(head.counted), String(v.pendingBlocks)), settingsHash: policyHash };
   if (!old) check(BigInt(request.expires) - BigInt(head.counted) >= BigInt(v.requestMinBlocks) && BigInt(request.expires) - BigInt(head.counted) <= BigInt(v.requestMaxBlocks), 'Mint request expired');
   if (agent.dryRun) return { state: 'dry-run', request, receiver, payer, quote, signatureExposed: false };
