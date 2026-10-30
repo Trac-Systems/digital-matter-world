@@ -45,3 +45,10 @@ test('adding patterns preserves every existing assignment and a used-up name get
   assert.equal(patternSymbol(store, 'p2:0'), before);
   assert.match(JSON.stringify(store.db.prepare('EXPLAIN QUERY PLAN SELECT 1 FROM publicPatternSymbols WHERE symbol=?').all('Ab')), /SEARCH.*INDEX/);
 });
+
+test('plain and legacy spellings share symbol preferences without losing short dmw names', () => {
+  const first = name => patternSymbolCandidates(name).next().value;
+  assert.equal(first('florite'), 'Fl'); assert.equal(first('dmwflorite'), 'Fl');
+  assert.equal(first('dmw'), 'Dm'); assert.equal(first('dmwa'), 'Dm');
+  assert.equal(first('abc'), 'Ab'); assert.equal(first('123'), '12');
+});

@@ -177,11 +177,11 @@ export function deploymentContent(job) {
   const text = job.inscriptionText;
   if (job.phase === 'element') {
     const name = typeof text === 'string' ? text.split('.')[0] : '';
-    ensure(/^dmw[a-z0-9]{0,29}$/.test(name) && text === tapElementText(name, job.definition) &&
+    ensure(/^[a-z0-9]{3,32}$/.test(name) && text === tapElementText(name, job.definition) &&
       text === job.content && text === attempt.text, 'Element differs from the accepted pattern');
   } else {
     let payload; try { payload = JSON.parse(text); } catch { ensure(false, 'Invalid deployment content'); }
-    ensure(payload?.p === 'tap' && payload.op === (pattern ? 'dmt-deploy' : 'token-deploy') && /^dmw[a-z0-9]{2,29}$/.test(payload.tick) &&
+    ensure(payload?.p === 'tap' && payload.op === (pattern ? 'dmt-deploy' : 'token-deploy') && typeof payload.tick === 'string' && (pattern ? /^[a-z0-9]{3,32}$/ : /^dmw[a-z0-9]{2,29}$/).test(payload.tick) &&
       /^[0-9a-f]{64}i[0-9]+$/.test(payload.prv) && (!job.privilege || payload.prv === job.privilege), 'Invalid mint authority or ticker');
     // prov names the pattern's discoverer or the compound's first maker.
     ensure(payload.prov === undefined || payload.prov === (pattern ? job.definition?.discoverer : job.definition?.firstMaker), 'Deployment names another discoverer or first maker');

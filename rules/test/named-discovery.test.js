@@ -129,3 +129,20 @@ test('named reorg correction touches one header, preserves the old revision and 
   assert.equal(replaced.record.knownMatchCount, '3'); assert.deepEqual(replaced.results, ['added']);
   assert.deepEqual(submitOccurrences(replaced.state, { patternKey: fixed.record.key, agent, anchor, matches: [{ height: '11', hash: hash('replacement'), count: '2' }], settings, history: canonical, counted: '10000' }).results, ['already_known']);
 });
+
+test('plain names keep exact ownership, legacy names, and existing record names across activation', async () => {
+  const { PLAIN_NAMES_HEIGHT } = await import('../src/pattern-names.js');
+  const old = prepare(undefined, { proposal: { ...proposal, name: 'dmwflorite' } });
+  const installed = revealNamedDiscovery(old.state, old.args), original = structuredClone(installed.record);
+  const plain = prepare(installed.state, { proposal: { ...proposal, name: 'florite', pat: '[1]' }, executionHeight: PLAIN_NAMES_HEIGHT });
+  const accepted = revealNamedDiscovery(plain.state, plain.args);
+  assert.equal(accepted.record.name, 'florite'); assert.notEqual(accepted.record.number, original.number);
+  assert.deepEqual(namedGet(accepted.state.records, `pattern/${original.key}`), original);
+  assert.notEqual(namedGet(accepted.state.records, 'name/florite'), namedGet(accepted.state.records, 'name/dmwflorite'));
+  const conflict = prepare(accepted.state, { proposal: { ...proposal, name: 'florite', pat: '^1' }, executionHeight: PLAIN_NAMES_HEIGHT });
+  assert.throws(() => revealNamedDiscovery(conflict.state, conflict.args), /pattern_exists/);
+  // A new alias for an existing definition must never rename its record.
+  const alias = prepare(accepted.state, { proposal: { ...proposal, name: 'newalias' }, executionHeight: PLAIN_NAMES_HEIGHT });
+  const retained = revealNamedDiscovery(alias.state, alias.args);
+  assert.equal(retained.record.name, original.name); assert.equal(retained.record.number, original.number);
+});

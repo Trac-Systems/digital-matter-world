@@ -1,15 +1,15 @@
-import { amountWith, hashObject, stableJSON, validateDefinition, canonicalDefinition } from '../../rules/src/index.js';
+import { amountWith, hashObject, stableJSON, validateDefinition, validPatternName, canonicalDefinition } from '../../rules/src/index.js';
 import { assertHistoryTip, historyProof } from './headers.mjs';
 import { check } from './check.mjs';
 
 // A self-contained local cursor survives process restart without touching the
 // action journal. It pins the proposal and independently verified snapshot.
-export async function searchMatchPage({ history, tip, proposal, cursor, pageSize = 100, signal, settings }) {
+export async function searchMatchPage({ history, tip, proposal, cursor, pageSize = 100, signal, settings, executionHeight = '0' }) {
   if (settings) {
     const proof = historyProof(history);
     check(Number.isSafeInteger(tip.height) && tip.height >= 0 && tip.height < proof.count && history.get(tip.height).hash === tip.hash, 'Local search snapshot is not in verified history');
   } else assertHistoryTip(history, tip);
-  if (settings) canonicalDefinition(proposal, settings);
+  if (settings) { check(validPatternName(proposal.name, executionHeight), 'pattern_name'); canonicalDefinition(proposal, settings); }
   else { check(proposal.amountMode === undefined, 'Pattern amount modes require v2 rules'); validateDefinition(proposal); }
   check(Number.isSafeInteger(pageSize) && pageSize >= (settings ? 1 : 3) && pageSize <= (settings?.values.occurrencePageSize ?? 200), 'Invalid local match page size');
   let searchSnapshot = { height: tip.height, hash: tip.hash }, saved;

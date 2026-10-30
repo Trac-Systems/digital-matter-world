@@ -14,9 +14,9 @@ export const NAME_WORDS = Object.freeze(['amber', 'basalt', 'cobalt', 'dune', 'e
   'leaf', 'loam', 'maple', 'marsh', 'meadow', 'mist', 'nova', 'oak', 'oasis', 'pine', 'prism', 'rain', 'sage', 'snow', 'summit',
   'thorn', 'umber', 'wave', 'wind']);
 // Every party derives the same name from the job and attempt. The name part is
-// shortened to fit 32 characters; the dmw prefix always stays.
+// shortened to fit 32 characters; existing dmw names keep their prefix.
 export function candidate(job, domain, attempt, base) {
-  check(Number.isSafeInteger(attempt) && attempt >= 1 && typeof base === 'string' && /^dmw[a-z0-9]*$/.test(base), 'candidate_name');
+  check(Number.isSafeInteger(attempt) && attempt >= 1 && typeof base === 'string' && (/^[a-z0-9]{3,32}$/.test(base) || /^dmw[a-z0-9]*$/.test(base)), 'candidate_name');
   const seed = hash(rules.stableJSON(['dmw-allocation-v2', job.network, job.asset, job.generation, domain, job.salt]));
   const n = NAME_WORDS.length, a = parseInt(seed.slice(0, 8), 16), b = parseInt(seed.slice(8, 16), 16), k = attempt - 1;
   const word = (offset, i) => NAME_WORDS[(offset + i) % n];

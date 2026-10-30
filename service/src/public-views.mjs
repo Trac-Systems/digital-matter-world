@@ -198,6 +198,7 @@ export class PublicViews {
     const pending = this.store.hasRows('feedEvents'), localBatch = this.store.get('meta', 'v2Last');
     return { version: 2, state: context.ready ? 'ready' : 'waiting_notary', network: this.network, unit: rules.TAP_UNIT,
       units: { tap: 18, bridgedTap: 18, bitcoin: 8, ethereum: 18, matter: 0 }, tip, counted, batch, bitcoinTip,
+      plainNames: rules.plainNamesActive(counted),
       catchingUp: tip !== bitcoinTip || batch.to !== counted,
       // Quotes stay authoritative; the site shows the pinned revision's current prices.
       feePolicy: await this.feePolicyV2(document),

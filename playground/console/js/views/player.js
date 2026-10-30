@@ -19,6 +19,7 @@ export function mount(root, params) {
   const figuresBox = h('div'), walletBox = h('div');
   const pagers = [];
   const pagedPanel = (title, opts, panelOpts) => { const t = pagedTable(opts); pagers.push(t); return panel(title, t.el, { flush: true, ...panelOpts }); };
+  let updateNameField = () => {};
   let built = false;
   const draw = () => {
     const p = store.player;
@@ -131,6 +132,7 @@ export function mount(root, params) {
   let formPagers = [];
   function formPaged(opts) { const t = pagedTable(opts); formPagers.push(t); return h('div.panel', { style: { marginTop: '4px' } }, t.el); }
   function drawActions() {
+    updateNameField = () => {};
     formPagers = [];
     const body = h('div.body');
     clear(actionsBox, h('header', {}, h('h2', {}, 'Play')),
@@ -173,14 +175,22 @@ export function mount(root, params) {
   }
 
   function discoverForm() {
-    const name = input({ class: 'mono', placeholder: 'mypattern', 'aria-label': 'Name after dmw', maxlength: 29 });
+    let plain = store.status?.plainNames === true;
+    const prefix = h('span.mono.muted', {}, plain ? '' : 'dmw');
+    const name = input({ class: 'mono', placeholder: 'mypattern', 'aria-label': plain ? 'Name' : 'Name after dmw', maxlength: plain ? 32 : 29 });
+    updateNameField = () => {
+      plain = store.status?.plainNames === true;
+      prefix.textContent = plain ? '' : 'dmw';
+      name.setAttribute('aria-label', plain ? 'Name' : 'Name after dmw');
+      name.maxLength = plain ? 32 : 29;
+    };
     const pat = input({ class: 'mono', placeholder: 'e.g. 7{3}', 'aria-label': 'Rule' });
     const fld = select([['4:n', 'Height · match count'], ['10:n', 'Nonce · match count'], ['11:n', 'Bits (decimal) · match count'], ['11:h', 'Bits (hex) · match count'],
       ['4:n:field-value', 'Height · field value'], ['10:n:field-value', 'Nonce · field value'], ['11:n:field-value', 'Bits (decimal) · field value'], ['11:h:field-value', 'Bits (hex) · field value']]);
     const check = h('div.small.muted', {}, 'Allowed: digits, a–f, [ranges], {n,m}, ?, ^, $ and | (up to 4 branches, 64 characters, 6 literal digits).');
     const validate = () => {
       const v = pat.value.trim(), n = name.value.trim(), problems = [];
-      if (!/^[a-z0-9]{2,29}$/.test(n)) problems.push('name: 2–29 lowercase letters or digits');
+      if (!(plain ? /^[a-z0-9]{3,32}$/ : /^[a-z0-9]{2,29}$/).test(n)) problems.push(plain ? 'name: 3–32 lowercase letters or digits' : 'name: 2–29 lowercase letters or digits');
       if (!v) problems.push('rule is empty');
       else if (v.length > 64) problems.push('rule is longer than 64 characters');
       else if (!/^[0-9a-f[\]{}\-,?|^$]+$/.test(v)) problems.push('rule uses characters outside the allowed set');
@@ -192,11 +202,11 @@ export function mount(root, params) {
     name.addEventListener('input', validate); pat.addEventListener('input', validate);
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Propose a new pattern type. First commit a hidden fingerprint, then reveal it at least two blocks later, so nobody can copy it.'),
-      h('div.two', {}, field('Name', h('div.row', { style: { flexWrap: 'nowrap', gap: '4px' } }, h('span.mono.muted', {}, 'dmw'), name)), field('Field', fld)),
+      h('div.two', {}, field('Name', h('div.row', { style: { flexWrap: 'nowrap', gap: '4px' } }, prefix, name)), field('Field', fld)),
       field('Rule', pat), check,
       h('div.row.end', {}, h('button.btn.primary', { onclick: async () => {
         if (!validate()) return;
-        const [f, dt, amountMode] = fld.value.split(':'), proposal = { name: `dmw${name.value.trim()}`, pat: pat.value.trim(), fld: Number(f), dt, ...(amountMode ? { amountMode } : {}) };
+        const [f, dt, amountMode] = fld.value.split(':'), proposal = { name: `${plain ? '' : 'dmw'}${name.value.trim()}`, pat: pat.value.trim(), fld: Number(f), dt, ...(amountMode ? { amountMode } : {}) };
         const actionId = `${proposal.name}-${Date.now().toString(36)}`;
         if (!await confirmModal({ title: 'Commit this discovery?', rows: [['Name', title(proposal.name)], ['Rule', h('code', {}, proposal.pat)], ['Field', FIELDS[proposal.fld] + (proposal.fld === 11 ? (dt === 'h' ? ' (hex)' : ' (decimal)') : '') + (amountMode === 'field-value' ? ' · field value' : ' · match count')]], lead: 'Only a fingerprint is published now. If accepted, your name goes on the periodic table and you earn 5 % of every mint fee for it.', confirm: 'Commit' })) return;
         try { await run('Discovery commit', '/player/discovery/commit', { actionId, proposal }); await store.refreshPlayer(); }
@@ -318,7 +328,7 @@ export function mount(root, params) {
   }
 
   draw(); drawActions();
-  const offs = [bus.on('player', draw), bus.on('patterns', draw)];
+  const offs = [bus.on('player', draw), bus.on('patterns', draw), bus.on('status', () => updateNameField())];
   store.refreshPlayer().catch(() => {});
   const cleanup = () => offs.forEach(f => f());
   cleanup.update = p => { if (p.do) pickTab(p.do); };

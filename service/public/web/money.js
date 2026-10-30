@@ -428,18 +428,19 @@ function patternSearch(listId, value, say, onPick) {
   let asked = 0, typing;
   // Up to ten { name, asset } suggestions for the typed text, or null when a newer search replaced this one.
   async function suggest(text) {
-    const seq = ++asked, q = text.trim().toLowerCase().replace(/^dmw/, ''), hits = [];
+    const seq = ++asked, q = text.trim().toLowerCase().replace(/ \([a-z0-9]+\)$/, ''), hits = [];
     if (q) {
       const params = new URLSearchParams({ q, sort: 'name', limit: String(SUGGESTIONS) });
       // The name search is a bounded scan: follow its cursor a few pages while it has not found enough.
       for (let page = 0; page < 8 && hits.length < SUGGESTIONS; page++) {
         const r = await get('/patterns?' + params);
-        hits.push(...(r.patterns ?? []).filter(p => P2.test(p.asset ?? '')).map(p => ({ name: nameOf(p), asset: p.asset })));
+        hits.push(...(r.patterns ?? []).filter(p => P2.test(p.asset ?? '')).map(p => ({ name: nameOf(p), wireName: p.name, asset: p.asset })));
         if (!r.next) break; params.set('cursor', r.next);
       }
     }
     if (seq !== asked) return null;
-    clear(choices, ...hits.slice(0, SUGGESTIONS).map(p => h('option', { value: p.name })));
+    for (const hit of hits) if (hits.some(other => other.asset !== hit.asset && other.name === hit.name)) hit.label = `${hit.name} (${hit.wireName})`;
+    clear(choices, ...hits.slice(0, SUGGESTIONS).map(p => h('option', { value: p.label ?? p.name })));
     return hits.slice(0, SUGGESTIONS);
   }
   const search = h('input', { type: 'search', value, placeholder: 'Search a pattern by name',
@@ -453,10 +454,11 @@ function patternSearch(listId, value, say, onPick) {
       try { hits = await suggest(text); } catch (error) { say(`Pattern search failed (${walletError(error)}). Try again.`); return; }
       if (!hits) return;
       // The exact name, a pattern id, or the one pattern whose name contains the text ("null" finds Nullspar).
-      const want = text.toLowerCase().replace(/^dmw/, '');
-      const pick = hits.find(p => p.name.toLowerCase() === want) ?? (P2.test(text) ? { asset: text, name: assetName(text) } : hits.length === 1 ? hits[0] : null);
+      const want = text.toLowerCase(), exact = hits.filter(p => p.name.toLowerCase() === want);
+      const pick = hits.find(p => p.wireName === want || p.label?.toLowerCase() === want) ??
+        (exact.length === 1 ? exact[0] : P2.test(text) ? { asset: text, name: assetName(text) } : hits.length === 1 ? hits[0] : null);
       if (!pick) { say(hits.length ? `${hits.length === SUGGESTIONS ? 'Many' : fmtInt(hits.length)} patterns match “${text}”. Pick one from the suggestions.` : `No pattern named “${text}”.`); return; }
-      say(''); search.value = pick.name;
+      say(''); search.value = pick.label ?? pick.name;
       onPick(pick);
     } });
   search.setAttribute('list', listId);

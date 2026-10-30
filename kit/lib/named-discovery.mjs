@@ -4,6 +4,7 @@ import { signNamedMove } from './signing.mjs';
 import { searchMatchPage } from './search-matches.mjs';
 import { check, nonce, sha256 } from './check.mjs';
 import { historyProof } from './headers.mjs';
+import { validPatternName } from '../../rules/src/pattern-names.js';
 import { fieldValueAmountActive } from '../../rules/src/pattern-amount.js';
 
 const localView = history => ({ get: h => history.get(safeNumberV2(h)) });
@@ -11,9 +12,10 @@ async function evidence(agent, proposal, history, settings, supplied) {
   historyProof(history);
   canonicalDefinition(proposal, settings);
   const head = await agent.trac.head(), at = Math.min(history.length - 1, safeNumberV2(decimalV2(head.counted))), hash = history.get(at).hash;
+  check(validPatternName(proposal.name, head.counted), 'pattern_name');
   check(proposal.amountMode === undefined || fieldValueAmountActive(head.counted), 'pattern_amount_inactive');
   check(await agent.trac.hashAt(at) === hash, 'Discovery snapshot is not canonical');
-  const page = supplied ?? await searchMatchPage({ history, proposal, tip: { height: at, hash }, pageSize: settings.values.minMatchingBlocks, settings });
+  const page = supplied ?? await searchMatchPage({ history, proposal, tip: { height: at, hash }, pageSize: settings.values.minMatchingBlocks, settings, executionHeight: head.counted });
   const anchor = { height: decimalV2(page.anchor?.height ?? page.searchSnapshot.height), hash: page.anchor?.hash ?? page.searchSnapshot.hash };
   const matches = page.matches.map(m => ({ ...m, height: decimalV2(m.height), count: decimalV2(m.count) }));
   verifyNamedWitnesses(proposal, anchor, matches, settings, localView(history), decimalV2(head.counted), settings.values.minMatchingBlocks);
@@ -21,8 +23,9 @@ async function evidence(agent, proposal, history, settings, supplied) {
   return { anchor, matches, witnessRoot: witnessRoot(matches) };
 }
 export async function sendNamedMove(agent, id, type, payload, settings, validate = async () => {}) {
-  const executionHeight = type === 'discovery-reveal-v2' && payload.proposal?.amountMode !== undefined
+  const executionHeight = type === 'discovery-reveal-v2'
     ? decimalV2((await agent.trac.head()).counted) : type === 'craft-v2' ? payload.snapshot?.height ?? '0' : '0';
+  if (type === 'discovery-reveal-v2') check(validPatternName(payload.proposal?.name, executionHeight), 'pattern_name');
   validateNamedPayload(type, payload, settings, executionHeight);
   let row = agent.journal.get(id); const intent = { type, payload };
   if (row) check(row.fingerprint === sha256(stableJSON(intent)), 'Conflicting action refused; use the saved intent');

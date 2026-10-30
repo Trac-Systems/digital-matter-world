@@ -1,3 +1,5 @@
+import { plainNamesActive } from '../../rules/src/pattern-names.js';
+
 // Small, local word stock: names describe a motif, never encode a hash or a field.
 const roots = ['null', 'sol', 'gem', 'tri', 'tetr', 'pent', 'hex', 'sept', 'oct', 'nov'];
 const modifiers = ['amber', 'blue', 'cedar', 'dawn', 'ember', 'frost', 'gold', 'jade',
@@ -15,34 +17,36 @@ function wordFor({ pat, fld, dt }) {
   return motif + (fld === 4 ? 'ite' : fld === 10 ? 'ine' : dt === 'h' ? 'spar' : 'ium');
 }
 
-function* variations(word) {
+function* variations(word, plain) {
   yield word;
-  for (const prefix of modifiers) yield prefix + word;
-  for (const first of modifiers) for (const second of modifiers) yield first + second + word;
+  for (const prefix of modifiers) yield plain ? word + prefix : prefix + word;
+  for (const first of modifiers) for (const second of modifiers) yield plain ? word + first + second : first + second + word;
 }
 
 // Same definitions and occupied names give the same names, regardless of input
 // order. Reserve catalog names; prefer unused two-letter display symbols, then
 // allow symbol reuse rather than turning a readable name into an identifier.
-export function namePatterns(proposals, existing = []) {
+export function namePatterns(proposals, existing = [], executionHeight = '0') {
+  const plain = plainNamesActive(executionHeight), prefix = plain ? '' : 'dmw';
+  const letters = name => name.replace(/^dmw(?=[a-z0-9]{2,29}$)/, '');
   const used = new Set(existing.map(p => p.name));
-  const symbols = new Set([...used].map(name => name.slice(3, 5)));
+  const symbols = new Set([...used].map(name => letters(name).slice(0, 2)));
   const named = new Map();
   const definitions = new Map(proposals.map(p => [identity(p), p]));
   for (const key of [...definitions.keys()].sort()) {
     let fallback, chosen;
-    for (const word of variations(wordFor(definitions.get(key)))) {
-      if (word.length > 29 || used.has('dmw' + word)) continue;
-      fallback ??= 'dmw' + word;
-      if (!symbols.has(word.slice(0, 2))) { chosen = 'dmw' + word; break; }
+    for (const word of variations(wordFor(definitions.get(key)), plain)) {
+      if (word.length > 32 - prefix.length || used.has(prefix + word)) continue;
+      fallback ??= prefix + word;
+      if (!symbols.has(word.slice(0, 2))) { chosen = prefix + word; break; }
     }
     chosen ??= fallback;
     if (!chosen) throw new Error('Readable pattern names exhausted for this motif');
-    named.set(key, chosen); used.add(chosen); symbols.add(chosen.slice(3, 5));
+    named.set(key, chosen); used.add(chosen); symbols.add(letters(chosen).slice(0, 2));
   }
   return proposals.map(p => ({ ...p, name: named.get(identity(p)) }));
 }
 
-export function patternName(proposal, existing = []) {
-  return namePatterns([proposal], existing)[0].name;
+export function patternName(proposal, existing = [], executionHeight = '0') {
+  return namePatterns([proposal], existing, executionHeight)[0].name;
 }

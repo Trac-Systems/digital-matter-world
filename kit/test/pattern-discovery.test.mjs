@@ -180,3 +180,17 @@ test('worked field examples and complete search responses match verified Bitcoin
     assert.deepEqual(JSON.parse(JSON.stringify(result)), expected, path);
   }
 });
+
+test('plain generated names activate by execution height and use readable suffixes for occupied names', async () => {
+  const { PLAIN_NAMES_HEIGHT } = await import('../../rules/src/pattern-names.js');
+  const p = { pat: '7{3}', fld: 10, dt: 'n' }, before = String(BigInt(PLAIN_NAMES_HEIGHT) - 1n);
+  assert.equal(patternName(p, [], before), 'dmwseptarine');
+  assert.equal(patternName(p, [], PLAIN_NAMES_HEIGHT), 'septarine');
+  assert.equal(patternName(p, [{ name: 'dmwseptarine' }], PLAIN_NAMES_HEIGHT).startsWith('dmw'), false);
+  const taken = [{ name: 'septarine' }, { name: 'dmwseptarine' }];
+  assert.match(patternName(p, taken, PLAIN_NAMES_HEIGHT), /^septarine[a-z]+$/);
+  const names = [...searchPatterns({ executionHeight: PLAIN_NAMES_HEIGHT })].map(p => p.name);
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(names.every(n => /^[a-z0-9]{3,32}$/.test(n) && !n.startsWith('dmw')));
+  assert.deepEqual([...searchPatterns({ executionHeight: before })], [...searchPatterns()]);
+});

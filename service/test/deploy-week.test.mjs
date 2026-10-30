@@ -97,7 +97,10 @@ test('fallback names are the name plus readable words, deterministic, and fit th
     assert.ok(name.length <= 32 && name.startsWith('dmwxx') && /^[a-z0-9]+$/.test(name), name);
   }
   assert.throws(() => candidate(job, 'element', 0, 'dmwflorite'), /candidate_name/);
-  assert.throws(() => candidate(job, 'element', 1, 'florite'), /candidate_name/);
+  const plain = Array.from({ length: 300 }, (_, i) => candidate(job, 'dmt-ticker', i + 1, 'florite'));
+  assert.equal(new Set(plain).size, plain.length);
+  assert.ok(plain.every(name => /^florite[a-z]{3,14}$/.test(name) && !names.includes(name)));
+  for (const invalid of ['ab', 'Florite', 'dmt-florite', 'x'.repeat(33)]) assert.throws(() => candidate(job, 'element', 1, invalid), /candidate_name/);
 });
 
 test('an existing deployment without prov keeps verifying and its approval digest is unchanged', async t => {

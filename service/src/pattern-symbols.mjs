@@ -11,7 +11,7 @@ export function patternSymbolSchema(db) {
 // order). Skipping repeated characters at each depth avoids enumerating the
 // same spelling exponentially often for names such as "mmmmmmmmmmmmmmmmmm".
 export function* patternSymbolCandidates(name) {
-  const letters = [...String(name ?? '').replace(/^dmw/, '').toLowerCase()];
+  const letters = [...String(name ?? '').replace(/^dmw(?=[a-z0-9]{2,29}$)/, '').toLowerCase()];
   if (letters.length < 2) return;
   function* later(start, left, prefix) {
     if (!left) { yield prefix; return; }

@@ -1,6 +1,7 @@
 import { encodeTracAddress, isTracAddress, publicIdentities, TRAC_ADDRESS_ERROR } from '../../rules/src/trac-address.js';
 import { compoundIdentityV4Active } from '../../rules/src/compound-identity-v4.js';
 import { z } from 'zod/v4';
+import { PLAIN_PATTERN_NAME, validPatternName } from '../../rules/src/pattern-names.js';
 import { check } from './check.mjs';
 import { findPatterns } from './search.mjs';
 import { searchMatchPage } from './search-matches.mjs';
@@ -13,7 +14,7 @@ const hex = z.string().regex(/^[0-9a-f]{64}$/), units = z.string().regex(/^[1-9]
 const asset = z.string().refine(isAsset, 'Invalid matter asset'), actionId = z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/);
 const pairs = z.array(z.tuple([asset, units])).min(1).max(16);
 const craftInputs = z.array(z.tuple([z.string().regex(/^([0-9a-z]{1,24}|p2:(0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/), z.string().regex(/^[1-9][0-9]*$/)])).min(2);
-const proposal = z.object({ name: z.string().regex(/^dmw[a-z0-9]{2,29}$/), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']), amountMode: z.enum(['count', 'field-value']).optional().describe('Default count pays regex matches. Field-value pays the numeric field once per matching block; proposals require activation.') }).strict();
+const proposal = z.object({ name: z.string().regex(PLAIN_PATTERN_NAME).describe('3–32 lowercase letters/digits after plain-name activation; before it, dmw plus 2–29 letters/digits.'), pat: z.string().max(64), fld: z.union([z.literal(4), z.literal(10), z.literal(11)]), dt: z.enum(['n', 'h']), amountMode: z.enum(['count', 'field-value']).optional().describe('Default count pays regex matches. Field-value pays the numeric field once per matching block; proposals require activation.') }).strict();
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const mintAsset = z.string().regex(/^(?:[0-9a-z]{1,24}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
 const deploymentAsset = z.string().regex(/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/);
@@ -32,6 +33,8 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     if (historySync && !historySync.available()) return historySync.status();
     const head = await agent.trac.head(), value = historySync ? historySync.available(head.tip) : needHistory();
     if (!value) return historySync.status();
+    for (const proposal of [args[0]?.proposal, ...(args[0]?.candidates ?? [])].filter(Boolean))
+      check(validPatternName(proposal.name, head.counted), 'pattern_name');
     return run(value, head, ...args);
   };
   for (const [name, tool] of Object.entries(readTools(agent))) register(name, tool.description, tool.shape, tool.run, tool.readOnly);
@@ -61,11 +64,11 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   }, false);
   register('pattern_search_matches', 'Page through locally computed matching heights, canonical hashes and exact counts. Reuse the proposal, snapshot and cursor; this creates no find or server submission. The activated occurrence page size is the upper limit.', { proposal, cursor: z.string().max(1024).optional(), pageSize: z.number().int().min(1).max(200).optional() }, discovery(async (history, head, args, extra) => {
     const context = await agent.namedContext?.();
-    return searchMatchPage({ history, tip: head.tip, ...args, pageSize: args.pageSize ?? context?.settings.values.occurrencePageSize ?? 100, settings: context?.settings, signal: extra?.signal });
+    return searchMatchPage({ history, tip: head.tip, executionHeight: head.counted, ...args, pageSize: args.pageSize ?? context?.settings.values.occurrencePageSize ?? 100, settings: context?.settings, signal: extra?.signal });
   }));
   register('search_patterns', 'Test bounded candidate patterns against verified local history and return matching heights, hashes, counts and a resumable local page cursor. Reports history downloading (x%) until ready.', { maxCandidates: z.number().int().min(1).max(60).default(10), candidates: z.array(proposal).max(60).optional() }, discovery(async (history, head, { maxCandidates, candidates }, extra) => {
     const context = await agent.namedContext?.();
-    return findPatterns({ history, tip: head.tip, existing: await agent.catalog(), settings: context?.settings, owner: encodeTracAddress(agent.owner), maxCandidates, candidates, strategy: strategies.searchPatterns, signal: extra?.signal });
+    return findPatterns({ history, tip: head.tip, executionHeight: head.counted, existing: await agent.catalog(), settings: context?.settings, owner: encodeTracAddress(agent.owner), maxCandidates, candidates, strategy: strategies.searchPatterns, signal: extra?.signal });
   }));
   register('propose_pattern', 'Save the pattern, snapshot, real matching blocks and salt; commit with a stable action ID. Reads the activated rules and preserves the original journal.', { actionId, proposal, witnesses: witnesses.optional() }, discovery(async (history, head, args) => agent.propose({ ...args, history, patterns: await agent.namedContext?.() ? [] : await agent.catalog() })), false);
   register('reveal_pattern', 'Reveal the saved pattern and named blocks in its recorded eligibility window, after independently verifying the accepted commitment. Legacy actions add a witness attachment.', { actionId, publication: publication.optional(), witnesses: witnesses.optional() }, discovery(async (history, head, args) => agent.reveal({ ...args, history, patterns: await agent.namedContext?.() ? [] : await agent.catalog() })), false);

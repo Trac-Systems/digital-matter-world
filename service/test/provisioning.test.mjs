@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Provisioner } from '../src/provisioning.mjs';
 import { candidate, verifyDeployment } from '../src/deployments.mjs';
 import { provisioningFixture } from './provisioning-fixture.mjs';
+import { publicIdentities } from '../../rules/src/trac-address.js';
 import { deploymentContent } from '../../kit/lib/inscription-core.mjs';
 import { mintAssetDefinition } from '../src/mint-assets.mjs';
 
@@ -241,4 +242,53 @@ test('periodic provisioning pages v2 compounds next to named patterns', async t 
   await f.operator.tick();
   assert.equal(new Set(visited).size, 11); assert.equal(f.store.get('meta', 'provisioningCursor').compound, '');
   assert.equal(f.store.get('provisioning', visited[0]).kind, 'compound');
+});
+
+test('plain pattern deployments keep complete names, distinct legacy tickers, wallet content and attribution', async t => {
+  const f = await provisioningFixture(t), plain = { ...f.pattern, name: 'florite' };
+  const old = await f.complete('p2:0', { ...plain, name: 'dmwflorite' });
+  const saved = structuredClone(old.entry), checks = [], tap = f.reads.tap;
+  f.reads.tap = async path => { checks.push(path); return tap(path); };
+  const pending = await f.operator.advanceAsset('p2:1', plain);
+  assert.equal(pending.content.tick, 'florite');
+  assert.equal(deploymentContent(publicIdentities(pending)).text, pending.inscriptionText);
+  const job = await f.complete('p2:1', plain);
+  assert.equal(job.entry.tick, 'florite'); assert.equal(job.entry.indexTick, 'dmt-florite');
+  assert.equal(old.entry.indexTick, 'dmt-dmwflorite');
+  assert.equal(job.entry.prov, old.entry.prov); assert.ok(job.entry.prov.startsWith('trac1'));
+  assert.ok(checks.includes('getDeployment/dmt-florite'));
+  assert.deepEqual((await f.reads.registry()).assets['p2:0'], saved);
+});
+
+test('plain element and ticker collisions append readable words, survive restart and retain prov', async t => {
+  const f = await provisioningFixture(t), plain = { ...f.pattern, name: 'florite' };
+  f.index('florite.999.4.element'); f.index({ op: 'dmt-deploy', tick: 'florite', prv: 'outsider' }); f.mine();
+  let job = await f.operator.advanceAsset('p2:0', plain);
+  assert.equal(job.reason, 'element_name_occupied');
+  job = await f.operator.advanceAsset('p2:0', plain);
+  assert.match(job.content, /^florite[a-z]+\.123\.4\.element$/);
+  assert.equal(deploymentContent(job).text, job.content);
+  const saved = structuredClone(job), restarted = new Provisioner(f);
+  t.after(() => restarted.close());
+  job = await f.complete('p2:0', plain, restarted);
+  assert.equal(job.salt, saved.salt); assert.ok(job.elementAttempt >= 1 && job.tickerAttempt >= 1);
+  assert.match(job.entry.tick, /^florite[a-z]+$/);
+  assert.match(job.entry.indexTick, /^dmt-florite[a-z]+$/);
+  assert.ok(job.entry.prov.startsWith('trac1'));
+  for (const attempt of job.attempts.filter(a => a.phase === 'deployment')) assert.equal(attempt.text.prov, job.entry.prov);
+  assert.equal(job.attempts[0].text, saved.attempts[0].text);
+  assert.equal(candidate(job, 'dmt-ticker', 1, 'x'.repeat(32)).length, 32);
+});
+
+test('plain 3-character names validate in player element and deployment packages', async t => {
+  const f = await provisioningFixture(t), plain = { ...f.pattern, name: 'abc' };
+  const element = await f.operator.advanceAsset('p2:0', plain);
+  assert.equal(deploymentContent(element).text, 'abc.123.4.element');
+  const id = f.index(element.content); f.mine();
+  const deployment = await f.operator.submit('p2:0', { phase: 'element', inscription: id });
+  assert.equal(JSON.parse(deploymentContent(publicIdentities(deployment)).text).tick, 'abc');
+  const numeric = publicIdentities(deployment), content = { ...numeric.content, tick: 123 };
+  numeric.content = content; numeric.inscriptionText = JSON.stringify(content);
+  numeric.attempts.at(-1).text = content;
+  assert.throws(() => deploymentContent(numeric), /ticker/);
 });

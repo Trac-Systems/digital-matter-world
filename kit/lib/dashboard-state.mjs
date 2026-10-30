@@ -88,7 +88,7 @@ const SEND_RECENT = 10, CONFIRM_PAGES = 2, CONFIRM_TTL = 10000;
 // for the header field it matches (rules/src/compounds-v2.js).
 const CHARGE_MOD = 65521n, SPECTRUM_FIELD = { 4: 1, 10: 2, 11: 4 }, CRAFT_RECENT = 10, CRAFT_TTL = 60000;
 // A compound's name uses its ingredients' names as people read them: dmwnullspar → Nullspar.
-const niceName = name => /^dmw[a-z0-9]/.test(name) ? name[3].toUpperCase() + name.slice(4) : name;
+const niceName = name => /^dmw[a-z0-9]{2,29}$/.test(name) ? name[3].toUpperCase() + name.slice(4) : name;
 const tierValue = tier => tier && typeof tier === 'object' ? tier.value ?? null : Number.isSafeInteger(tier) ? tier : null;
 // A compound record's inputs: accepted records list {asset,amount}; older
 // projections list [asset, amount].

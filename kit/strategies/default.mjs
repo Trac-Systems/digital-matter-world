@@ -23,7 +23,7 @@ for (const [fld, dt, shapes] of [
   [11, 'n', ['^4[0-9]', '[6-9]{2}', '99$', '48|54']],
   [11, 'h', ['^1[7-9]', '[a-f]{2,3}', '0{2}$', 'ab|cd']]
 ]) for (const pat of shapes) baseline.push({ pat, fld, dt });
-const namedBaseline = namePatterns(baseline);
+
 
 // Hunt each pattern throughout counted history, rarest first. Public index
 // exclusions and the window budget are supplied by the caller, never fetched here.
@@ -45,7 +45,8 @@ export function chooseClaims({ history, patterns = [], taken = {}, claimsPerWind
   }
   return [...plots.values()].sort((a, b) => a.block - b.block).map(row => ({ ...row, patterns: row.patterns.sort((a, b) => a - b) }));
 }
-export function* searchPatterns({ history, patterns = [], settings } = {}) {
+export function* searchPatterns({ history, patterns = [], settings, executionHeight = '0' } = {}) {
+  const namedBaseline = namePatterns(baseline, [], executionHeight);
   // Naming is fixed before ranking so a growing history cannot rename a motif.
   // If another idea has occupied a name, choose a readable catalog-safe variant.
   // Rank only this finite pool; findPatterns still owns the shared maxCandidates
@@ -55,7 +56,7 @@ export function* searchPatterns({ history, patterns = [], settings } = {}) {
     let proposal = original;
     if (patterns.some(p => p.name === proposal.name &&
       (p.pat !== proposal.pat || p.fld !== proposal.fld || p.dt !== proposal.dt || p.amountMode === 'field-value'))) {
-      proposal = { ...proposal, name: patternName(proposal, occupied) }; occupied.push(proposal);
+      proposal = { ...proposal, name: patternName(proposal, occupied, executionHeight) }; occupied.push(proposal);
     }
     const known = patterns.some(p => p.name === proposal.name ||
       p.pat === proposal.pat && p.fld === proposal.fld && p.dt === proposal.dt && p.amountMode !== 'field-value');

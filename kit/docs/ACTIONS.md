@@ -26,6 +26,17 @@ constraints. submit_bitmap and report_custody_payment return sent:false in dry-r
 
 ## Claims, discovery and occurrences
 
+New pattern names require `dmw` plus 2–29 lowercase letters/digits until the
+coordinated plain-name activation. At/after that execution height they accept
+3–32 lowercase letters/digits, for example `florite`. Existing names and
+records keep their exact spelling. The kit checks the accepted counted height;
+a witness block or search snapshot cannot enable the rule early. A new plain
+name deploys with `tick: "florite"`; TAP indexes it as `dmt-florite`.
+`dmwflorite` remains a different name and deploys as `dmt-dmwflorite`.
+Search uses readable alternatives for occupied DMW names. TAP element/ticker
+collisions use the existing name-plus-word fallback and keep `prov` attribution.
+Never rename an existing record or a saved commitment to resolve a collision.
+
 V2 proposal definitions accept optional `amountMode: "count" | "field-value"`.
 Omit it for the existing count identity. `field-value` retains the regex as block
 eligibility and awards the full numeric field once, including decimal amounts

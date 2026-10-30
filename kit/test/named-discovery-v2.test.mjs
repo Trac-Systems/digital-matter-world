@@ -133,3 +133,30 @@ test('known closure refusal retains retry timing across restart; later refusal n
     assert.equal(journal.get('uncertain').state, 'unknown'); assert.deepEqual(bodies.at(-1), saved);
   } finally { journal?.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('plain-name tools and local proposal preflight refuse before activation and preserve plain names after it', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dmw-plain-search-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const history = await verified(directory), plain = { ...proposal, name: 'florite' };
+  let counted = String(BigInt(r.PLAIN_NAMES_HEIGHT) - 1n);
+  const agent = { owner, dryRun: true, actionId() {}, catalog: async () => [], namedContext: async () => ({ settings }),
+    journal: { get: () => null, reserve: () => assert.fail('dry run saved') },
+    trac: { head: async () => ({ counted, tip: history.get(63) }), hashAt: async h => history.get(h).hash },
+    service: { submit: () => assert.fail('dry run submitted') } };
+  agent.propose = args => proposeNamed(agent, args, { settings });
+  const tools = gameTools({ agent, history });
+  const args = tools.propose_pattern.schema.parse({ actionId: 'plain', proposal: plain });
+  await assert.rejects(tools.propose_pattern.run(args), /pattern_name/);
+  await assert.rejects(proposeNamed(agent, { ...args, history }, { settings }), /pattern_name/);
+  await assert.rejects(tools.pattern_search_matches.run({ proposal: plain }), /pattern_name/);
+  counted = r.PLAIN_NAMES_HEIGHT;
+  assert.equal((await tools.propose_pattern.run(args)).state, 'dry-run');
+  const found = await tools.search_patterns.run({ candidates: [plain], maxCandidates: 1 });
+  assert.equal(found.accepted[0].proposal.name, 'florite');
+  assert.equal(found.rejected.length, 0);
+  assert.ok((await tools.pattern_search_matches.run({ proposal: plain })).matches.length >= 3);
+  for (const name of ['ab', 'UPPER', 'x'.repeat(33), 'dmt-florite']) assert.throws(() => tools.propose_pattern.schema.parse({ ...args, proposal: { ...plain, name } }));
+  const collision = await findPatterns({ history, tip: history.get(63), settings, executionHeight: counted,
+    existing: [{ ...plain, pat: '2' }], owner: r.encodeTracAddress(owner), candidates: [plain], maxCandidates: 1 });
+  assert.equal(collision.rejected[0].reason, 'pattern_exists');
+});

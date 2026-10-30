@@ -19,7 +19,7 @@ export function mineral(id) {
 export const FIELDS = { 4: 'Height', 10: 'Nonce', 11: 'Difficulty bits' };
 export function fieldName(p) { return p ? `${FIELDS[p.fld] ?? `Field ${p.fld}`}${p.fld === 11 ? (p.dt === 'h' ? ' (hex)' : ' (decimal)') : ''}${p.amountMode === 'field-value' ? ' · field value' : ''}` : '–'; }
 export function title(name) {
-  const n = String(name ?? '').replace(/^dmw/, '');
+  const n = String(name ?? '').replace(/^dmw(?=[a-z0-9]{2,29}$)/, '');
   return n ? n[0].toUpperCase() + n.slice(1) : '–';
 }
 export function symbol(pattern) {
@@ -31,7 +31,7 @@ export function assetName(asset) {
   const p = store.pattern(asset);
   if (p) return title(p.name);
   const c = store.compound(asset) ?? compounds.get(asset);
-  if (c?.name && c.name !== c.id) return c.name.replace(/\bdmw([a-z0-9]+)/g, (_, n) => title(n));
+  if (c?.name && c.name !== c.id) return c.name.replace(/\bdmw([a-z0-9]{2,29})\b/g, (_, n) => title(n));
   if (c || /^c2:[0-9a-f]{64}$/.test(asset ?? '')) return compoundName(c ?? { id: asset });
   return asset ?? '–';
 }

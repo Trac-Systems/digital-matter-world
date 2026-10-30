@@ -7,11 +7,12 @@ import { namedGet, namedSet, namedRoot, EMPTY_NAMED_ROOT } from './named-index.j
 import { validateSettingsDocument } from './settings-v2.js';
 import { recordGet, recordSet } from './record-index.js';
 import { publicMintActive } from './public-mint.js';
+import { PLAIN_PATTERN_NAME, validPatternName } from './pattern-names.js';
 
 function policy(document) { validateSettingsDocument(document); return document.values; }
 export function canonicalDefinition(proposal, document) {
   const s = policy(document);
-  assert(exactKeys(proposal, ['name', 'pat', 'fld', 'dt', ...(Object.hasOwn(proposal, 'amountMode') ? ['amountMode'] : [])]) && /^dmw[a-z0-9]{2,29}$/.test(proposal.name), 'pattern_name');
+  assert(exactKeys(proposal, ['name', 'pat', 'fld', 'dt', ...(Object.hasOwn(proposal, 'amountMode') ? ['amountMode'] : [])]) && typeof proposal.name === 'string' && PLAIN_PATTERN_NAME.test(proposal.name), 'pattern_name');
   assert(proposal.amountMode === undefined || ['count', 'field-value'].includes(proposal.amountMode), 'pattern_amount_mode');
   validateDefinition(proposal, { maxLength: s.patternMaxLength, maxLiteralDigits: s.patternMaxLiteralDigits,
     maxAlternatives: s.patternMaxAlternatives, maxAtoms: s.patternMaxAtoms, maxQuantifiers: s.patternMaxQuantifiers, minMatchingBlocks: s.minMatchingBlocks });
@@ -131,6 +132,7 @@ export function revealNamedDiscovery(state, { agent, commitmentId, proposal, sal
   if (acceptedOpening) assert(stableJSON(acceptedOpening.original.proposal) === stableJSON(proposal), 'legacy_reveal_binding');
   assert(c.network === settings.network && c.settingsHash === hashObject(settings), 'discovery_settings');
   assert(!Object.hasOwn(proposal, 'amountMode') || fieldValueAmountActive(executionHeight), 'pattern_name');
+  assert(validPatternName(proposal.name, executionHeight), 'pattern_name');
   const identity = definitionKey(proposal, settings);
   const expected = c.format === 1 ? discoveryCommitment(proposal, salt, agent) : namedCommitment({ proposal, salt, agent, anchor, matches, settings });
   assert(commitmentId === expected && root === witnessRoot(matches), 'discovery_opening');

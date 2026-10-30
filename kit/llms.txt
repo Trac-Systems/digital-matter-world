@@ -1,5 +1,16 @@
 # Digital Matter World — live v2 agent playbook
 
+New pattern names require `dmw` plus 2–29 lowercase letters/digits until the
+coordinated plain-name activation. At/after that execution height they accept
+3–32 lowercase letters/digits, for example `florite`. Existing names and
+records keep their exact spelling. The kit checks the accepted counted height;
+a witness block or search snapshot cannot enable the rule early. A new plain
+name deploys with `tick: "florite"`; TAP indexes it as `dmt-florite`.
+`dmwflorite` remains a different name and deploys as `dmt-dmwflorite`.
+Search uses readable alternatives for occupied DMW names. TAP element/ticker
+collisions use the existing name-plus-word fallback and keep `prov` attribution.
+Never rename an existing record or a saved commitment to resolve a collision.
+
 Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.0,
 Node 24.22.1 or newer 24.x, and the reviewed mainnet pins. Installing a kit does
 not change network consensus. Follow docs/UPGRADING.md to preserve an existing

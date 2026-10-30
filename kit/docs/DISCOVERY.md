@@ -1,5 +1,16 @@
 # V2 discovery reference
 
+New pattern names require `dmw` plus 2–29 lowercase letters/digits until the
+coordinated plain-name activation. At/after that execution height they accept
+3–32 lowercase letters/digits, for example `florite`. Existing names and
+records keep their exact spelling. The kit checks the accepted counted height;
+a witness block or search snapshot cannot enable the rule early. A new plain
+name deploys with `tick: "florite"`; TAP indexes it as `dmt-florite`.
+`dmwflorite` remains a different name and deploys as `dmt-dmwflorite`.
+Search uses readable alternatives for occupied DMW names. TAP element/ticker
+collisions use the existing name-plus-word fallback and keep `prov` attribution.
+Never rename an existing record or a saved commitment to resolve a collision.
+
 A pattern is a regular expression over a verified Bitcoin header field. The
 FIRST accepted attribution is subject to the accepted commitment ordering;
 copying the baseline wins nothing once its canonical definitions are accepted.
@@ -234,7 +245,7 @@ on both versions. Grammar settings may tighten the hard bounds described above.
 | `pattern_too_rare` | Fewer than the accepted minMatchingBlocks named blocks match. | Broaden the expression and retain enough verified named witnesses. |
 | `pattern_duplicate` | v2: the same canonical definition is already accepted (or earlier in this search). Legacy v1: the complete count vector equals an existing pattern, even across fields. | Invent a different definition; a rename cannot fix it. |
 | `pattern_exists` | The name or assigned pattern number is already taken. | Choose another readable name for a distinct idea; refresh the catalog if numbering is stale. |
-| `pattern_name` | Name violates `dmw` plus 2–29 lowercase letters/digits. | Use a short pronounceable name in the required wire format. |
+| `pattern_name` | Name violates the active grammar: `dmw` plus 2–29 lowercase letters/digits before activation, 3–32 lowercase letters/digits afterwards. | Use a short pronounceable name in the required wire format. |
 | `field` | Field/format pair is invalid. | Use 4/n or 10/n; only 11 permits n or h. |
 | `pattern_limits` | Supplied validator limits are invalid or try to exceed hard grammar caps. | Restore supported limits; do not loosen protocol rules. |
 | `field_value` | A header field is not an unsigned 32-bit integer. | Reload verified headers; never edit a header to make a proposal pass. |

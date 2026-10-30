@@ -2,13 +2,13 @@ import { ed25519 } from '@noble/curves/ed25519';
 
 // Accepts either the frozen release rules or current rules. The only evidence
 // reads are the anchor and three named headers; no historical scan is available.
-export function amountReplay(r, { executionHeight, value = false }) {
+export function amountReplay(r, { executionHeight, value = false, name = 'dmwreplay' }) {
   const height = '10002', network = 'amount-replay';
   const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '0', values: { ...r.SETTINGS_PROFILE, puzzleBits: 0 } });
   const secret = r.hashBytes('amount-replay-agent'), agent = r.bytesToHex(ed25519.getPublicKey(secret));
   const gatewaySecret = r.hashBytes('amount-replay-gateway'), gateway = r.bytesToHex(ed25519.getPublicKey(gatewaySecret));
   const hashAt = h => r.hash(String(h)), history = { get length() { throw Error('history_scan'); }, get: h => ({ height: h, hash: hashAt(h), nonce: 3789512813, bits: 386007187 }) };
-  const proposal = { name: 'dmwreplay', pat: '1', fld: 10, dt: 'n', ...(value ? { amountMode: 'field-value' } : {}) };
+  const proposal = { name, pat: '1', fld: 10, dt: 'n', ...(value ? { amountMode: 'field-value' } : {}) };
   const salt = r.hash('amount-replay-salt'), anchor = { height: '10000', hash: hashAt('10000') };
   const matches = ['1', '10', '11'].map(h => ({ height: h, hash: hashAt(h), count: value ? '3789512813' : '2' }));
   // Construct the new commitment without requiring the retained release to

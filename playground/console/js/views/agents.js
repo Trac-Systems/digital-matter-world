@@ -179,7 +179,7 @@ export function mount(root, params) {
       const kind = /^p\d+$/.test(asset) ? 'patterns' : 'compounds';
       if (!names.has(asset)) names.set(asset, get(`/${kind}?asset=${encodeURIComponent(asset)}&limit=1`).then(r => {
         const row = r[kind]?.[0];
-        return row?.name ? (kind === 'patterns' ? title(row.name) : row.name.replace(/\bdmw([a-z0-9]+)/g, (_, n) => title(n))) : asset;
+        return row?.name ? (kind === 'patterns' ? title(row.name) : row.name.replace(/\bdmw([a-z0-9]{2,29})\b/g, (_, n) => title(n))) : asset;
       }).catch(() => { names.delete(asset); return asset; }));
       names.get(asset).then(name => { if (!disposed) text.textContent = name; });
     }
