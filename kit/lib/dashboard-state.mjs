@@ -1,16 +1,18 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runTool } from './tools.mjs';
 import { stableJSON } from '../../rules/src/index.js';
-import { nextCursor } from './api-values.mjs';
+import { nextCursor, isAsset } from './api-values.mjs';
 import { safeCode } from './errors.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
-import { wireIdentities } from '../../rules/src/trac-address.js';
+import { wireIdentities, decodeTracAddress, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { verifyBinding } from '../../rules/src/payout-bindings.mjs';
+import { formatTnk } from './tnk-values.mjs';
 
 export function dashboardCheck(ok, code, status = 400) {
   if (!ok) throw Object.assign(Error(code), { code, status });
 }
 export const dashboardError = error => safeCode(error?.code ?? error?.message, 'dashboard_request_failed');
+
 const digest = value => createHash('sha256').update(value).digest('hex');
 const assetId = asset => /^p2:(0|[1-9][0-9]{0,77})$/.test(asset ?? '') || /^p[0-9a-z]{1,23}$/.test(asset ?? '');
 const canonicalAsset = asset => /^p[0-9a-z]{1,23}$/.test(asset ?? '')
@@ -42,6 +44,52 @@ function tokenState(deployment) {
   return 'not_deployed';
 }
 
+// Send units on Trac: one list of rows (recipient trac1…, unit, amount).
+// Rows are grouped into one transfer action per recipient, at most 16 units
+// each (the transfer move's limit); larger groups split into more actions.
+export const SEND_ROWS = 200, SEND_ASSETS = 16, SEND_GROUPS = 50;
+const amountText = value => typeof value === 'string' && /^[1-9][0-9]{0,77}$/.test(value.trim());
+// Paste format: one line per row, "address, unit, amount". Commas, tabs,
+// semicolons or spaces separate; the unit may be a name of several words.
+export function parseSendList(text) {
+  dashboardCheck(typeof text === 'string' && text.length <= 100000, 'send_list');
+  const rows = [];
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(/[,;\t ]+/).filter(Boolean);
+    rows.push({ line: index + 1, to: parts[0] ?? '', unit: parts.slice(1, -1).join(' '), amount: parts.length > 1 ? parts.at(-1) : '' });
+  }
+  dashboardCheck(rows.length <= SEND_ROWS, 'send_too_many_rows');
+  return rows;
+}
+// Valid rows → transfer actions: one per recipient, units summed, split
+// above SEND_ASSETS. Input order of recipients and units is kept.
+export function groupSends(rows) {
+  const byRecipient = new Map();
+  for (const row of rows) {
+    const key = decodeTracAddress(row.to), units = byRecipient.get(key) ?? new Map();
+    units.set(row.asset, (units.get(row.asset) ?? 0n) + BigInt(row.amount)); byRecipient.set(key, units);
+  }
+  const groups = [];
+  for (const [key, units] of byRecipient) {
+    const assets = [...units].map(([asset, amount]) => [asset, String(amount)]);
+    for (let i = 0; i < assets.length; i += SEND_ASSETS) groups.push({ to: encodeTracAddress(key), assets: assets.slice(i, i + SEND_ASSETS) });
+  }
+  return groups;
+}
+// Gateway refusals before acceptance that clear with the next batch.
+const SEND_LATER = ['sender_rate', 'next_batch_work_capacity', 'next_batch_byte_capacity', 'next_batch_account_capacity', 'request_rate', 'service_busy'];
+const SEND_RECENT = 10, CONFIRM_PAGES = 2, CONFIRM_TTL = 10000;
+// TNK, the Trac network's own coin (gas): balance and fee reads are cached a
+// few seconds; each send keeps one action ID for every retry.
+const TNK_TTL = 5000, TNK_RECENT = 10, TNK_RESEND_AFTER = 120000;
+const TNK_LATER = ['tnk_validators', 'tnk_fee_unavailable', 'tnk_balance_unavailable', 'tnk_unavailable'];
+const tnkFailure = error => {
+  const code = dashboardError(error);
+  return code.startsWith('tnk_') ? Object.assign(Error(code), { code, status: TNK_LATER.includes(code) ? 503 : 400 }) : error;
+};
+
 // Financial requests have their own sequential queue. Mining's per-tip move
 // allowance must not make a human's mint click wait for another Bitcoin block.
 export function dashboardJournal(journal) {
@@ -56,6 +104,10 @@ export class DashboardState {
     this.queue = Promise.resolve(); this.inflight = new Map(); this.names = new Map(); this.closed = false;
     this.batch = null; this.batchTask = null; this.walletLocks = new Map(); this.instance = randomUUID();
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_wallet (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key))');
+    this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_sends (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
+    this.labels = new Map(); this.sendTail = Promise.resolve(); this.sending = new Set(); this.confirmCache = null;
+    this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_tnk (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
+    this.tnkCache = null; this.tnkTail = Promise.resolve(); this.tnkSending = new Set(); this.tnkStatus = new Map();
   }
   activate() {
     const db = this.journal.db;
@@ -138,7 +190,7 @@ export class DashboardState {
     }
     return this.names.get(key);
   }
-  async name(asset, fallback) { return fallback || (await this.pattern(asset)).name; }
+  async name(asset, fallback) { return fallback || (await this.unitLabel(asset)).name; }
   async claim(row, c, balance) {
     dashboardCheck(assetId(row.asset) && integer(row.block), 'invalid_claim_response', 502);
     const saved = this.savedSlot(row);
@@ -254,7 +306,7 @@ export class DashboardState {
       this.collect(cursor => this.service.mintRights(this.agent.address, { asset: id, limit: 50, minted: false, cursor }), 'mintRights', COUNT_PAGES).catch(() => null),
       p.name && p.tier !== null && p.tier !== undefined ? null : this.pattern(p.asset).catch(() => null)]);
     const token = tokenState(deployment);
-    return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? detail?.name ?? p.asset, tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
+    return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? (detail && detail.name !== p.asset ? detail.name : 'Pattern #' + p.asset.slice(3)), tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
       token, deploymentState: deployment?.state ?? null,
       // null: the count could not be read this time.
       claims: finds && rights ? new Set([...unique(finds.rows), ...unique(rights.rows)]).size : null, moreClaims: !!(finds?.more || rights?.more),
@@ -315,7 +367,7 @@ export class DashboardState {
     for (const row of saved.slice(offset, offset + limit)) {
       const id = this.idOf(row); let status;
       try { status = await this.status(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
-      if (status.state !== 'minted') requests.push({ asset: row.body.request.asset, block: row.body.request.block, requestId: id,
+      if (status.state !== 'minted') requests.push({ asset: row.body.request.asset, name: (await this.unitLabel(row.body.request.asset)).name, block: row.body.request.block, requestId: id,
         state: status.state, payable: status.payable === true, error: status.error ?? null,
         paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) });
     }
@@ -412,6 +464,335 @@ export class DashboardState {
     })().catch(error => { this.batch.state = 'failed'; this.batch.error = dashboardError(error); }).finally(() => { this.batchTask = null; });
     return this.batch;
   }
+  // Human label of a ledger key: pattern name, compound recipe or imported
+  // pattern name. The key itself is only shown as a muted detail.
+  async unitLabel(asset) {
+    if (this.labels.has(asset)) return this.labels.get(asset);
+    let label, final = true;
+    if (asset.startsWith('c2:')) {
+      let row = null;
+      try { row = (await this.service.compounds({ asset, limit: 1 })).compounds?.find(c => c.id === asset || c.asset === asset) ?? null; } catch { final = false; }
+      const inputs = Array.isArray(row?.inputs) ? row.inputs.filter(i => Array.isArray(i) && typeof i[0] === 'string' && i[0] !== asset).slice(0, 4) : [];
+      const names = [];
+      for (const [input] of inputs) names.push((await this.unitLabel(input)).name);
+      label = { kind: 'compound', tier: row?.tier ?? null,
+        name: names.length ? `Compound · ${row.recipe === 'fusion' ? 'fusion' : 'resonance'} of ${names.join(' + ')}${row.inputs.length > inputs.length ? ' + …' : ''}` : 'Compound #' + asset.slice(3, 11) };
+    } else {
+      let p = null;
+      try { p = await this.pattern(asset); } catch { final = false; }
+      const known = p && p.name !== asset, pattern = asset.startsWith('p2:');
+      label = { kind: pattern ? 'pattern' : 'legacy', tier: p?.tier ?? null,
+        name: known ? p.name : pattern ? 'Pattern #' + asset.slice(3) : 'Imported units ' + asset };
+    }
+    if (final) this.labels.set(asset, label);
+    return label;
+  }
+  // Units on their way out in sends not yet confirmed.
+  pendingUnits() {
+    const out = new Map();
+    for (const send of this.savedSends(SEND_RECENT * 3)) for (const g of send.groups) {
+      if (['confirmed', 'failed', 'stale', 'replaced'].includes(this.groupState(g).state)) continue;
+      for (const [asset, amount] of g.assets) out.set(asset, (out.get(asset) ?? 0n) + BigInt(amount));
+    }
+    return out;
+  }
+  // Spendable units: the agent's public available balances (held units are
+  // excluded by the gateway) minus units in unconfirmed sends. Bounded pages.
+  async units() {
+    const { rows, more } = await this.collect(cursor => this.service.profile(this.agent.address, { collection: 'balances', limit: 50, cursor }), 'balances', 4);
+    const pending = this.pendingUnits(), held = rows.filter(r => typeof r.asset === 'string' && isAsset(r.asset) && integer(r.amount) && r.amount !== '0');
+    const units = [];
+    for (let i = 0; i < held.length; i += 4) units.push(...await Promise.all(held.slice(i, i + 4).map(async r => {
+      const out = pending.get(r.asset) ?? 0n, amount = BigInt(r.amount);
+      return { asset: r.asset, ...await this.unitLabel(r.asset), amount: String(r.amount), pending: String(out),
+        available: String(amount > out ? amount - out : 0n), current: r.current !== false && !r.blocked };
+    })));
+    return { units, more, address: this.agent.address };
+  }
+  // Check every row before anything is signed: address checksum, a unit the
+  // agent holds (by name or key), positive amount, totals within available.
+  async review(value) {
+    dashboardCheck(value && Object.keys(value).length === 1 && (Array.isArray(value.rows) || typeof value.text === 'string'), 'invalid_send');
+    const input = value.text !== undefined ? parseSendList(value.text) : value.rows;
+    dashboardCheck(input.length > 0 && input.length <= SEND_ROWS, input.length ? 'send_too_many_rows' : 'send_empty');
+    const { units } = await this.units(), totals = new Map();
+    const find = unit => {
+      const text = String(unit ?? '').trim(), lower = text.toLowerCase();
+      const exact = units.filter(u => u.asset === text);
+      if (exact.length) return exact;
+      return units.filter(u => u.name.toLowerCase() === lower || u.kind === 'compound' && lower.length >= 8 && u.asset.slice(3).startsWith(lower.replace(/^(compound\s*)?#?/, '')));
+    };
+    const rows = input.map((row, index) => {
+      const out = { line: row?.line ?? index + 1, to: String(row?.to ?? '').trim(), unit: String(row?.unit ?? '').trim(), amount: String(row?.amount ?? '').trim(), error: null };
+      let key = null;
+      try { key = decodeTracAddress(out.to); } catch { out.error = 'send_address'; }
+      if (key && key === this.agent.owner) out.error = 'send_self';
+      const matches = find(out.unit);
+      if (matches.length === 1) Object.assign(out, { asset: matches[0].asset, name: matches[0].name, kind: matches[0].kind });
+      else out.error ??= matches.length ? 'send_unit_ambiguous' : 'send_unit_unknown';
+      if (!amountText(out.amount)) out.error ??= 'send_amount';
+      if (!out.error) totals.set(out.asset, (totals.get(out.asset) ?? 0n) + BigInt(out.amount));
+      return out;
+    });
+    const over = [...totals].filter(([asset, total]) => total > BigInt(units.find(u => u.asset === asset).available)).map(([asset]) => asset);
+    for (const row of rows) if (!row.error && over.includes(row.asset)) row.error = 'send_over_available';
+    const ok = rows.every(r => !r.error), groups = ok ? groupSends(rows) : [];
+    dashboardCheck(groups.length <= SEND_GROUPS, 'send_too_many_recipients');
+    return { ok, rows, groups: await Promise.all(groups.map(async g => ({ ...g, labels: await Promise.all(g.assets.map(async ([asset]) => (await this.unitLabel(asset)).name)) }))),
+      totals: await Promise.all([...totals].map(async ([asset, total]) => ({ asset, name: (await this.unitLabel(asset)).name, amount: String(total),
+        available: units.find(u => u.asset === asset).available }))) };
+  }
+  savedSends(limit = SEND_RECENT) {
+    return this.journal.db.prepare('SELECT value FROM dashboard_sends WHERE scope=? ORDER BY rowid DESC LIMIT ?').all(this.journal.scope, limit).map(r => JSON.parse(r.value));
+  }
+  saveSend(send) {
+    this.journal.db.prepare('INSERT INTO dashboard_sends(scope,id,value) VALUES(?,?,?) ON CONFLICT(scope,id) DO UPDATE SET value=excluded.value').run(this.journal.scope, send.id, JSON.stringify(send));
+  }
+  loadSend(id) {
+    dashboardCheck(typeof id === 'string' && /^[0-9a-f]{12}$/.test(id), 'invalid_send');
+    const row = this.journal.db.prepare('SELECT value FROM dashboard_sends WHERE scope=? AND id=?').get(this.journal.scope, id);
+    dashboardCheck(row, 'send_not_found', 404); return JSON.parse(row.value);
+  }
+  // A group's state from the transfer journal; the dashboard row only adds
+  // the last plain error and a public confirmation.
+  groupState(g) {
+    const intent = this.journal.get(`tx/${g.actionId}/v2-intent`), move = this.journal.get(`tx/${g.actionId}/v2-move`);
+    const running = this.sending.has(g.actionId), batch = move?.result?.batch ?? null;
+    if (g.replacedBy) return { state: 'replaced', batch };
+    if (g.confirmed) return { state: 'confirmed', batch: g.confirmed.batch ?? batch };
+    if (move && ['received', 'accepted'].includes(move.state)) return { state: 'received', batch };
+    if (move?.state === 'rejected') return { state: 'failed', batch, error: 'send_rejected' };
+    if (running) return { state: 'sending', batch };
+    if (move && ['sending', 'unknown'].includes(move.state)) return { state: 'uncertain', batch, error: g.error ?? null };
+    if (['transfer_intent_stale', 'transfer_intent_expired'].includes(g.error) && (!move || ['prepared', 'refused'].includes(move.state))) return { state: 'stale', batch, error: g.error };
+    if (g.error && SEND_LATER.includes(g.error)) return { state: 'queued', batch, error: g.error, signed: !!intent };
+    if (g.error) return { state: 'failed', batch, error: g.error, signed: !!intent };
+    return { state: g.tried ? 'uncertain' : 'waiting', batch, signed: !!intent };
+  }
+  // Public confirmation: the accepted transfer's event in this agent's
+  // history (event id from the receipt's move and each action nonce).
+  async confirmations(groups) {
+    const wanted = new Map();
+    for (const g of groups) {
+      const move = this.journal.get(`tx/${g.actionId}/v2-move`), intent = this.journal.get(`tx/${g.actionId}/v2-intent`);
+      const receipt = move?.result, nonce = intent?.body?.actions?.[0]?.nonce;
+      if (typeof receipt?.move === 'string' && typeof nonce === 'string') wanted.set(digest('v2-event/transfer/' + receipt.move + '/' + nonce), g);
+    }
+    if (!wanted.size) return;
+    let events = this.confirmCache && Date.now() - this.confirmCache.at < CONFIRM_TTL ? this.confirmCache.rows : null;
+    if (!events) {
+      events = (await this.collect(cursor => this.service.profile(this.agent.address, { collection: 'history', type: 'transfer', limit: 50, cursor }), 'history', CONFIRM_PAGES)).rows;
+      this.confirmCache = { at: Date.now(), rows: events };
+    }
+    for (const event of events) {
+      const g = wanted.get(event?.id);
+      if (g) g.confirmed = { batch: event.provenance?.batch ?? null, sequence: event.sequence ?? null };
+    }
+  }
+  async sendView(send) {
+    const open = send.groups.filter(g => !g.confirmed && !g.replacedBy && this.journal.get(`tx/${g.actionId}/v2-move`)?.result?.move);
+    if (open.length) {
+      try { await this.confirmations(open); if (open.some(g => g.confirmed)) this.saveSend(send); } catch { /* shown as waiting */ }
+    }
+    const groups = await Promise.all(send.groups.map(async g => ({ actionId: g.actionId, to: g.to, replacedBy: g.replacedBy ?? null,
+      assets: await Promise.all(g.assets.map(async ([asset, amount]) => ({ asset, amount, name: (await this.unitLabel(asset)).name }))), ...this.groupState(g) })));
+    return { id: send.id, createdAt: send.createdAt, running: this.sendRunning === send.id, waiting: this.sendRunning === send.id ? this.sendWaiting ?? null : null, groups };
+  }
+  async sends() {
+    const sends = [];
+    for (const send of this.savedSends()) sends.push(await this.sendView(send));
+    return { sends };
+  }
+  // Save every transfer action with its stable ID before anything is
+  // submitted, then send them one by one through the kit's transfer action.
+  async send(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 1 && Array.isArray(value.rows), 'invalid_send');
+    const review = await this.review({ rows: value.rows });
+    dashboardCheck(review.ok, review.rows.find(r => r.error)?.error ?? 'invalid_send');
+    const id = randomBytes(6).toString('hex');
+    const send = { id, createdAt: Date.now(), groups: review.groups.map((g, i) => ({ actionId: `dash-send-${id}-${i + 1}`, to: g.to, assets: g.assets })) };
+    this.saveSend(send);
+    this.runSend(id);
+    return this.sendView(send);
+  }
+  // Retry only the unsent or uncertain actions, each with its saved ID.
+  async retrySend(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 1, 'invalid_send');
+    const send = this.loadSend(value.id);
+    dashboardCheck(send.groups.some(g => ['failed', 'uncertain', 'queued', 'waiting'].includes(this.groupState(g).state)), 'send_nothing_to_retry', 409);
+    this.runSend(send.id);
+    return this.sendView(send);
+  }
+  // A never-submitted action whose signature went stale (an earlier send
+  // changed the account first) is signed again under a new action ID, only
+  // when the player asks; the old authorization can no longer execute.
+  async resignSend(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 2 && typeof value.actionId === 'string', 'invalid_send');
+    const send = this.loadSend(value.id), g = send.groups.find(g => g.actionId === value.actionId);
+    dashboardCheck(g && this.groupState(g).state === 'stale' && !this.sending.has(g.actionId), 'send_not_stale', 409);
+    const n = send.groups.length + 1, actionId = `dash-send-${send.id}-${n}`;
+    g.replacedBy = actionId; send.groups.push({ actionId, to: g.to, assets: g.assets, replaces: g.actionId });
+    this.saveSend(send); this.runSend(send.id);
+    return this.sendView(send);
+  }
+  runSend(id) {
+    const task = this.sendTail.then(() => this.sendNow(id));
+    this.sendTail = task.catch(() => {});
+    return task;
+  }
+  async sendNow(id) {
+    this.sendRunning = id;
+    try {
+      for (let pass = 0; pass < 6 && !this.closed; pass++) {
+        let later = null;
+        for (const g of this.loadSend(id).groups) {
+          if (this.closed) return;
+          if (!['failed', 'uncertain', 'queued', 'waiting'].includes(this.groupState(g).state) || later) continue;
+          this.sending.add(g.actionId);
+          let error = null;
+          try { await runTool(this.context, 'transfer', { actionId: g.actionId, to: g.to, assets: g.assets }); }
+          catch (e) {
+            // The kit keeps an unanswered packet that is too old to resend.
+            error = /^Saved packet outcome is unknown/.test(e?.message) ? 'send_outcome_unknown' : dashboardError(e);
+            if (e.retryAfterMs !== undefined || e.status === 429) later = { error, retryAfterMs: e.retryAfterMs }; }
+          finally { this.sending.delete(g.actionId); }
+          const send = this.loadSend(id), saved = send.groups.find(r => r.actionId === g.actionId);
+          saved.tried = true; if (error) saved.error = error; else delete saved.error;
+          this.saveSend(send);
+        }
+        if (!later) return;
+        // The next batch is full or the gateway paces this sender: the rest
+        // waits for the next Bitcoin block instead of failing.
+        const wait = Math.min(Math.max(later.retryAfterMs ?? 60000, 2000), 15 * 60000);
+        this.sendWaiting = { reason: later.error, until: Date.now() + wait };
+        await new Promise(resolve => { const timer = setTimeout(resolve, wait); this.wakeSend = () => { clearTimeout(timer); resolve(); }; });
+        this.sendWaiting = null; this.wakeSend = null;
+      }
+    } finally { this.sendRunning = null; this.sendWaiting = null; }
+  }
+  // TNK balance, the current network fee per send and the most that can be
+  // sent (balance − fee). A missing account is "no TNK yet", not an error.
+  async tnk() {
+    if (!this.tnkCache || Date.now() - this.tnkCache.at >= TNK_TTL) {
+      let balance = null, error = null;
+      try { balance = await this.agent.tnkBalance(); } catch (e) { error = dashboardError(e); }
+      this.tnkCache = { at: Date.now(), balance, error };
+    }
+    const { balance: b, error } = this.tnkCache;
+    if (!b) return { address: this.agent.address, ready: false, error };
+    const out = await this.tnkOut(), max = BigInt(b.balanceAtoms) - BigInt(b.feeAtoms) - out;
+    return { address: this.agent.address, ready: true, accountExists: b.accountExists, balanceTnk: b.balanceTnk, feeTnk: b.feeTnk,
+      outTnk: formatTnk(out), maxTnk: b.accountExists && max > 0n ? formatTnk(max) : '0' };
+  }
+  // TNK on its way out (amount + fee) in this dashboard's unconfirmed sends:
+  // the network balance drops only once they confirm.
+  async tnkOut() {
+    let out = 0n;
+    for (const send of this.savedTnk()) {
+      if (send.totalAtoms && ['waiting', 'sending', 'sent', 'pending', 'uncertain'].includes((await this.tnkState(send)).state)) out += BigInt(send.totalAtoms);
+    }
+    return out;
+  }
+  // Unsigned check of one TNK send: address, amount, balance and fee.
+  async tnkReview(value) {
+    dashboardCheck(value && Object.keys(value).length === 2 && typeof value.to === 'string' && typeof value.amount === 'string', 'invalid_tnk_send');
+    const to = value.to.trim(), amount = value.amount.trim();
+    dashboardCheck(amount !== 'max', 'tnk_invalid_amount');
+    let quote;
+    try { quote = await this.agent.prepareTnkTransfer({ to, amount }); } catch (error) { throw tnkFailure(error); }
+    const left = BigInt(quote.remainingAtoms) - await this.tnkOut();
+    if (left < 0n) throw tnkFailure({ code: 'tnk_insufficient' });
+    return { to, amount: quote.amountTnk, feeTnk: quote.feeTnk, totalTnk: quote.totalTnk, totalAtoms: quote.totalAtoms, balanceTnk: quote.balanceTnk, remainingTnk: formatTnk(left) };
+  }
+  savedTnk() {
+    return this.journal.db.prepare('SELECT value FROM dashboard_tnk WHERE scope=? ORDER BY rowid DESC LIMIT ?').all(this.journal.scope, TNK_RECENT).map(r => JSON.parse(r.value));
+  }
+  saveTnk(send) {
+    this.journal.db.prepare('INSERT INTO dashboard_tnk(scope,id,value) VALUES(?,?,?) ON CONFLICT(scope,id) DO UPDATE SET value=excluded.value').run(this.journal.scope, send.id, JSON.stringify(send));
+  }
+  loadTnk(id) {
+    dashboardCheck(typeof id === 'string' && /^[0-9a-f]{12}$/.test(id), 'invalid_tnk_send');
+    const row = this.journal.db.prepare('SELECT value FROM dashboard_tnk WHERE scope=? AND id=?').get(this.journal.scope, id);
+    dashboardCheck(row, 'tnk_send_not_found', 404); return JSON.parse(row.value);
+  }
+  // The network's answer for a sent TNK transfer, cached a few seconds.
+  async tnkNetwork(actionId) {
+    const cached = this.tnkStatus.get(actionId);
+    if (cached && Date.now() - cached.at < TNK_TTL) return cached.value;
+    let value;
+    try { value = await this.agent.tnkTransferStatus(actionId); } catch { value = { state: 'unknown', code: 'tnk_unknown_status' }; }
+    this.tnkStatus.set(actionId, { at: Date.now(), value });
+    return value;
+  }
+  // A send's state from the kit's TNK journal row; the dashboard row adds
+  // only the last plain error. retry: Retry may resend under the same ID.
+  async tnkState(send) {
+    const row = this.journal.get('tnk/' + send.actionId), packet = row?.body?.packet, tx = packet?.tx ?? null;
+    if (this.tnkSending.has(send.actionId)) return { state: 'sending', tx, retry: false };
+    if (row?.state === 'accepted') return { state: 'confirmed', tx, retry: false };
+    if (!row) return send.error ? { state: 'failed', tx, error: send.error, retry: true } : { state: 'waiting', tx, retry: true };
+    // A signing claim without a saved packet: never signed a second time.
+    if (!packet) return { state: 'uncertain', tx, error: 'tnk_interrupted', retry: false };
+    if (packet.blockedCode) return { state: 'failed', tx, error: packet.blockedCode, retry: false, signed: true };
+    if (row.state === 'prepared') return { state: 'failed', tx, error: send.error ?? 'tnk_validators', retry: true, signed: true };
+    const status = await this.tnkNetwork(send.actionId);
+    if (status.state === 'confirmed') return { state: 'confirmed', tx, retry: false };
+    if (status.state === 'pending') return { state: 'pending', tx, retry: false };
+    if (row.state === 'submitted') return { state: 'sent', tx, retry: Date.now() - (send.sentAt ?? send.createdAt) > TNK_RESEND_AFTER };
+    return { state: 'uncertain', tx, error: 'tnk_unknown_status', retry: true };
+  }
+  async tnkView(send) {
+    return { id: send.id, actionId: send.actionId, createdAt: send.createdAt, to: send.to, amount: send.amount, feeTnk: send.feeTnk, ...await this.tnkState(send) };
+  }
+  async tnkSends() {
+    const sends = [];
+    for (const send of this.savedTnk()) sends.push(await this.tnkView(send));
+    return { sends };
+  }
+  // Save the TNK send with its action ID first, then sign and send it
+  // through the kit's native TNK transfer.
+  async tnkSend(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    const review = await this.tnkReview(value), id = randomBytes(6).toString('hex');
+    const send = { id, actionId: `dash-tnk-${id}`, to: review.to, amount: review.amount, feeTnk: review.feeTnk, totalAtoms: review.totalAtoms, createdAt: Date.now() };
+    this.saveTnk(send);
+    this.runTnk(id);
+    return this.tnkView(send);
+  }
+  // Retry resends the saved transfer under its saved action ID: the kit
+  // rebroadcasts the same signed bytes, or signs once if nothing was signed.
+  async tnkRetry(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).length === 1, 'invalid_tnk_send');
+    const send = this.loadTnk(value.id);
+    dashboardCheck((await this.tnkState(send)).retry, 'tnk_nothing_to_retry', 409);
+    this.runTnk(send.id);
+    return this.tnkView(send);
+  }
+  runTnk(id) {
+    // Queued counts as sending: a second click cannot queue the same send twice.
+    const { actionId } = this.loadTnk(id);
+    this.tnkSending.add(actionId);
+    const task = this.tnkTail.then(() => this.tnkNow(id, actionId));
+    this.tnkTail = task.catch(() => {});
+    return task;
+  }
+  async tnkNow(id, actionId) {
+    if (this.closed) { this.tnkSending.delete(actionId); return; }
+    const { to, amount } = this.loadTnk(id);
+    let error = null, result = null;
+    try { result = await this.agent.sendTnkTransfer({ actionId, to, amount }); }
+    catch (e) { error = dashboardError(e); }
+    finally { this.tnkSending.delete(actionId); }
+    const saved = this.loadTnk(id);
+    saved.tried = true; if (error) saved.error = error; else delete saved.error;
+    if (result?.sent) saved.sentAt = Date.now();
+    this.tnkStatus.delete(actionId); this.tnkCache = null;
+    this.saveTnk(saved);
+  }
   walletKey(key) {
     dashboardCheck(typeof key === 'string' && key.length <= 300 && key.startsWith(this.agent.bitcoinNetwork + '/') && /^[a-zA-Z0-9/:-]+$/.test(key), 'invalid_wallet_key');
     return key;
@@ -445,8 +826,8 @@ export class DashboardState {
     return { saved: true };
   }
   async close() {
-    this.closed = true;
-    try { await this.batchTask; await this.queue; }
+    this.closed = true; this.wakeSend?.();
+    try { await this.batchTask; await this.queue; await this.sendTail; await this.tnkTail; }
     finally {
       if (this.active) this.journal.db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance);
       this.active = false;

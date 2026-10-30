@@ -103,8 +103,12 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       }
       const mint = /^\/api\/requests\/([0-9a-f]{64})(\/plan)?$/.exec(path);
       if (req.method === 'GET' && mint) { keys([]); json(await (mint[2] ? state.plan(mint[1]) : state.status(mint[1]))); return; }
+      if (req.method === 'GET' && path === '/api/units') { keys([]); json(await state.units()); return; }
+      if (req.method === 'GET' && path === '/api/sends') { keys([]); json(await state.sends()); return; }
+      if (req.method === 'GET' && path === '/api/tnk') { keys([]); json(await state.tnk()); return; }
+      if (req.method === 'GET' && path === '/api/tnk-sends') { keys([]); json(await state.tnkSends()); return; }
       if (req.method === 'GET' && path === '/api/wallet') { keys(['key']); json({ value: state.walletGet(url.searchParams.get('key')) }); return; }
-      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock'].includes(path)) {
+      if (req.method === 'POST' && ['/api/mint', '/api/mint-all', '/api/link', '/api/payment', '/api/wallet', '/api/wallet-lock', '/api/send-review', '/api/send', '/api/send-retry', '/api/send-resign', '/api/tnk-review', '/api/tnk-send', '/api/tnk-retry'].includes(path)) {
         keys([]); const value = await body(req);
         if (path === '/api/mint') json(await state.mint(value));
         if (path === '/api/link') json(await state.link(value));
@@ -112,6 +116,17 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
         if (path === '/api/payment') json(await state.payment(value));
         if (path === '/api/wallet') json(state.walletPut(value));
         if (path === '/api/wallet-lock') json(state.walletLock(value));
+        // Send units on Trac: review signs nothing; send, retry and re-sign
+        // save each transfer action ID before the transfer action runs.
+        if (path === '/api/send-review') json(await state.review(value));
+        if (path === '/api/send') json(await state.send(value), 202);
+        if (path === '/api/send-retry') json(await state.retrySend(value), 202);
+        if (path === '/api/send-resign') json(await state.resignSend(value), 202);
+        // TNK (network gas): review signs nothing; send and retry save and
+        // reuse one action ID per send.
+        if (path === '/api/tnk-review') json(await state.tnkReview(value));
+        if (path === '/api/tnk-send') json(await state.tnkSend(value), 202);
+        if (path === '/api/tnk-retry') json(await state.tnkRetry(value), 202);
         return;
       }
       dashboardCheck(upstream && !path.startsWith('/api/') && !path.startsWith('/local/'), 'not_found', 404);

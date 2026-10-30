@@ -34,6 +34,8 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     return run(value, head, ...args);
   };
   for (const [name, tool] of Object.entries(readTools(agent))) register(name, tool.description, tool.shape, tool.run, tool.readOnly);
+  register('tnk_transfer', 'Send native TNK to another trac1… account. Amount is a decimal TNK string (up to 18 places) or max for balance minus fee. Reuse the action ID to resend the same signed packet.',
+    { actionId, to: z.string().refine(isTracAddress, 'tnk_invalid_address'), amount: z.string().max(59) }, args => agent.sendTnkTransfer(args), false);
   register('use_credit', 'Allocate accepted fee credit to an open request with matching fee terms. Reuse the action ID after uncertainty.',
     { actionId, credit: hex, request: hex, items: z.array(z.object({ fee: hex, amount: z.string().regex(/^[1-9][0-9]*$/) }).strict()).min(1) }, args => agent.useCredit(args), false);
   register('transfer_credit', 'Transfer an accepted fee credit to another player using the current signed revision. Reuse the action ID after uncertainty.',

@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes } from '../../contract/signing.js';
 export { bytesToHex, hexToBytes };
 export function unicode(s) {
   assert(typeof s === 'string', 'unicode_string');

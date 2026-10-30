@@ -5,6 +5,8 @@ import { dirname } from 'node:path';
 import { rules } from '../src/rules.mjs';
 import { v2StackFixture } from './v2-stack-fixture.mjs';
 import { Feeds } from '../src/feeds.mjs';
+import { canonicalJSON, batchDigest } from '../../contract/signing.js';
+import { sha256 } from '../../contract/node_modules/@noble/hashes/sha256.js';
 
 // The reference captures the original store/projection implementation. Five
 // independent policy services also replay each proposed batch in this scenario.
@@ -26,6 +28,12 @@ test('store optimizations preserve signed batch bytes, replay roots and closure 
     for (const { value: { batch } } of s.store.list('batches', { limit: 1000 })) {
       if (batch.v !== 2) continue;
       const replayed = await s.replayAccepted(batch.n);
+      // Hash the replayed batch independently of the digest helper. The
+      // retained fixture below pins the pre-optimization bytes and roots.
+      const { sig, ...unsigned } = batch;
+      const expectedDigest = Buffer.from(sha256(Buffer.from(`dmw-batch-v2|${s.config.network}|${canonicalJSON(unsigned)}`))).toString('hex');
+      assert.equal(Buffer.from(batchDigest(s.config.network, batch)).toString('hex'), expectedDigest);
+      assert.equal(replayed.digest, expectedDigest);
       results.push({ n: batch.n, root: batch.root, digest: replayed.digest,
         batchBytes: rules.stableJSON(batch), fileDigests: replayed.files.map(file => rules.bytesToHex(rules.hashBytes(rules.encodeBinary(file)))),
         fileBytes: replayed.files.map(file => rules.encodeBinary(file).length), replayState: rules.hash(JSON.stringify(replayed.state)) });

@@ -113,6 +113,73 @@ continue bounded exact-tier work from accepted progress. It spends no matter and
 does not change compound identity. Reuse the ID for one pending refinement;
 read accepted progress before preparing the next step.
 
+## Native TNK transfers
+
+The agent's `address` result is its TNK (MSB) account address. Send TNK to this
+`trac1…` address from any Trac wallet to fund it. V2 game moves need 0 TNK.
+Native TNK transfers pay the current MSB fee and do not require subnet writer
+admission or game-transfer activation.
+
+`tnk_balance {}` returns `{address,balanceAtoms,balanceTnk,feeAtoms,feeTnk,accountExists}`.
+Atoms are integer strings; TNK values are exact decimal strings with up to 18
+fractional digits and trailing zeros trimmed. An absent account has zero balance.
+This read works in dry-run through the independent native MSB adapter.
+
+`tnk_transfer {actionId,to,amount}` accepts a checksum-valid lowercase `trac1…`
+recipient and a positive decimal TNK **string**, at most 18 fractional digits,
+or `"max"` for balance minus fee. Exponents, leading zeros and numeric JSON
+amounts are refused. Self-transfers and insufficient balance including the fee
+are refused before signing. `actionId` is 1–64 letters, digits, dots, dashes or
+underscores. From kit/, with those arguments saved in a JSON file:
+
+```sh
+node bin/dmw.mjs read tnk_balance --config /absolute/player.json
+node bin/dmw.mjs action tnk_transfer /absolute/tnk-send.json --config /absolute/player.json
+```
+
+Actions default to an unsigned preview with `state:"dry-run"`, `signed:false`
+and `sent:false`. Add `--live` only for an authorized send. Previews need no
+validator quorum; sends require at least three distinct connected validators
+and use the kit's three-validator fanout. The native builder rechecks the balance
+and fee before signing. A preview is a snapshot; live preparation refreshes it.
+
+The journal claims the action ID before signing and saves the exact signed
+packet before broadcasting. Retry the **same ID, recipient and amount** after
+a disconnect or restart. A saved `max` amount stays fixed even if the balance
+later changes. Retries never generate a new nonce or signature. A process lost
+during preparation can leave an incomplete signing claim; it stays unknown and
+requires reconciliation instead of automatically signing again. If balance or
+fee changes during signing of `max`, the packet is retained without submission
+with `tnk_balance_changed`.
+
+A successful broadcast returns `state:"pending"` and `tx`; acknowledgement is
+not confirmation. `transaction_status {tx}` reads native MSB evidence by hash;
+`tnk_transfer_status {actionId}` resolves the saved hash. Native states are
+`confirmed` (signed MSB view), `pending` (unconfirmed MSB record), or `unknown`
+with `code:"tnk_unknown_status"` (no local evidence or unavailable reader).
+An absent journal action has `tx:null`. Preserve unknown actions; absence is
+not proof of failure. Confirmed retries do not broadcast again. Legacy subnet
+status retains its `accepted`/`rejected` meanings.
+
+Library callers can import from `lib/tnk.mjs` or `lib/index.mjs`:
+
+- `tnkBalance(agent)` returns the balance shape above.
+- `prepareTnkTransfer(agent,{to,amount})` always returns an unsigned preview,
+  even for a live agent: balance fields plus `to`, normalized `amount`,
+  `amountAtoms/amountTnk`, `totalAtoms/totalTnk`, `remainingAtoms/remainingTnk`,
+  `signed:false` and `sent:false`.
+- `sendTnkTransfer(agent,{actionId,to,amount})` serializes through the agent and
+  returns the same preview fields plus `actionId`, `tx` (null for a new dry-run),
+  `state`, `signed` (whether this call signed), `sent`, and `replayed`.
+- `tnkTransferStatus(agent,actionId)` returns `{actionId,tx,state,code?}` and
+  never signs or sends. The `Agent` exposes the same methods without the first
+  argument. Public results never contain signed packets or private keys.
+
+Thrown library errors have a plain `code`, including `tnk_invalid_address`,
+`tnk_invalid_amount`, `tnk_self`, `tnk_insufficient`, `tnk_validators`,
+`tnk_action_conflict`, `tnk_balance_changed` and `tnk_unknown_status`. Ambiguous
+submit errors also carry `actionId` and `tx`; keep both for reconciliation.
+
 ## Unit transfers on v2
 
 `transfer {actionId,to,assets:[[asset,amount],…]}` takes a checksum-valid `trac1…`
@@ -239,6 +306,14 @@ header awards. No production trust fallback is provided for these gaps.
 | page_cursor_stale / claimed_cursor_stale | Restart traversal with unchanged filters/order. |
 | claimed_query | Use p2:N, limit 1–50, block ordering, found/minted filters. |
 | account_v2_required | Direct legacy transfer is unavailable on v2. |
+| tnk_invalid_address / tnk_invalid_amount | Use a checksum-valid trac1… address and a positive decimal TNK string (up to 18 places) or max. |
+| tnk_self | Choose a different recipient from the sending agent. |
+| tnk_insufficient | Fund the agent with enough TNK for the amount plus the current MSB fee. |
+| tnk_validators | Wait for three distinct connected validators; retry the same action ID. |
+| tnk_action_conflict | This ID belongs to a different intent; preserve and retry its saved recipient/amount. |
+| tnk_unknown_status / tnk_prepare_failed | Preserve the action ID and journal. Resend a saved packet unchanged; an incomplete signing claim needs reconciliation. |
+| tnk_balance_changed | Max changed during signing; the packet is retained without sending. Reconcile before replacing. |
+| tnk_fee_unavailable / tnk_balance_unavailable | Wait for native MSB state synchronization and retry the read. |
 | transfer_v2_unavailable | Transfer activation has not been reached; the authorization is retained and nothing was sent. |
 | transfer_insufficient_units | Insufficient available balance for the exact ledger key; held units are unavailable. |
 | transfer_unknown_asset | No available units or catalog entry for that asset; check agent_profile balances. |
@@ -284,7 +359,9 @@ header awards. No production trust fallback is provided for these gaps.
 | `hunting` | Private journal timing and incomplete settlement evidence. |
 | `read_page` | Follow same-origin public collection links and cursor aliases. |
 | `mint_status` | Request state by request ID or mint/actionId. |
-| `transaction_status` | Independent read of an existing legacy TNK transaction. |
+| `transaction_status` | Native TNK confirmation or legacy subnet acceptance, by transaction hash. |
+| `tnk_balance` | TNK address, exact native balance and MSB fee; no signing. |
+| `tnk_transfer_status` | Native TNK confirmed/pending/unknown state by saved action ID. |
 | `payout_binding` | Current binding or its public history. |
 | `financial_action_status` | Acceptance of a credit/beneficiary action. |
 | `custody_status` | Beneficiary liability and payout plan. |
@@ -319,6 +396,7 @@ header awards. No production trust fallback is provided for these gaps.
 | `claim_custody` | Sign a beneficiary claim; never send the custodian payment. |
 | `report_custody_payment` | Report a payment already made; dry-run sends nothing. |
 | `transfer` | Send exact v2 unit authorizations after public-mint activation; retain the same ID on retry. Legacy sends charge sender TNK. |
+| `tnk_transfer` | Send native TNK with a stable ID; decimal amount or max. Dry-run previews without signing. |
 
 See [READS.md](READS.md) for v:3 response shapes, cursor aliases, decimal strings,
 collection routes and fee display. See [UPGRADING.md](UPGRADING.md) for preserving

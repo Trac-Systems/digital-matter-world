@@ -30,7 +30,7 @@ export async function create({ wallet, network, config, service, dryRun = true, 
     runtime = await openRuntime({ wallet, config });
     try {
       check(publicKey(runtime.peer.wallet) === publicKey(wallet), 'Runtime must belong to this signer');
-      const trac = productionTrac(runtime.peer, { network, msb: runtime.bus, pins: config.trac });
+      const trac = productionTrac(runtime.peer, { network, msb: runtime.bus, pins: config.trac, dryRun });
       trac.balanceProof = (owner, asset, limit) => service.accountProof(owner, asset, limit);
       const health = await service.health(), tip = readInteger(health.tip);
       check(Number.isSafeInteger(tip) && tip >= config.runtime.deployment.beacon.checkpoint.height, 'Gateway has no current mainnet tip');
@@ -67,7 +67,8 @@ export async function create({ wallet, network, config, service, dryRun = true, 
       return trac;
     } catch (error) { await runtime.close(); runtime = null; throw error; }
   })();
-  const methods = ['head', 'hashAt', 'balance', 'settings', 'rulesContext', 'settingsByHash', 'renewalSlice', 'discoveryCommitment', 'accountRoot', 'financialRecord', 'mint', 'batchLast', 'batchRoot', 'record', 'preflight', 'prepare', 'submit', 'transactionStatus'];
+  const methods = ['head', 'hashAt', 'balance', 'settings', 'rulesContext', 'settingsByHash', 'renewalSlice', 'discoveryCommitment', 'accountRoot', 'financialRecord', 'mint', 'batchLast', 'batchRoot', 'record', 'preflight', 'prepare', 'submit', 'transactionStatus',
+    'tnkBalance', 'tnkRequireValidators', 'prepareTnkTransfer', 'submitTnkTransfer', 'tnkTransactionStatus'];
   const trac = { network, ...Object.fromEntries(methods.map(method => [method, async (...args) => (await connect())[method](...args)])) };
   return { trac, source,
     candidates: async (asset, { block } = {}) => collect(cursor => service.mintRights(publicAddress(wallet), {

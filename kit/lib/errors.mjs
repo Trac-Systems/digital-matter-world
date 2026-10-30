@@ -2,6 +2,23 @@ import { KIT_UPGRADE_MESSAGE } from '../../rules/src/kit-release.js';
 // Only bounded codes are echoed. Remote bodies and nested errors may contain
 // credentials, private paths or signed payloads.
 export const errorMeanings = Object.freeze({
+  tnk_invalid_address: 'Use a checksum-valid lowercase trac1… address for the TNK recipient.',
+  tnk_invalid_amount: 'Use a positive decimal TNK string with at most 18 fractional digits, or max. Numbers, exponent notation and leading zeros are not accepted.',
+  tnk_invalid_action_id: 'Choose a stable action ID of 1–64 letters, numbers, dots, dashes or underscores.',
+  tnk_invalid_tx: 'Use the 64-character lowercase transaction hash returned by the TNK send.',
+  tnk_self: 'The TNK recipient must differ from this agent’s address.',
+  tnk_insufficient: 'The agent needs an MSB account with enough TNK for the positive transfer amount plus the current MSB fee. V2 game moves need 0 TNK.',
+  tnk_validators: 'Sending TNK requires at least three distinct connected validators. Wait for connections and retry the same action ID.',
+  tnk_unknown_status: 'TNK confirmation is unknown. Preserve the action ID and journal. A saved signed packet can be resent unchanged; an interrupted signing claim requires reconciliation and will not sign again.',
+  tnk_action_conflict: 'This TNK action ID already belongs to a different recipient or amount. Retry its saved intent.',
+  tnk_unavailable: 'This adapter does not expose native MSB TNK operations. Use the pinned player runtime.',
+  tnk_fee_unavailable: 'The current MSB fee is unavailable. Wait for synchronization and retry.',
+  tnk_balance_unavailable: 'The MSB account returned an invalid balance. Wait for synchronization and retry.',
+  tnk_balance_changed: 'The balance or fee changed while preparing max. The signed packet is retained and was not sent; reconcile it before preparing another action.',
+  tnk_signer: 'The native MSB wallet must belong to this agent.',
+  tnk_packet: 'The native TNK packet does not match its saved transfer. Preserve the journal for reconciliation.',
+  tnk_prepare_failed: 'Native TNK preparation failed. Its signing claim is retained; inspect the saved action before attempting a different action ID.',
+  tnk_dry_run: 'The dry-run runtime cannot sign or submit TNK transactions.',
   upgrade_required: KIT_UPGRADE_MESSAGE,
   public_projection_pending: 'The v2 public index for this scope is catching up or its worker is blocked. Check public_status and retry this read; this is not an empty catalog or proof that a slot is free.',
   projection_asset_version: 'The gateway projection worker encountered an incompatible asset version. The operator must repair the index; keep local history and retry public reads later.',

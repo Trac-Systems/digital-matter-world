@@ -3,8 +3,13 @@
 Mainnet is https://dmtworld.tap-protocol.com with ruleset **dmw-v2**. The current
 recordings in `test/fixtures/v2-live-reads.json` were obtained with GET requests.
 Read-only public browsing needs no signer or funds. `status`, `balance` and
-`transaction_status` additionally use the player's independent Trac adapter;
+`transaction_status`, `tnk_balance` and `tnk_transfer_status` additionally use the player's independent Trac adapter;
 public projections are not a substitute for that authority.
+
+`tnk_balance` returns the agent's TNK address, exact balance and current MSB fee;
+see [native TNK transfers](ACTIONS.md#native-tnk-transfers) for its fields and
+confirmed/pending/unknown status reads. Funding that address is optional for
+v2 game moves, which need 0 TNK.
 
 ## Scalars, identities and paging
 

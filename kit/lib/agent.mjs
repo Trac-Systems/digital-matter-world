@@ -24,8 +24,13 @@ import { proposeNamed, revealNamed, addNamedOccurrences, sendNamedMove } from '.
 import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RESOURCE_PROFILE, validateResources, safeNumberV2 } from '../../rules/src/index.js';
 import { requireKitVersion, resumeLegacyFinancial } from './upgrade.mjs';
 import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './api-values.mjs';
+import { tnkBalance, prepareTnkTransfer, sendTnkTransfer, tnkTransferStatus } from './tnk.mjs';
 
 export class Agent {
+  tnkBalance() { return tnkBalance(this); }
+  prepareTnkTransfer(args) { return prepareTnkTransfer(this, args); }
+  sendTnkTransfer(args) { return sendTnkTransfer(this, args); }
+  tnkTransferStatus(actionId) { return tnkTransferStatus(this, actionId); }
   useCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
   transferCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
   claimCustody(args) { return this.exclusive(() => claimFinancialCustody(this, args)); }
@@ -51,6 +56,7 @@ export class Agent {
   }
   async reconcileAction(id) {
     const row = this.journal.get(id);
+    if (id.startsWith('tnk/')) { await tnkTransferStatus(this, id.slice(4)); return; }
     if (!row || ['prepared', 'refused', 'accepted', 'rejected'].includes(row.state)) return;
     if (row.body.version === 2 && !row.body.t || id.endsWith('/witnesses-v2')) return;
     if (id.startsWith('payout/')) {
@@ -114,6 +120,8 @@ export class Agent {
       const kind = row.id.split('/')[0], digest = { mint: pendingId, link: linkId }[kind];
       const evidence = this.journal.evidence(row.id);
       const savedMove = this.journal.get(row.id);
+      if (kind === 'tnk') return { ...row, ...evidence, tx: savedMove.body.packet?.tx ?? null,
+        statusTool: { name: 'tnk_transfer_status', arguments: { actionId: row.id.slice(4) } } };
       if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: (savedMove.body.v === 2 ? moveIdV2 : moveId)(savedMove.body),
         ...(row.state === 'refused' ? { refusal: savedMove.result, retry: 'Retry the original action ID and intent; the kit will refresh the refused packet.' } : {}) };
       if (kind.startsWith('bitcoin-')) {

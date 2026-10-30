@@ -84,6 +84,9 @@ export function mount(root, { id, onPublicMint }) {
   };
   // The gateway cannot read an inscription until it is in a block (and indexed).
   const notYet = error => ['deployment_confirmations', 'tap_quorum_unavailable', 'request_failed'].includes(error?.message);
+  // The gateway answers request_pending when its inscription checks outlast the response budget; the work continues
+  // there and the next status read shows the result, so this is progress, not a failure.
+  const stillWorking = error => error?.message === 'request_pending';
   let registering = false, lastRegister = 0;
   let owner = assetPage ? new URLSearchParams(location.search).get('owner') ?? '' : '';
   const journal = new BrowserMintJournal();
@@ -113,7 +116,7 @@ export function mount(root, { id, onPublicMint }) {
     if (waiting && !registering && Date.now() - lastRegister > 30000) {
       registering = true; lastRegister = Date.now();
       api('/mint/deployment', { asset: job.asset, phase, inscription: receipt.inscriptionId })
-        .then(() => { if (!stopped) return refresh(); }, error => { if (!notYet(error)) say(walletError(error), 'bad'); })
+        .then(() => { if (!stopped) return refresh(); }, error => { if (!notYet(error) && !stillWorking(error)) say(walletError(error), 'bad'); })
         .finally(() => { registering = false; });
     }
     const waitText = 'Sent. Waiting for the next Bitcoin block (about 10 minutes). This page registers it automatically; keep it open or come back to this link.';
@@ -144,7 +147,11 @@ export function mount(root, { id, onPublicMint }) {
     }, 'primary'));
     if (waiting) next.push(button('Check now', async () => {
       try { await api('/mint/deployment', { asset: job.asset, phase, inscription: receipt.inscriptionId }); }
-      catch (error) { if (notYet(error)) throw Error('Not in a Bitcoin block yet. This page keeps checking; nothing else to do.'); throw error; }
+      catch (error) {
+        if (notYet(error)) throw Error('Not in a Bitcoin block yet. This page keeps checking; nothing else to do.');
+        if (stillWorking(error)) throw Error('Still checking the inscription. This page updates by itself in a few seconds.');
+        throw error;
+      }
       await refresh();
     }, 'primary'));
     if (job.state === 'queued') lead.append(h('div.callout.busy', {}, 'Preparing the inscription. This page updates by itself in a few seconds.'));
@@ -172,7 +179,7 @@ export function mount(root, { id, onPublicMint }) {
       try { await api('/mint/deployment', { asset: job.asset, phase: result.phase, inscription: result.inscriptionId }); }
       catch (error) {
         await refresh();
-        if (notYet(error)) return;
+        if (notYet(error) || stillWorking(error)) return;
         throw error;
       }
       await refresh();

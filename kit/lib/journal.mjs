@@ -38,6 +38,15 @@ export class Journal {
       this.db.exec('COMMIT'); return this.get(id);
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
+  completePreparation(id, previous, body) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.get(id);
+      check(row?.state === 'prepared' && JSON.stringify(row.body) === JSON.stringify(previous), 'Saved preparation changed');
+      this.db.prepare('UPDATE actions SET body=? WHERE scope=? AND id=?').run(JSON.stringify(body), this.scope, id);
+      this.db.exec('COMMIT'); return this.get(id);
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   take(tip) {
     this.db.exec('BEGIN IMMEDIATE');
     try {

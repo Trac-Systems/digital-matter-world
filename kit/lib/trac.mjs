@@ -5,8 +5,8 @@ import { financialAsset } from '../../rules/src/financial-mint.js';
 import { check, exact, hex32, integer, nonce } from './check.mjs';
 import { publicKey } from './keyring.mjs';
 import { signBytes } from './signing.mjs';
-import { fanOutValidatorSends } from '../../contract/runtime/fanout.js';
 import { readInteger } from './api-values.mjs';
+import { nativeTnk } from './tnk-runtime.mjs';
 
 export function transactionCommand(op, value) {
   check(op === 'tf', 'Only transfers are permitted');
@@ -89,18 +89,18 @@ export function runtimeTrac(peer, { network, localOnly, msb } = {}) {
     loopback(peer.config.dhtBootstrap) && loopback(msb?.config?.dhtBootstrap), 'Local regtest peer and local MSB discovery required');
   return peerTrac(peer,network,msb);
 }
-export function productionTrac(peer,{network,msb,pins}={}) {
+export function productionTrac(peer,{network,msb,pins,dryRun=false}={}) {
   check(peer.config.dmw.network===network && stableJSON(peer.config.dmw.beacon.params)===stableJSON(MAINNET_PARAMS), "Production deployment required");
   const msbBootstrap = msb.config?.bootstrap?.toString('hex') ?? msb.bootstrapHex;
   const networkId = msb.config?.networkId ?? msb.networkId;
   check(peer.base.key.toString("hex")===pins.bootstrap && msbBootstrap===pins.msbBootstrap && String(networkId)===String(pins.networkId), "Pinned Trac network required");
   check(peer.config.dmw.admin===pins.adminPublicKey && peer.config.dmw.committee===pins.committeePublicKey, "Pinned Trac authorities required");
-  return peerTrac(peer,network,msb);
+  return peerTrac(peer,network,msb,{dryRun});
 }
-function peerTrac(peer,network,msb) {
-  fanOutValidatorSends(msb.network, 3);
+function peerTrac(peer,network,msb,options) {
   const protocol = peer.protocol.instance;
-  return new TracClient({ network, api: protocol.api, integerVersion: peer.config.dmw.v2 ? 2 : 1,
+  const tnk = nativeTnk(msb, options);
+  return Object.assign(new TracClient({ network, api: protocol.api, integerVersion: peer.config.dmw.v2 ? 2 : 1,
     context: async () => ({ networkId: peer.msbClient.networkId, txv: await peer.msbClient.getTxvHex(), incomingWritingKey: peer.writerLocalKey,
       subnetBootstrap: peer.base.key.toString('hex'), msbBootstrap: peer.msbClient.bootstrapHex }),
     submit: async p => {
@@ -109,8 +109,12 @@ function peerTrac(peer,network,msb) {
     },
     status: async tx => {
       check(hex32(tx), 'Invalid transaction');
-      const marker = await peer.base.view.get(`tx/${tx}`), row = marker && await peer.base.view.get(`txi/${marker.value}`);
-      return !row ? { state: 'pending' } : row.value.err ? { state: 'rejected' } : { state: 'accepted' };
+      const native = typeof msb.getConfirmedTxInfo === 'function' ? await tnk.tnkTransactionStatus(tx) : null;
+      if (native && native.state !== 'unknown') return native;
+      try {
+        const marker = await peer.base.view.get(`tx/${tx}`), row = marker && await peer.base.view.get(`txi/${marker.value}`);
+        return !row ? native ?? { state: 'pending' } : row.value.err ? { state: 'rejected' } : { state: 'accepted' };
+      } catch (error) { if (native) return native; throw error; }
     }
-  });
+  }), tnk);
 }

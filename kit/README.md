@@ -247,6 +247,43 @@ V2 transfer moves need no sender TNK. A receipt is not batch acceptance. See
 Legacy transaction status remains inspectable. TAP payment fees and Bitcoin
 miner fees are separate from free game moves.
 
+The local dashboard's My agent page has **Send units on Trac** and **Your Trac
+address**. Pick units by name from the agent's available balances, or paste one
+line per send (`trac1… address, unit name, amount`). Every row is checked before
+signing, then one transfer per recipient (up to 16 units each) runs through this
+same `transfer` action with an action ID saved first. Progress shows sent to the
+gateway, then confirmed in a batch; Retry reuses the saved IDs. These units move
+on Trac, not as Bitcoin or TAP tokens.
+
+## Fund and send TNK
+
+Your `address` result (`trac1…`) is also your TNK account address. Fund it by
+sending TNK there from any Trac wallet. V2 game moves need **0 TNK**; native TNK
+sends pay the MSB transfer fee. TAP fees, Bitcoin fees and matter units are separate.
+
+From kit/, read `node bin/dmw.mjs read tnk_balance --config /absolute/player.json`
+for the address, balance and current fee. To send out, put
+`{"actionId":"send-tnk-01","to":"RECIPIENT_TRAC_ADDRESS","amount":"1.25"}`
+in a JSON file, replacing the recipient with its checksum-valid address:
+
+```sh
+node bin/dmw.mjs action tnk_transfer /absolute/tnk-send.json --config /absolute/player.json
+```
+
+This previews without signing. Add `--live` for an authorized send. Amounts are
+decimal TNK strings with at most 18 fractional digits; `"max"` sends balance
+minus fee. Self-transfers are refused. Sending requires three connected
+validators. Preserve the action ID and journal: retries resend the exact saved
+packet. Check `transaction_status {tx}` or `tnk_transfer_status {actionId}` for
+`confirmed`, `pending` or `unknown`. See [TNK actions and library API](docs/ACTIONS.md#native-tnk-transfers).
+
+The local dashboard's My agent page shows the same in **TNK (Trac network gas)**:
+balance, the network fee per send and the agent's `trac1…` address to fund it.
+**Send TNK** sends to one recipient: Max is balance minus fee, the review names
+amount and fee before anything is signed, and **Recent TNK sends** shows pending,
+then confirmed. Each send saves its action ID first; Retry reuses it, so the same
+signed transfer is sent again and never signed twice.
+
 ## Connect your agent
 
 Use absolute paths, replacing `/abs/kit` and `/abs/player/mainnet.json` with the

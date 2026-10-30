@@ -30,11 +30,14 @@ export function readTools(agent) {
   return {
     rules: tool('Read the self-contained game playbook.', {}, () => readFile(new URL('../llms.txt', import.meta.url), 'utf8')),
     address: tool('Read your trac1… address for Trac identity and TNK fees.', {}, () => ({ address: encodeTracAddress(agent.owner), dryRun: agent.dryRun, owner: agent.ownerConfig, bitcoinNetwork: agent.bitcoinNetwork })),
+    tnk_balance: tool('Read your TNK account address, exact MSB balance and native transfer fee. V2 game moves need 0 TNK.', {}, () => agent.tnkBalance()),
+    tnk_transfer_status: tool('Read native TNK confirmation for a saved action ID without signing or resending.',
+      { actionId: z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/) }, ({ actionId }) => agent.tnkTransferStatus(actionId)),
     status: tool('Read the contract clock and recent journal actions with payment request IDs.', {}, () => agent.status()),
     balance: tool('Read spendable matter units.', { asset }, ({ asset }) => agent.balance(asset)),
     mint_status: tool('Read mint payment and expiry progress using a request ID or a mint/actionId from status.',
       { id: z.string().regex(/^(?:[0-9a-f]{64}|mint\/[a-zA-Z0-9._-]{1,64})$/) }, async ({ id }) => presentRead(await agent.mintStatus(id))),
-    transaction_status: tool('Check an already submitted TNK transaction.', { tx: hash }, ({ tx }) => {
+    transaction_status: tool('Check a native TNK or legacy subnet transaction by hash. Native states are confirmed, pending or unknown.', { tx: hash }, ({ tx }) => {
       check(agent.trac.transactionStatus, 'Transaction status adapter required'); return agent.trac.transactionStatus(tx);
     }),
     public_status: tool('Read public network progress, fee policy and unit metadata.', { limit: page.limit }, args => agent.service.publicStatus(args)),

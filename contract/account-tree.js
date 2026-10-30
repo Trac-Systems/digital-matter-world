@@ -6,9 +6,20 @@ const hex = x => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
 const digest = x => bytesToHex(sha256(utf8ToBytes(x)));
 export const accountKey = (kind, id) => digest('dmw-account-key-v2|' + canonicalJSON([kind, id]));
 const leaf = (key, value) => value === null ? EMPTY[256] : digest('dmw-account-leaf-v2|' + key + '|' + canonicalJSON(value));
+// Reconstructing sparse paths repeatedly reuses the same child commitments.
+// A bounded direct-mapped cache avoids allocating/hashing concatenated keys.
+// The slot is only a hint: compare BOTH complete immutable strings on a hit.
+// Collisions replace a slot and never change traversal or resource accounting.
+const branchLeft = new Array(131072), branchRight = new Array(131072), branchResult = new Array(131072);
+const prefix = x => x.charCodeAt(0) | x.charCodeAt(1) << 8 | x.charCodeAt(2) << 16 | x.charCodeAt(3) << 24;
 const branch = (left, right) => {
+  const slot = typeof left === 'string' && left.length === 64 && typeof right === 'string' && right.length === 64 ?
+    (Math.imul(prefix(left), 0x9e3779b1) ^ Math.imul(prefix(right), 0x85ebca6b)) >>> 15 : -1;
+  if (slot >= 0 && branchLeft[slot] === left && branchRight[slot] === right) return branchResult[slot];
   const bytes = new Uint8Array(65); bytes[0] = 2; bytes.set(hexToBytes(left), 1); bytes.set(hexToBytes(right), 33);
-  return bytesToHex(sha256(bytes));
+  const result = bytesToHex(sha256(bytes));
+  if (slot >= 0) { branchLeft[slot] = left; branchRight[slot] = right; branchResult[slot] = result; }
+  return result;
 };
 const EMPTY = new Array(257); EMPTY[256] = digest('dmw-account-empty-v2');
 for (let depth = 255; depth >= 0; depth--) EMPTY[depth] = branch(EMPTY[depth + 1], EMPTY[depth + 1]);

@@ -225,6 +225,8 @@ Unclaimed blocks use a separate website flow.
 | `read_page` | Follow same-origin public collection links and cursor aliases. |
 | `mint_status` | Request state by request ID or mint/actionId. |
 | `transaction_status` | Independent read of an existing legacy TNK transaction. |
+| `tnk_balance` | TNK address, exact native balance and MSB fee; no signing. |
+| `tnk_transfer_status` | Native TNK confirmed/pending/unknown state by saved action ID. |
 | `payout_binding` | Current binding or its public history. |
 | `financial_action_status` | Acceptance of a credit/beneficiary action. |
 | `custody_status` | Beneficiary liability and payout plan. |
@@ -259,6 +261,7 @@ Unclaimed blocks use a separate website flow.
 | `claim_custody` | Sign a beneficiary claim; never send the custodian payment. |
 | `report_custody_payment` | Report a payment already made; dry-run sends nothing. |
 | `transfer` | Send exact v2 unit authorizations after public-mint activation; retain the same ID on retry. Legacy sends charge sender TNK. |
+| `tnk_transfer` | Send native TNK with a stable ID; decimal amount or max. Dry-run previews without signing. |
 
 Use README.md for setup, docs/READS.md for response shapes and docs/ACTIONS.md
 for action arguments and recovery. Strategies remain deterministic and offline;
