@@ -6,9 +6,10 @@ import { pathToFileURL } from 'node:url';
 const escape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function inline(text) {
   let html = '', at = 0;
-  for (const match of text.matchAll(/\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)|\{\{price:(find:[1-5]|compound-minimum|link)\}\}/g)) {
+  for (const match of text.matchAll(/\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)|\{\{price:(find:[1-5]|compound-minimum|link)\}\}|\{\{(legacy-deploy-share)\}\}/g)) {
     html += escape(text.slice(at, match.index));
-    if (match[5] !== undefined) {
+    if (match[6] !== undefined) html += '<span data-legacy-deploy-share>The older deployment share is inactive.</span>';
+    else if (match[5] !== undefined) {
       const [kind, tier = '1'] = match[5].split(':');
       html += `<span data-fee-kind="${kind}" data-fee-tier="${tier}">current fee</span>`;
     } else if (match[3] !== undefined) html += `<a href="${escape(match[4])}" target="_blank" rel="noopener">${escape(match[3])}</a>`;
@@ -62,7 +63,7 @@ export function buildAbout(markdown) {
   return `// Generated from content/about.md by scripts/build-about.mjs. Do not edit.
 import { h, clear } from '../dom.js';
 import { bus, store } from '../api.js';
-import { feePrice } from '../money.js';
+import { feePrice, legacyDeployPolicyText } from '../money.js';
 
 const html = ${JSON.stringify(renderMarkdown(markdown))};
 
@@ -72,6 +73,8 @@ export function mount(root) {
   const prices = article.querySelectorAll('[data-fee-kind]');
   const update = status => {
     for (const price of prices) price.textContent = feePrice(status?.feePolicy, price.dataset.feeKind, Number(price.dataset.feeTier));
+    const legacy = article.querySelector('[data-legacy-deploy-share]');
+    if (legacy) legacy.textContent = legacyDeployPolicyText(status);
   };
   update(store.status);
   return bus.on('status', update);

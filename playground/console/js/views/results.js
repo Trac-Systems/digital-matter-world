@@ -9,11 +9,11 @@ const TABS = [
   ['payments', 'TAP payments', 'Player-paid fee items on Bitcoin. Each item must be final before the committee issues the mint permit.'],
   ['ethereum', 'Ethereum escrow', 'Player-funded bridged TAP deposits. The payer or a recipient submits the signed release and pays gas; the player also pays to inscribe on Bitcoin.'],
   ['payouts', 'Payment recipients', 'Public payment records by recipient. Indexed transactions show what was paid.'],
-  ['owed', 'Unsettled records', 'Public records still awaiting payment evidence. Mint fee shares are paid directly by the player.'],
+  ['owed', 'Unsettled records', 'Public records still awaiting payout. Older deploy holders accrue their equal share from the burn here.'],
   ['links', 'Bitmap links', 'Paid Bitmap links. A link stays with the Bitmap for good.'],
 ];
 // The public pages also list payouts already sent to bound payout wallets.
-if (site.public) TABS.splice(5, 0, ['paid', 'Paid payouts', 'Discoverer and Bitmap-holder shares sent to the payout wallet each agent bound.']);
+if (site.public) TABS.splice(5, 0, ['paid', 'Paid payouts', 'Payouts sent to beneficiaries, including the Bitcoin holders of older deployments.']);
 const AMOUNT_KEYS = /amount|price|fee|total|treasury|burn|share|paid|balance|released|held|accrued|owed|^tap$|erc20|supply/i;
 
 export function mount(root, params = {}) {
@@ -41,8 +41,8 @@ export function mount(root, params = {}) {
     const d = data ?? {};
     clear(top, figures([
       ['Minted on Bitcoin', fmtInt(count('mints')), 'inscriptions'],
-      ['Treasury', tapOr(sum(d.treasury)), 'TAP on Bitcoin', 'The quoted treasury share. Other beneficiaries receive their quoted shares directly.'],
-      ['Burned', tapOr(sum(d.burn)), 'TAP on Bitcoin', 'Burn shares plus the shares of unlinked Bitmap holders.'],
+      ['Treasury', tapOr(sum(d.treasury)), 'TAP on Bitcoin', 'The quoted treasury share, including backing for older-deploy liabilities.'],
+      ['Burned', tapOr(sum(d.burn)), 'TAP on Bitcoin', 'Burn shares plus unlinked Bitmap shares, less any older-deploy share.'],
       ['Escrow on Ethereum', fmtInt(count('ethereum')), 'payments'],
       ['Payouts', fmtInt(count('payouts')), 'ledger entries'],
     ]));
@@ -99,16 +99,16 @@ export function mount(root, params = {}) {
       { key: 'beneficiary', label: 'Paid to', render: r => hashEl(r.beneficiary ?? r.to), sortable: false },
       { key: 'accrued', label: 'Earned', num: true, render: r => h('span.mono', {}, tap(r.accrued, unit())) },
       { key: 'paid', label: 'Paid out', num: true, render: r => h('span.mono', {}, tap(r.paid, unit())) },
-      { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit())) },
+      { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit()) + (r.legacyDeploy ? ` · ${r.eligible ? 'ready for payout' : 'payout from ' + tap(r.payoutMinAtoms, unit())}` : '')) },
     ],
     owed: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'to', label: 'Paid to', render: r => hashEl(r.to), sortable: false },
       { key: 'inscription', label: 'From mint', render: r => hashEl(r.inscription), sortable: false },
     ],
     paid: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'agent', label: 'Agent', render: r => hashEl(r.agent ?? r.beneficiary), sortable: false },
       { key: 'address', label: 'Paid to', render: r => hashEl(r.address ?? r.to), sortable: false },

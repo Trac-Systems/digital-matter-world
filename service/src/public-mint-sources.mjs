@@ -86,11 +86,13 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     await reads.feeQuotes.validate(q, mintFeeScope(asset, block, 'tap'));
     const original = await reads.financialSettings(q.settingsHash);
     check(rules.publicMintActive(original, q.validFrom) && q.deploymentId === c.deployment.id && same(q.payouts, c.payouts), 'public_quote_binding');
-    const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings), split = financialSplit(price,
+    const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings), baseSplit = financialSplit(price,
       { kind: 'find', publicMint: true, linked: !!holder, discovered: !!(c.beneficiaries?.discoverer ?? c.discoverer) }, original);
+    const { split, legacyDeploy } = rules.legacyDeployFee(price, baseSplit, { kind: 'find', deployment: c.deployment,
+      document: original, height: at?.executionHeight ?? resolved.height, bitcoinNetwork });
     const destinations = { treasury: c.treasury, finder: null, firstMaker: null, landowner: holder?.address ?? null, discoverer: c.discoverer ?? null };
     const plan = reads.financialFeePlan({ split, destinations, beneficiaries: c.beneficiaries, id: null, payer: tapAddress, rail: 'tap' });
-    return { ...resolved, feeQuote: q, price, split, destinations, beneficiaries: c.beneficiaries, plan };
+    return { ...resolved, feeQuote: q, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), destinations, beneficiaries: c.beneficiaries, plan };
   };
   reads.publicMintQuote = async (input, at) => {
     const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document, height } = result;
@@ -142,6 +144,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     check(registered?.deployment === d.id, 'financial_deployment_pending');
     const source = { publicMint: true, requestId: id, owner: null, request, asset: signed.asset, amount: signed.amount, receiver: signed.tapAddress,
       payer: signed.tapAddress, rail: 'tap', deployment: d, quote: signed.feeQuote, intent, feeItems, fees: financialFees(feeItems),
+      ...(result.legacyDeploy ? { legacyDeploy: result.legacyDeploy } : {}),
       custody: signed.custody.map(c => ({ ...c, requestId: id })), settingsHash: signed.settingsHash, generation,
       capacity: { deployment: d.id, asset: signed.asset, block: signed.block, amount: signed.amount, remaining: d.remaining, limit: d.limit ?? '0' } };
     const paymentHash = rules.paymentCommitment(progress.allocations), plan = permit(network, request, d, signed.tapAddress, id, paymentHash);

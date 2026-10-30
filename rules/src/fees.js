@@ -47,7 +47,7 @@ export function splitFee(total, { kind = 'find', linked = false, discovered = fa
 }
 
 // Commissions are liabilities of the treasury, paid in the public payout ledger.
-export const treasuryPayment = split => (BigInt(split.treasury) + BigInt(split.discoverer)).toString();
+export const treasuryPayment = split => (BigInt(split.treasury) + BigInt(split.discoverer) + BigInt(split.legacyDeploy ?? '0')).toString();
 export function commissionOwed(id, split, destinations, kind = 'tap') {
   return ['discoverer', ...(kind === 'ethereum' ? ['landowner'] : [])].filter(role => split[role] !== '0').map(role => {
     assert(typeof destinations[role] === 'string' && destinations[role].length > 0, 'commission_destination');

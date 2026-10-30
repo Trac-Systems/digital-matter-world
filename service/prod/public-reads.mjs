@@ -52,3 +52,18 @@ export async function bitmapOwner({ tap, indexer, bindings }, block) {
   check(owners.length === 1 && /^[0-9a-f]{64}$/.test(owners[0]), 'bitmap_agent_binding');
   return { agent: owners[0], address: bitmap.ownr };
 }
+
+// Same canonical indexer snapshot and inscription endpoint as Bitmap holder
+// verification. A deployment holder need not have a DMW/Trac wallet binding.
+export async function deploymentHolders(indexer, ids, at) {
+  return indexer.at(at, async () => {
+    const holders = [];
+    for (const id of ids) {
+      const current = await indexer.inscription(id);
+      check(current?.id === id && typeof current.address === 'string' && current.address.length > 0 && current.address.length <= 90,
+        'legacy_deploy_holder');
+      holders.push({ id, address: rules.legacyDeployHolderAddress(current.address) });
+    }
+    return holders;
+  });
+}

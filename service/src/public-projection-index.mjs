@@ -1,3 +1,4 @@
+import { payoutBalance } from './payout-values.mjs';
 import { patternCatalogId } from './mint-assets.mjs';
 import { rules } from './rules.mjs';
 import { heightKey } from './util.mjs';
@@ -188,7 +189,7 @@ export function projectPublicRecord(store, op, previous, { rebuild = false } = {
     confirmations: row.paymentEvidence.confirmations ?? null });
   if (['payoutTotals', 'commissionOwed', 'payoutPaid'].includes(op.space)) {
     const kind = { payoutTotals: 'payouts', commissionOwed: 'owed', payoutPaid: 'paid' }[op.space];
-    item(kind, '', id, row && { id, ...row, ...(kind === 'payouts' ? { owed: String(BigInt(row.accrued) - BigInt(row.paid)) } : {}) });
+    item(kind, '', id, row && { id, ...row, ...(kind === 'payouts' ? payoutBalance(store, row) : {}) });
   }
   if (op.space.startsWith('window/')) {
     const [, window, kind] = op.space.split('/'), value = row?.row ?? previous?.row;

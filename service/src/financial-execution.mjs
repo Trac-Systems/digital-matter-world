@@ -33,7 +33,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     try {
     const link = /^(?:legacy-)?link-/.test(transition.action?.type ?? '');
     check(!link || linkInputs < document.values.linkOperationBudget, 'financial_link_budget');
-    let evidence = await sources.financialEvidence(transition, at);
+    let evidence = await sources.financialEvidence(transition, rules.legacyDeployShareActive(height) ? { ...at, executionHeight: height } : at);
     if (transition.type === 'public-scan' && rules.claimsNeverCloseActive(document, height)) {
       check(publicClaims && preparePublicMint, 'public_claim_projection_required');
       const { pattern, asset } = rules.publicPatternForAsset(publicClaims.patterns, transition.asset);

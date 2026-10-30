@@ -1,3 +1,4 @@
+import { payoutBalance } from './payout-values.mjs';
 import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
 import { currentFee } from './fees.mjs';
@@ -199,6 +200,8 @@ export class PublicViews {
     return { version: 2, state: context.ready ? 'ready' : 'waiting_notary', network: this.network, unit: rules.TAP_UNIT,
       units: { tap: 18, bridgedTap: 18, bitcoin: 8, ethereum: 18, matter: 0 }, tip, counted, batch, bitcoinTip,
       plainNames: rules.plainNamesActive(counted),
+      legacyDeployShare: { active: this.bitcoinNetwork === 'mainnet' && rules.legacyDeployShareActive(counted) && !!document.values.legacyDeployShareBps,
+        shareBps: document.values.legacyDeployShareBps ?? 0, payoutMinAtoms: document.values.legacyDeployPayoutMinAtoms ?? '0', cutoff: rules.LEGACY_DEPLOY_MANIFEST.cutoff },
       catchingUp: tip !== bitcoinTip || batch.to !== counted,
       // Quotes stay authoritative; the site shows the pinned revision's current prices.
       feePolicy: await this.feePolicyV2(document),
@@ -401,7 +404,7 @@ export class PublicViews {
       const rows = await Promise.all([...ids].map(async id => ({ id, consumed: await this.reads.tap('getLockConsume/' + id) })));
       return [...direct.values(), ...rows.filter(r => r.consumed)];
     }
-    if (kind === 'payouts') return this.rows('payoutTotals').map(r => ({ ...r, owed: (BigInt(r.accrued) - BigInt(r.paid)).toString() }));
+    if (kind === 'payouts') return this.rows('payoutTotals').map(r => (payoutBalance(this.store, r)));
     if (kind === 'owed') return this.rows('commissionOwed');
     if (kind === 'paid') return this.rows('payoutPaid');
     if (kind === 'links') return Promise.all(this.rows('links').map(async link => {

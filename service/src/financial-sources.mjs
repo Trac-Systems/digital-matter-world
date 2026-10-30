@@ -112,7 +112,9 @@ export function installFinancialSources(reads, options) {
     const kind = d.kind === 'dmt' ? 'find' : 'compound';
     const price = rules.feeFor(kind, terms.baseFee, context.tier, terms.feeSettings);
     const options = { kind, linked: !!holder, discovered: !!(row.quote.feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
-    const split = row.quote.feeQuote.settingsHash ? financialSplit(price, options, original) : rules.splitFee(price, options);
+    const baseSplit = row.quote.feeQuote.settingsHash ? financialSplit(price, options, original) : rules.splitFee(price, options);
+    const { split, legacyDeploy } = rules.legacyDeployFee(price, baseSplit, { kind, deployment: d,
+      document: row.quote.feeQuote.settingsHash ? original : null, height: at?.executionHeight ?? counted, bitcoinNetwork });
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
       landowner: row.kind === 'ethereum' ? context.landownerAddress ?? null : holder?.address ?? null, discoverer: context.discoverer ?? null };
     const plan = row.quote.feeQuote.settingsHash ? reads.financialFeePlan({ split, destinations, beneficiaries: context.beneficiaries, id, payer: row.payer, rail: row.kind }) :
@@ -125,7 +127,7 @@ export function installFinancialSources(reads, options) {
     return { version: 2, requestId: id, owner: r.owner, asset: r.asset, amount: r.amount, receiver: row.receiver, payer: row.payer, rail: row.kind,
       request: r, signature: row.signature, authorization: row.authorization, quote: row.quote.feeQuote, feeAuthorization: row.feeAuthorization,
       deployment: immutableDeployment(d), capacity: { deployment: d.id, asset: r.asset, amount: r.amount, block: r.block ?? null, remaining: d.remaining, limit: d.limit ?? '0' }, generationCapacity: { deployment: generation, plot: r.block === undefined ? null : rules.decimalV2(r.block) }, fees: financialFees(items), feeItems: items,
-      custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
+      ...(legacyDeploy ? { legacyDeploy } : {}), custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
   };
   const accepted = async (id, at) => {
     const publicSource = await reads.financialRecord('fi/source/' + id, at);
@@ -142,7 +144,7 @@ export function installFinancialSources(reads, options) {
     if (source.legacy) check(row.kind === 'tap' ? source.legacy.domain.network === bitcoinNetwork : same(source.legacy.domain, escrow), 'financial_legacy_domain');
     return { row, funding, source };
   };
-  installCapacitySources(reads, { network, accepted });
+  installCapacitySources(reads, { network, bitcoinNetwork, accepted });
   installCreditSources(reads, { network });
   installCustodySources(reads, { network, bitcoinNetwork, accepted, payout, ethereumRPC });
   installRecoverySources(reads);
@@ -259,7 +261,7 @@ export function installFinancialSources(reads, options) {
     reads[name] = async (...args) => {
       const before = await reads.batchStamp(), at = args[index];
       check(!at || rules.compareOrdinal(at.counted, before.counted) === 0 && same(at.last, before.last) && (at.revision === undefined || at.revision === before.revision), 'financial_snapshot_changed');
-      args[index] = before;
+      args[index] = at?.executionHeight === undefined ? before : { ...before, executionHeight: at.executionHeight };
       const result = ['publicMintScan', 'publicMintPayment'].includes(name) && reads.withTapSnapshot ?
         await reads.withTapSnapshot(before, () => original(...args)) : await original(...args);
       check(same(before, await reads.batchStamp()), 'financial_snapshot_changed');

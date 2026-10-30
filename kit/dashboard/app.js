@@ -125,7 +125,7 @@ async function refreshPayment() {
     }
   }
   payment.replaceChildren(el('h2', 'Mint payment'), el('p', activeId, 'mono'), el('p', 'State: ' + mintState(status.state)), el('p', 'Receiver: ' + status.receiver, 'mono'));
-  for (const item of status.missing) payment.append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → ${item.to}`));
+  for (const item of status.missing) payment.append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → ${item.to}${item.role === 'treasury' && status.split?.legacyDeploy ? ` (includes ${formatTap(status.split.legacyDeploy)} TAP from burn for older deploy holders, paid through the payout ledger)` : ''}`));
   const funding = status.payBy?.rail === 'tap' && Number.isSafeInteger(status.mintFunding?.satoshis) ? status.mintFunding : null;
   const ms = SENDER_STATES.includes(status.mintSender?.state) ? status.mintSender : null, senderStopped = SENDER_STOPPED.includes(ms?.state);
   if (funding) payment.append(el('p', `Bitcoin set aside for the mint inscription: ${funding.satoshis} sats`));

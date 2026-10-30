@@ -5,6 +5,9 @@ import { tapAtoms, formatTapAmount } from './fees.js';
 // Amounts at every server/contract boundary are atomic TAP. Conversion to the
 // wallet's decimal strings happens only when building its redeem items.
 export function mintFeeItems(split, destinations, requestId = null, payer = null, rail = 'tap', bitcoinNetwork = 'mainnet') {
+  // Deferred deploy-holder shares are funded in the existing treasury item.
+  // No holder receives a transfer inside the mint payment.
+  if (split.legacyDeploy) split = { ...split, treasury: String(BigInt(split.treasury) + BigInt(split.legacyDeploy)) };
   return ['finder', 'firstMaker', 'discoverer', 'landowner', 'treasury', 'burn']
     .filter(role => BigInt(split[role] ?? '0') > 0n).map(role => {
       const to = role === 'burn' ? (rail === 'tap' ? tapBurnAddress(bitcoinNetwork) : null) : destinations[role];

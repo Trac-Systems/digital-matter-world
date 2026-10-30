@@ -41,7 +41,7 @@ import { verifyPayer } from '../src/mints.mjs';
 import { check, hash, heightKey, serial } from '../src/util.mjs';
 import { AcceptedAssetSupply } from './asset-supply.mjs';
 import { walletBitmaps } from '../src/bitmaps.mjs';
-import { publicTreasury, publicEscrow, bitmapOwner } from './public-reads.mjs';
+import { publicTreasury, publicEscrow, bitmapOwner, deploymentHolders } from './public-reads.mjs';
 import { installPublicSummarySources } from './public-summary-sources.mjs';
 
 import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms, mintOwnershipMatches } from '../src/fees.mjs';
@@ -295,6 +295,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
         finderAddress: found?.finder ? address : null, firstMakerAddress: registered.kind === 'compound' ? address : null };
     },
     bitmap: block => bitmapOwner({ tap, indexer, bindings }, block),
+    deploymentHolders: (ids, at) => deploymentHolders(indexer, ids, at),
     async link(block) {
       const suffix = BigInt(block).toString(36);
       const value = (config.v2 ? await trac('read', ['k/link/' + suffix]) : null) ?? await trac('record', ['link/' + suffix]);

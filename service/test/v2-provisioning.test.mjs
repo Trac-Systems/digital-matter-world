@@ -130,3 +130,24 @@ test('c2 compounds use the deployment-state, prepare and registration routes', a
   const missing = await fetch(http.url + '/mint/deployment-state/c2:' + '5e'.repeat(31));
   assert.equal(missing.status, 400); assert.equal((await missing.json()).error, 'deployment_asset');
 });
+
+test('reused count and all three pattern-free element inscriptions select their frozen legacy deployments', async t => {
+  const { readFile } = await import('node:fs/promises');
+  const elements = JSON.parse(await readFile(new URL('./fixtures/legacy-elements.json', import.meta.url)));
+  for (const { ins: elementId, fld, pat, tick, deployCount } of elements) {
+    const fieldValue = pat === null;
+    const f = await provisioningFixture(t);
+    const pattern = { ...f.pattern, number: '0', fld, pat: fieldValue ? '^1' : pat, ...(fieldValue ? { amountMode: 'field-value' } : {}) };
+    f.index(rules.tapElementText(tick, pattern), elementId);
+    const job = await f.complete('p2:0', pattern);
+    assert.equal(job.reused, true); assert.equal(job.entry.elementId, elementId);
+    assert.equal(job.attempts.length, 1, 'only the DMW token is deployed');
+    const ids = rules.legacyDeployments(job.entry.elementId, job.entry.privilege);
+    assert.equal(ids.length, deployCount, 'membership is by the reused inscription, including an empty group');
+    const result = rules.legacyDeployFee('1000000000000000000', rules.splitFee('1000000000000000000'), {
+      kind: 'find', deployment: job.entry, height: rules.LEGACY_DEPLOY_SHARE_HEIGHT,
+      document: { values: { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } } });
+    assert.equal(result.legacyDeploy?.count ?? 0, ids.length);
+    if (!ids.length) assert.deepEqual(result.split, rules.splitFee('1000000000000000000'));
+  }
+});

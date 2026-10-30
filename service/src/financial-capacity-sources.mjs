@@ -1,3 +1,4 @@
+import { legacyDeployMintCommissions } from './legacy-deploy-sources.mjs';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { verifyDeployment } from './deployments.mjs';
@@ -5,7 +6,7 @@ import { capacityKey } from '../../contract/financial-capacity.js';
 
 export const financialGenerationId = (network, asset, deployment) => rules.hashObject(['dmw-financial-generation-v2', network, asset, deployment]);
 
-export function installCapacitySources(reads, { network, accepted }) {
+export function installCapacitySources(reads, { network, bitcoinNetwork = 'mainnet', accepted }) {
   reads.financialDeploymentState = async (asset, at) => {
     await reads.ensureRegistryAsset?.(asset);
     const registry = await reads.registry(), entry = registry.assets[asset];
@@ -52,6 +53,7 @@ export function installCapacitySources(reads, { network, accepted }) {
       return { requestId: a.id, state: 'minted', confirmations: 1, permitHash: a.permitHash,
         deployment: capacity.deployment, asset: capacity.asset, amount: capacity.amount, plot: capacity.plot,
         inscription: minted.inscription,
+        ...await legacyDeployMintCommissions(reads, source, at, bitcoinNetwork),
         receipt: rules.hashObject(['dmw-external-mint-v2', source.deployment.id, minted.inscription, a.permitHash]) };
     }
     throw Error('financial_capacity_transition');

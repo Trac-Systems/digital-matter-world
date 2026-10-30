@@ -55,3 +55,5 @@ export * from './compound-merge-manifest.js';
 export * from './compound-merge-v4.js';
 export * from './pattern-amount.js';
 export * from './pattern-names.js';
+export * from './legacy-deploy-share.js';
+export * from './legacy-deploy-manifest.js';

@@ -71,7 +71,8 @@ export class Mints {
     const splitOptions = { kind: feeKind, linked: !!holder, discovered: !!(this.financial && feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
     const policy = this.financial && feeQuote.settingsHash ? await this.reads.financialSettings(feeQuote.settingsHash) : null;
     if (policy) check(rules.hashObject(policy) === feeQuote.settingsHash, 'financial_settings_history');
-    const split = policy ? financialSplit(price, splitOptions, policy) : rules.splitFee(price, splitOptions);
+    const baseSplit = policy ? financialSplit(price, splitOptions, policy) : rules.splitFee(price, splitOptions);
+    const { split, legacyDeploy } = rules.legacyDeployFee(price, baseSplit, { kind: feeKind, deployment: d, document: policy, height: counted, bitcoinNetwork: this.bitcoinNetwork });
     const unitsUsed = d.kind === 'dmt' ? String(context.find.count) : amount ?? '1';
     check(typeof unitsUsed === 'string' && /^[1-9][0-9]{0,19}$/.test(unitsUsed) && BigInt(unitsUsed) <= 18446744073709551615n && (amount === undefined || amount === unitsUsed), 'quote_amount');
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
@@ -81,7 +82,7 @@ export class Mints {
     const untilBlock = this.financial ? rules.ordinalCodec(typeof counted === 'string').add(counted, policy?.values.pendingBlocks ?? this.pendingBlocks) : counted + this.pendingBlocks;
     return { requestId: null, receiver, asset, amount: unitsUsed, fees, payBy: { rail: kind, untilBlock }, payable: false,
       displayLabel: context.displayLabel ?? asset, actualTicker: d.tick, deploymentId: d.id, generation: d.generation ?? 1, jobState: 'registered',
-      ...(block === undefined ? {} : { block }), kind, baseFee, feeSettings: feeQuote.feeSettings ?? context.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, feeQuote, price, split, networkFeeSats: '0',
+      ...(block === undefined ? {} : { block }), kind, baseFee, feeSettings: feeQuote.feeSettings ?? context.feeSettings ?? rules.FEE_DEFAULTS, unit: rules.TAP_UNIT, feeQuote, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), networkFeeSats: '0',
       networkFeePayment: 'player_wallet', destinations, ...(plan ? { custody: plan.custody, beneficiaries: context.beneficiaries ?? {} } : {}), counted, unitsUsed, matterUnit: { asset, denomination: 'units', decimals: 0 },
       feeDestinations: Object.fromEntries(fees.map(f => [f.role, { amount: f.amount, to: f.to, settlement: f.role === 'burn' ? 'burn' : 'direct' }])) };
   }

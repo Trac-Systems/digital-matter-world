@@ -22,18 +22,18 @@ const { identifyFinancialFees } = await import('../src/financial-fee-identity.mj
 const flat = JSON.parse(await readFile(new URL('./fixtures/flat-fees.json', import.meta.url))).changes;
 const flatSettings = { tierMultipliers: flat.tierMultipliers, compoundMinimum: flat.compoundMinimum, link: flat.link };
 
-function fixture({ baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false } = {}) {
+function fixture({ baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false, bitcoinNetwork = 'regtest', legacyElement } = {}) {
   const network = 'test', key = new Uint8Array(32).fill(44), publicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
-  const address = fundingAddress(publicKey, 'regtest'), asset = legacyAsset ? 'p0' : 'p2:0', block = '100';
+  const address = fundingAddress(publicKey, bitcoinNetwork), asset = legacyAsset ? 'p0' : 'p2:0', block = '100';
   const registry = { feePolicy: createFeePolicy(baseFee, 0, feeSettings) };
   const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: {
-    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
+    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, ...(legacyElement ? { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } : {}), publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
     linkMultiplier: feeSettings?.link ?? r.FEE_DEFAULTS.link, finderWindow: 2, publicMintLegacyFinderWindow: 2, ...(!legacyPolicy ? { claimsNeverCloseHeight: '100' } : {}),
     ...(bitmapMintOpenHeight ? { bitmapMintOpenHeight } : {}), ...(publicPaymentV2Height ? { publicPaymentV2Height } : {}), ...(moveBytes ? { moveBytes } : {}) } });
   const feeQuotes = new FeeQuotes({ network, secret: Buffer.alloc(32, 9), registry: async () => registry, now: () => 1000 }); feeQuotes.document = document;
   const context = { pattern: { number: '0', pat: '[0-9]', fld: 4, dt: 'n', releaseHeight: '100', releaseFinderWindow: 2 },
     publicClaims: { reservation: null, headerAward: false, unsettled: true }, find: null, tier: 1, treasury: address,
-    beneficiaries: {}, payouts: {}, deployment: { active: true, kind: 'dmt', id: r.hash('deployment') + 'i0', tick: 'dmwfixture', remaining: '1000000', limit: '0' } };
+    beneficiaries: {}, payouts: {}, deployment: { active: true, kind: 'dmt', ...(legacyElement ? { elementId: legacyElement, privilege: r.hash('authority') + 'i0' } : {}), id: r.hash('deployment') + 'i0', tick: 'dmwfixture', remaining: '1000000', limit: '0' } };
   const records = new Map([['fd/asset/' + asset, 'generation'], ['fd/generation', { asset, deployment: context.deployment.id, minted: '0', reserved: '0', maximum: '1000000' }]]), blocks = new Map(), contents = new Map(), transfers = new Map(), included = new Map(), calls = [];
   let height = '103', confirmations = 1, activeDocument = document;
   const reads = { feeQuotes, rulesContext: async () => ({ settings: activeDocument }), counted: async () => height,
@@ -44,14 +44,14 @@ function fixture({ baseFee = '100', feeSettings, legacyPolicy = false, legacyAss
     content: async id => contents.get(id), paymentTransfers: async id => (transfers.get(id) ?? []).map((value, index) => ({ index, value })),
     included: async id => confirmations ? { height: included.get(id) ?? height, confirmations } : null,
     financialFeePlan: ({ split, destinations, beneficiaries, id, payer, rail }) => {
-      const plan = beneficiaryFeePlan({ split, destinations, beneficiaries, requestId: id, payer, rail, bitcoinNetwork: 'regtest' });
-      return { fees: identifyFinancialFees(plan.fees, { network, rail, bitcoinNetwork: 'regtest' }), custody: plan.credits };
+      const plan = beneficiaryFeePlan({ split, destinations, beneficiaries, requestId: id, payer, rail, bitcoinNetwork: bitcoinNetwork });
+      return { fees: identifyFinancialFees(plan.fees, { network, rail, bitcoinNetwork: bitcoinNetwork }), custody: plan.credits };
     } };
-  installPublicMintSources(reads, { network, bitcoinNetwork: 'regtest' });
+  installPublicMintSources(reads, { network, bitcoinNetwork: bitcoinNetwork });
   const input = { asset, block, tapAddress: address }, scan = () => reads.publicMintScan({ asset, block, id: r.publicPlotId(asset, block) }, { counted: height });
   const pay = (quote, payer = address) => {
-    const payload = { p: 'tap', op: 'token-auth', redeem: { items: r.walletFeeItems(quote.fees, 'regtest') } };
-    const plan = buildInscription({ text: JSON.stringify(payload), receiver: address, publicKey, network: 'regtest', feeRate: 1, maxFeeSats: '1000000', secret: key.slice(),
+    const payload = { p: 'tap', op: 'token-auth', redeem: { items: r.walletFeeItems(quote.fees, bitcoinNetwork) } };
+    const plan = buildInscription({ text: JSON.stringify(payload), receiver: address, publicKey, network: bitcoinNetwork, feeRate: 1, maxFeeSats: '1000000', secret: key.slice(),
       utxos: [{ txid: r.hash('cardinal'), vout: 0, value: '10000000', script: Buffer.from(p2tr(secp256k1.getPublicKey(key).slice(1)).script).toString('hex'), confirmed: true, cardinal: true }] });
     const signed = signCommit(plan, key), id = plan.inscriptionId;
     blocks.set(height, [{ id: id.slice(0, 64), hex: signed.revealHex }]); contents.set(id, payload); included.set(id, height);
@@ -395,4 +395,43 @@ test('flat gross public fee preserves payer self-share omission', async () => {
   assert.equal(quote.price, flat.baseFee);
   assert.equal(quote.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), quote.split.burn);
   assert.equal(quote.fees.some(fee => fee.to === f.input.tapAddress), false);
+});
+
+for (const opaque of [false, true]) test(`public pattern quotes and independently verified settlement retain the legacy share; opaque=${opaque}`, async () => {
+  const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
+  const f = fixture({ bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
+    ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
+  f.setHeight(String(BigInt(r.LEGACY_DEPLOY_SHARE_HEIGHT) - 1n));
+  const before = await f.reads.publicMintQuote(f.input);
+  assert.equal(before.split.legacyDeploy, undefined);
+  f.setHeight(r.LEGACY_DEPLOY_SHARE_HEIGHT);
+  const quote = await f.reads.publicMintQuote(f.input), allocated = BigInt(flat.baseFee) / 10n / 156n * 156n;
+  assert.equal(quote.price, before.price); assert.equal(quote.split.legacyDeploy, String(allocated));
+  assert.equal(quote.split.treasury, before.split.treasury);
+  assert.equal(BigInt(quote.split.burn), BigInt(before.split.burn) - allocated);
+  if (opaque) { await f.register(quote); f.setHeight(r.nextUint(r.LEGACY_DEPLOY_SHARE_HEIGHT)); }
+  const payment = f.pay(quote);
+  if (opaque) await f.reveal(quote, payment);
+  const result = await f.settle(), winner = result.payments.find(p => p.complete);
+  assert.equal(winner.source.legacyDeploy.element, element);
+  assert.equal(winner.source.legacyDeploy.amount, String(allocated));
+  assert.equal(winner.source.legacyDeploy.count, 156);
+  assert.equal(winner.source.legacyDeploy.payoutMinAtoms, '1000000000000000000');
+  assert.equal(winner.source.feeItems.some(f => f.role === 'legacyDeploy'), false);
+  assert.equal(winner.source.legacyDeploy.authority, f.context.deployment.privilege);
+  const { installCapacitySources } = await import('../src/financial-capacity-sources.mjs');
+  const source = f.records.get('fi/source/' + winner.id), funding = f.records.get('fp/' + winner.id), height = await f.reads.counted();
+  const reader = { ...f.reads, deploymentHolders: async ids => ids.map(id => ({ id, address: '1BitcoinEaterAddressDontSendf59kuE' })),
+    mint: async () => ({ accepted: true, fail: false, confirmations: 1, permitHash: winner.permitHash,
+      deployment: source.deployment.id, amount: source.amount, receiver: source.receiver, tick: source.deployment.tick,
+      committee: source.deployment.privilegePublicKey, block: source.request.block, inscription: r.hash('public-mint') + 'i0' }) };
+  installCapacitySources(reader, { network: 'test', bitcoinNetwork: 'mainnet', accepted: async () => ({ source, funding,
+    row: { request: source.request, receiver: source.receiver, permit: { prv: { hash: winner.permitHash } } } }) });
+  reader.financialEvidence = (transition, at) => reader.financialCapacityEvidence(transition.action, at);
+  const transition = { type: 'lifecycle', id: winner.id, action: { type: 'capacity-finish', id: winner.id, permitHash: winner.permitHash } };
+  const finished = await buildFinancialExecution({ store: { get: (space, id) => space === 'accountRecords' ? f.records.get(id) ?? null : null },
+    reads: reader, transitions: [transition], document: f.document, height, at: { counted: height } });
+  assert.equal(finished.inputs[0].evidence.commissions.length, 156);
+  await verifyFinancialExecution({ files: [{ ops: finished.operations, financialOperations: finished.inputs }],
+    reads: reader, document: f.document, network: 'test', height, at: { counted: height } });
 });

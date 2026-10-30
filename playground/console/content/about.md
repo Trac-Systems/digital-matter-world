@@ -124,7 +124,7 @@ The flat fee policy uses the same operator-set TAP amount for every pattern mint
 These values follow the live fee policy, including during the change to flat fees. Bitcoin network fees and Ethereum gas are separate. Check your quote before paying;
 existing requests keep their signed terms.
 
-Where a fee for making a found pattern real goes:
+The base split for making a found pattern real, before any older deployment share comes out of the burn:
 
 | Share | Goes to |
 |---|---|
@@ -139,7 +139,7 @@ Where a fee for making a found pattern real goes:
 | Making a compound real | 30 % | 35 % | 35 % |
 | Bitmap link | – | 50 % | 50 % |
 
-For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`.
+For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`. {{legacy-deploy-share}} Several tokens can use the same DMT discovery; DMW manages its own one-to-one provenance while recognizing holders of older deployments.
 
 When you are also one of the recipients, for example a finder minting their own find, that share simply stays with you.
 

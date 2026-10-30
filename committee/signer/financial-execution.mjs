@@ -1,3 +1,4 @@
+import { legacyDeployShareActive } from '../../rules/src/legacy-deploy-share.js';
 import { applyRootAccounts } from '../../contract/root-accounts.js';
 import { applyPaymentPage } from '../../contract/payment-pages.js';
 import { accountSettings } from '../../rules/src/account-settings.js';
@@ -43,7 +44,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
     verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? [], file.compoundMerge);
     for (const op of prefix) await apply(op);
     for (const input of inputs) {
-      let evidence = await sources.financialEvidence(input.transition, at);
+      let evidence = await sources.financialEvidence(input.transition, legacyDeployShareActive(height) ? { ...at, executionHeight: height } : at);
       if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
         // Full rules replay already derived this decision after agent closure
         // and moves. The external scan is read at the accepted predecessor and

@@ -1,3 +1,4 @@
+import { tapAtoms } from './fees.js';
 import { assert, exactKeys, hashObject, networkId } from './core.js';
 import { uintV2, compareUint, nextUint } from './integers-v2.js';
 
@@ -51,6 +52,8 @@ const zeroAllowed = new Set(['batchKv', 'puzzleBits', 'patternMaxLiteralDigits',
   'finderShareBps', 'discovererShareBps', 'landownerShareBps', 'findBurnBps', 'unlinkedBurnBps',
   'firstMakerShareBps', 'compoundBurnBps', 'linkBurnBps']);
 const closureKeys = ['closureWorkBudget', 'closureReadBudget', 'closureByteBudget', 'closureBacklogPairs', 'closureBacklogBytes', 'closureBacklogWindows'];
+// Optional complete group: absent/zero share preserves retained settings hashes.
+export const LEGACY_DEPLOY_SETTINGS = Object.freeze({ legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '0' });
 export const PUBLIC_MINT_SETTINGS = Object.freeze({ publicMintActivationHeight: '0', publicMintLegacyFinderWindow: 1008, publicMintScanBlocks: 2, publicMintPageSize: 50 });
 export function freezeDocument(value) {
   if (value && typeof value === 'object') { for (const v of Object.values(value)) freezeDocument(v); Object.freeze(value); }
@@ -64,13 +67,16 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
   const neverClose = Object.hasOwn(values, 'claimsNeverCloseHeight');
   const bitmapOpen = Object.hasOwn(values, 'bitmapMintOpenHeight');
   const paymentV2 = Object.hasOwn(values, 'publicPaymentV2Height');
+  const legacyDeploy = Object.hasOwn(values, 'legacyDeployShareBps');
   assert(exactKeys(values, [...Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k)),
-    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : []), ...(bitmapOpen ? ['bitmapMintOpenHeight'] : []), ...(paymentV2 ? ['publicPaymentV2Height'] : [])]), 'settings_keys');
+    ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : []), ...(bitmapOpen ? ['bitmapMintOpenHeight'] : []), ...(paymentV2 ? ['publicPaymentV2Height'] : []), ...(legacyDeploy ? Object.keys(LEGACY_DEPLOY_SETTINGS) : [])]), 'settings_keys');
   if (neverClose) assert(publicMint && compareUint(uintV2(values.claimsNeverCloseHeight), values.publicMintActivationHeight) >= 0, 'settings_claims_never_close');
   if (paymentV2) assert(publicMint && compareUint(uintV2(values.publicPaymentV2Height), values.publicMintActivationHeight) >= 0, 'settings_public_payment_activation');
   if (bitmapOpen) assert(publicMint && compareUint(uintV2(values.bitmapMintOpenHeight), values.publicMintActivationHeight) >= 0, 'settings_bitmap_mint_open');
   for (const [key, value] of Object.entries(values)) {
-    if (key === 'tierThresholds') {
+    if (key === 'legacyDeployShareBps') assert(Number.isSafeInteger(value) && value >= 0 && value <= values.findBurnBps, 'settings_legacy_deploy_share');
+    else if (key === 'legacyDeployPayoutMinAtoms') { tapAtoms(value); assert(!values.legacyDeployShareBps || value !== '0', 'settings_legacy_deploy_threshold'); }
+    else if (key === 'tierThresholds') {
       assert(Array.isArray(value) && value.length === 4 && value.every((n, i) => {
         uintV2(n); return compareUint(n, '0') > 0 && (!i || compareUint(n, value[i - 1]) > 0);
       }), 'settings_tiers');

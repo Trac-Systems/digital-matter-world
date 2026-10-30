@@ -1,3 +1,4 @@
+import { payoutBalance, payoutPolicyHash } from './payout-values.mjs';
 import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
@@ -49,7 +50,7 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   if (kind === 'finds' && scope.startsWith('owner/')) projectionReady(store, 'findsByAgent/' + scope.slice(6));
   projectionReady(store, { events: 'publicEvents', patterns: 'catalogPatterns', compounds: 'catalogTypes', agents: 'catalogAgents' }[kind] ?? kind);
   const revision = projectionRevision(store, `items/${kind}/${scope}`) + (kind === 'links' || kind === 'bitmaps' ? '/' + projectionRevision(store, 'submittedBitmaps') + '/' + projectionRevision(store, 'links') + '/' + (store.get('meta', 'head')?.hash ?? '') : kind === 'balances' ? '/' + projectionRevision(store, 'publicBalanceHeads/' + scope) + '/' + projectionRevision(store, 'accountRecords/ar/' + scope) : '') +
-    (financialKinds.includes(kind) ? '/' + projectionRevision(store, 'financialHealth') : '');
+    (financialKinds.includes(kind) ? '/' + projectionRevision(store, 'financialHealth') : '') + (kind === 'payouts' && payoutPolicyHash(store) ? '/' + payoutPolicyHash(store) : '');
   const filters = ['asset', 'owner', 'block', 'state', 'action', 'since', 'q', 'tier', 'recipe', 'firstMaker', 'discoverer', 'address', 'nonzero', 'minted', 'pending', 'linked', 'height', 'type', 'actor', 'category', 'payer', 'beneficiary', 'role', 'to', 'status', 'window', 'agent', 'header', 'kind'];
   const p = paging(params, kind + '/' + scope, revision, settings, filters);
   if (!params.has('order') && ['agents', 'events', 'finds', 'links'].includes(kind)) p.order = 'desc';
@@ -72,6 +73,7 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   const selected = []; let last, examined = 0;
   for (const row of rows.slice(0, budget)) {
     const value = map ? map(row) : JSON.parse(row.value);
+    if (kind === 'payouts') Object.assign(value, payoutBalance(store, value));
     if (kind === 'links') Object.assign(value, currentLink(store, value));
     if (kind === 'balances') {
       const account = store.get('accountRecords', 'ar/' + scope), head = store.get('publicBalanceHeads', scope);
@@ -125,7 +127,8 @@ export function publicProjectionRevision(store, input) {
   if ((match = /^\/accounts\/([0-9a-f]{64})\//.exec(path))) scopes = ['accountRecords/ar/' + match[1]];
   if (path.startsWith('/results')) { clock = true; scopes = ['mints', 'linkRequests', 'links', 'submittedBitmaps', 'payoutTotals', 'commissionOwed', 'payoutPaid', 'publicSummaries', 'publicSupply', 'financialHealth', 'publicFinancialHealth', ...['mints', 'payments', 'ethereum', 'credits', 'custody', 'linkRequests'].map(k => 'publicResults/' + k)]; }
   if (!scopes) return null;
-  return scopes.map(s => projectionRevision(store, s)).join('/') + (clock ? '/' + JSON.stringify(clocks(store)) + '/' + (store.get('meta', 'head')?.hash ?? '') : '');
+  const payoutPolicy = ['/payouts/beneficiaries', '/results/payouts'].includes(path) ? payoutPolicyHash(store) : '';
+  return scopes.map(s => projectionRevision(store, s)).join('/') + (payoutPolicy ? '/' + payoutPolicy : '') + (clock ? '/' + JSON.stringify(clocks(store)) + '/' + (store.get('meta', 'head')?.hash ?? '') : '');
 }
 function plot(store, height) {
   const mark = store.db.prepare('SELECT * FROM publicBlocksV2 WHERE heightKey=?').get(rules.uintKeyV2(height));

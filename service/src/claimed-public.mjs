@@ -1,3 +1,4 @@
+import { payoutBalance, payoutPolicyHash } from './payout-values.mjs';
 import { check, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { claimedPage } from './claimed-feeds.mjs';
@@ -11,7 +12,8 @@ import { publicPageBytes } from './public-page-bytes.mjs';
 
 export function recordPage(store, space, params, { key = 'rows', maxRows = R3_RESOURCES.patternDetailRows, maxBytes = R3_RESOURCES.publicPageBytes, map = r => ({ id: r.id, ...r.value }) } = {}) {
   projectionReady(store, space);
-  const requested = Number(params.get('limit') ?? maxRows), limit = Math.min(requested, maxRows), revision = projectionRevision(store, space);
+  const policy = space === 'payoutTotals' ? payoutPolicyHash(store) : '';
+  const requested = Number(params.get('limit') ?? maxRows), limit = Math.min(requested, maxRows), revision = projectionRevision(store, space) + (policy ? '/' + policy : '');
   check(Number.isSafeInteger(requested) && requested > 0, 'page_limit');
   for (const k of params.keys()) check(['limit', 'cursor', 'order', 'sort'].includes(k) && params.getAll(k).length === 1, 'paged_query');
   const order = params.get('order') ?? 'asc', sort = params.get('sort') ?? 'id';
@@ -76,7 +78,7 @@ export function claimedPublicRead(store, url, settings = {}) {
     '/payouts/beneficiaries': ['payoutTotals', 'beneficiaries'], '/payouts/owed': ['commissionOwed', 'owed'], '/payouts/paid': ['payoutPaid', 'paid'],
     '/events': ['publicEvents', 'events'], '/feed': ['publicEvents', 'events'], '/receipts': ['receiptObservations', 'receipts'], '/records/batches': ['batches', 'batches'] };
   if (sources[path]) return page(sources[path][0], { key: sources[path][1],
-    ...(path === '/payouts/beneficiaries' ? { map: ({ id, value }) => ({ id, ...value, owed: String(BigInt(value.accrued) - BigInt(value.paid)) }) } : {}),
+    ...(path === '/payouts/beneficiaries' ? { map: ({ id, value }) => ({ id, ...payoutBalance(store, value) }) } : {}),
     ...(path === '/records/batches' ? { map: ({ value }) => ({ n: value.batch.n, from: value.batch.from, to: value.batch.to, root: value.batch.root, manifest: '/records/batches/' + value.batch.n }) } : {}),
     ...(path === '/receipts' ? { map: ({ id, value }) => ({ id, seal: value.seal, archive: value.archive ?? null }) } : {}) });
   const agent = /^\/agents\/([0-9a-f]{64})(?:\/(finds|assets|discoveries))?$/.exec(path);
