@@ -51,6 +51,10 @@ export class BrowserMintJournal {
 }
 
 const userCancelled = error => error?.message === 'User rejected the request.';
+// TAP Wallet's transfer popup refuses these before anything is signed or broadcast
+// (its balance and item checks run when the popup opens), so nothing can have been sent.
+const refusedBeforeSigning = error => typeof error?.message === 'string' && (error.message.startsWith('Transaction cannot be processed')
+  || ['Invalid items', 'Error processing items', 'Error checking token balances'].includes(error.message));
 
 export class TapWalletMint {
   constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
@@ -127,8 +131,14 @@ export class TapWalletMint {
         }
         // Reject also arrives when the popup closes mid-broadcast, so a
         // cancel stays a retryable 'sending' record, never a silent reset.
+        if (refusedBeforeSigning(error)) {
+          await this.journal.put(key, saved);
+          const reason = /Insufficient amount for tokens/.test(error.message) ? 'your wallet does not have enough spendable TAP for these fees (TAP held in transfer inscriptions is not spendable here)' : error.message.replace(/\s+/g, ' ').trim();
+          throw Error(`TAP Wallet refused the payment before signing: ${reason}. Nothing was sent. Fix that, then press ${extra ? 'Pay and mint' : 'Pay missing items'} again.`);
+        }
         if (userCancelled(error)) throw Error(`TAP Wallet reports the payment was cancelled. If you did not confirm it in the wallet, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry.`);
-        throw Error('TAP Wallet did not return a payment receipt. The payment may have been sent. Keep this request and inspect the wallet; another payment will not be sent automatically.');
+        const said = typeof error?.message === 'string' && error.message ? ` TAP Wallet said: “${error.message.slice(0, 300)}”.` : '';
+        throw Error(`TAP Wallet did not return a payment receipt.${said} If your wallet shows no sent payment for this request, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry; another payment is never sent automatically.`);
       }
       await this.journal.put(key, { ...saved, payment: { state: 'submitted', items, ...(extra ? { extraOutputs: [extra] } : {}), result } });
       return { ...await this.status(id), localState: 'payment_submitted', ...(extra ? { mintFunded: true } : {}) };

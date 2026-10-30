@@ -6,7 +6,7 @@ import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral } from '/web/console/js/words.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
-const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
+const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
 
 async function api(path, body) {
   const response = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },

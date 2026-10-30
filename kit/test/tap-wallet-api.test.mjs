@@ -96,6 +96,22 @@ test('No authority found clears only the definite preflight failure; generic 400
   assert.equal(after.localState, 'payment_pending'); assert.equal(after.retryable, false);
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 3);
 });
+test('a TAP Wallet refusal before signing says nothing was sent and allows a plain retry', async () => {
+  const f = fixture(true); await f.wallet.connect();
+  f.state.transferError = { code: 4001, message: 'Transaction cannot be processed due to the following issues:\n\n• Insufficient amount for tokens: tap\n' };
+  await assert.rejects(f.wallet.pay(f.id), /refused the payment before signing: your wallet does not have enough spendable TAP.*Nothing was sent/s);
+  assert.equal(f.records.get(f.wallet.key(f.id))?.payment, undefined);
+  f.state.transferError = { code: 4001, message: 'Invalid items' };
+  await assert.rejects(f.wallet.pay(f.id), /refused the payment before signing: Invalid items\. Nothing was sent/);
+  f.state.transferError = null;
+  assert.equal((await f.wallet.pay(f.id)).localState, 'payment_submitted');
+});
+test('an unknown TAP Wallet error keeps the payment uncertain and shows the wallet message', async () => {
+  const f = fixture(true); await f.wallet.connect();
+  f.state.transferError = { code: -32603, message: 'broadcast failed: bad-txns' };
+  await assert.rejects(f.wallet.pay(f.id), /did not return a payment receipt\. TAP Wallet said: “broadcast failed: bad-txns”/);
+  assert.equal(f.records.get(f.wallet.key(f.id))?.payment?.state, 'sending');
+});
 test('locked or changed 1.0.48 account fails before a durable payment attempt', async () => {
   const f = fixture(true); await f.wallet.connect();
   for (const state of [{ locked: true }, { locked: false, network: 'regtest' }, { network: 'mainnet', address: 'bc1pwrong' }]) {

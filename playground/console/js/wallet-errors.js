@@ -1,6 +1,6 @@
 // Request states before the wallet can pay; the page shows a spinner until the Pay button appears.
 export const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
-export const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
+export const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
 export const publicOpeningLabel = row => typeof row?.publicFrom === 'string' && /^(0|[1-9][0-9]*)$/.test(row.publicFrom)
   ? `Opens at block ${row.publicFrom}` : null;
 export const publicMintMessages = {

@@ -1,7 +1,7 @@
 import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
 
 // One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
-const PAY_SOON = 'Your request is being recorded on the network. The Pay button appears here by itself, usually within one Bitcoin block (about 10 minutes).';
+const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
 const PAID_ONCE = 'Paid. Your mint goes out automatically when the permit arrives. You can close this page.';
 const NEEDS_USER = 'The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.';
 const SENDER_STATES = ['waiting_funding', 'funded', 'sending', 'sent', 'minted', 'needs_user', 'returning', 'returned'], SENDER_STOPPED = ['needs_user', 'returning', 'returned'];
