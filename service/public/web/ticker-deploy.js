@@ -103,7 +103,8 @@ export function tickerPage(root, { asset, id }) {
       ['Your ticker', h('span.mono', {}, ticker ?? '–')],
       ['State', pill(registered ? 'deployed' : job.state === 'awaiting_player_deploy' ? 'ready to deploy' : job.state === 'awaiting_fee' ? 'fee due' : String(job.state).replace(/_/g, ' '), registered ? 'good' : job.state === 'refused' ? 'bad' : 'warn')],
       ['Deploy fee', quoteFeeText(fee)],
-      fee?.refundFunding && PAY_STATES.includes(fee.state) ? ['Bitcoin set aside for a possible refund', `${fmtInt(fee.refundFunding.satoshis)} sats`, 'Returned to you after the deploy is registered, minus the Bitcoin network fee.'] : null,
+      fee?.refundFunding && PAY_STATES.includes(fee.state) ? ['Bitcoin set aside', h('div', {}, h('span.mono', {}, `${fmtInt(fee.refundFunding.satoshis)} sats`),
+        h('div.small.muted', {}, 'Returned to you after the deploy is registered, minus the Bitcoin network fee.'))] : null,
       job.receiver ? ['Your wallet', addressLink(job.receiver)] : null,
       receipt ? ['Your inscription', inscriptionLink(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', inscriptionLink(job.entry.id)] : null,
     ]), { flush: true }));
@@ -115,7 +116,7 @@ export function tickerPage(root, { asset, id }) {
     await tapWalletCapabilities(globalThis.tapprotocol);
     const fee = job.fee;
     if (!await confirmModal({ title: 'Pay the deploy fee?', lead: 'TAP Wallet pays the fee items of this request in one TAP payment. If your ticker cannot be registered, the fee is refunded.',
-      rows: [...(fee.missing ?? []).map(f => [String(f.role).replace(/_/g, ' '), tap(f.amount, fee.unit)]), fee.refundFunding ? ['Bitcoin set aside for a possible refund', `${fmtInt(fee.refundFunding.satoshis)} sats`] : null].filter(Boolean), confirm: 'Pay from my wallet' })) return;
+      rows: [...(fee.missing ?? []).map(f => [String(f.role).replace(/_/g, ' '), tap(f.amount, fee.unit)])].filter(Boolean), confirm: 'Pay from my wallet' })) return;
     await wallet.connect();
     let result = await wallet.payTickerFee(job);
     if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this ticker.', rows: [], confirm: 'Retry payment' })) result = await wallet.payTickerFee(job, { retry: true });

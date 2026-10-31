@@ -106,7 +106,7 @@ export class TapWalletMint {
       // reconstruct that transaction; never create a second payment blindly.
       // A 'sending' record without a receipt may be retried only on the
       // player's explicit word that the wallet shows no sent payment.
-      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at);
+      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at, saved.payment.extraOutputs);
       if (saved.payment && !(retry && saved.payment.state === 'sending')) return { ...status, localState: 'payment_pending', payment: saved.payment, retryable: saved.payment.state === 'sending',
         message: saved.payment.state === 'sending' ? 'TAP Wallet returned no receipt for the last payment attempt. If your wallet shows no sent payment for this request, retry the payment.' : 'A payment was already requested. Wait for its indexed items; inspect the wallet if the result is uncertain.' };
       // 1-TX Transfers must already be on in TAP Wallet; DMW never sets them up.
@@ -164,7 +164,7 @@ export class TapWalletMint {
         'Invalid ticker fee items. Nothing was paid.');
       const extra = capabilities?.singleTxTransferExtraOutputs === true && fee.refundFunding ? mintFundingOutput(fee.refundFunding, this.network) : null;
       const key = this.key('ticker/' + job.id), saved = await this.journal.get(key) ?? {};
-      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at);
+      if (saved.payment?.state === 'sending' && retry) await this.checkNothingSent(saved.payment.at, saved.payment.extraOutputs);
       if (saved.payment && !(retry && saved.payment.state === 'sending')) return { localState: 'payment_pending', payment: saved.payment, retryable: saved.payment.state === 'sending',
         message: saved.payment.state === 'sending' ? 'TAP Wallet returned no receipt for the last payment attempt. If your wallet shows no sent payment for this ticker, retry the payment.' : 'The fee was already paid from this browser. Wait for it to be confirmed.' };
       await ensureTapAuthority(this.provider, this.address, null, { checkAccount: () => this.checkAccount() });
@@ -198,15 +198,25 @@ export class TapWalletMint {
   // this wallet sent nothing since the attempt: no unconfirmed transaction and
   // no confirmed one newer than the attempt (or the last six hours, if older
   // records lack a time). Unrelated wallet activity also waits, never pays twice.
-  async checkNothingSent(at) {
+  async checkNothingSent(at, extraOutputs) {
     if (this.network === 'regtest') return;
-    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/address/' + this.address;
+    const site = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/address/';
+    // The payment also sends this request's Bitcoin set-aside to its own address: that address is the exact witness.
+    // It received nothing (mempool or chain) means this payment was never sent, whatever else the wallet did.
+    const own = extraOutputs?.[0]?.address;
+    let base = site + (own ?? this.address);
     const read = async path => {
       const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) });
       ensure(response.ok, 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
       const txs = await response.json(); ensure(Array.isArray(txs), 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
       return txs;
     };
+    if (own) {
+      const received = [...await read('/txs/mempool'), ...await read('/txs/chain')];
+      ensure(!received.length, 'This payment was already sent. Wait for the request to update; it does not need to be paid again.');
+      return;
+    }
+    base = site + this.address;
     ensure(!(await read('/txs/mempool')).length, 'A transaction from this wallet is still unconfirmed. Wait until it confirms; if it was this payment, the request will update by itself.');
     const since = Math.floor((Number.isSafeInteger(at) ? at : Date.now() - 6 * 3600_000) / 1000) - 600;
     ensure(!(await read('/txs/chain')).some(tx => !tx.status?.block_time || tx.status.block_time >= since),

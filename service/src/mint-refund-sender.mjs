@@ -129,7 +129,7 @@ export class MintRefundSender {
           changeAddress: record.tapAddress, allowUnconfirmed: true, dustSats: this.settings.dustSats }), key.privateKey);
       } catch (error) {
         if (['bitcoin_funding_insufficient', 'bitcoin_fee_limit'].includes(error.code))
-          return this.save(row, { state: 'refund_needs_operator', message: 'Payer Bitcoin set-aside is insufficient for the refund. Operator action required; float Bitcoin cannot pay refund fees.' });
+          return this.save(row, { state: 'refund_pending', message: 'Refund pending; waiting for Bitcoin fees low enough for the set-aside.' });
         throw error;
       }
       // Re-read accepted consensus evidence immediately before committing a

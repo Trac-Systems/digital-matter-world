@@ -73,7 +73,7 @@ export class MintSenderView {
       snapshot.receiver === row.receiver && SENDER_STATES.has(snapshot.mintSender?.state) ? snapshot.mintSender : null;
     const offer = this.settings.enabled && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state) && this.ready() &&
       (!sender || sender.state === 'waiting_funding');
-    return { ...status, ...(Array.isArray(status.refunds) ? { refunds: status.refunds.map(r => this.decorateRefund(r)) } : {}), ...(offer ? { mintFunding: { address: this.address(row.id), satoshis: this.satoshis, feeRate: this.settings.feeRate, label: this.settings.refundsEnabled ? 'mint inscription and possible refund' : 'your mint inscription' } } : {}),
+    return { ...status, ...(Array.isArray(status.refunds) ? { refunds: status.refunds.map(r => this.decorateRefund(r)) } : {}), ...(offer ? { mintFunding: { address: this.address(row.id), satoshis: this.satoshis, feeRate: this.settings.feeRate, label: 'your mint inscription' } } : {}),
       ...(sender || offer ? { mintSender: sender ?? { state: 'waiting_funding' } } : {}) };
   }
   page(mints, params) {

@@ -585,7 +585,7 @@ test('the public Mint confirmation names the Bitcoin set aside and that TAP Wall
   const dialog = p.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Continue to payment', exact: true }).waitFor();
   const text = await dialog.innerText();
-  assert.match(text, /TAP Wallet asks once/); assert.match(text, /Bitcoin set aside for the mint inscription and a possible refund\s+4,200 sats/);
+  assert.match(text, /TAP Wallet asks once/); assert.match(text, /Bitcoin for the mint inscription\s+4,200 sats/);
   assert.doesNotMatch(text, /\bprices?\b/i);
   await shot(p, 'public-mint-confirm-set-aside');
 });
@@ -658,11 +658,11 @@ test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside
   const pay = p.getByRole('button', { name: 'Pay and mint', exact: true });
   await pay.waitFor();
   assert.equal(await p.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
-  assert.match(await p.locator('main').innerText(), /Bitcoin set aside for the mint inscription and a possible refund\s+4,200 sats/);
+  assert.match(await p.locator('main').innerText(), /Bitcoin for the mint inscription\s+4,200 sats/);
   await pay.click();
   const dialog = p.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Pay and mint', exact: true }).waitFor();
-  assert.match(await dialog.innerText(), /TAP Wallet asks once/); assert.match(await dialog.innerText(), /Bitcoin set aside for the mint inscription and a possible refund\s+4,200 sats/);
+  assert.match(await dialog.innerText(), /TAP Wallet asks once/); assert.match(await dialog.innerText(), /Bitcoin for the mint inscription\s+4,200 sats/);
   await shot(p, 'request-pay-and-mint-confirm');
   await dialog.getByRole('button', { name: 'Pay and mint', exact: true }).click();
   await p.getByText('Paid. Your mint goes out automatically when the permit arrives. You can close this page.', { exact: true }).first().waitFor();

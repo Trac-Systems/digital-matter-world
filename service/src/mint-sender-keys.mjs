@@ -51,14 +51,15 @@ export function refundBudget(settings) {
   return inscriptionBudget(settings, settings.refundContentBytes, settings.maxRefundFeeRate, 1);
 }
 export function fundingAmount(settings) {
-  if (settings.refundsEnabled) check(settings.refundReserveSats >= refundBudget(settings), 'mint_sender_refund_reserve');
+  // The reserve is an operator setting; a refund that does not fit it at current fees waits for lower fees.
+  if (settings.refundsEnabled) check(settings.refundReserveSats >= settings.postageSats + settings.dustSats, 'mint_sender_refund_reserve');
   const satoshis = inscriptionBudget(settings) + (settings.refundsEnabled ? settings.refundReserveSats : 0);
   check(satoshis <= settings.maxFundingSats, 'mint_sender_funding_cap');
   return satoshis;
 }
 export function fundingQuote(seed, id, network, settings) {
   const key = requestKey(seed, id, network);
-  try { return { address: key.address, satoshis: fundingAmount(settings), feeRate: settings.feeRate, label: settings.refundsEnabled ? 'mint inscription and possible refund' : 'your mint inscription' }; }
+  try { return { address: key.address, satoshis: fundingAmount(settings), feeRate: settings.feeRate, label: 'your mint inscription' }; }
   finally { key.privateKey.fill(0); }
 }
 export async function readMintSeed(filename, { credentialsDirectory = process.env.CREDENTIALS_DIRECTORY, rootOwned = process.platform === 'linux' } = {}) {

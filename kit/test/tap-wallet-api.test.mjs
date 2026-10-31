@@ -211,6 +211,25 @@ test('1.0.49 with mintFunding sends one transfer carrying the set-aside output, 
   assert.equal((await again.pay(f.id)).localState, 'payment_pending');
   assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
 });
+test('after a cancelled payment, a retry checks only this request\'s set-aside address, not other wallet activity', async () => {
+  const mintFunding = { address: setAsideAddress(), satoshis: 3000, feeRate: 2, label: 'your mint inscription' };
+  const f = fixture1049({ mintFunding }); await f.wallet.connect();
+  f.state.transferError = { code: 4001, message: 'User rejected the request.' };
+  await assert.rejects(f.wallet.pay(f.id));
+  f.state.transferError = null;
+  const seen = [], received = { mempool: [], chain: [] };
+  f.wallet.fetchImpl = async url => { if (walletFundsReply(url)) return walletFundsFetch(url); seen.push(url);
+    // The wallet itself is busy with an unrelated inscription; only the set-aside address decides.
+    const own = url.includes('/address/' + mintFunding.address + '/');
+    return { ok: true, json: async () => own ? (url.endsWith('/txs/mempool') ? received.mempool : received.chain) : [{ txid: 'aa', status: { confirmed: false } }] }; };
+  received.mempool = [{ txid: 'bb' }];
+  await assert.rejects(f.wallet.pay(f.id, { retry: true }), /already sent/);
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
+  received.mempool = [];
+  assert.equal((await f.wallet.pay(f.id, { retry: true })).localState, 'payment_submitted');
+  assert.equal(f.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 2);
+  assert.ok(seen.every(url => url.includes('/address/' + mintFunding.address + '/txs/')));
+});
 test('1.0.49 without mintFunding keeps the 1.0.48 transfer call: items only, no options argument', async () => {
   const f = fixture1049(); await f.wallet.connect();
   const result = await f.wallet.pay(f.id);

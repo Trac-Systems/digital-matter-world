@@ -45,9 +45,9 @@ test('standard legacy payer/receiver addresses remain eligible while funding its
 });
 
 test('refund reserve is operator-configured and returned in a winning mint commit', async () => {
-  const { refundBudget, refundFloatKey } = await import('../src/mint-sender-keys.mjs');
+  const { refundFloatKey } = await import('../src/mint-sender-keys.mjs');
   const enabled = mintSenderSettings({ refundsEnabled: true });
-  assert.ok(enabled.refundReserveSats >= refundBudget(enabled));
+  assert.equal(enabled.refundReserveSats, 3000);
   assert.equal(fundingAmount(enabled) - fundingAmount(settings), enabled.refundReserveSats);
   assert.throws(() => fundingAmount({ ...enabled, refundReserveSats: 1 }), /refund_reserve/);
   const float = refundFloatKey(seed, 'regtest'), signer = requestKey(seed, id, 'regtest');

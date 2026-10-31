@@ -251,7 +251,7 @@ export function mount(root, { id, onPublicMint }) {
     clear(body, fees ? panel('Remaining fees', fees, { flush: true }) : null, ms && !SENDER_STOPPED.includes(ms.state) && !failed ? panel('Your mint', senderSteps(status, ms), { flush: true }) : null);
     const aside = funding ?? (Number.isSafeInteger(ms?.satoshis) ? ms : null);
     clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], ['Receiver', hashEl(status.receiver)], ['Units', fmtInt(status.amount)],
-      aside ? ['Bitcoin set aside for the mint inscription and a possible refund', sats(aside.satoshis)] : null,
+      aside ? ['Bitcoin for the mint inscription', sats(aside.satoshis)] : null,
       ms?.state === 'returning' ? ['Set-aside', 'Being returned to you'] : ms?.state === 'returned' ? ['Set-aside', txid(ms.returnTxid) ? h('span', {}, 'Returned to you: ', txLink(ms.returnTxid, ms.returnTxid.slice(0, 12) + '…')) : 'Returned to you'] : null,
       status.publicMint && status.refunds?.length ? ['Refund', h('span', {}, status.refunds.flatMap((r, i) => [i ? ' · ' : '', refundStatus(r)]))] : null, status.publicMint && (status.reason || status.refunds?.[0]?.reason) ? ['Reason', walletError(status.reason ?? status.refunds[0].reason, status)] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')], rest = [];
@@ -260,7 +260,7 @@ export function mount(root, { id, onPublicMint }) {
       if (status.payBy.rail === 'tap') await tapWalletCapabilities(globalThis.tapprotocol);
       const once = funding ? 'TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when the permit arrives. ' : '';
       if (!await confirmModal({ title: funding ? 'Pay and mint?' : 'Pay the remaining fees?', lead: once + (status.publicMint ? 'Pay every fee in one TAP payment. First confirmed complete payment wins. ' + (funding ? 'If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.' : 'If your payment does not win the block, your refund needs operator action because this payment has no Bitcoin set-aside.') : 'Your wallet pays the quoted recipients. We do not refund these payments.'),
-        rows: [...status.missing.map(item => [item.role, tap(item.amount)]), funding ? ['Bitcoin set aside for the mint inscription and a possible refund', sats(funding.satoshis)] : null].filter(Boolean), confirm: funding ? 'Pay and mint' : 'Pay from my wallet' })) return;
+        rows: [...status.missing.map(item => [item.role, tap(item.amount)]), funding ? ['Bitcoin for the mint inscription', sats(funding.satoshis)] : null].filter(Boolean), confirm: funding ? 'Pay and mint' : 'Pay from my wallet' })) return;
       if (status.payBy.rail === 'tap') {
         await wallet.connect(); let result = await wallet.pay(id);
         if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this request.', rows: status.missing.map(item => [item.role, tap(item.amount)]), confirm: 'Retry payment' })) result = await wallet.pay(id, { retry: true });

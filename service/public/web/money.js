@@ -402,7 +402,7 @@ async function mintPublic(row, notify, { deployment = null, ticker = null } = {}
       ['Fee', h('strong.mono', {}, formatTap(quote.price, decimals))],
       ...(quote.fees ?? []).map(f => [`· ${String(f.role ?? 'fee').replace(/_/g, ' ')}`, h('span.mono', {}, formatTap(f.amount, decimals))]),
       quote.split?.deployer && BigInt(quote.split.deployer) > 0n ? ['· of the treasury item, for the ticker’s deploy holder', h('span.mono', {}, formatTap(quote.split.deployer, decimals))] : null,
-      setAside !== null ? ['Bitcoin set aside for the mint inscription and a possible refund', h('span.mono', {}, `${fmtInt(setAside)} sats`)] : null,
+      setAside !== null ? ['Bitcoin for the mint inscription', h('span.mono', {}, `${fmtInt(setAside)} sats`)] : null,
       ['Bitcoin fee rate', rate ?? 'TAP Wallet shows the network fee before you approve'],
       ['Receiver', hashEl(quote.receiver ?? tapAddress)]],
     confirm: 'Continue to payment' })) return;
