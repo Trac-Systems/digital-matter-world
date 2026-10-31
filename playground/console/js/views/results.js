@@ -70,8 +70,10 @@ export function mount(root, params = {}) {
     if (!obj || typeof obj !== 'object' || !Object.keys(obj).length) return h('div.empty', {}, 'Nothing yet.');
     const bridgedKey = k => k === 'erc20' || (['burn', 'outstandingSupply'].includes(ctx) && k === 'ethereum');
     const fmt = (k, v) => bridgedKey(k) ? h('span.mono', {}, bridged(v)) : AMOUNT_KEYS.test(k) ? h('span.mono', {}, tap(v, unit())) : cell(v);
+    // The treasury's own wallets link to their explorers like every other address.
+    const value = (k, v) => ctx === 'treasury' && ['bitcoin', 'ethereum'].includes(k) && typeof v === 'string' ? addressLink(v) : typeof v === 'string' && /^\d+$/.test(v) && v.length < 40 ? fmt(k, v) : cell(v);
     // Paging metadata of nested lists is not a total; it stays in Inspect.
-    return h('div', {}, kv(Object.entries(obj).filter(([k]) => k !== 'pages' && k !== 'counts').map(([k, v]) => [TOTAL_LABELS[ctx]?.[k] ?? labelFor(k), typeof v === 'string' && /^\d+$/.test(v) && v.length < 40 ? fmt(k, v) : cell(v)])), h('div.row', { style: { padding: '6px 10px' } }, inspectBtn('Totals', obj)));
+    return h('div', {}, kv(Object.entries(obj).filter(([k]) => k !== 'pages' && k !== 'counts').map(([k, v]) => [TOTAL_LABELS[ctx]?.[k] ?? labelFor(k), value(k, v)])), h('div.row', { style: { padding: '6px 10px' } }, inspectBtn('Totals', obj)));
   }
   const unit = () => data?.unit;
   const STATE = s => pill(String(s ?? '–').replace(/_/g, ' '), s === 'minted' || s === 'complete' || s === 'released' ? 'good' : /fail|cancel/.test(String(s)) ? 'bad' : /refund/.test(String(s)) ? '' : 'warn');
@@ -124,7 +126,7 @@ export function mount(root, params = {}) {
       { key: 'status', label: 'Escrow', render: r => { const st = { 0: 'empty', 1: 'held', 2: 'released', 3: 'refunded' }[r.deposit?.status ?? r.status] ?? r.deposit?.status ?? r.status; return STATE(st === 'held' ? 'held' : st === 'released' ? 'released' : st); } },
       { key: 'split', label: 'Split on release', sortable: false, render: r => { const d = r.deposit?.split ?? r.split ?? {}; return h('span.small', {}, [['finder', d.finderAmount], ['discoverer', d.discovererAmount], ['Bitmap holder', d.landownerAmount], ['burn', d.burnAmount], ['treasury', d.treasuryAmount]].filter(([, v]) => v && v !== '0').map(([k, v]) => `${tap(v, r.unit)} ${k}`).join(' · ')); } },
       { key: 'confirmations', label: 'Confirmations', num: true },
-      { key: 'payer', label: 'Payer', render: r => hashEl(r.payer ?? r.deposit?.payer), sortable: false },
+      { key: 'payer', label: 'Payer', render: r => addressLink(r.payer ?? r.deposit?.payer), sortable: false },
     ],
   };
   const EMPTY = {

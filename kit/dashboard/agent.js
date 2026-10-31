@@ -3,10 +3,10 @@
 // /mint/<request> page with the header's TAP Wallet / MetaMask connection.
 import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper, fmtInt } from '/web/console/js/dom.js';
 import { isTracAddress } from '/rules/src/trac-address.js';
-import { assetName, mineral, INFLIGHT_TEXT, inflightLine } from '/web/console/js/words.js';
+import { assetName, mineral, INFLIGHT_TEXT, INFLIGHT_PAYMENT_TEXT, inflightLine } from '/web/console/js/words.js';
 import { store, site } from '/web/console/js/api.js';
 import { feePrice } from '/web/console/js/money.js';
-import { tickerList, tickerChoice, deployTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
+import { tickerList, tickerChoice, deployTickerForm, officialTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
@@ -255,13 +255,16 @@ export function mount(el) {
     patternList.append(patternTickers);
   };
   const requestPager = h('div.pager-foot');
+  // A payment or mint seen on Bitcoin, not yet confirmed: the shared words and the transaction, no second Pay.
+  const sentCell = inflight => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+    pill(inflight.phase === 'payment' ? INFLIGHT_PAYMENT_TEXT : INFLIGHT_TEXT, 'info'), h('div.small.muted', {}, inflightLine(inflight)));
   // Open requests: ten per page, newest first, with the page's range and Newest / Older buttons.
   const drawRequests = data => {
     open = data.requests.length; more.requests = data.next !== null; drawProfile();
     clear(requests, data.requests.length ? table(data.requests, [
       { key: 'asset', label: 'Pattern', render: r => matter(r.asset, r.name) }, { key: 'block', label: 'Block', num: true, render: r => r.block === undefined || r.block === null ? '—' : blockLink(r.block) },
-      { key: 'state', label: 'State', render: r => pill(words(r.state), STATE_KIND[r.state] ?? '') },
-      { key: 'action', label: '', render: r => ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
+      { key: 'state', label: 'State', render: r => r.inflight ? sentCell(r.inflight) : pill(words(r.state), STATE_KIND[r.state] ?? '') },
+      { key: 'action', label: '', render: r => r.inflight ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open') : ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
         ? h('button.btn.sm', { onclick: event => mint(r, event.currentTarget) }, 'Resume')
         // Same conditions as the request page: Pay and mint with a set-aside; Inscribe only while the server is not sending.
         : h(!r.payable && BEFORE_PAY.includes(r.state) ? 'a.btn.sm.busy' : 'a.btn.sm', { href: '/mint/' + r.requestId, title: !r.payable && BEFORE_PAY.includes(r.state) ? PAY_SOON : null }, r.state === 'permit_issued' ? (!r.mintSender || ['needs_user', 'returning', 'returned'].includes(r.mintSender.state) ? 'Inscribe' : 'Open')
@@ -276,8 +279,8 @@ export function mount(el) {
   const drawLinks = data => {
     clear(links, data.links.length ? table(data.links, [
       { key: 'block', label: 'Bitmap', render: r => r.block !== null ? h('a', { href: site.href('world', { b: r.block }) }, `${r.block}.bitmap`) : '—' },
-      { key: 'state', label: 'State', render: r => pill(words(r.state), r.state === 'linked' || r.state === 'accepted' ? 'good' : r.payable ? 'warn' : '') },
-      { key: 'action', label: '', render: r => r.price === '0' ? h('a.btn.sm', { href: r.paymentLink }, 'Free') : !r.payable && BEFORE_PAY.includes(r.state) ? h('a.btn.sm.busy', { href: r.paymentLink, title: PAY_SOON }, 'Preparing…') : h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
+      { key: 'state', label: 'State', render: r => r.inflight ? sentCell(r.inflight) : pill(words(r.state), r.state === 'linked' || r.state === 'accepted' ? 'good' : r.payable ? 'warn' : '') },
+      { key: 'action', label: '', render: r => r.inflight ? h('a.btn.sm.ghost', { href: r.paymentLink }, 'Open') : r.price === '0' ? h('a.btn.sm', { href: r.paymentLink }, 'Free') : !r.payable && BEFORE_PAY.includes(r.state) ? h('a.btn.sm.busy', { href: r.paymentLink, title: PAY_SOON }, 'Preparing…') : h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
     ], { sortable: false }) : h('div.empty', {}, linkOffset ? 'No more link requests.' : 'No Bitmap link requests yet.'));
     clear(linkPager, h('span.pager-total', {}, data.links.length ? `${linkOffset + 1}–${linkOffset + data.links.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !linkOffset, onclick: () => { linkOffset = 0; act('Loading…', loadLinks); } }, 'Newest'),
@@ -726,11 +729,29 @@ export function mount(el) {
     if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
       h('button.btn.sm', { disabled: true, title: 'Refine its tier first.' }, 'Deploy its TAP token'),
       h('div.small.muted', {}, 'You made it first, so you deploy its TAP token once. Refine its tier first; then deploy it here.'));
-    if (c.token === 'not_deployed' && c.firstMaker && c.deploymentLink) return stack(
-      h('a.btn.sm.primary', { href: localPath(c.deploymentLink) }, 'Deploy its TAP token'),
-      h('div.small.muted', {}, 'You made it first, so you deploy its TAP token once with your TAP Wallet (one inscription; it costs only Bitcoin network fees). Then holders can make units real.'));
+    if (c.token === 'not_deployed' && c.firstMaker && c.deploymentLink) {
+      // Its first maker chooses the ticker (the agent signs), then deploys it; the ticker can change until the deploy is in a block.
+      const chosen = c.tickerChoice?.tick ?? null, ready = !!chosen && c.tickerChoice.state === 'awaiting_player_deploy';
+      return stack(chosen ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, chosen)) : null,
+        ready ? h('a.btn.sm.primary', { href: localPath(c.deploymentLink) }, 'Deploy its TAP token') : null,
+        compoundTickerBox(c, chosen),
+        h('div.small.muted', {}, chosen ? 'You made it first, so you deploy its TAP token once with your TAP Wallet (one inscription; it costs only Bitcoin network fees). You can change the ticker until the deploy is in a Bitcoin block. Then holders can make units real.'
+          : 'You made it first, so you choose its ticker, then deploy its TAP token once with your TAP Wallet (one inscription; it costs only Bitcoin network fees). Then holders can make units real.'));
+    }
     if (c.token === 'not_deployed') return stack(h('div.small.muted', {}, 'Its first maker deploys its TAP token first. Then you can make your units real here.'));
     return stack(h('div.small.muted', {}, 'Could not read its token state. It is read again on the next refresh.'));
+  };
+  // The ticker form of one compound, kept across redraws so typing is not lost. A chosen ticker opens it from a quiet button.
+  const tickerForms = new Map();
+  const compoundTickerBox = (c, chosen) => {
+    const key = c.asset + '/' + (chosen ?? '');
+    if (!tickerForms.has(key)) {
+      const box = h('div'), form = () => officialTickerForm({ current: chosen, choose: ticker => api('/api/compound-ticker', { asset: c.asset, ticker }),
+        onChosen: () => { tickerForms.delete(key); return loadCraft(); } });
+      if (chosen) clear(box, h('button.btn.sm.ghost', { type: 'button', onclick: () => clear(box, form()) }, 'Change ticker')); else clear(box, form());
+      tickerForms.set(key, box);
+    }
+    return tickerForms.get(key);
   };
   const mintCompound = (c, amount, button) => act('', async () => {
     if (!/^[1-9][0-9]*$/.test(amount) || BigInt(amount) > BigInt(c.available)) { say(`Enter a whole number of units from 1 to ${fmtInt(c.available)}.`, 'bad'); return; }

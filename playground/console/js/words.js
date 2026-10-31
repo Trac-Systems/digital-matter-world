@@ -76,7 +76,8 @@ export function namedText(text, assets) {
 }
 // Complete references: every mention of a thing with its own page or public record is named in words and links
 // there. Pages are the site's own (site.href); inscriptions, Bitcoin transactions and addresses open the mainnet
-// explorers the pages already use, on the public pages only. Ethereum has no explorer page: its values stay copyable.
+// explorers the pages already use, on the public pages only. Ethereum values open Etherscan when the target chain is
+// Ethereum mainnet; on a test chain they stay copyable.
 const EXTERNAL = { target: '_blank', rel: 'noreferrer noopener' };
 export function assetHref(asset) {
   const id = currentAsset(asset);
@@ -106,13 +107,16 @@ export function inscriptionLink(id, label) {
   return href ? h('a.mono', { href, title: id, ...EXTERNAL }, label ?? short(id, 8, 6)) : hashEl(id, label);
 }
 export function txLink(chain, txid, label) {
+  if (chain === 'ethereum') return ethereumLink(txid, label);
   const href = chain === 'bitcoin' && /^[0-9a-f]{64}$/.test(txid ?? '') ? explorer('mempool.space/tx/' + txid) : null;
   return href ? h('a.mono', { href, title: txid, ...EXTERNAL }, label ?? short(txid, 8, 6)) : hashEl(txid, label);
 }
 // An inscription a wallet has broadcast and the gateway has seen on Bitcoin, not yet confirmed and indexed.
 // Every page shows it in these words, with its phase and the transaction linked.
 export const INFLIGHT_TEXT = 'Inscription sent — waiting for Bitcoin confirmation';
-export const INFLIGHT_PHASE = { element: 'Pattern inscription', deployment: 'Token deployment', mint: 'Mint', link: 'Bitmap link' };
+// A TAP fee payment (a mint's or a Bitmap link's) the same way.
+export const INFLIGHT_PAYMENT_TEXT = 'Payment sent — waiting for Bitcoin confirmation';
+export const INFLIGHT_PHASE = { element: 'Pattern inscription', deployment: 'Token deployment', mint: 'Mint', link: 'Bitmap link', payment: 'TAP fee payment' };
 export const inflightTxid = inflight => /^[0-9a-f]{64}$/.test(inflight?.revealTxid ?? '') ? inflight.revealTxid : null;
 export function inflightLine(inflight, { asset } = {}) {
   const txid = inflightTxid(inflight); if (!txid) return null;
@@ -121,11 +125,25 @@ export function inflightLine(inflight, { asset } = {}) {
     confirmations ? ` · ${fmtInt(confirmations)} confirmation${confirmations === 1 ? '' : 's'}` : '');
 }
 export function inflightNote(inflight, { asset, detail } = {}) {
-  return inflightTxid(inflight) ? h('div.callout.info', {}, h('strong', {}, INFLIGHT_TEXT), h('div.small', {}, inflightLine(inflight, { asset })), detail ? h('div.small', {}, detail) : null) : null;
+  return inflightTxid(inflight) ? h('div.callout.info', {}, h('strong', {}, inflight.phase === 'payment' ? INFLIGHT_PAYMENT_TEXT : INFLIGHT_TEXT), h('div.small', {}, inflightLine(inflight, { asset })), detail ? h('div.small', {}, detail) : null) : null;
 }
-// A wallet: its agent page for a Trac key, the Bitcoin explorer for a mainnet Bitcoin address.
+// The Ethereum chain the pages pay on (the gateway's payment target). Etherscan only knows mainnet (chain 1).
+let ethereumChain = null;
+export function setEthereumChain(chainId) { ethereumChain = chainId ?? null; }
+const ethereumMainnet = chainId => { try { return BigInt(chainId ?? ethereumChain ?? 0) === 1n; } catch { return false; } };
+// An Ethereum transaction hash (0x + 64 hex) or address/contract (0x + 40 hex).
+export function ethereumHref(value, { chainId } = {}) {
+  if (!site.public || !ethereumMainnet(chainId)) return null;
+  return /^0x[0-9a-fA-F]{64}$/.test(value ?? '') ? 'https://etherscan.io/tx/' + value : /^0x[0-9a-fA-F]{40}$/.test(value ?? '') ? 'https://etherscan.io/address/' + value : null;
+}
+export function ethereumLink(value, label, { chainId } = {}) {
+  const href = ethereumHref(value, { chainId });
+  return href ? h('a.mono', { href, title: value, ...EXTERNAL }, label ?? short(value, 8, 6)) : hashEl(value, label);
+}
+// A wallet: its agent page for a Trac key, the Bitcoin explorer for a mainnet Bitcoin address, Etherscan for an Ethereum one.
 export function addressLink(address, label) {
   if (agentHref(address)) return agentLink(address, label);
+  if (/^0x[0-9a-fA-F]{40}$/.test(address ?? '')) return ethereumLink(address, label);
   const href = /^(?:bc1|[13])[0-9a-zA-Z]{20,}$/.test(address ?? '') ? explorer('mempool.space/address/' + address) : null;
   return href ? h('a.mono', { href, title: address, ...EXTERNAL }, label ?? short(address, 8, 6)) : hashEl(address, label);
 }

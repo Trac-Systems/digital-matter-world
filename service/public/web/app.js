@@ -5,7 +5,8 @@ import { h, clear, installTooltips, fmtInt, logo, inspect, panel, table, autoCol
 import { get, bus, stream, store } from './console/js/api.js';
 import { tap, feePolicyTip } from './console/js/money.js';
 import { pagedTable } from './console/js/paged.js';
-import { route } from './data.js';
+import { route, api } from './data.js';
+import { setEthereumChain } from './console/js/words.js';
 import { moneyPage } from './money.js';
 import { walletControl } from './connect.js';
 
@@ -68,7 +69,8 @@ async function boot() {
   bus.on('event-stream', drawConn); drawConn(stream.state);
   bus.on('status', drawStrip);
   stream.start();
-  const ready = Promise.allSettled([store.refreshStatus(), store.refreshPatterns()]);
+  // The payment target names the Ethereum chain, so Ethereum hashes link to Etherscan on mainnet only.
+  const ready = Promise.allSettled([store.refreshStatus(), store.refreshPatterns(), api('/web-api/target').then(target => setEthereumChain(target?.ethereum?.chainId))]);
   // About can show its current-fee placeholders while the live reads load.
   if (resolve(pageAddress(new URL(location.href)).pathname).id !== 'about') await ready;
   document.addEventListener('click', follow);

@@ -14,7 +14,7 @@ const { Feeds } = await import('../src/feeds.mjs');
 const { createPublicAPI } = await import('../src/public-api.mjs');
 const { rankingHighlights } = await import('../src/public-rankings.mjs');
 const { mintAssetDefinition } = await import('../src/mint-assets.mjs');
-const { provisioningFixture } = await import('./provisioning-fixture.mjs');
+const { provisioningFixture, chosenTicker } = await import('./provisioning-fixture.mjs');
 const { temp } = await import('./helpers.mjs');
 const height = r.COMPOUND_IDENTITY_V4_HEIGHT, before = String(BigInt(height) - 1n);
 const f = mergeFixture(); manifest.rows.push(...f.manifest.rows);
@@ -70,11 +70,12 @@ test('after the conversion the deterministic compound lists 11 units on Trac, re
   } finally { await store.close(); }
 });
 
-test('only the deterministic compound deploys: its ticker uses the new id and prov names the oldest record\'s first maker', async t => {
+test('only the deterministic compound deploys: its first maker\'s chosen ticker deploys and prov names the oldest record\'s first maker', async t => {
   const p = await provisioningFixture(t), { merge } = r.mergeCompoundCatalogV4(f.state, { network: f.network, height });
   await p.store.put('meta', 'ruleState', { batchVersion: 2 });
   // A job opened for an old id before activation, still waiting for its inscription.
   await p.store.put('compoundTypes', later.id, { ...later, firstMaker: f.other });
+  await chosenTicker(p.operator, later.id, { ...later, firstMaker: f.other }, 'oldpick');
   let old = await p.operator.advanceAsset(later.id, { ...later, firstMaker: f.other });
   assert.equal(old.state, 'awaiting_player_deploy');
   for (const value of merge.types) await p.store.put('compoundTypes', value.id, value);
@@ -97,8 +98,10 @@ test('only the deterministic compound deploys: its ticker uses the new id and pr
   p.reads.bindings = { resolve: maker => { resolved.push(maker); return { request: { address: 'maker' } }; } };
   const { definition } = await mintAssetDefinition(p.store, f.id);
   assert.equal(definition.firstMaker, f.owner);
+  assert.equal((await p.operator.advanceAsset(f.id, definition)).state, 'awaiting_ticker');
+  await chosenTicker(p.operator, f.id, definition, 'merged');
   const job = await p.complete(f.id, definition);
-  assert.equal(job.entry.tick, 'dmwc' + f.id.slice(3, 11)); assert.equal(job.entry.firstMaker, f.owner);
+  assert.equal(job.entry.tick, 'merged'); assert.equal(job.entry.firstMaker, f.owner);
   assert.equal(job.attempts[0].text.prov, r.encodeTracAddress(f.owner)); assert.equal(job.entry.prov, job.attempts[0].text.prov);
   assert.ok(resolved.length && resolved.every(maker => maker === f.owner));
 });

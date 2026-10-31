@@ -5,7 +5,8 @@ import { check } from './util.mjs';
 // accepted catalog writes maintain it thereafter. Runtime readers never scan.
 export function officialCatalogNames(space, asset, row) {
   if (!row || !['patternsByAsset', 'compoundTypes', 'types'].includes(space)) return [];
-  return [...new Set([row.name, space === 'patternsByAsset' ? row.name : rules.compoundTicker(asset)]
+  // v2 compounds have no automatic ticker: their first maker's choice is indexed when made.
+  return [...new Set([row.name, space === 'types' ? rules.compoundTicker(asset) : row.name]
     .filter(name => typeof name === 'string').map(name => name.toLowerCase()))];
 }
 export function indexOfficialNames(store, { space, id, value }) {
@@ -34,6 +35,11 @@ export async function rebuildOfficialNames(store) {
         await store.put('officialCatalogNames', name, { asset: id, name });
       if (!rows.length) break; after = rows.at(-1).id;
     }
+  }
+  for (let after = ''; ;) {
+    const rows = store.list('provisioning', { after, limit: 128 });
+    for (const { id, value } of rows) if (value.chosenTicker?.tick) await store.put('officialCatalogNames', value.chosenTicker.tick, { asset: id, name: value.chosenTicker.tick });
+    if (!rows.length) break; after = rows.at(-1).id;
   }
   await store.put('officialCatalogNameIndex', 'ready', { version: 1 });
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Provisioner } from '../src/provisioning.mjs';
 import { candidate, verifyDeployment } from '../src/deployments.mjs';
-import { provisioningFixture } from './provisioning-fixture.mjs';
+import { provisioningFixture, chosenTicker } from './provisioning-fixture.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
 import { deploymentContent } from '../../kit/lib/inscription-core.mjs';
 import { mintAssetDefinition } from '../src/mint-assets.mjs';
@@ -83,10 +83,13 @@ test('complete binding rejects wrong type, options, element, authority and unava
   f.reads.element = undefined;
   await assert.rejects(verifyDeployment(f.reads, job.entry), /tap_element_lookup_required/);
 });
-test('compound allocator uses registry ticker and occupied friendly label falls back', async t => {
-  const f = await provisioningFixture(t); f.index({ op: 'token-deploy', tick: 'dmwc1', prv: 'outsider' });
-  const job = await f.complete('c1', { id: 'c1', firstMaker: 'ab'.repeat(32) });
-  assert.equal(job.entry.kind, 'compound'); assert.notEqual(job.entry.tick, 'dmwc1'); assert.match(job.entry.tick, /^dmwc1[a-z]{3,7}$/);
+test('a legacy compound deploys its first maker\'s chosen ticker, never an automatic fallback', async t => {
+  const f = await provisioningFixture(t), definition = { id: 'c1', firstMaker: 'ab'.repeat(32) };
+  f.index({ op: 'token-deploy', tick: 'dmwc1', prv: 'outsider' });
+  assert.equal((await f.operator.advanceAsset('c1', definition)).state, 'awaiting_ticker');
+  await chosenTicker(f.operator, 'c1', definition, 'legacypick');
+  const job = await f.complete('c1', definition);
+  assert.equal(job.entry.kind, 'compound'); assert.equal(job.entry.tick, 'legacypick');
 });
 
 test('reorg replacing an element retains old generation and allocates a new deployment payload', async t => {
@@ -202,7 +205,7 @@ test('a recheck cut off by shutdown never suspends a registered token', async t 
   assert.equal(entry.suspended, false); assert.equal(entry.id, job.entry.id);
 });
 
-test('a v2 compound deploys as dmwc and 8 hex, retries a taken ticker, and binds its first maker', async t => {
+test('a v2 compound deploys its chosen ticker, waits for another choice when it is taken, and binds its first maker', async t => {
   const f = await provisioningFixture(t), commitment = 'ab'.repeat(32), asset = 'c2:' + commitment;
   const record = { id: asset, commitment, v: 3, recipe: 'fusion', firstMaker: 'cd'.repeat(32) };
   await f.store.put('compoundTypes', asset, record);
@@ -215,17 +218,23 @@ test('a v2 compound deploys as dmwc and 8 hex, retries a taken ticker, and binds
   f.reads.bindings = { resolve: maker => { assert.equal(maker, record.firstMaker); return { request: { address: 'maker' } }; } };
   const state = await f.operator.state(asset);
   assert.equal(state.state, 'not_started'); assert.equal(state.kind, 'compound');
+  await chosenTicker(f.operator, asset, record, 'abpick');
   let job = await f.complete(asset, record);
-  assert.equal(job.entry.kind, 'compound'); assert.equal(job.entry.tick, 'dmwcabababab'); assert.equal(job.entry.receiver, 'maker');
+  assert.equal(job.entry.kind, 'compound'); assert.equal(job.entry.tick, 'abpick'); assert.equal(job.entry.receiver, 'maker');
   assert.equal(job.entry.firstMaker, record.firstMaker); assert.equal(job.attempts[0].text.op, 'token-deploy');
-  // Someone else's deployment on the ticker: the same ticker and a word.
+  // Someone else's deployment on the chosen ticker: no invented fallback, the first maker chooses again.
   const other = 'c2:' + '12'.repeat(32), second = { ...record, id: other, commitment: '12'.repeat(32) };
-  f.index({ p: 'tap', op: 'token-deploy', tick: 'dmwc12121212', prv: 'outsider' });
+  f.index({ p: 'tap', op: 'token-deploy', tick: 'twelve', prv: 'outsider' });
+  await chosenTicker(f.operator, other, second, 'twelve');
+  await f.operator.advanceAsset(other, second); job = await f.operator.advanceAsset(other, second);
+  assert.equal(job.state, 'awaiting_ticker'); assert.equal(job.tickerAttempt, 1); assert.equal(job.reason, 'ticker_occupied');
+  await chosenTicker(f.operator, other, second, 'twelveb');
   job = await f.complete(other, second);
-  assert.equal(job.tickerAttempt, 1); assert.equal(job.entry.tick, candidate(job, 'compound-ticker', 1, 'dmwc12121212')); assert.match(job.entry.tick, /^dmwc12121212[a-z]{3,7}$/);
+  assert.equal(job.tickerAttempt, 1); assert.equal(job.entry.tick, 'twelveb');
   // An inscription received by another wallet is refused.
   const third = 'c2:' + '34'.repeat(32);
   f.reads.inscription = async () => ({ address: 'someone-else' });
+  await chosenTicker(f.operator, third, { ...record, id: third, commitment: '34'.repeat(32) }, 'thirtyfour');
   job = await f.operator.advanceAsset(third, { ...record, id: third, commitment: '34'.repeat(32) });
   const item = job.attempts.at(-1), id = f.index(item.text); f.mine();
   await assert.rejects(f.operator.submit(third, { phase: 'deployment', inscription: id }), /first_maker_receiver/);

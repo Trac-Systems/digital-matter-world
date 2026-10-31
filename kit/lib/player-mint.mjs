@@ -31,7 +31,13 @@ export class PlayerMint {
     feeRate ??= await this.wallet.source.feeRate();
     return buildInscription({ text, receiver: status.receiver, publicKey: this.wallet.publicKey, network: this.wallet.network, utxos, feeRate, maxFeeSats });
   }
-  async broadcast(row) {
+  // Right after a broadcast the gateway is told, so every viewer sees it as sent until Bitcoin confirms it.
+  // Best effort: the gateway checks it on Bitcoin, and a failed report never fails the broadcast.
+  async reportInflight(inflight, plan) {
+    if (!inflight || typeof this.service.reportInflight !== 'function') return;
+    try { await this.service.reportInflight({ ...inflight, commitTxid: plan.commitTxid, revealTxid: plan.revealTxid, inscriptionId: plan.inscriptionId }); } catch {}
+  }
+  async broadcast(row, inflight) {
     const plan = row.body.plan, source = this.wallet.source;
     // A response lost after either send is harmless: retry only these exact
     // transaction bytes, never choose replacement inputs or pay again.
@@ -41,6 +47,7 @@ export class PlayerMint {
       await source.broadcast(plan.revealHex, plan.revealTxid);
       const result = { state: 'broadcast', requestId: row.body.requestId, commitTxid: plan.commitTxid, revealTxid: plan.revealTxid, inscriptionId: plan.inscriptionId, feeSats: plan.feeSats };
       this.journal.mark(row.id, 'submitted', result);
+      await this.reportInflight(inflight, plan);
       if (row.body.payment && this.service.reportMintPayment) {
         try { await this.service.reportMintPayment({ id: row.body.requestId, paymentId: plan.inscriptionId }); }
         catch { result.notice = 'Payment broadcast; gateway notification is pending. Retry this request to report the same payment ID.'; }
@@ -68,7 +75,7 @@ export class PlayerMint {
         ensure(old.body.receiver === status.receiver, 'Saved payment receiver mismatch');
         checkSavedFee(old.body.plan, maxFeeSats);
         if (this.dryRun) return { state: 'dry-run', requestId: id, resume: true, missing: items, signed: false };
-        const result = await this.broadcast(old);
+        const result = await this.broadcast(old, { kind: 'mint', ref: id, phase: 'payment', attempt: 0 });
         return { ...result, replayed: true, missing: items, note: 'Original payment rebroadcast. Wait for indexed evidence; no second payment was created.' };
       }
       if (this.dryRun) return { state: 'dry-run', requestId: id, items: transfers, signed: false };
@@ -77,7 +84,7 @@ export class PlayerMint {
       const fresh = await this.status(id);
       ensure(JSON.stringify(missingItems(fresh).map(i => [feeItemKey(i), i.amount])) === JSON.stringify(items.map(i => [feeItemKey(i), i.amount])), 'Payment evidence changed; review the remaining items and retry');
       const row = this.journal.reserve(key, { requestId: id, receiver: status.receiver }, { requestId: id, receiver: status.receiver, items, plan, payment: true });
-      return this.broadcast(row);
+      return this.broadcast(row, { kind: 'mint', ref: id, phase: 'payment', attempt: 0 });
     });
   }
   inscribe({ id, feeRate, maxFeeSats }) {
@@ -91,12 +98,12 @@ export class PlayerMint {
         checkSavedFee(old.body.plan, maxFeeSats);
         ensure(old.body.plan.textHash === intent.textHash && old.body.plan.receiver === status.receiver, 'Inscription content changed since preparation');
         if (this.dryRun) return { state: 'dry-run', requestId: id, resume: true, signed: false };
-        return { ...await this.broadcast(old), replayed: true };
+        return { ...await this.broadcast(old, { kind: 'mint', ref: id, phase: 'mint', attempt: 0 }), replayed: true };
       }
       const plan = await this.prepare(text, status, { feeRate, maxFeeSats });
       if (this.dryRun) return { state: 'dry-run', requestId: id, receiver: status.receiver, feeSats: plan.feeSats, feeRate: plan.feeRate, text, signed: false };
       const signed = this.wallet.signCommit(plan);
-      return this.broadcast(this.journal.reserve(key, intent, { requestId: id, plan: signed }));
+      return this.broadcast(this.journal.reserve(key, intent, { requestId: id, plan: signed }), { kind: 'mint', ref: id, phase: 'mint', attempt: 0 });
     });
   }
   deploy({ asset, ticker, retry, feeRate, maxFeeSats }) {
@@ -107,10 +114,12 @@ export class PlayerMint {
         if (job.state === 'awaiting_fee' || job.state === 'refused') return { ...job, sent: false };
       }
       // The gateway prepares deployment content in the background and answers "queued" first.
-      for (let waited = 0; job.state !== 'registered' && !job.content && waited < 120000; waited += 2000) {
+      for (let waited = 0; job.state !== 'registered' && job.state !== 'awaiting_ticker' && !job.content && waited < 120000; waited += 2000) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         job = { ...job, ...await (ticker === undefined ? this.service.deploymentState(job.catalogAsset ?? asset) : this.service.tickerState(job.catalogAsset ?? asset, job.id)) };
       }
+      // A compound's first maker chooses its ticker first (My agent → Your compounds, or its deploy page).
+      if (job.state === 'awaiting_ticker') return { state: job.state, asset, sent: false, notice: 'Its first maker chooses the ticker first: My agent → Your compounds, or the compound\'s deploy page. Then retry inscribe_deployment.' };
       if (job.state !== 'registered' && !job.content) return { state: job.state ?? 'queued', asset, sent: false, notice: 'The gateway is still preparing this deployment. Retry inscribe_deployment in a minute.' };
       ensure(job.asset === asset || asset === job.catalogAsset && /^p2:(0|[1-9][0-9]*)$/.test(asset) &&
         job.asset === 'p' + BigInt(asset.slice(3)).toString(36), 'Deployment asset mismatch');
@@ -137,7 +146,8 @@ export class PlayerMint {
         row = this.journal.reserve(key, intent, { asset, phase, requestId: attemptId, plan: this.wallet.signCommit(plan) });
       }
       if (this.dryRun) return { state: 'dry-run', asset, attemptId, resume: true, signed: false };
-      const result = await this.broadcast(row);
+      const result = await this.broadcast(row, job.officialDeployment ? { kind: 'ticker', ref: job.id, phase: 'deployment', attempt: 0 }
+        : { kind: 'deployment', ref: asset, phase, attempt: phase === 'element' ? job.elementAttempt : job.tickerAttempt });
       try {
         const registered = job.officialDeployment ? await this.service.deployTicker({ asset, requestId: job.id, phase, inscription: result.inscriptionId }) : await this.service.submitDeployment({ asset, phase, inscription: result.inscriptionId });
         return { ...result, asset, phase, deploymentState: registered.state };

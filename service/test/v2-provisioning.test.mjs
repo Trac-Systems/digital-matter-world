@@ -5,6 +5,7 @@ import { mintAssetDefinition, patternCatalogId } from '../src/mint-assets.mjs';
 import { FinancialMints } from '../src/financial-mints.mjs';
 import { serve } from '../src/http.mjs';
 import { rules } from '../src/rules.mjs';
+import { ed25519 } from '../../contract/node_modules/@noble/curves/ed25519.js';
 
 async function fixture(t) {
   const f = await provisioningFixture(t);
@@ -112,9 +113,11 @@ test('a registered v2 compound keeps its existing financial registration path', 
   assert.deepEqual(submitted, [{ type: 'lifecycle', ...generation }]);
 });
 
-test('c2 compounds use the deployment-state, prepare and registration routes', async t => {
+test('c2 compounds use the deployment-state, ticker choice, prepare and registration routes', async t => {
   const f = await fixture(t), commitment = '5e'.repeat(32), asset = 'c2:' + commitment;
-  await f.store.put('compoundTypes', asset, { id: asset, commitment, v: 3, recipe: 'fusion', firstMaker: 'cd'.repeat(32) });
+  const secret = Buffer.alloc(32, 7), maker = Buffer.from(ed25519.getPublicKey(secret)).toString('hex');
+  await f.store.put('compoundTypes', asset, { id: asset, commitment, v: 3, recipe: 'fusion', firstMaker: maker });
+  f.reads.officialName = async name => f.store.get('officialCatalogNames', name) ?? null;
   const http = await serve({ intake: { store: f.store }, files: { serve: async () => false }, operator: { provisioner: f.operator } });
   t.after(() => http.close());
   const get = async path => { const response = await fetch(http.url + path); assert.equal(response.status, 200); return response.json(); };
@@ -122,11 +125,20 @@ test('c2 compounds use the deployment-state, prepare and registration routes', a
   assert.equal((await get('/mint/deployment-state/' + asset)).state, 'not_started');
   assert.equal((await get('/mint/deployment-state/' + encodeURIComponent(asset))).kind, 'compound');
   await get('/mint/deployment/' + asset); await f.operator.work.drain();
-  const job = await get('/mint/deployment-state/' + asset);
-  assert.equal(job.state, 'awaiting_player_deploy'); assert.equal(job.phase, 'deployment');
-  assert.deepEqual(job.content, { p: 'tap', op: 'token-deploy', tick: 'dmwc5e5e5e5e', prv: f.privilege, prov: rules.encodeTracAddress('cd'.repeat(32)), max: '18446744073709551615', dec: '0' });
+  assert.equal((await get('/mint/deployment-state/' + asset)).state, 'awaiting_ticker');
+  // The first maker's agent signs the choice; the reply is the deployment state.
+  const expiry = Date.now() + 60000, message = rules.compoundTickerMessage({ network: f.network, asset, ticker: 'fivee', revision: 1, expiry, firstMaker: rules.encodeTracAddress(maker) });
+  const choose = signer => fetch(http.url + '/mint/deployment-ticker', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ asset, ticker: 'fivee', revision: 1, expiry, agentSignature: Buffer.from(ed25519.sign(Buffer.from(message), signer)).toString('hex') }) });
+  const refused = await choose(Buffer.alloc(32, 8));
+  assert.equal(refused.status, 403); assert.equal((await refused.json()).error, 'first_maker_signature');
+  const chosen = await choose(secret); assert.equal(chosen.status, 200);
+  const job = await chosen.json();
+  assert.equal(job.state, 'awaiting_player_deploy'); assert.equal(job.phase, 'deployment'); assert.equal(job.chosenTicker.tick, 'fivee');
+  assert.deepEqual(job.content, { p: 'tap', op: 'token-deploy', tick: 'fivee', prv: f.privilege, prov: rules.encodeTracAddress(maker), max: '18446744073709551615', dec: '0' });
+  assert.deepEqual(await get('/mint/deployment-state/' + asset), job);
   assert.equal((await post({ asset, phase: 'deployment', inscription: f.index(job.content) })).state, 'registered');
-  assert.equal((await f.reads.registry()).assets[asset].tick, 'dmwc5e5e5e5e');
+  assert.equal((await f.reads.registry()).assets[asset].tick, 'fivee');
   const missing = await fetch(http.url + '/mint/deployment-state/c2:' + '5e'.repeat(31));
   assert.equal(missing.status, 400); assert.equal((await missing.json()).error, 'deployment_asset');
 });

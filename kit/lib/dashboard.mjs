@@ -110,6 +110,7 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
         keys([]); const value = await body(req); dashboardCheck(value && Object.keys(value).every(k => ['asset', 'ticker', 'retry'].includes(k)), 'invalid_ticker_request');
         json(await state.service.deployTicker({ ...value, receiver: await state.payout() })); return;
       }
+      if (req.method === 'POST' && path === '/api/compound-ticker') { keys([]); json(await state.chooseCompoundTicker(await body(req))); return; }
       if (req.method === 'GET' && path === '/api/units') { keys([]); json(await state.units()); return; }
       if (req.method === 'GET' && path === '/api/sends') { keys([]); json(await state.sends()); return; }
       if (req.method === 'GET' && path === '/api/tnk') { keys([]); json(await state.tnk()); return; }

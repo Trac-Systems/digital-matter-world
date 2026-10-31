@@ -25,8 +25,8 @@ export const linkWalletMessage = (network, id, paymentHash) => `dmw-link-payment
 // Only public, bounded checkout projections. No whole row, registry, RPC URL,
 // agent signature, wallet journal or committee secret is sent to the browser.
 export class WebCheckout {
-  constructor({ store, intents = store, config, reads, post, mints, links }) {
-    Object.assign(this, { store, intents, reads, post, mints, links }); this.target = webTarget(config); this.gate = serial();
+  constructor({ store, intents = store, config, reads, post, mints, links, inflight }) {
+    Object.assign(this, { store, intents, reads, post, mints, links, inflight }); this.target = webTarget(config); this.gate = serial();
     this.records = createRecordHighlights(store);
   }
   enrollLink(input) { return this.gate(async () => {
@@ -85,7 +85,8 @@ export class WebCheckout {
   async plan(type, id, requesterSecret) {
     check(['mint', 'link'].includes(type) && rules.hex(id, 32), 'payment_request');
     if (type === 'link' && this.links?.financialVersion === 2 && this.store.get('financialLinks', id)) {
-      const status = await this.links.public(id);
+      // A sent fee payment the gateway has seen on Bitcoin shows to every viewer until it is counted (display only).
+      const status = this.inflight ? this.inflight.decorate('link', await this.links.public(id)) : await this.links.public(id);
       return publicIdentities({ ...status, type, kind: 'tap', financialVersion: 2, target: this.target, counted: await this.reads.counted(), deadline: status.payBy.untilBlock,
         submit: '/link/payment', walletPreparation: false, bitcoinWalletRequired: status.price !== '0', refundAfter: null, networkFee: null,
         redeem: { items: status.payable ? rules.walletFeeItems(status.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] } });

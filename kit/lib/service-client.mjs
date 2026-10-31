@@ -27,7 +27,7 @@ export class ServiceClient {
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
-    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
+    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
     const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: this.origin, route: path, method, status, code, reason, submission });
     let response;
     for (let attempt = 0; ; attempt++) try {
@@ -229,10 +229,13 @@ export class ServiceClient {
   mintStatus(id) { check(hex32(id), 'Invalid mint ID'); return this.request('/mint/' + id); }
   mintPaymentPlan(id) { check(hex32(id), 'Invalid mint ID'); return this.request('/web-api/mint/' + id); }
   reportMintPayment(value) { return this.request('/mint/payment', { value }); }
+  // A broadcast the gateway checks on Bitcoin and shows as sent until it confirms (display only).
+  reportInflight(value) { return this.request('/mint/inflight', { value }); }
   deployment(asset) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/deployment/' + asset, { limit: 1500000 }); }
   assetTickers(asset, { after, limit } = {}) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/assets/' + asset + '/tickers', { query: { ...(after ? { after } : {}), ...(limit ? { limit: String(limit) } : {}) } }); }
   tickerPayment(value) { return this.request('/mint/ticker-payment', { value }); }
   deployTicker(value) { return this.request('/mint/deploy-ticker', { value }); }
+  chooseCompoundTicker(value) { return this.request('/mint/deployment-ticker', { value }); }
   tickerState(asset, selector) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/ticker-state/' + asset, { query: { selector } }); }
   deploymentState(asset) { check(deploymentAsset(asset), 'Invalid deployment asset'); return this.request('/mint/deployment-state/' + asset, { limit: 1500000 }); }
   deploymentLink(asset, owner, origin = this.origin) {

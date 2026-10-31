@@ -192,8 +192,8 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         result = input.request?.v !== 2 && !input.paymentHash && web.checkout ? await web.checkout.enrollLink(input) : await links.request(input);
       }
       else if (links?.quote && req.method === 'POST' && req.url === '/link/quote') result = await links.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
-      else if (links?.public && req.method === 'GET' && /^\/link-status\/[0-9a-f]{64}$/.test(req.url)) result = await links.public(req.url.split('/').at(-1));
-      else if (links && req.method === 'POST' && req.url === '/link/payment') result = await links.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
+      else if (links?.public && req.method === 'GET' && /^\/link-status\/[0-9a-f]{64}$/.test(req.url)) result = shown('link', await links.public(req.url.split('/').at(-1)));
+      else if (links && req.method === 'POST' && req.url === '/link/payment') result = shown('link', await links.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096))));
       else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/(?:api\/)?assets\/[^/?#]+\/tickers(?:\?|$)/.test(req.url)) {
         const url = new URL(req.url, 'http://local'), asset = decodeURIComponent(url.pathname.split('/').at(-2));
         check([...url.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_query');
@@ -229,6 +229,10 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       else if (operator?.provisioner && req.method === 'POST' && req.url === '/mint/deployment') {
         const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input.asset), 'deployment_asset');
         result = shown('deployment', input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input));
+      }
+      else if (operator?.provisioner && req.method === 'POST' && req.url === '/mint/deployment-ticker') {
+        const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input?.asset), 'deployment_asset');
+        result = shown('deployment', await operator.provisioner.chooseTicker(input.asset, input));
       }
       else if (inflight && req.method === 'POST' && req.url === '/mint/inflight') result = await inflight.report(JSON.parse(await body(req, inflight.settings.requestBytes)));
       else if (mints?.publicMints && req.method === 'POST' && ['/public-mints/quote', '/public-mints/start'].includes(req.url)) {

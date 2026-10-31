@@ -103,7 +103,7 @@ export function tickerPage(root, { asset, id }) {
       { key: 'role', label: 'Fee', render: f => String(f.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
       { key: 'amount', label: 'Amount', num: true, render: f => h('span.mono', {}, tap(f.amount, fee.unit)) },
       { key: 'to', label: 'Paid to', render: f => f.to ? addressLink(f.to) : h('span.faint', {}, 'burn') }], { sortable: false }), { flush: true }) : null,
-    fee?.split && !free ? panel('Fee split', h('div', { style: { padding: '0 14px 4px' } }, splitTable(fee.split, fee.destinations ?? {}, 'tap', fee.unit)), { flush: true }) : null,
+    fee?.split && !free ? panel('Fee split', h('div', { style: { padding: '0 14px 4px' } }, splitTable(fee.split, fee.destinations ?? {}, 'tap', fee.unit, { address: addressLink })), { flush: true }) : null,
     h('p.small.muted', { style: { margin: 0 } }, 'The deploy inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'));
     clear(side, panel(compound ? 'Compound' : 'Pattern', kv([
       [compound ? 'Compound' : 'Pattern', h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: site.href('table', compound ? { c: asset } : { p: asset }) }, assetName(asset)))],

@@ -6,6 +6,8 @@ import { safeCode } from './errors.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
 import { wireIdentities, decodeTracAddress, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { verifyBinding } from '../../rules/src/payout-bindings.mjs';
+import { compoundTickerMessage, validateOfficialTicker } from '../../rules/src/ticker-grammar.js';
+import { signBytes } from './signing.mjs';
 import { formatTnk } from './tnk-values.mjs';
 import { previewCraftNamed } from './craft-v2.mjs';
 
@@ -107,6 +109,8 @@ export function dashboardJournal(journal) {
   return Object.assign(Object.create(journal), { waitTurn: async getHead => getHead(), finishTurn() {} });
 }
 
+// A payment or mint the gateway has seen on Bitcoin and that waits for its confirmation (display only).
+const sentOnBitcoin = (inflight, phases) => /^[0-9a-f]{64}$/.test(inflight?.revealTxid ?? '') && phases.includes(inflight.phase) ? inflight : null;
 export class DashboardState {
   constructor(context) {
     this.context = context; this.agent = context.agent;
@@ -366,7 +370,8 @@ export class DashboardState {
       const id = row.result.request?.id ?? row.result.next[0].arguments.id;
       let status; try { status = await this.service.linkStatus(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
       links.push({ requestId: id, block: status.block ?? row.body?.request?.block ?? row.body?.request?.height ?? null, state: status.state,
-        ...(status.price === '0' ? { price: '0' } : {}), payable: status.price !== '0' && status.state === 'awaiting_payment', error: status.error ?? null, paymentLink: '/link/' + id });
+        ...(status.price === '0' ? { price: '0' } : {}), payable: status.price !== '0' && status.state === 'awaiting_payment', error: status.error ?? null,
+        inflight: status.price === '0' ? null : sentOnBitcoin(status.inflight, ['payment']), paymentLink: '/link/' + id });
     }
     return { links, next: offset + limit < saved.length ? offset + limit : null };
   }
@@ -392,7 +397,7 @@ export class DashboardState {
       const id = this.idOf(row); let status;
       try { status = await this.status(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
       if (status.state !== 'minted') requests.push({ asset: row.body.request.asset, name: (await this.unitLabel(row.body.request.asset)).name, block: row.body.request.block, requestId: id,
-        state: status.state, payable: status.payable === true, error: status.error ?? null,
+        state: status.state, payable: status.payable === true, error: status.error ?? null, inflight: sentOnBitcoin(status.inflight, ['payment', 'mint']),
         paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) });
     }
     return { requests, next: offset + limit < saved.length ? offset + limit : null, batch: this.batch };
@@ -897,14 +902,37 @@ export class DashboardState {
     const refine = this.savedCrafts(CRAFT_RECENT * 3).find(c => c.kind === 'refine' && c.asset === u.asset);
     const p = record?.properties ?? {}, maker = record ? wireIdentities(record).firstMaker : null;
     const firstMaker = !!maker && maker === this.agent.owner, token = await this.compoundToken(u.asset);
-    const inflight = token === 'not_deployed' ? await this.craftRead('i/' + u.asset, async () => (await this.service.deploymentState(u.asset))?.inflight ?? null).catch(() => null) : null;
+    const deployment = token === 'not_deployed' ? await this.craftRead('d/' + u.asset, async () => {
+      const d = await this.service.deploymentState(u.asset);
+      return d ? { inflight: d.inflight ?? null, state: d.state ?? null, reason: d.reason ?? null, chosenTicker: d.chosenTicker ?? null } : null;
+    }).catch(() => null) : null;
+    const inflight = deployment?.inflight ?? null;
     return { asset: u.asset, name: u.name, amount: u.amount, available: u.available, tier, recipe: record?.recipe ?? null, from,
       generation: p.generation === undefined ? null : String(p.generation), charge: p.charge ?? null, spectrum: p.spectrum ?? null,
       firstMaker, token, ticker: token === 'deployed' ? await this.compoundTicker(u.asset) : null,
       inflight: /^[0-9a-f]{64}$/.test(inflight?.revealTxid ?? '') ? inflight : null,
       // The first maker deploys the token on the same deployment page as patterns, with the agent's address filled in.
       deploymentLink: firstMaker && token === 'not_deployed' ? this.service.deploymentLink(u.asset, this.agent.address, this.agent.paymentOrigin) : null,
+      // The official ticker the first maker chose (null: not chosen yet). It can change until the deploy is in a block.
+      tickerChoice: firstMaker && token === 'not_deployed' && deployment ? { state: deployment.state, reason: deployment.reason,
+        tick: deployment.chosenTicker?.tick ?? null, revision: deployment.chosenTicker?.revision ?? 0 } : null,
       needsRefine: !!record && tier === null, refine: refine ? await this.craftView(refine) : null };
+  }
+  // The first maker's agent signs the compound's official ticker; the gateway checks it like
+  // "deploy your own ticker" and answers with the deployment, now waiting for the deploy.
+  async chooseCompoundTicker(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).sort().join(',') === 'asset,ticker' && /^c2:[0-9a-f]{64}$/.test(value.asset) && typeof value.ticker === 'string', 'invalid_ticker_request');
+    let ticker; try { ticker = validateOfficialTicker(value.ticker); } catch (error) { dashboardCheck(false, error.message); }
+    const record = await this.compoundRecord(value.asset);
+    dashboardCheck(record && wireIdentities(record).firstMaker === this.agent.owner, 'not_first_maker', 403);
+    const state = await this.service.deploymentState(value.asset);
+    const revision = (state?.chosenTicker?.revision ?? 0) + 1, expiry = Date.now() + 600000;
+    const message = compoundTickerMessage({ network: this.agent.network, asset: value.asset, ticker, revision, expiry, firstMaker: this.agent.address });
+    const job = await this.service.chooseCompoundTicker({ asset: value.asset, ticker, revision, expiry, agentSignature: signBytes(this.agent.wallet, Buffer.from(message)) });
+    this.craftReads.delete('d/' + value.asset);
+    return { asset: value.asset, state: job.state, tick: job.chosenTicker?.tick ?? null, revision: job.chosenTicker?.revision ?? revision,
+      deploymentLink: this.service.deploymentLink(value.asset, this.agent.address, this.agent.paymentOrigin) };
   }
   // A deployed compound's ticker, from its registered deployment.
   async compoundTicker(asset) {

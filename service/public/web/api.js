@@ -58,7 +58,7 @@ export const site = {
     return '/' + view;
   },
   // A pattern's or compound's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inflight' | 'inscribed' | 'none', label, kind, inflight,
-  // tick (the deployed ticker, which can differ from the name), deployer (who may deploy until when) }, or null when
+  // tick (the deployed ticker, which can differ from the name), chosen (a compound's ticker chosen before deploy), deployer (who may deploy until when) }, or null when
   // the gateway does not know the asset. Read-only; pages ask only for what is on screen.
   token(asset) {
     if (!/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(asset ?? '')) return Promise.resolve(null);
@@ -85,12 +85,14 @@ async function slot(read) {
 }
 // 'inflight': a wallet-sent inscription the gateway saw on Bitcoin (words.js INFLIGHT_TEXT).
 const TOKEN_STEPS = { deployed: ['Token deployed', 'minted'], confirming: ['Token being confirmed', 'info'], inflight: ['Inscription sent — waiting for Bitcoin confirmation', 'info'], inscribed: ['Pattern inscribed — deploy token next', 'info'], none: ['Token not deployed', 'warn'] };
-const JOB_STATES = new Set(['not_started', 'queued', 'awaiting_player_deploy', 'inscribed', 'deploying', 'confirming']);
+const JOB_STATES = new Set(['not_started', 'queued', 'awaiting_ticker', 'awaiting_player_deploy', 'inscribed', 'deploying', 'confirming']);
 function tokenStep(job) {
   const step = job?.state === 'registered' ? 'deployed' : !JOB_STATES.has(job?.state) ? null
     : job.state === 'confirming' && job.entry ? 'confirming' : job.inflight ? 'inflight' : job.elementId ? 'inscribed' : 'none';
   return step && { step, label: TOKEN_STEPS[step][0], kind: TOKEN_STEPS[step][1], tick: step === 'deployed' ? job.entry?.tick ?? null : null,
     ...(step === 'inflight' ? { inflight: job.inflight } : {}),
+    // A compound's ticker chosen by its first maker, before it is deployed (null: not chosen yet).
+    ...(job.kind === 'compound' && step !== 'deployed' ? { chosen: job.chosenTicker?.tick ?? null } : {}),
     deployer: step === 'deployed' ? null : job.deployer ?? null };
 }
 

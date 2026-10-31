@@ -8,7 +8,7 @@ import { pagedTable } from './paged.js';
 import { addressLink } from './words.js';
 import { get, store } from './api.js';
 import { tap } from './money.js';
-import { validateChosenTicker } from '../../../rules/src/ticker-grammar.js';
+import { validateChosenTicker, validateOfficialTicker } from '../../../rules/src/ticker-grammar.js';
 
 export const SAME_REWARDS = 'Units go to the ticker you choose. The rewards are the same whichever ticker.';
 export const OFFICIAL_FIRST = 'The official token is deployed first. Once it exists, anyone can deploy another ticker for it.';
@@ -29,12 +29,23 @@ export const TICKER_WORDS = {
   deployment_content: 'The inscription differs from this ticker’s deployment.',
   deployment_confirmations: 'Not in a Bitcoin block yet. This page keeps checking.',
   invalid_ticker_request: 'Enter a ticker name.',
+  ticker_official_grammar: 'A compound’s official ticker uses 3 to 32 lowercase letters a–z and digits 0–9.',
+  ticker_fixed: 'The deploy is already in a Bitcoin block, so the ticker is fixed.',
+  ticker_choice_stale: 'The ticker was changed meanwhile. Reload the page and try again.',
+  ticker_choice_expired: 'The signature expired. Try again.',
+  first_maker_signature: 'Only the compound’s first maker can set its ticker: sign with that agent or the TAP Wallet bound to it.',
+  first_maker_wallet_required: 'The first maker’s agent has no TAP Wallet bound yet. Bind one in My agent, or set the ticker from the agent dashboard.',
+  not_first_maker: 'Only the compound’s first maker can set its ticker.',
   no_payout: 'Bind a payout TAP wallet to your agent first.',
 };
-export const tickerWords = code => TICKER_WORDS[code] ?? String(code ?? '').replace(/_/g, ' ');
+const PAUSED = 'The fees are being updated. New quotes open again once the new fee settings are active on Trac, within a few Bitcoin blocks. Nothing was sent; try again then.';
+// A code without its own words never shows raw: the gateway's code stays only as a small detail.
+export const tickerWords = code => code === 'fee_settings_pin' ? PAUSED : TICKER_WORDS[code] ?? `This step could not be completed right now (${String(code ?? 'unknown').replace(/_/g, ' ')}). Nothing was sent; try again shortly.`;
 
 // The gateway's own ticker grammar; the gateway checks again.
 export const chosenTicker = text => validateChosenTicker(String(text ?? ''));
+// A compound's official ticker: the same grammar, within what signers accept for official mints.
+export const officialTicker = text => validateOfficialTicker(String(text ?? ''));
 
 // The deploy fee before a quote: base fee times the ticker multiplier of the live settings; none means free.
 export function deployFeeText(status = store.status) {
@@ -116,6 +127,55 @@ export function tickerChoice(asset, { onChange, single } = {}) {
   return { el, value: () => chosen, label: () => chosen ? names.get(chosen) ?? null : null };
 }
 
+// Refusals of the name itself, said once under the field.
+const NAME_REFUSALS = ['ticker_occupied', 'ticker_taken', 'ticker_conflict', 'ticker_reserved', 'ticker_invalid', 'ticker_official_grammar'];
+// A ticker name field with live checks: the grammar here, then other patterns' official names; the gateway also
+// checks compounds, TAP itself and pending requests. onCheck(ok) after each check; ok() whether the name passed.
+function tickerNameField({ label = 'Your ticker', grammar = chosenTicker, taken = new Set(), takenText = '', action = 'Continue', onCheck, onTyping, value = '' } = {}) {
+  const hint = h('div.hint', { role: 'status', 'aria-live': 'polite' });
+  let typing, asked = 0, ok = false;
+  const show = (text, bad) => { hint.textContent = text; hint.style.color = bad ? 'var(--bad)' : ''; };
+  const done = (passed, text, bad) => { ok = passed; if (text !== undefined) show(text, bad); onCheck?.(ok); };
+  const check = async () => {
+    const seq = ++asked, text = name.value;
+    done(false);
+    if (!text) { show(''); return; }
+    let tick;
+    try { tick = grammar(text); } catch (error) { show(tickerWords(error.message), true); return; }
+    if (taken.has(tick)) { show(takenText, true); return; }
+    show('Checking…');
+    const names = await get('/patterns?' + new URLSearchParams({ q: tick, limit: '10' })).then(r => r.patterns ?? [], () => []);
+    if (seq !== asked) return;
+    if (names.some(p => String(p.name).toLowerCase() === tick || String(p.name).toLowerCase() === 'dmt-' + tick)) { show(TICKER_WORDS.ticker_conflict, true); return; }
+    done(true, `“${tick}” looks free. ${action} checks it on TAP and against pending requests.`);
+  };
+  const name = input({ value, placeholder: 'Ticker name', 'aria-label': 'Ticker name', maxlength: 64, autocomplete: 'off', spellcheck: 'false',
+    oninput: () => { clearTimeout(typing); ok = false; onTyping?.(); typing = setTimeout(() => void check(), 250); } });
+  return { el: field(label, name, hint), name, show, ok: () => ok };
+}
+
+// A compound's official ticker, chosen by its first maker before its token is deployed. It can change until the
+// deploy is in a Bitcoin block. choose(tick) signs and sends the choice and returns the deployment; current: the
+// ticker chosen so far (null: none yet).
+export function officialTickerForm({ current = null, choose, onChosen } = {}) {
+  const note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
+  const ticker = tickerNameField({ label: current ? 'Change the ticker' : 'Ticker', grammar: officialTicker, taken: new Set(current ? [current] : []), action: current ? 'Change ticker' : 'Set ticker',
+    takenText: 'This is already its ticker.', onCheck: ok => { go.disabled = !ok; clear(note); note.className = 'callout'; }, onTyping: () => { go.disabled = true; } });
+  const go = h('button.btn' + (current ? '' : '.primary'), { type: 'button', disabled: true, onclick: async () => {
+    if (!ticker.ok()) return;
+    go.disabled = true; go.classList.add('busy'); note.className = 'callout busy'; note.textContent = 'Signing and checking the name on TAP…';
+    try {
+      const job = await choose(officialTicker(ticker.name.value));
+      note.className = 'callout good'; clear(note, 'Ticker set: ', h('strong.mono', {}, job?.chosenTicker?.tick ?? job?.tick ?? officialTicker(ticker.name.value)), '.');
+      onChosen?.(job);
+    } catch (error) {
+      if (NAME_REFUSALS.includes(error.message)) { ticker.show(tickerWords(error.message), true); clear(note); note.className = 'callout'; }
+      else { note.className = 'callout bad'; note.textContent = tickerWords(error.message); }
+    } finally { go.classList.remove('busy'); go.disabled = !ticker.ok(); }
+  } }, current ? 'Change ticker' : 'Set ticker');
+  return h('div.stack', { style: { gap: '10px' } }, ticker.el, h('div.row', {}, go), note);
+}
+
 // "Deploy your own ticker": a name with live checks, the fee, then the request and its payment page.
 // request(ticker) prepares it on the gateway and returns the request; open(job) continues to its page.
 // toggle: start as one quiet button that opens the form; padded: inside a flush panel.
@@ -130,29 +190,15 @@ export function deployTickerForm(asset, { request, open, compound = false, compa
     else form(rows);
   });
   const form = rows => {
-    const hint = h('div.hint', { role: 'status', 'aria-live': 'polite' }), fee = h('span.mono', {}, deployFeeText());
+    const fee = h('span.mono', {}, deployFeeText());
     const note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
     const taken = new Set(rows.map(r => String(r.tick ?? '').toLowerCase()));
-    let typing, asked = 0, ok = false;
-    const show = (text, bad) => { hint.textContent = text; hint.style.color = bad ? 'var(--bad)' : ''; };
-    const check = async () => {
-      const seq = ++asked, text = name.value;
-      ok = false; go.disabled = true; clear(note); note.className = 'callout';
-      if (!text) { show(''); return; }
-      let tick;
-      try { tick = chosenTicker(text); } catch (error) { show(tickerWords(error.message), true); return; }
-      if (taken.has(tick)) { show('This ticker already belongs to this ' + (compound ? 'compound' : 'pattern') + '. Choose another name.', true); return; }
-      show('Checking…');
-      // Another pattern's official name; the gateway also checks compounds, TAP itself and pending requests.
-      const names = await get('/patterns?' + new URLSearchParams({ q: tick, limit: '10' })).then(r => r.patterns ?? [], () => []);
-      if (seq !== asked) return;
-      if (names.some(p => String(p.name).toLowerCase() === tick || String(p.name).toLowerCase() === 'dmt-' + tick)) { show(TICKER_WORDS.ticker_conflict, true); return; }
-      ok = true; go.disabled = false;
-      show(`“${tick}” looks free. Continue checks it on TAP and against pending requests.`);
-    };
-    const name = input({ placeholder: 'Ticker name', 'aria-label': 'Ticker name', maxlength: 64, autocomplete: 'off', spellcheck: 'false',
-      oninput: () => { clearTimeout(typing); ok = false; go.disabled = true; typing = setTimeout(() => void check(), 250); } });
+    const ticker = tickerNameField({ taken, takenText: 'This ticker already belongs to this ' + (compound ? 'compound' : 'pattern') + '. Choose another name.',
+      onCheck: ok => { go.disabled = !ok; clear(note); note.className = 'callout'; }, onTyping: () => { go.disabled = true; } });
+    const { name, show } = ticker;
+    let ok = false;
     const go = h('button.btn.primary', { type: 'button', disabled: true, onclick: async () => {
+      ok = ticker.ok();
       if (!ok) return;
       go.disabled = true; go.classList.add('busy'); note.className = 'callout busy'; note.textContent = 'Checking the name on TAP…';
       try {
@@ -163,13 +209,13 @@ export function deployTickerForm(asset, { request, open, compound = false, compa
         open?.(job);
       } catch (error) {
         // A refused name is said once, under the field; anything else in the callout.
-        if (['ticker_occupied', 'ticker_taken', 'ticker_conflict', 'ticker_reserved', 'ticker_invalid'].includes(error.message)) { show(tickerWords(error.message), true); ok = false; clear(note); note.className = 'callout'; }
+        if (NAME_REFUSALS.includes(error.message)) { show(tickerWords(error.message), true); ok = false; clear(note); note.className = 'callout'; }
         else { note.className = 'callout bad'; note.textContent = tickerWords(error.message); }
       } finally { go.classList.remove('busy'); go.disabled = !ok; }
     } }, 'Continue');
     clear(el, h('div.stack', { style: { gap: '10px' } },
       compact ? null : h('p', { style: { margin: 0 } }, 'Deploy another TAP token for this ' + (compound ? 'compound' : 'pattern') + ' under a name you choose. It shares the units of the official token; whoever holds its deploy inscription earns a share of every mint into it.'),
-      field('Your ticker', name, hint),
+      ticker.el,
       kv([['Deploy fee', fee, 'Set by the operator. The exact fee is quoted before you pay.']]),
       h('div.row', {}, go), note));
     if (toggle) name.focus();

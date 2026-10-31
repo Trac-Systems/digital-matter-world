@@ -25,6 +25,7 @@ export const publicMintMessages = {
 };
 const messages = {
   ...publicMintMessages,
+  fee_settings_pin: 'The fees are being updated. New quotes open again once the new fee settings are active on Trac, within a few Bitcoin blocks. Nothing was sent; try again then.',
   binding_wallet_signature: "Your wallet's signature was not accepted. Make sure the wallet shown above is the active account and try again.",
   binding_expired: 'Request expired. Ask your agent for a new binding link.',
   binding_nonce: 'A newer payout binding already exists. Ask your agent for a new binding link.',

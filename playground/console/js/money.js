@@ -89,8 +89,9 @@ const ROLE = {
   discoverer: ['Discoverer', '#9A72C8', 'Paid directly to the pattern discoverer.'],
   deployer: ['Ticker deployer', '#3E7F86', 'Taken from burn and owed to the current holder of the minted ticker\'s deploy inscription in the payout ledger.'],
 };
-// Deferred shares use the same split rows; treasury holds their payout backing.
-export function splitTable(split, destinations = {}, kind = 'tap', unit) {
+// Deferred shares use the same split rows; treasury holds their payout backing. `address` renders a destination
+// (the public pages pass their explorer link).
+export function splitTable(split, destinations = {}, kind = 'tap', unit, { address = hashEl } = {}) {
   if (!split) return h('div.empty', {}, 'No split.');
   const entries = Object.entries(split).filter(([k, v]) => ROLE[k] && v !== undefined && v !== null);
   const total = entries.reduce((sum, [, v]) => sum + BigInt(v), 0n);
@@ -100,7 +101,7 @@ export function splitTable(split, destinations = {}, kind = 'tap', unit) {
     { key: 'role', label: 'Goes to', render: r => h('span', { 'data-tip': ROLE[r.role][2] }, h('span.swatch', { style: { background: ROLE[r.role][1] } }), ROLE[r.role][0]), sortable: false },
     { key: 'pct', label: 'Share', num: true, render: r => h('span.mono', {}, percent(r.amount, total)), sortable: false },
     { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, fee(r.amount, kind, unit)), sortable: false },
-    { key: 'to', label: 'Address', render: r => r.to ? hashEl(r.to) : h('span.faint', {}, r.role === 'burn' ? 'burn' : ['legacyDeploy', 'deployer'].includes(r.role) ? 'payout ledger' : '–'), sortable: false },
+    { key: 'to', label: 'Address', render: r => r.to ? address(r.to) : h('span.faint', {}, r.role === 'burn' ? 'burn' : ['legacyDeploy', 'deployer'].includes(r.role) ? 'payout ledger' : '–'), sortable: false },
   ], { sortable: false }));
 }
 

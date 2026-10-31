@@ -95,6 +95,20 @@ export function tapPaymentStep(journal, name, { provider, address, network, mess
     definitelyNotSent: error => transfer && error?.message === 'No authority found',
   });
 }
+// TAP Wallet's one-transaction transfer receipt names its redeem inscription, or the transaction funding the redeem;
+// a script-path spend is itself the reveal, otherwise the reveal spends its output 0 (one point read each, by txid).
+export async function paymentReveal(result, network, fetchImpl = fetch) {
+  const id = typeof result === 'string' ? result : result?.inscriptionId;
+  if (/^[0-9a-f]{64}i0$/.test(id ?? '')) return { revealTxid: id.slice(0, 64), inscriptionId: id };
+  const txid = result?.txid;
+  if (!/^[0-9a-f]{64}$/.test(txid ?? '')) return null;
+  if (network === 'regtest') return { revealTxid: txid, inscriptionId: txid + 'i0' };
+  const base = 'https://mempool.space' + (network === 'mainnet' ? '' : '/' + network) + '/api/tx/';
+  const read = async path => { const response = await fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) }); return response.ok ? response.json() : null; };
+  if ((await read(txid))?.vin?.[0]?.witness?.length >= 3) return { revealTxid: txid, inscriptionId: txid + 'i0' };
+  const spend = await read(txid + '/outspend/0');
+  return spend?.spent && /^[0-9a-f]{64}$/.test(spend.txid ?? '') ? { commitTxid: txid, revealTxid: spend.txid, inscriptionId: spend.txid + 'i0' } : null;
+}
 export function ethereumPaymentStep(journal, name, { provider, transaction, chainId, token }) {
   return journal.step(name, () => provider.request({ method: 'eth_sendTransaction', params: [transaction] }), {
     beforeSend: async () => {

@@ -109,6 +109,16 @@ test('unpaid, expired, wrong receiver and mismatched quantity never authorize a 
 });
 
 
+test('a compound waiting for its first maker\'s ticker is not deployed and says how to choose it', async t => {
+  const f = fixture(), journal = await Journal.open(await temp(t), 'deploy'); cleanup(t, () => journal.close());
+  let reads = 0;
+  const job = { asset: 'c2:' + 'ab'.repeat(32), kind: 'compound', state: 'awaiting_ticker', reason: 'ticker_choice_required', phase: 'deployment', tickerAttempt: 0, attempts: [], content: null };
+  const player = new PlayerMint({ service: { deployment: async () => { reads++; return job; } }, journal, wallet: f.wallet, owner: 'fixture-first-maker' });
+  const result = await player.deploy({ asset: job.asset, maxFeeSats: '10000' });
+  assert.equal(result.state, 'awaiting_ticker'); assert.equal(result.sent, false); assert.match(result.notice, /chooses the ticker first/);
+  assert.equal(reads, 1); assert.equal(journal.recent().length, 0);
+});
+
 test('compound first maker deploys once and retries registration after finality', async t => {
   const f = fixture(), journal = await Journal.open(await temp(t), 'deploy'); cleanup(t, () => journal.close());
   const owner = 'fixture-first-maker', payload = { p: 'tap', op: 'token-deploy', tick: 'dmwcfixture', max: '1000', dec: '0', prv: payee + 'i0' };
@@ -141,6 +151,19 @@ test('a c2 compound deployment job yields its dmwc token-deploy content; malform
   const service = new ServiceClient({ origin: 'http://127.0.0.1:5570', mode: 'regtest' });
   assert.equal(service.deploymentLink(asset), 'http://127.0.0.1:5570/mint/' + asset);
   assert.throws(() => service.deploymentLink('c2:xyz'), /Invalid deployment asset/);
+});
+
+test('a compound deploys its first maker\'s chosen ticker; another ticker or one signers cannot use is refused', () => {
+  const asset = 'c2:' + 'ab'.repeat(32), payload = { p: 'tap', op: 'token-deploy', tick: 'nullspar', prv: payee + 'i0', max: '18446744073709551615', dec: '0' };
+  const job = { asset, kind: 'compound', state: 'awaiting_player_deploy', phase: 'deployment', tickerAttempt: 1, chosenTicker: { tick: 'nullspar', revision: 1, attempt: 1 },
+    definition: { firstMaker: 'fixture-first-maker' }, content: payload, inscriptionText: JSON.stringify(payload), attempts: [{ id, phase: 'deployment', attempt: 1, text: payload }] };
+  assert.deepEqual(deploymentContent(job), { text: JSON.stringify(payload), attemptId: id, phase: 'deployment' });
+  for (const tick of ['dmwcabababab', 'other', 'NULLSPAR']) {
+    const text = { ...payload, tick };
+    assert.throws(() => deploymentContent({ ...job, content: text, inscriptionText: JSON.stringify(text), attempts: [{ id, phase: 'deployment', attempt: 1, text }] }), /Invalid mint authority or ticker/);
+  }
+  // Without a choice only an automatic dmw ticker packaged earlier is accepted.
+  assert.throws(() => deploymentContent({ ...job, chosenTicker: null }), /Invalid mint authority or ticker/);
 });
 
 test('deploy content may name its discoverer or first maker in prov, never anyone else', () => {

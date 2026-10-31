@@ -8,6 +8,8 @@ import { updateRegistryAsset } from './registry.mjs';
 import { mintAssetDefinition, patternCatalogId } from './mint-assets.mjs';
 import { encodeTracAddress, isTracAddress } from '../../rules/src/trac-address.js';
 import { lifecycleSignal } from './lifecycle.mjs';
+import { verifyTickerChoice, TICKER_CHOICE_KEYS, TICKER_CHOICE_MS } from './compound-ticker.mjs';
+import { tickerAvailable, reserveTicker, releaseTicker } from './ticker-availability.mjs';
 
 // Background pacing: a failed step retries after RETRY_MS; a registered deployment is re-verified
 // every RECHECK_MS. Source verification runs independently for each asset.
@@ -19,6 +21,13 @@ const packagedName = (job, phase, attempt) => {
   const text = job.attempts.find(a => a.phase === phase && a.attempt === attempt)?.text;
   return phase === 'element' ? (typeof text === 'string' ? text.split('.')[0] : undefined) : text?.tick;
 };
+// A compound's official ticker is the one its first maker chose for the current attempt.
+// Without one the job waits for the choice; there is no automatic compound ticker.
+const choiceFor = job => job.kind === 'compound' && job.chosenTicker?.attempt === job.tickerAttempt ? job.chosenTicker : null;
+const needsChoice = job => job.kind === 'compound' && !choiceFor(job);
+// Jobs that move only when a person acts: the player's inscription, or the first maker's ticker.
+const waitsForPlayer = job => job.state === 'awaiting_ticker' || job.state === 'awaiting_player_deploy' && !needsChoice(job);
+const reservation = asset => 'official/' + asset;
 const TRANSIENT = new Set(['tap_snapshot_changed', 'tap_quorum_unavailable', 'tap_lookup_index_catching_up', 'http_timeout', 'http_unavailable', 'http_capacity']);
 export class Provisioner {
   constructor({ store, reads, network, registryPath, policy, concurrency = 4 }) {
@@ -86,7 +95,7 @@ export class Provisioner {
     }
     const job = await this.enqueue(resolved.asset, resolved.definition);
     check(same(job.definition, resolved.definition), 'provisioning_definition_changed');
-    if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) {
+    if (!waitsForPlayer(job) && (job.nextRetry ?? 0) <= Date.now()) {
       this.advanceAsset(resolved.asset, resolved.definition).catch(() => {});
     }
     return shown(job);
@@ -110,7 +119,7 @@ export class Provisioner {
       await parallelPage(definitions, async ([asset, definition]) => {
         const job = await this.enqueue(asset, definition);
         // A job waiting for the player's inscription advances when the player submits it.
-        if (job.state !== 'awaiting_player_deploy' && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
+        if (!waitsForPlayer(job) && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
       }, this.concurrency);
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
         ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '', compound: compounds.length === 8 ? compounds.at(-1).id : '' } : {}) };
@@ -216,8 +225,10 @@ export class Provisioner {
           return this.save(sent.job, { state: 'resolving-element', reason: 'element_index_pending', nextRetry: Date.now() + 1000 });
         }
       }
-      const first = job.kind === 'dmt' ? job.displayLabel.toLowerCase() : rules.compoundTicker(job.asset);
-      const tick = job.tickerAttempt === 0 ? first : packagedName(job, 'deployment', job.tickerAttempt) ?? candidate(job, job.kind === 'dmt' ? 'dmt-ticker' : 'compound-ticker', job.tickerAttempt, first);
+      if (needsChoice(job) && !await this.keptAutoTicker(job)) return this.awaitTicker(job);
+      const choice = choiceFor(job);
+      const first = job.kind === 'dmt' ? job.displayLabel.toLowerCase() : choice?.tick ?? rules.compoundTicker(job.asset);
+      const tick = choice ? choice.tick : job.tickerAttempt === 0 ? first : packagedName(job, 'deployment', job.tickerAttempt) ?? candidate(job, job.kind === 'dmt' ? 'dmt-ticker' : 'compound-ticker', job.tickerAttempt, first);
       const indexTick = job.kind === 'dmt' ? 'dmt-' + tick : tick;
       const occupied = await this.reads.tap('getDeployment/' + encodeURIComponent(indexTick));
       let prior = job.attempts.find(a => a.phase === 'deployment' && a.attempt === job.tickerAttempt);
@@ -258,6 +269,74 @@ export class Provisioner {
       return this.save(this.store.get('provisioning', job.asset) ?? job, { state: /fund|budget|cost|fee_rate/.test(error.message) ? 'waiting-for-funds' : 'confirming',
         reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'provisioning_dependency', nextRetry: Date.now() + RETRY_MS });
     }
+  }
+  // A compound packaged under its automatic ticker before first makers chose keeps it only once that deploy was
+  // submitted for registration. A deploy that is merely in a block is not registered: its first maker may still
+  // choose a ticker, and the unregistered automatic token stays unmintable (signers sign only registered deployments).
+  async keptAutoTicker(job) {
+    const prior = job.attempts.find(a => a.phase === 'deployment' && a.attempt === job.tickerAttempt);
+    return !!prior?.inscription;
+  }
+  async deployInBlock(job, item) {
+    const sent = this.store.get('inflight', `deployment/${job.asset}/deployment`);
+    if (sent?.attempt === item.attempt && (sent.confirmations > 0 || await this.reads.included(sent.inscriptionId).catch(() => null))) return true;
+    const occupied = await this.reads.tap('getDeployment/' + encodeURIComponent(item.text.tick.toLowerCase()));
+    return !!occupied && same(await this.reads.content(occupied.ins), item.text);
+  }
+  async awaitTicker(job) {
+    const waiting = { state: 'awaiting_ticker', phase: 'deployment', content: null, inscriptionText: null,
+      reason: ['ticker_occupied', 'deployment_race'].includes(job.reason) ? job.reason : 'ticker_choice_required' };
+    if (Object.entries(waiting).every(([k, v]) => same(job[k] ?? null, v))) return job;
+    return this.save(job, waiting);
+  }
+  // The first maker chooses (or changes) the compound's official ticker, signed by their agent
+  // or by the TAP Wallet bound to it. Once its deploy is in a block the ticker is fixed.
+  async chooseTicker(asset, input) {
+    check(input && typeof input === 'object' && Object.keys(input).every(k => TICKER_CHOICE_KEYS.includes(k)) &&
+      (input.agentSignature === undefined) !== (input.walletSignature === undefined) && typeof input.ticker === 'string', 'ticker_choice_request');
+    const resolved = await mintAssetDefinition(this.store, asset);
+    check(resolved.asset.startsWith('c') && resolved.definition?.firstMaker, 'ticker_choice_asset');
+    check(!this.store.get('compoundTypes', resolved.asset)?.retired, 'compound_retired');
+    const now = Date.now();
+    check(Number.isSafeInteger(input.expiry) && input.expiry > now && input.expiry <= now + TICKER_CHOICE_MS, 'ticker_choice_expired');
+    const tick = rules.validateOfficialTicker(input.ticker);
+    await this.enqueue(resolved.asset, resolved.definition);
+    return this.work.run(resolved.asset, async () => {
+      let job = this.store.get('provisioning', resolved.asset);
+      check(same(job.definition, resolved.definition), 'provisioning_definition_changed');
+      const previous = job.chosenTicker ?? null, revision = (previous?.revision ?? 0) + 1;
+      check(input.revision === revision, 'ticker_choice_stale', 409);
+      const firstMaker = tracId(job.definition.firstMaker);
+      const message = rules.compoundTickerMessage({ network: this.network, asset: job.asset, ticker: tick, revision, expiry: input.expiry, firstMaker });
+      const by = verifyTickerChoice({ message, firstMaker, input, bindings: this.reads.bindings, bitcoinNetwork: this.reads.bindings?.bitcoinNetwork ?? 'mainnet' });
+      const current = job.attempts.find(a => a.phase === 'deployment' && a.attempt === job.tickerAttempt);
+      const fixed = job.entry || job.state === 'registered' || current?.inscription || !!choiceFor(job) && current && await this.deployInBlock(job, current);
+      // A chosen ticker's deploy already in a block continues under it; an automatic one is replaced until registered.
+      if (fixed) { await this.advance(job).catch(() => {}); check(false, 'ticker_fixed', 409); }
+      if (choiceFor(job)?.tick === tick) return this.request(job.asset);
+      // The same checks as deploying your own ticker; this compound's own names are its own.
+      const registry = await this.reads.registry();
+      const { tickerConflicts } = await import('../../rules/src/ticker-names.js');
+      await tickerConflicts(tick, { officialName: async name => {
+        check(typeof this.reads.officialName === 'function', 'ticker_official_lookup_required');
+        const row = await this.reads.officialName(name), other = registry.officialName?.(name) ?? null;
+        return row && row.asset !== job.asset ? row : other && other !== job.asset ? other : null;
+      } });
+      check(await tickerAvailable(this.reads, tick), 'ticker_occupied');
+      await reserveTicker(this.store, tick, reservation(job.asset));
+      // Release what this compound held before: an earlier choice, and the automatic name it never deployed.
+      for (const name of new Set([previous?.tick, rules.compoundTicker(job.asset)].filter(n => n && n !== tick))) {
+        await releaseTicker(this.store, name, reservation(job.asset));
+        if (this.store.get('officialCatalogNames', name)?.asset === job.asset) await this.store.transact([{ space: 'officialCatalogNames', id: name }]);
+      }
+      await this.store.put('officialCatalogNames', tick, { asset: job.asset, name: tick });
+      // A packaged attempt is superseded by a new one; the collision logic continues from there.
+      const attempt = current ? job.tickerAttempt + 1 : job.tickerAttempt;
+      job = await this.save(job, { chosenTicker: { tick, revision, attempt, by, at: now }, tickerAttempt: attempt,
+        state: 'queued', phase: 'deployment', content: null, inscriptionText: null, reason: null, nextRetry: 0 });
+      await this.advance(job);
+      return this.request(job.asset);
+    });
   }
   async register(job) {
     const { inclusion, authorityKey, elementId, dt } = await verifyDeployment(this.reads, { ...job.entry, suspended: false }, { confirmations: this.policy.confirmations });

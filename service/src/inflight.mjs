@@ -1,16 +1,18 @@
 import { createRequire } from 'node:module';
 import { check } from './util.mjs';
+import { rules } from './rules.mjs';
 import { same } from './deployments.mjs';
 import { KeyedWork } from './keyed-work.mjs';
 import { mintAssetDefinition, deploymentAssetId } from './mint-assets.mjs';
 const require = createRequire(new URL('../../local/package.json', import.meta.url));
 const btc = require('@scure/btc-signer');
 
-// An inscription a player's wallet has broadcast and Bitcoin has not confirmed yet. Display only:
+// An inscription a player's wallet has broadcast and Bitcoin has not confirmed yet: a deploy, a mint, or the TAP
+// transfer (token-auth redeem) that pays a mint's or a Bitmap link's fees. Display only:
 // nothing here moves a deployment, a payment, a permit or a mint. The normal indexing and registration
 // path stays the only way a state advances; a record simply stops showing once the state has moved on.
 export const INFLIGHT_DEFAULTS = Object.freeze({ requestBytes: 1024, recheckMs: 10000, concurrency: 2, capacity: 16, contentBytes: 400000 });
-export const INFLIGHT_PHASES = Object.freeze({ deployment: ['element', 'deployment'], ticker: ['deployment'], mint: ['mint'] });
+export const INFLIGHT_PHASES = Object.freeze({ deployment: ['element', 'deployment'], ticker: ['deployment'], mint: ['mint', 'payment'], link: ['payment'] });
 const TXID = /^[0-9a-f]{64}$/, REQUEST = /^[0-9a-f]{64}$/;
 const KEYS = ['kind', 'ref', 'phase', 'attempt', 'commitTxid', 'revealTxid', 'inscriptionId'];
 
@@ -50,10 +52,10 @@ const text = value => typeof value === 'string' ? value : JSON.stringify(value);
 
 export class Inflight {
   // bitcoin: { transaction(txid) → raw hex | null, confirmations(inscriptionId) → integer | null }, point reads only.
-  constructor({ store, provisioner, mints, bitcoin, settings = {}, now = Date.now }) {
+  constructor({ store, provisioner, mints, links, bitcoin, settings = {}, now = Date.now }) {
     this.settings = { ...INFLIGHT_DEFAULTS, ...settings };
     for (const key of Object.keys(INFLIGHT_DEFAULTS)) check(Number.isSafeInteger(this.settings[key]) && this.settings[key] > 0, 'inflight_settings');
-    Object.assign(this, { store, provisioner, mints, bitcoin, now });
+    Object.assign(this, { store, provisioner, mints, links, bitcoin, now });
     this.work = new KeyedWork({ concurrency: this.settings.concurrency, capacity: this.settings.capacity });
   }
   static key({ kind, ref, phase }) { return `${kind}/${ref}/${phase}`; }
@@ -76,7 +78,14 @@ export class Inflight {
       check(job.state === 'awaiting_player_deploy', 'inflight_not_waiting', 409);
       return { asset: ref, text: text(job.inscriptionText ?? job.content), alt: job.content };
     }
-    check(kind === 'mint' && REQUEST.test(ref) && attempt === 0, 'inflight_ref');
+    check(['mint', 'link'].includes(kind) && REQUEST.test(ref) && attempt === 0, 'inflight_ref');
+    if (phase === 'payment') {
+      // A TAP fee payment: the request still waits for exactly the fee items its redeem must carry.
+      const status = kind === 'mint' ? await this.mints?.public(ref) : this.links?.financialVersion === 2 ? await this.links.public(ref) : null;
+      check(status?.requestId === ref, 'request_not_found', 404);
+      check(paymentWaits(status), 'inflight_not_waiting', 409);
+      return { asset: ref, fees: status.missing, progress: paymentProgress(status) };
+    }
     const status = await this.mints?.public(ref);
     check(status?.requestId === ref, 'request_not_found', 404);
     check(status.state === 'permit_issued' && status.mintContent !== undefined, 'inflight_not_waiting', 409);
@@ -95,17 +104,18 @@ export class Inflight {
       const expected = await this.expected({ kind, ref, phase, attempt });
       // A deployment is kept under its job's asset, whichever catalog or legacy id the page used.
       const key = Inflight.key({ kind, ref: expected.asset, phase }), known = this.store.get('inflight', key);
-      if (known && known.attempt === attempt && known.revealTxid === revealTxid && this.now() - known.checkedAt < this.settings.recheckMs) return { inflight: view(known) };
+      if (known && known.attempt === attempt && known.revealTxid === revealTxid && known.progress === expected.progress && this.now() - known.checkedAt < this.settings.recheckMs) return { inflight: view(known) };
       const hex = await this.bitcoin.transaction(revealTxid);
       check(typeof hex === 'string', 'inflight_transaction_unknown', 404);
       const content = revealText(hex, this.settings.contentBytes);
-      check(content !== null && (content === expected.text || matchesJSON(content, expected.alt)), 'inflight_content');
+      check(content !== null && (expected.fees ? matchesPayment(content, expected.fees) : content === expected.text || matchesJSON(content, expected.alt)), 'inflight_content');
       const commitTxid = revealCommit(hex);
       check(input.commitTxid === undefined || input.commitTxid === commitTxid, 'inflight_commit');
       const confirmations = await this.bitcoin.confirmations(revealTxid + 'i0').catch(() => null);
       const row = { kind, ref: expected.asset, phase, attempt, commitTxid, revealTxid, inscriptionId: revealTxid + 'i0',
         seenAt: known?.revealTxid === revealTxid && known.attempt === attempt ? known.seenAt : this.now(), checkedAt: this.now(),
-        confirmations: Number.isSafeInteger(confirmations) && confirmations > 0 ? confirmations : null };
+        confirmations: Number.isSafeInteger(confirmations) && confirmations > 0 ? confirmations : null,
+        ...(expected.progress ? { progress: expected.progress } : {}) };
       // One record per kind/ref/phase: the latest accepted attempt replaces an earlier one.
       await this.store.put('inflight', key, row);
       return { inflight: view(row) };
@@ -127,10 +137,35 @@ export class Inflight {
       return row && row.attempt === attempt && item && !item.inscription ? row : null;
     }
     if (kind === 'ticker') return result.state === 'awaiting_player_deploy' && REQUEST.test(result.id ?? '') ? this.store.get('inflight', Inflight.key({ kind, ref: result.id, phase: 'deployment' })) : null;
-    return result.state === 'permit_issued' && REQUEST.test(result.requestId ?? '') ? this.store.get('inflight', Inflight.key({ kind, ref: result.requestId, phase: 'mint' })) : null;
+    if (!REQUEST.test(result.requestId ?? '')) return null;
+    // A payment shows until the request's funding moves (the payment, or any other, is counted) or it stops waiting.
+    if (paymentWaits(result)) {
+      const row = this.store.get('inflight', Inflight.key({ kind, ref: result.requestId, phase: 'payment' }));
+      return row?.progress === paymentProgress(result) ? row : null;
+    }
+    return kind === 'mint' && result.state === 'permit_issued' ? this.store.get('inflight', Inflight.key({ kind, ref: result.requestId, phase: 'mint' })) : null;
   }
 }
 const view = row => ({ phase: row.phase, commitTxid: row.commitTxid, revealTxid: row.revealTxid, inscriptionId: row.inscriptionId, seenAt: row.seenAt, confirmations: row.confirmations });
+// A request waits for a TAP payment while fee items remain; a free link (price 0) has none, so nothing is in flight.
+const paymentWaits = status => ['awaiting_payment', 'partly_paid'].includes(status?.state) && (status.payBy?.rail ?? status.kind) === 'tap' &&
+  status.price !== '0' && Array.isArray(status.missing) && status.missing.length > 0 && !status.payment?.length;
+const paymentProgress = status => rules.stableJSON({ paid: status.funding?.paid ?? null, missing: status.missing.map(fee => [fee.dta ?? null, fee.amount]) });
+// TAP Wallet's one-transaction transfer is a token-auth redeem. It pays this request when every item is one of the
+// request's own remaining fee items (recipient, ticker and request-bound data), each once, for no more than is due.
+export function matchesPayment(content, fees) {
+  let payload; try { payload = JSON.parse(content); } catch { return false; }
+  const items = payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items) ? payload.redeem.items : null;
+  if (!items?.length || items.length > fees.length) return false;
+  const used = new Set();
+  return items.every(item => {
+    const index = fees.findIndex((fee, i) => !used.has(i) && fee.tt === 'a' && typeof fee.dta === 'string' && fee.dta === item?.dta && fee.to === item.address && fee.ticker === item.tick);
+    if (index < 0) return false;
+    used.add(index);
+    let amount; try { amount = BigInt(rules.parseTapAmount(item.amt)); } catch { return false; }
+    return amount > 0n && amount <= BigInt(fees[index].amount);
+  });
+}
 function matchesJSON(content, expected) {
   if (!expected || typeof expected !== 'object') return false;
   try { return same(JSON.parse(content), expected); } catch { return false; }

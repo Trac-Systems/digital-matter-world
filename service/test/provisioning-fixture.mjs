@@ -63,3 +63,9 @@ export async function provisioningFixture(t, { secret = Buffer.alloc(32, 73) } =
       tip += 1;
     } throw Error('not_registered:' + JSON.stringify(job)); } };
 }
+// A compound's first-maker ticker choice as the gateway stores it after verifying the signature
+// (signatures and refusals: compound-ticker-choice.test.mjs).
+export async function chosenTicker(operator, asset, definition, tick) {
+  const job = await operator.enqueue(asset, definition);
+  return operator.save(job, { chosenTicker: { tick, revision: (job.chosenTicker?.revision ?? 0) + 1, attempt: job.tickerAttempt, by: 'agent', at: Date.now() } });
+}

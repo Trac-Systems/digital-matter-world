@@ -338,3 +338,45 @@ test('an older compound id merged on mainnet is named and linked as the compound
   assert.deepEqual(await state.unitLabel(row.oldId), { ...await state.unitLabel(row.newId), mergedInto: row.newId });
   assert.equal((await state.unitLabel(row.oldId)).name, 'Test + Muffinite fusion');
 });
+
+test('your compounds: the first maker\'s agent signs the official ticker choice; another agent cannot choose', async t => {
+  const { ed25519 } = await import('../../contract/node_modules/@noble/curves/ed25519.js');
+  const { compoundTickerMessage } = await import('../../rules/src/ticker-grammar.js');
+  const { decodeTracAddress } = await import('../../rules/src/trac-address.js');
+  let job = { asset: COMPOUND, kind: 'compound', network: 'x', state: 'awaiting_ticker', reason: 'ticker_choice_required', chosenTicker: null };
+  const sent = [];
+  const { f, state, call } = await start(t, (f, { compoundRows }) => {
+    f.balances.set(COMPOUND, { amount: '4', current: true });
+    compoundRows.get(COMPOUND).tier = { value: 5, expression: {} };
+    compoundRows.get(COMPOUND).firstMaker = f.agent.address;
+    f.agent.service.mintRights = async (owner, { asset } = {}) => ({ mintRights: asset ? [{ asset, compound: true, deploymentRegistered: false }] : [] });
+    f.agent.service.deploymentState = async () => job;
+    f.agent.service.chooseCompoundTicker = async value => {
+      sent.push(value);
+      job = { ...job, state: 'awaiting_player_deploy', chosenTicker: { tick: value.ticker, revision: value.revision } };
+      return job;
+    };
+  });
+  let c = (await call('/api/craft')).body.compounds.find(c => c.asset === COMPOUND);
+  assert.deepEqual(c.tickerChoice, { state: 'awaiting_ticker', reason: 'ticker_choice_required', tick: null, revision: 0 });
+  // The grammar is checked before anything is signed.
+  assert.deepEqual((await call('/api/compound-ticker', { asset: COMPOUND, ticker: 'ñandu' })).body, { error: 'ticker_official_grammar' });
+  assert.deepEqual((await call('/api/compound-ticker', { asset: COMPOUND, ticker: 'dmt-x' })).body, { error: 'ticker_invalid' });
+  assert.equal(sent.length, 0);
+  const { status, body } = await call('/api/compound-ticker', { asset: COMPOUND, ticker: 'Amber' });
+  assert.equal(status, 200); assert.equal(body.tick, 'amber'); assert.equal(body.revision, 1);
+  const [value] = sent;
+  assert.deepEqual(Object.keys(value).sort(), ['agentSignature', 'asset', 'expiry', 'revision', 'ticker']);
+  const message = compoundTickerMessage({ network: state.agent.network, asset: COMPOUND, ticker: 'amber', revision: 1, expiry: value.expiry, firstMaker: state.agent.address });
+  assert.equal(ed25519.verify(value.agentSignature, Buffer.from(message), decodeTracAddress(state.agent.address)), true);
+  c = (await call('/api/craft')).body.compounds.find(c => c.asset === COMPOUND);
+  assert.equal(c.tickerChoice.tick, 'amber'); assert.equal(c.tickerChoice.state, 'awaiting_player_deploy');
+  // A change signs the next revision.
+  await call('/api/compound-ticker', { asset: COMPOUND, ticker: 'amber2' });
+  assert.equal(sent[1].revision, 2);
+  // Not this agent's compound: refused before signing.
+  const { encodeTracAddress } = await import('../../rules/src/trac-address.js');
+  state.craftReads.clear(); f.agent.service.compounds = async ({ asset }) => ({ compounds: [{ id: asset, firstMaker: encodeTracAddress('cd'.repeat(32)) }] });
+  assert.deepEqual(await call('/api/compound-ticker', { asset: COMPOUND, ticker: 'other' }), { status: 403, body: { error: 'not_first_maker' } });
+  assert.equal(sent.length, 2);
+});

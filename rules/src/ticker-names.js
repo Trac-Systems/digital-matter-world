@@ -2,6 +2,7 @@ import { assert } from './core.js';
 
 import { validateChosenTicker } from './ticker-grammar.js';
 export { validateChosenTicker };
+export { validateOfficialTicker, compoundTickerMessage } from './ticker-grammar.js';
 
 // officialName must point-resolve both catalog names and allocated official
 // tickers, including fallback names, across patterns and compounds.

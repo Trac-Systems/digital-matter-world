@@ -6,9 +6,9 @@ import { tokenStatus, compoundFacts } from './console/js/views/table.js';
 import { pagedTable } from './console/js/paged.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
-import { assetName, mineral, title, rememberCompound, lookupName, assetLink, agentLink, addressLink, inscriptionLink, txLink } from './console/js/words.js';
+import { assetName, mineral, title, rememberCompound, lookupName, assetLink, agentLink, addressLink, inscriptionLink, txLink, ethereumLink, setEthereumChain, inflightTxid, inflightNote, inflightLine } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
-import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, wait, hex, sha256, unhex, fail } from './wallets.js';
+import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, paymentReveal, wait, hex, sha256, unhex, fail } from './wallets.js';
 import { wallet, walletSummary, connectButtons } from './connect.js';
 import { tickerPage } from './ticker-deploy.js';
 import { tickerChoice } from './console/js/tickers.js';
@@ -33,7 +33,7 @@ function compoundPage(root, id, back) {
     back,
     h('div.grid.cols-main', {}, facts,
       panel('How it works', kv([
-        ['1 · Deploy its token', 'Once, by its first maker, with the TAP Wallet bound to their agent: here or in their agent dashboard (My agent → Your compounds). Until then nobody can mint it.'],
+        ['1 · Deploy its token', 'Once, by its first maker, with the TAP Wallet bound to their agent: here or in their agent dashboard (My agent → Your compounds). The first maker chooses its ticker first. Until then nobody can mint it.'],
         ['2 · Make units real', 'Whoever holds its units opens My agent → Your compounds → Make real on TAP. The agent signs the request; you pay the fee per mint from your TAP Wallet, and the tokens go to your payout wallet.'],
         ['Funds', 'Before your wallet opens, the page checks that it can pay the fee and the inscription. If it cannot, it says why and nothing is sent.'],
       ]), { flush: true }))));
@@ -52,9 +52,11 @@ function compoundPage(root, id, back) {
     site.token(id).then(t => {
       if (stopped) return;
       if (t && !['none', 'inscribed'].includes(t.step)) clear(next, say('Its TAP token is deployed. Whoever holds its units makes them real from My agent → Your compounds → Make real on TAP.'));
-      else if (agent && agent === c.firstMaker) clear(next, say('You made it first, so you deploy its TAP token once with your TAP Wallet: one inscription that costs only Bitcoin network fees. Then holders can make units real.'),
-        h('div.row', {}, h('a.btn.primary', { href: site.deployHref(id, agent) }, t?.step === 'inscribed' ? 'Continue deployment' : 'Deploy its token')));
-      else clear(next, say('Its TAP token is not deployed yet. Only its first maker, ', c.firstMaker ? agentLink(c.firstMaker) : 'the agent that made it first', ', can deploy it. Until then nobody can make its units real.'),
+      else if (agent && agent === c.firstMaker) clear(next, say('You made it first, so you choose its ticker and deploy its TAP token once with your TAP Wallet: one inscription that costs only Bitcoin network fees. Then holders can make units real.'),
+        t?.chosen ? say('Ticker: ', h('span.mono', {}, t.chosen), '. You can change it until the deploy is in a Bitcoin block.') : null,
+        h('div.row', {}, h('a.btn.primary', { href: site.deployHref(id, agent) }, t?.step === 'inscribed' ? 'Continue deployment' : t?.chosen ? 'Deploy its token' : 'Choose its ticker')));
+      else clear(next, say('Its TAP token is not deployed yet. Only its first maker, ', c.firstMaker ? agentLink(c.firstMaker) : 'the agent that made it first', ', chooses its ticker and deploys it. Until then nobody can make its units real.'),
+        t?.chosen ? say('Ticker chosen so far: ', h('span.mono', {}, t.chosen), '.') : null,
         h('p.small.muted', { style: { margin: 0 } }, 'Are you its first maker? Connect the TAP Wallet bound to that agent (Connect wallet, top right); the Deploy button appears here.'));
     }, () => { if (!stopped) clear(next, say('Its token state could not be read right now. Reload the page to try again.')); });
   }, e => { if (!stopped) clear(facts, panel('Compound', h('div.note.bad', { role: 'alert' }, `This compound could not be loaded (${walletError(e)}).`))); });
@@ -89,9 +91,10 @@ export function moneyPage(root, { type, id }) {
     try { target = await api('/web-api/target'); }
     catch (e) { if (!stopped) app.append(h('div.note.bad', {}, `Unable to load: ${walletError(e)}.`)); return; }
     if (stopped) return;
+    setEthereumChain(target.ethereum?.chainId);
     side.append(panel('Payment contracts', kv([
-      target.ethereum ? ['Bridged TAP token', hashEl(target.ethereum.token)] : null,
-      target.ethereum ? ['Escrow contract', hashEl(target.ethereum.escrow)] : null,
+      target.ethereum ? ['Bridged TAP token', ethereumLink(target.ethereum.token, null, { chainId: target.ethereum.chainId })] : null,
+      target.ethereum ? ['Escrow contract', ethereumLink(target.ethereum.escrow, null, { chainId: target.ethereum.chainId })] : null,
     ]), { flush: true }));
     try {
       if (type === 'bind-payout') return await binding(app, id, target);
@@ -107,7 +110,7 @@ async function request(app, type, id, target, progress) {
   const review = h('section.panel'), status = h('div.callout', { role: 'status' }), evidence = h('div'), lead = h('div');
   const pay = h('button.btn.primary.cta', { type: 'button' }, 'Connect wallet and continue');
   const refresh = h('button.btn.ghost', { type: 'button' }, 'Refresh receipt');
-  const refund = h('button.btn', { type: 'button', hidden: true }, 'Refund with wallet');
+  const refund = h('button.btn.hidden', { type: 'button', hidden: true }, 'Refund with wallet');
   app.append(h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Payment')), h('div.body', {}, lead, status, h('div.row.actions', {}, pay, refund, refresh))), review, evidence);
   let plan, busy = false;
   const mayPay = () => type === 'mint' || plan?.financialVersion === 2 ? !!plan && (plan.ethereumRelease && plan.ethereumDepositStatus === 1 && !plan.ethereumRefundEligible || plan.payable && ['awaiting_payment','partly_paid'].includes(plan.state)) : ['awaiting_wallet','waiting_payment'].includes(plan?.state);
@@ -120,20 +123,38 @@ async function request(app, type, id, target, progress) {
       table(steps, [
         { key: 'name', label: 'Step', render: r => STEPS[r.name] ?? r.name },
         { key: 'state', label: 'State', render: r => pill(r.state === 'done' ? 'done' : r.state, r.state === 'done' ? 'good' : 'warn') },
-        { key: 'result', label: 'Transaction', render: r => typeof r.result === 'string' ? txLink(r.result.startsWith('0x') ? 'ethereum' : 'bitcoin', r.result) : r.result ? inspectBtn(STEPS[r.name] ?? r.name, r.result) : h('span.faint', {}, '–') },
+        { key: 'result', label: 'Transaction', render: r => typeof r.result === 'string' ? /i[0-9]+$/.test(r.result) ? inscriptionLink(r.result) : txLink(r.result.startsWith('0x') ? 'ethereum' : 'bitcoin', r.result)
+          : /^[0-9a-f]{64}$/.test(r.result?.txid ?? '') ? h('span', {}, txLink('bitcoin', r.result.txid), ' ', inspectBtn(STEPS[r.name] ?? r.name, r.result)) : r.result ? inspectBtn(STEPS[r.name] ?? r.name, r.result) : h('span.faint', {}, '–') },
       ], { sortable: false, empty: 'No wallet step yet.' }),
       plan?.payment || plan?.inscription ? kv([plan.payment ? ['Indexed payment', /i[0-9]+$/.test(plan.payment) ? inscriptionLink(plan.payment) : txLink('bitcoin', plan.payment)] : null, plan.inscription ? ['Bitcoin inscription', inscriptionLink(plan.inscription)] : null]) : null,
       h('div.row', { style: { padding: '10px 14px' } }, h('a.btn.sm.ghost', { href: ledger }, 'Public result ledger')),
     ], { flush: true }));
   };
+  // A sent TAP fee payment: this browser's saved wallet receipt, resolved to its redeem reveal on Bitcoin. The gateway
+  // checks it there and shows it to every viewer until it is counted; once confirmed, any viewer reports it for counting.
+  let lastReport = 0, lastSubmit = 0;
+  const savedPayment = () => Object.entries(journal.data).find(([name, step]) => name.startsWith('fees/') && step?.state === 'done')?.[1]?.result;
+  const reportSent = async (sent, shown) => {
+    if (!sent || shown?.revealTxid === sent.revealTxid || Date.now() - lastReport < 30000) return null;
+    lastReport = Date.now();
+    return api('/mint/inflight', { kind: type, ref: id, phase: 'payment', attempt: 0, ...sent }).catch(() => null);
+  };
+  const selfHeal = async shown => {
+    const saved = savedPayment();
+    if (saved !== undefined && (await reportSent(await paymentReveal(saved, target.bitcoinNetwork).catch(() => null), shown))?.inflight && !busy && !stopped) return load();
+    if (shown?.confirmations && plan.submit && Date.now() - lastSubmit > 30000) { lastSubmit = Date.now(); await api(plan.submit, { id, paymentId: shown.inscriptionId }).then(() => !busy && !stopped && load(), () => {}); }
+  };
   async function load() {
     plan = await api(`/web-api/${type}/${id}`);
     const free = type === 'link' && plan.price === '0';
+    // Free links have no payment, so nothing of theirs is ever in flight.
+    const inflight = !free && plan.financialVersion === 2 && plan.inflight?.phase === 'payment' && inflightTxid(plan.inflight) ? plan.inflight : null;
     app.querySelector('.next-step h2').textContent = free ? 'Bitmap link' : 'Payment';
     const unit = plan.unit, labels = free ? ['Confirm', 'Linked'] : type === 'link' ? ['Prepare', 'Pay', 'Confirm', 'Linked'] : ['Pay', 'Confirm', 'Done'];
-    const at = complete.has(plan.state) ? labels.length : free ? 0 : type === 'link' ? (plan.walletPreparation ? 0 : plan.payment ? 2 : 1) : plan.payment ? 1 : 0;
+    const at = complete.has(plan.state) ? labels.length : free ? 0 : type === 'link' ? (plan.walletPreparation ? 0 : plan.payment || inflight ? 2 : 1) : plan.payment ? 1 : 0;
     clear(progress, stepper(labels, at, { failed: stopped.has(plan.state) }));
-    clear(lead, plan.price && !complete.has(plan.state) ? h('div', {}, h('div.small.muted', {}, 'Fee'), h('div.price', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))) : null);
+    clear(lead, plan.price && !complete.has(plan.state) ? h('div', {}, h('div.small.muted', {}, 'Fee'), h('div.price', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))) : null,
+      inflightNote(inflight, { detail: 'It is counted once Bitcoin confirms it; nothing else to do.' }));
     clear(review,
       h('header', {}, h('h2', {}, 'Review request'), statePill(plan.state), h('div.grow'), inspectBtn('Request', plan)),
       kv([
@@ -143,6 +164,7 @@ async function request(app, type, id, target, progress) {
         plan.amount ? ['Units used up', h('span.mono', {}, fmtInt(plan.amount))] : null,
         plan.kind ? ['Paid with', free ? 'No payment required' : plan.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'] : null,
         plan.price ? ['Fee', h('strong.mono', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))] : null,
+        inflight ? ['Payment sent', inflightLine(inflight)] : null,
         plan.baseFee ? ['Base fee', h('span.mono', {}, formatTap(plan.baseFee, unit?.decimals))] : null,
         plan.networkFee && BigInt(plan.networkFee.sats ?? 0) > 0n ? ['Bitcoin inscription fee', h('span.mono', {}, `${btc(plan.networkFee.sats)} · ${fmtInt(plan.networkFee.sats)} sats`)] : null,
         ['Payer', addressLink(plan.payer)],
@@ -154,7 +176,7 @@ async function request(app, type, id, target, progress) {
         plan.counted !== undefined ? ['Counted', blockLink(plan.counted)] : null,
         plan.reason ? ['Reason', publicMintMessages[plan.reason] ?? String(plan.reason).replace(/_/g, ' ')] : null,
       ]),
-      plan.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(plan.split, plan.destinations ?? {}, plan.kind, unit))] : null,
+      plan.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(plan.split, plan.destinations ?? {}, plan.kind, unit, { address: addressLink }))] : null,
       h('div.body.small.muted', {}, type === 'link' ? free ? 'Free. No payment is required. The link follows the Bitmap when it changes owners.' : 'Bitmap links are paid before publication. The link follows the Bitmap when it changes owners.'
         : type === 'mint' ? 'Pay the remaining fees first. After payment is final, your units are consumed and your permanent permit is ready. You then inscribe it from your Bitcoin wallet, including when paying with Ethereum.' : 'The wallet can refund after the displayed deadline if payment remains unspent.'));
     if (type === 'mint' || plan.financialVersion === 2) {
@@ -166,12 +188,16 @@ async function request(app, type, id, target, progress) {
       if (plan.inscriptionText) review.append(h('div.section-label', {}, 'Permanent mint content'), h('div.body', {}, h('p', { style: { marginTop: 0 } }, 'Inscribe this exact content from your Bitcoin wallet to the receiver above. This permit does not expire.'), h('pre', {}, plan.inscriptionText)));
     }
     pay.disabled = busy || !mayPay();
+    // Nobody pays a second time while the sent payment waits for Bitcoin. (A .btn needs the .hidden class to hide.)
+    pay.classList.toggle('hidden', !!inflight);
     if (free) pay.remove();
     pay.textContent = type === 'mint' && plan.ethereumRelease && plan.ethereumDepositStatus === 1 ? 'Release paid fees with wallet' : plan.walletPreparation ? 'Prepare Bitmap payment with wallet' : journal.data.lock || journal.data.deposit || journal.data.networkFee ? 'Resume payment' : 'Approve payment in wallet';
     refund.hidden = (type === 'mint' || plan.financialVersion === 2) && plan.kind === 'tap' || complete.has(plan.state) || (plan.kind === 'ethereum' ? !plan.ethereumRefundEligible : !(plan.payment || journal.data.paymentId) || plan.counted < plan.refundAfter);
+    refund.classList.toggle('hidden', refund.hidden);
     const words = v => String(v).replace(/_/g, ' ');
     notify(complete.has(plan.state) ? `Confirmed: ${words(plan.state)}.` : `Request state: ${words(plan.state)}${plan.reason ? ' — ' + words(plan.reason) : ''}.`, complete.has(plan.state) ? 'good' : stopped.has(plan.state) ? 'bad' : '');
     receipts();
+    if (plan.financialVersion === 2 && !free && ['awaiting_payment', 'partly_paid'].includes(plan.state) && !busy) void selfHeal(inflight).catch(() => {});
   }
   async function guard(fn, clicked) {
     if (busy) return; busy = true; pay.disabled = refresh.disabled = refund.disabled = true; clicked?.classList.add('busy');
@@ -262,8 +288,14 @@ async function request(app, type, id, target, progress) {
       await authority(tap, address, journal, notify, () => tapAccount(target, plan.payer));
       const batch = await sha256(new TextEncoder().encode(JSON.stringify(plan.missing)));
       const result = await tapPaymentStep(journal, 'fees/' + batch, { provider: tap, address, network: target.bitcoinNetwork, message: plan.redeem, transfer: true });
-      const paymentId = typeof result === 'string' ? result : result.inscriptionId;
-      if (/^[0-9a-f]{64}i[0-9]+$/.test(paymentId ?? '')) await api(plan.submit, { id, paymentId });
+      const sent = type === 'link' ? await paymentReveal(result, target.bitcoinNetwork).catch(() => null) : null;
+      if (sent) { lastReport = 0; await reportSent(sent); }
+      const paymentId = sent?.inscriptionId ?? (typeof result === 'string' ? result : result.inscriptionId);
+      // Before its first block the payment cannot be counted yet; it shows as sent, and is reported again once confirmed.
+      if (/^[0-9a-f]{64}i[0-9]+$/.test(paymentId ?? '')) {
+        try { await api(plan.submit, { id, paymentId }); }
+        catch (e) { if (!sent || !['payment_unconfirmed', 'payment_unseen'].includes(e.message)) throw e; }
+      }
     } else {
       const { eth, address } = await ethAccount(target, plan.ethereumRelease ? undefined : plan.payer);
       if (plan.ethereumRelease) {

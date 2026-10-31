@@ -139,8 +139,8 @@ async function startGateway(config, controller) {
     if (mints) mints.provisioner = operator.provisioner;
     if (operator.provisioner) { operator.provisioner.financial = v2?.financial; if (mintSender) operator.provisioner.mintSender = mintSender; }
     // Wallet-reported broadcasts, checked against the ord source and shown until the state moves on.
-    const inflight = adapters.reads.client ? new Inflight({ store, provisioner: operator.provisioner, mints, bitcoin: ordInflightReads(adapters.reads.client, { mempoolTransaction: config.mode === 'regtest' ? null : mempoolTransaction }), settings: config.inflight }) : undefined;
-    const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links,
+    const inflight = adapters.reads.client ? new Inflight({ store, provisioner: operator.provisioner, mints, links, bitcoin: ordInflightReads(adapters.reads.client, { mempoolTransaction: config.mode === 'regtest' ? null : mempoolTransaction }), settings: config.inflight }) : undefined;
+    const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links, inflight,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);
     evidence = config.mode === 'prod' ? evidencePublisher({ config, store, reads: adapters.reads, secret,
