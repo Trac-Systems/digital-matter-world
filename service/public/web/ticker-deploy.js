@@ -1,5 +1,7 @@
 // Deploy your own ticker (/mint/<asset>?ticker=<request>): pay the request's deploy fee from TAP Wallet,
 // inscribe its deploy from the same wallet, and the page registers it once it is in a Bitcoin block.
+// One approval: when the request offers it, the fee payment also sets aside the deploy's Bitcoin and the
+// server sends the deploy to the wallet once the fee confirms; the two steps stay as the fallback.
 import { h, clear, kv, pill, hashEl, panel, table, stepper, confirmModal, fmtInt } from './console/js/dom.js';
 import { tap, splitTable } from './console/js/money.js';
 import { assetName, mineral, addressLink, inscriptionLink, inflightNote, inflightLine, inflightTxid } from './console/js/words.js';
@@ -22,6 +24,7 @@ export const requestTicker = (asset, ticker, receiver, extra = {}) => local ? ap
 export const tickerHref = (asset, id) => `/mint/${asset}?` + new URLSearchParams({ ticker: id });
 const notYet = error => ['deployment_confirmations', 'tap_quorum_unavailable', 'request_failed', 'request_pending'].includes(error?.message);
 const PAY_STATES = ['awaiting_payment', 'partly_paid'];
+const AUTO_SENT = 'Payment sent — the deploy inscription is sent to your wallet automatically once it confirms.';
 
 export function tickerPage(root, { asset, id }) {
   const compound = /^c2:[0-9a-f]{64}$/.test(asset);
@@ -67,8 +70,10 @@ export function tickerPage(root, { asset, id }) {
     const registered = job.state === 'registered', fee = job.fee, free = !fee || BigInt(fee.price ?? 0) === 0n;
     const ticker = job.ticker ?? job.entry?.tick, receipt = await journal.get(receiptKey()), paid = await journal.get(paidKey());
     if (stopped) return;
-    const labels = free ? ['Reserve name', 'Deploy ticker', 'Done'] : ['Reserve name', 'Pay fee', 'Deploy ticker', 'Done'];
-    const at = registered ? labels.length : job.state === 'awaiting_player_deploy' ? labels.length - 2 : 1;
+    // A payment this browser sent without the set-aside (an older wallet) keeps the two steps.
+    const one = !free && job.oneApproval === true && paid?.oneApproval !== false && !receipt, funding = fee?.refundFunding;
+    const labels = free ? ['Reserve name', 'Deploy ticker', 'Done'] : one ? ['Reserve name', 'Pay & deploy', 'Done'] : ['Reserve name', 'Pay fee', 'Deploy ticker', 'Done'];
+    const at = registered ? labels.length : job.state === 'awaiting_player_deploy' && !one ? labels.length - 2 : 1;
     clear(progress, stepper(labels, at, { failed: ['refused', 'recovery', 'refund_pending'].includes(job.state) || ['refused', 'recovery', 'refund_pending'].includes(fee?.state) }));
     const next = [button('Refresh', refresh, 'quiet')];
     clear(lead);
@@ -77,14 +82,19 @@ export function tickerPage(root, { asset, id }) {
         h('div.row', { style: { marginTop: '10px' } }, h('a.btn.primary', { href: site.href('table', compound ? { c: asset } : { p: asset }) }, `Open ${assetName(asset)}`)));
     } else if (job.state === 'awaiting_fee' && PAY_STATES.includes(fee?.state)) {
       lead.append(h('div', {}, h('div.small.muted', {}, fee.state === 'partly_paid' ? 'Remaining deploy fee' : 'Deploy fee'), h('div.price', {}, quoteFeeText(fee))));
-      if (paid?.paymentId) lead.append(h('div.callout.info', {}, 'Fee sent. It is credited once Bitcoin confirms it; this page reports it and updates by itself.'));
-      else if (fee.payable) next.push(button('Pay deploy fee', pay, 'primary'));
+      if (one && funding?.deploySats) lead.append(h('div', {}, h('div.small.muted', {}, 'Bitcoin for the deploy inscription'), h('div.mono', {}, `${fmtInt(funding.deploySats)} sats`)));
+      if (paid?.paymentId) lead.append(h('div.callout.info', {}, one ? AUTO_SENT + ' This page updates by itself.' : 'Fee sent. It is credited once Bitcoin confirms it; this page reports it and updates by itself.'));
+      else if (fee.payable) next.push(button(one ? 'Pay & deploy' : 'Pay deploy fee', pay, 'primary'));
       if (fee.state === 'awaiting_payment' && !paid?.paymentId) next.push(button('Cancel request', cancel, 'quiet'));
     } else if (job.state === 'awaiting_fee' && fee?.state === 'paid' || job.state === 'awaiting_fee' && free) {
-      lead.append(h('div.callout.busy', {}, 'Fee paid. Your deploy inscription is being prepared; this page updates by itself.'));
+      lead.append(h('div.callout.busy', {}, one ? AUTO_SENT + ' This page updates by itself.' : 'Fee paid. Your deploy inscription is being prepared; this page updates by itself.'));
     } else if (job.state === 'awaiting_player_deploy') {
-      const inflight = inflightTxid(job.inflight) ? job.inflight : null;
-      if (receipt) {
+      const inflight = inflightTxid(job.inflight) ? job.inflight : null, sent = inflightTxid(job.deploySender) ? { phase: 'deployment', ...job.deploySender } : null;
+      if (one) {
+        // The server sends the deploy from the payment's set-aside; no second approval.
+        if (inflight || sent) lead.append(inflightNote(inflight ?? sent, { detail: AUTO_SENT + ' This page updates by itself once it is in a block.' }));
+        else lead.append(h('div.callout.busy', {}, AUTO_SENT + ' This page updates by itself.'));
+      } else if (receipt) {
         lead.append(inflightNote(inflight ?? { phase: 'deployment', revealTxid: receipt.inscriptionId.slice(0, 64) }, { detail: 'Sent. Waiting for the next Bitcoin block (about 10 minutes). This page registers it automatically; keep it open or come back to this link.' }));
         next.push(button('Check now', async () => { await register(receipt.inscriptionId); await refresh(); }, 'primary'));
       } else if (inflight) lead.append(inflightNote(inflight, { detail: 'This page updates by itself once it is in a block.' }));
@@ -104,13 +114,15 @@ export function tickerPage(root, { asset, id }) {
       { key: 'amount', label: 'Amount', num: true, render: f => h('span.mono', {}, tap(f.amount, fee.unit)) },
       { key: 'to', label: 'Paid to', render: f => f.to ? addressLink(f.to) : h('span.faint', {}, 'burn') }], { sortable: false }), { flush: true }) : null,
     fee?.split && !free ? panel('Fee split', h('div', { style: { padding: '0 14px 4px' } }, splitTable(fee.split, fee.destinations ?? {}, 'tap', fee.unit, { address: addressLink })), { flush: true }) : null,
-    h('p.small.muted', { style: { margin: 0 } }, 'The deploy inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'));
+    h('p.small.muted', { style: { margin: 0 } }, one ? 'The deploy inscription costs only Bitcoin network fees, set aside with your fee payment; TAP Wallet shows them before you approve. You can close this page: open this same link again to see its progress.' :
+      'The deploy inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'));
     clear(side, panel(compound ? 'Compound' : 'Pattern', kv([
       [compound ? 'Compound' : 'Pattern', h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: site.href('table', compound ? { c: asset } : { p: asset }) }, assetName(asset)))],
       ['Your ticker', h('span.mono', {}, ticker ?? '–')],
-      ['State', pill(registered ? 'deployed' : job.state === 'awaiting_player_deploy' ? 'ready to deploy' : job.state === 'awaiting_fee' ? 'fee due' : String(job.state).replace(/_/g, ' '), registered ? 'good' : job.state === 'refused' ? 'bad' : 'warn')],
+      ['State', pill(registered ? 'deployed' : job.state === 'awaiting_player_deploy' ? one ? 'deploying' : 'ready to deploy' : job.state === 'awaiting_fee' ? 'fee due' : String(job.state).replace(/_/g, ' '), registered ? 'good' : job.state === 'refused' ? 'bad' : 'warn')],
       ['Deploy fee', quoteFeeText(fee)],
-      fee?.refundFunding && PAY_STATES.includes(fee.state) ? ['Bitcoin set aside', h('div', {}, h('span.mono', {}, `${fmtInt(fee.refundFunding.satoshis)} sats`),
+      // With one approval the deploy's own Bitcoin shows in the overview; this row is the refund part.
+      funding && PAY_STATES.includes(fee.state) && (!one || funding.refundReserveSats) ? ['Bitcoin set aside', h('div', {}, h('span.mono', {}, `${fmtInt(one ? funding.refundReserveSats : funding.satoshis)} sats`),
         h('div.small.muted', {}, 'Returned to you after the deploy is registered, minus the Bitcoin network fee.'))] : null,
       job.receiver ? ['Your wallet', addressLink(job.receiver)] : null,
       receipt ? ['Your inscription', inscriptionLink(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', inscriptionLink(job.entry.id)] : !registered && inflightTxid(job.inflight) ? ['Inscription sent', inflightLine(job.inflight)] : null,
@@ -120,17 +132,20 @@ export function tickerPage(root, { asset, id }) {
     if (receipt && job.state === 'awaiting_player_deploy' && job.inflight?.revealTxid !== receipt.inscriptionId.slice(0, 64) && Date.now() - lastInflight > 30000)
       void reportInflight({ revealTxid: receipt.inscriptionId.slice(0, 64), inscriptionId: receipt.inscriptionId });
     if (receipt && job.state === 'awaiting_player_deploy' && Date.now() - lastRegister > 30000) void register(receipt.inscriptionId).then(() => refresh()).catch(error => { if (!stopped) say(TICKER_ERROR(error), 'bad'); });
+    // The server's deploy is registered by the server; an open page asks for it too (same checks).
+    else if (one && inflightTxid(job.inflight) && job.state === 'awaiting_player_deploy' && Date.now() - lastRegister > 30000) void register(job.inflight.inscriptionId).then(() => refresh()).catch(() => {});
   };
   async function pay() {
-    await tapWalletCapabilities(globalThis.tapprotocol);
-    const fee = job.fee;
-    if (!await confirmModal({ title: 'Pay the deploy fee?', lead: 'TAP Wallet pays the fee items of this request in one TAP payment. If your ticker cannot be registered, the fee is refunded.',
-      rows: [...(fee.missing ?? []).map(f => [String(f.role).replace(/_/g, ' '), tap(f.amount, fee.unit)])].filter(Boolean), confirm: 'Pay from my wallet' })) return;
+    const capabilities = await tapWalletCapabilities(globalThis.tapprotocol);
+    const fee = job.fee, one = job.oneApproval === true && capabilities?.singleTxTransferExtraOutputs === true && !!fee.refundFunding?.deploySats;
+    if (!await confirmModal({ title: one ? 'Pay and deploy?' : 'Pay the deploy fee?', lead: one ? 'TAP Wallet pays the fee items of this request in one TAP payment and sets aside the Bitcoin for your deploy inscription, which is sent to your wallet automatically once the payment confirms. If your ticker cannot be registered, the fee is refunded.' :
+      'TAP Wallet pays the fee items of this request in one TAP payment. If your ticker cannot be registered, the fee is refunded.',
+      rows: [...(fee.missing ?? []).map(f => [String(f.role).replace(/_/g, ' '), tap(f.amount, fee.unit)]), one ? ['Bitcoin for the deploy inscription', `${fmtInt(fee.refundFunding.deploySats)} sats`] : null].filter(Boolean), confirm: 'Pay from my wallet' })) return;
     await wallet.connect();
     let result = await wallet.payTickerFee(job);
     if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this ticker.', rows: [], confirm: 'Retry payment' })) result = await wallet.payTickerFee(job, { retry: true });
     if (result.localState === 'payment_pending') throw Error(result.message);
-    if (/^[0-9a-f]{64}i[0-9]+$/.test(result.paymentId ?? '')) { await journal.put(paidKey(), { paymentId: result.paymentId }); await report(result.paymentId); }
+    if (/^[0-9a-f]{64}i[0-9]+$/.test(result.paymentId ?? '')) { await journal.put(paidKey(), { paymentId: result.paymentId, oneApproval: one }); await report(result.paymentId); }
     await refresh();
   }
   async function cancel() {

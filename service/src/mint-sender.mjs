@@ -1,5 +1,6 @@
 import { MintPayoutSender } from './mint-payout-sender.mjs';
 import { MintRefundSender } from './mint-refund-sender.mjs';
+import { TickerDeploySender } from './ticker-deploy-sender.mjs';
 import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { mintSenderError } from './mint-sender-errors.mjs';
 import { join } from 'node:path';
@@ -35,6 +36,7 @@ export class MintSender {
     this.cursor = journal.meta('cursor') ?? ''; this.sourceReady = false; this.sourceVerified = false; this.lastSourceCheck = 0; this.stopped = false;
     this.refunds = new MintRefundSender(this); this.refundJob = null;
     this.payouts = new MintPayoutSender(this); this.payoutJob = null;
+    this.deploys = new TickerDeploySender(this);
   }
   async discover() {
     const page = await this.gateway.list(this.cursor, this.settings.pageSize);
@@ -61,6 +63,16 @@ export class MintSender {
     }
     if (returns) this.journal.meta('tickerReturnCursor', returns.next ?? '');
     this.cursor = page.next ?? ''; this.journal.meta('cursor', this.cursor); this.lastDiscovery = this.now();
+    if (page.tickerDeploys) try { await this.deploys.discover(); } catch (error) { this.log({ event: 'ticker_deploy_discovery_retry', code: mintSenderError(error) }); }
+  }
+  // A request's Bitcoin set-aside: the outputs its fee payments sent to its address, and the change of a
+  // ticker deploy this minter sent from there (the rest of that set-aside stays at the same address).
+  async setAside(address, references) {
+    const coins = [];
+    for (const reference of references) coins.push(...await this.bitcoin.paymentFunding(address, reference));
+    const commits = this.journal.deployCommits(address);
+    if (commits.length) coins.push(...(await this.bitcoin.utxos(address)).filter(c => commits.includes(c.txid)));
+    return coins.filter((c, i) => coins.findIndex(o => o.txid === c.txid && o.vout === c.vout) === i);
   }
   save(row, change) { return this.journal.save({ ...row, ...change }); }
   async process(id) {
@@ -96,7 +108,7 @@ export class MintSender {
     }
     if (this.settings.refundsEnabled && status.publicMint && status.state === 'permit_issued' && !row.fundingReference)
       return this.save(row, { message: 'Waiting for the accepted winning payment funding reference.' });
-    const coins = (this.settings.refundsEnabled || row.tickerReturn) && row.fundingReference ? await this.bitcoin.paymentFunding(row.address, row.fundingReference) : await this.bitcoin.utxos(row.address);
+    const coins = (this.settings.refundsEnabled || row.tickerReturn) && row.fundingReference ? await this.setAside(row.address, [row.fundingReference]) : await this.bitcoin.utxos(row.address);
     const available = coins.filter(c => !this.journal.coinOwner(c));
     const previous = row.coin && available.find(c => c.txid === row.coin.txid && c.vout === row.coin.vout);
     // A wallet fee bump can replace its payment before the permit arrives.
@@ -162,7 +174,11 @@ export class MintSender {
     return row;
   }
   async attempt(id) {
-    try { await this.process(id); const row = this.journal.get(id); this.save(row, { failures: 0, nextAttempt: this.now() + (row.state === 'waiting_funding' ? row.terminal ? this.settings.terminalPollMs : this.settings.fundingPollMs : this.settings.pollMs) }); }
+    try {
+      if (this.journal.get(id).tickerDeploy) await this.deploys.process(id); else await this.process(id);
+      const row = this.journal.get(id), deploy = row.tickerDeploy && row.state !== 'sending';
+      this.save(row, { failures: 0, nextAttempt: this.now() + (row.state === 'waiting_funding' || deploy ? row.terminal ? this.settings.terminalPollMs : this.settings.fundingPollMs : this.settings.pollMs) });
+    }
     catch (error) {
       const row = this.journal.get(id), failures = (row.failures ?? 0) + 1;
       this.save(row, { failures, nextAttempt: this.now() + Math.min(this.settings.maxRetryMs, this.settings.retryMs * 2 ** Math.min(failures - 1, 16)) });

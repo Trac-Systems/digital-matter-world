@@ -60,6 +60,11 @@ export class MintSenderJournal {
       .all(this.now() - stuckMs, limit).map(r => JSON.parse(r.value));
     return { counts, oldestWaitingMs: oldest === null ? 0 : this.now() - oldest, stuck };
   }
+  // Commits of sent ticker deploys from this funding address: their change keeps the rest of the set-aside there.
+  deployCommits(address) {
+    return this.db.prepare("SELECT json_extract(value,'$.plan.commitTxid') AS txid FROM requests WHERE json_extract(value,'$.tickerDeploy')=1 AND json_extract(value,'$.address')=? AND json_extract(value,'$.plan') IS NOT NULL ORDER BY id")
+      .all(address).map(r => r.txid);
+  }
   refund(id) { return JSON.parse(this.db.prepare('SELECT value FROM refunds WHERE id=?').get(id)?.value ?? 'null'); }
   refundDue(limit) {
     return this.db.prepare("SELECT value FROM refunds WHERE COALESCE(json_extract(value,'$.nextAttempt'),0)<=? AND json_extract(value,'$.state') != 'refund_confirmed' ORDER BY COALESCE(json_extract(value,'$.nextAttempt'),0), id LIMIT ?")

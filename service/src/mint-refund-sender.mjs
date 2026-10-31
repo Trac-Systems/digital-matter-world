@@ -107,7 +107,7 @@ export class MintRefundSender {
     const record = row.record, key = requestKey(this.seed, record.id, this.network);
     let plan, redeem, coin;
     try {
-      const coins = await this.bitcoin.paymentFunding(key.address, record.reference);
+      const coins = await this.sender.setAside(key.address, [record.reference]);
       coin = coins.filter(c => !this.journal.coinOwner(c) && BigInt(c.value) >= BigInt(this.settings.dustSats))
         .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)) || `${a.txid}:${a.vout}`.localeCompare(`${b.txid}:${b.vout}`))[0];
       if (!coin) return this.save(row, { state: 'refund_needs_operator', message: 'Payer Bitcoin set-aside missing or already spent. Operator action required; float Bitcoin cannot pay refund fees.' });

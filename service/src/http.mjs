@@ -71,7 +71,10 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         check(mints?.mintSender && mints.mintSender.authorized(req.headers.authorization), 'not_found', 404);
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
         const page = mints.mintSender.page(mints, operatorURL.searchParams);
-        if (operator?.provisioner?.tickers && rules.multiTickerActive(await operator.provisioner.reads.counted())) page.tickerReturns = true;
+        if (operator?.provisioner?.tickers && rules.multiTickerActive(await operator.provisioner.reads.counted())) {
+          page.tickerReturns = true;
+          if (mints.mintSender.settings.tickerDeploysEnabled) page.tickerDeploys = true;
+        }
         res.end(JSON.stringify(page)); return;
       }
       if (req.method === 'GET' && /^\/internal\/mint-sender\/ticker-returns(?:\/[0-9a-f]{64})?$/.test(operatorURL.pathname)) {
@@ -80,6 +83,16 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         check([...operatorURL.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_return_page');
         const result = id === 'ticker-returns' ? await tickers.fundingReturns({ after: operatorURL.searchParams.get('after') ?? '',
           limit: Number(operatorURL.searchParams.get('limit') ?? mints.mintSender.settings.pageSize) }) : await tickers.fundingReturn(id);
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(result)); return;
+      }
+      // Ticker deploys the minter sends from the fee payment's set-aside, with any reported in-flight deploy.
+      if (req.method === 'GET' && /^\/internal\/mint-sender\/ticker-deploys(?:\/[0-9a-f]{64})?$/.test(operatorURL.pathname)) {
+        check(mints?.mintSender?.authorized(req.headers.authorization) && operator?.provisioner?.tickers, 'not_found', 404);
+        const tickers = operator.provisioner.tickers, id = operatorURL.pathname.split('/').at(-1);
+        check([...operatorURL.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_deploy_page');
+        let result = id === 'ticker-deploys' ? await tickers.deployStatuses({ after: operatorURL.searchParams.get('after') ?? '',
+          limit: Number(operatorURL.searchParams.get('limit') ?? mints.mintSender.settings.pageSize) }) : shown('ticker', await tickers.deployStatus(id));
+        if (id === 'ticker-deploys') result = { ...result, rows: result.rows.map(row => shown('ticker', row)) };
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(result)); return;
       }
       if (mints?.public && ['GET', 'HEAD'].includes(req.method) && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) {

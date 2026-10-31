@@ -3,7 +3,7 @@ import { check } from './util.mjs';
 
 // Local operator policy, independent of committee economic settings.
 export const MINT_SENDER_DEFAULTS = Object.freeze({ enabled: false, refundsEnabled: false, refundReserveSats: 3000, maxRefundFeeRate: 10, refundContentBytes: 2048, refundTickers: ['tap'], feeRate: 2, feeMargin: 2, feeTargetBlocks: 3, bitcoinApiPath: '/api',
-  refundReserveMode: 'dynamic', refundFeeHeadroom: 1.5, refundReserveMinSats: 1500, refundReserveMaxSats: 6000, refundFeeRateMaxAgeMs: 120000,
+  refundReserveMode: 'dynamic', tickerDeploysEnabled: true, refundFeeHeadroom: 1.5, refundReserveMinSats: 1500, refundReserveMaxSats: 6000, refundFeeRateMaxAgeMs: 120000,
   payoutsEnabled: false, payoutDailyCapAtoms: '100000000000000000000', payoutMaxAtoms: '50000000000000000000',
   postageSats: 546, dustSats: 546, contentBytes: 4096, maxFundingSats: 100000, maxFeeSats: 90000,
   maxFeeRate: 1000, feeWaitMs: 300000, stuckMs: 180000, pollMs: 2000, fundingPollMs: 10000, terminalPollMs: 300000, timeoutMs: 5000,
@@ -17,6 +17,7 @@ export function mintSenderSettings(input = {}) {
   const configured = s.enabled || s.payoutsEnabled || paths.some(k => s[k] !== undefined);
   check(typeof s.enabled === 'boolean' && typeof s.refundsEnabled === 'boolean', 'mint_sender_enabled');
   check(typeof s.payoutsEnabled === 'boolean', 'mint_sender_payouts_enabled');
+  check(typeof s.tickerDeploysEnabled === 'boolean', 'mint_sender_ticker_deploys_enabled');
   check(['dynamic', 'fixed'].includes(s.refundReserveMode), 'mint_sender_refund_reserve_mode');
   for (const key of ['payoutDailyCapAtoms', 'payoutMaxAtoms'])
     check(typeof s[key] === 'string' && /^[1-9][0-9]{0,77}$/.test(s[key]), 'mint_sender_setting_' + key);

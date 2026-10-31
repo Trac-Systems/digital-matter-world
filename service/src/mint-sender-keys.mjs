@@ -63,6 +63,15 @@ export function refundReserve(settings, { payer, feeRate, feeRateAt, now = Date.
   const cost = inscriptionBudget(settings, bytes, Math.min(1000, feeRate * settings.refundFeeHeadroom), 1);
   return Math.min(settings.refundReserveMaxSats, Math.max(settings.refundReserveMinSats, cost));
 }
+// A ticker deploy inscription the minter sends from the fee payment's set-aside: the exact deploy
+// content size at the observed fee rate with the refund headroom, or the static rate and margin.
+export function deployBudget(settings, contentBytes, { feeRate, feeRateAt, now = Date.now() } = {}) {
+  check(Number.isSafeInteger(contentBytes) && contentBytes > 0 && contentBytes <= settings.contentBytes, 'mint_sender_deploy_content');
+  const fresh = settings.refundReserveMode === 'dynamic' && Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= settings.maxFeeRate && Number.isSafeInteger(feeRateAt) &&
+    feeRateAt >= 0 && feeRateAt <= now && now - feeRateAt <= settings.refundFeeRateMaxAgeMs;
+  return fresh ? inscriptionBudget(settings, contentBytes, Math.min(1000, Math.max(settings.feeRate, feeRate) * settings.refundFeeHeadroom), 1)
+    : inscriptionBudget(settings, contentBytes);
+}
 export function boundRefundReserve(record, settings) {
   if (record.refundReserveSats === undefined) return Math.min(settings.maxFeeSats, settings.refundReserveSats);
   check(Number.isSafeInteger(record.refundReserveSats) && record.refundReserveSats >= 0, 'mint_sender_refund_binding');

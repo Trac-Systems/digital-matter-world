@@ -7,6 +7,14 @@ import { mintAssetDefinition } from './mint-assets.mjs';
 import { deploymentPayload, generationDigest, same, verifyDeployment } from './deployments.mjs';
 import { registerAdditionalDeployment, selectedDeployment } from './registry.mjs';
 
+// An additional ticker's registry entry: the official deployment's, bound to this request and its ticker.
+function deployEntry(parent, job) {
+  const entry = { ...parent, id: undefined, approval: undefined, inclusion: undefined, receiver: job.receiver,
+    officialDeployment: parent.id, tickerRequestId: job.id, generation: 1, tick: job.ticker, indexTick: job.indexTick, suspended: false };
+  delete entry.ordinal; return entry;
+}
+const deployBytes = entry => Buffer.byteLength(rules.stableJSON(deploymentPayload(entry)));
+
 // The coordinated release supplies these components. Lazy loading preserves existing paths
 // until the coordinated release is integrated; no substitute admission exists.
 const dependencies = async () => ({ ...await import('../../rules/src/ticker-names.js'), ...await import('./ticker-availability.mjs') });
@@ -48,7 +56,10 @@ export class TickerProvisioning {
         job = { id, ...(requestNonce ? { requestNonce } : {}), asset, catalogAsset: resolved.catalogAsset, definition: resolved.definition, network, ticker: tick, indexTick,
           receiver: input.receiver, officialDeployment: official.id, kind: official.kind, generation: 1, privilege: official.privilege, elementId: official.elementId, elementName: official.elementName,
           salt: randomBytes(32).toString('hex'), state: 'awaiting_fee', createdHeight: height };
-        if (this.p.mintSender?.settings.refundsEnabled && this.p.mintSender.refundFunding)
+        // One approval: the fee payment's set-aside also pays the deploy inscription the minter sends.
+        const deploy = this.p.mintSender?.tickerDeployFunding?.(id, input.receiver, deployBytes(deployEntry(official, job)));
+        if (deploy) job.refundFunding = deploy;
+        else if (this.p.mintSender?.settings.refundsEnabled && this.p.mintSender.refundFunding)
           job.refundFunding = this.p.mintSender.refundFunding(id, input.receiver);
         await store.transact([{ space: 'tickerProvisioning', id, value: job }, { space: 'tickerRequestHeads', id: initialId, value: id }]);
       }
@@ -80,13 +91,14 @@ export class TickerProvisioning {
       if (fee.state !== 'paid') return this.present(job);
       if (job.content) return this.present(job);
       if (!await checks.tickerAvailable(reads, indexTick)) return this.refuse(job, 'ticker_occupied');
-      const entry = { ...parent, id: undefined, approval: undefined, inclusion: undefined, receiver: input.receiver,
-        officialDeployment: parent.id, tickerRequestId: id, generation: 1, tick, indexTick, suspended: false };
-      delete entry.ordinal;
+      const entry = deployEntry(parent, job);
       const content = deploymentPayload(entry), attemptId = hash(rules.stableJSON([id, content]));
       job = { ...job, entry, phase: 'deployment', content, inscriptionText: rules.stableJSON(content),
         attempts: [{ phase: 'deployment', attempt: 0, id: attemptId, text: content }], tickerAttempt: 0, state: 'awaiting_player_deploy' };
-      await store.put('tickerProvisioning', id, job); return this.present(job);
+      // A request whose payment set aside the deploy's Bitcoin is queued for the minter.
+      await store.transact([{ space: 'tickerProvisioning', id, value: job },
+        ...(job.refundFunding?.deploySats ? [{ space: 'tickerDeploys', id, value: { requestId: id } }] : [])]);
+      return this.present(job);
     }, { join: true });
   }
   async refuse(job, reason) {
@@ -105,7 +117,14 @@ export class TickerProvisioning {
       if (job.state === 'registered') { check(job.entry.id === inscription, 'deployment_submission_conflict'); return this.present(await this.completed(job)); }
       check(job.state === 'awaiting_player_deploy' && same(await reads.content(inscription), job.content), 'deployment_content');
       const indexed = await reads.tap('getDeployment/' + encodeURIComponent(job.indexTick));
-      if (indexed && indexed.ins !== inscription) return this.refuse(job, 'ticker_occupied');
+      if (indexed && indexed.ins !== inscription) {
+        // The minter and the wallet may both have sent this request's deploy: the one TAP indexed counts when
+        // it is the same content owned by the requester. Anyone else's deploy of the ticker refuses the request.
+        const ours = typeof reads.inscription === 'function' && same(await reads.content(indexed.ins), job.content) &&
+          (await reads.inscription(indexed.ins))?.address === job.receiver;
+        if (!ours) return this.refuse(job, 'ticker_occupied');
+        inscription = indexed.ins;
+      }
       let entry = { ...job.entry, id: inscription };
       check(typeof reads.tickerDeploymentFee === 'function', 'ticker_payment_unavailable');
       await reads.tickerDeploymentFee(entry, await reads.batchStamp());
@@ -131,11 +150,42 @@ export class TickerProvisioning {
   }
   present(job) {
     const view = this.p.mintSender;
-    return view && job.fee ? { ...job, fee: { ...job.fee,
-      ...(job.fee.payable && view.settings.refundsEnabled && view.ready() ? { refundFunding: job.refundFunding ?? {
+    if (!view || !job.fee) return job;
+    const deploys = !!job.refundFunding?.deploySats && view.settings.enabled && view.settings.tickerDeploysEnabled, ready = view.ready();
+    const sender = deploys ? view.tickerDeploySender(job) : null;
+    // One approval holds while the minter is live (or has already signed) and has not handed the deploy back.
+    const handedBack = ['needs_user', 'returning', 'returned'].includes(sender?.state), signed = ['sending', 'sent', 'minted'].includes(sender?.state);
+    const oneApproval = deploys && (job.state === 'awaiting_fee' ? ready : job.state === 'awaiting_player_deploy' ? !handedBack && (ready || signed) :
+      job.state === 'registered' && signed);
+    return { ...job, ...(deploys ? { oneApproval } : {}), ...(sender ? { deploySender: sender } : {}), fee: { ...job.fee,
+      ...(job.fee.payable && ready && (deploys || view.settings.refundsEnabled) ? { refundFunding: job.refundFunding ?? {
         address: view.address(job.id), satoshis: view.settings.refundReserveSats, feeRate: view.settings.maxRefundFeeRate,
         label: 'possible ticker fee refund' } } : {}),
-      ...(job.fee.refunds ? { refunds: job.fee.refunds.map(r => view.decorateRefund(r)) } : {}) } } : job;
+      ...(job.fee.refunds ? { refunds: job.fee.refunds.map(r => view.decorateRefund(r)) } : {}) } };
+  }
+  // The minter's view of a request it may deploy: the exact registered content, its funding and the payments
+  // that carried the set-aside. Point reads of this request only.
+  async deployStatus(id) {
+    await this.active();
+    const { store, reads } = this.p, view = this.p.mintSender;
+    const queued = store.get('tickerDeploys', id), job = store.get('tickerProvisioning', id), payment = store.get('tickerPayments', id);
+    check(view && queued?.requestId === id && job?.id === id && job.refundFunding?.deploySats && payment?.payer === job.receiver, 'ticker_deploy_binding');
+    const references = [...new Set((payment.verified?.receipts ?? []).filter(r => r.accepted && BigInt(r.amount) > 0n).map(r => r.reference))];
+    const waiting = job.state === 'awaiting_player_deploy';
+    return { requestId: id, id, asset: job.asset, tickerDeploy: true, state: job.state, payer: job.receiver, receiver: job.receiver, fundingAddress: view.address(id),
+      fundingReferences: references, deploySats: job.refundFunding.deploySats, refundReserveSats: job.refundFunding.refundReserveSats,
+      payBy: { rail: 'tap', untilBlock: payment.until }, counted: String(await reads.counted()),
+      // The page's own view of the job (public identities), so the minter checks exactly what the page would inscribe.
+      ...(waiting ? { deploy: rules.publicIdentities(Object.fromEntries(['id', 'asset', 'kind', 'state', 'phase', 'attempts', 'tickerAttempt', 'inscriptionText', 'content',
+        'officialDeployment', 'ticker', 'privilege', 'elementId', 'definition', 'receiver'].map(k => [k, job[k]]))) } : {}),
+      ...(job.entry?.id && job.state === 'registered' ? { inscriptionId: job.entry.id } : {}) };
+  }
+  async deployStatuses({ after = '', limit }) {
+    await this.active();
+    const view = this.p.mintSender; check(view && typeof after === 'string' && (after === '' || rules.hex(after, 32)) &&
+      Number.isSafeInteger(limit) && limit > 0 && limit <= view.settings.pageSize, 'ticker_deploy_page');
+    const page = this.p.store.list('tickerDeploys', { after, limit });
+    return { keyId: view.keyId, rows: await Promise.all(page.map(r => this.deployStatus(r.id))), next: page.length === limit ? page.at(-1).id : null };
   }
   async fundingReturn(id) {
     await this.active();

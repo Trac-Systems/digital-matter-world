@@ -10,5 +10,5 @@ const codes = new Set(['mint_payout_journal', 'mint_payout_pending', 'mint_payou
   'mint_sender_gateway_unavailable', 'mint_sender_gateway_identity', 'mint_sender_gateway_binding',
   'mint_sender_funding_binding', 'mint_sender_refund_binding', 'mint_sender_request_changed', 'mint_sender_status_binding',
   'mint_sender_coin_changed', 'mint_sender_permit_changed', 'mint_sender_plan_immutable',
-  'mint_sender_return_immutable', 'mint_sender_coin_immutable', 'mint_sender_spend_conflict']);
+  'mint_sender_return_immutable', 'mint_sender_coin_immutable', 'mint_sender_spend_conflict', 'ticker_deploy_binding']);
 export const mintSenderError = error => codes.has(error?.message) ? error.message : 'mint_sender_dependency_unavailable';

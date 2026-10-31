@@ -4,11 +4,11 @@ import { acceptedRefund, refundPage, decorateRefund } from './mint-refund-view.m
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { openSync, readFileSync, closeSync, fstatSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { requestKey, refundFloatKey, payoutFloatKey, fundingAmount, fundingQuote, refundReserve, validDestination, validRequestId } from './mint-sender-keys.mjs';
+import { requestKey, refundFloatKey, payoutFloatKey, fundingAmount, fundingQuote, refundReserve, deployBudget, validDestination, validRequestId } from './mint-sender-keys.mjs';
 import { check, hash } from './util.mjs';
 
 export const senderToken = (seed, network) => createHmac('sha256', seed).update('dmw-mint-sender-api-v1|' + network).digest('hex');
-export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'refundReserveSats', 'refundReserveMode', 'refundFeeHeadroom', 'refundReserveMinSats', 'refundReserveMaxSats', 'refundFeeRateMaxAgeMs', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers', 'payoutsEnabled', 'payoutDailyCapAtoms', 'payoutMaxAtoms'].map(k => [k, settings[k]]))));
+export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'tickerDeploysEnabled', 'refundReserveSats', 'refundReserveMode', 'refundFeeHeadroom', 'refundReserveMinSats', 'refundReserveMaxSats', 'refundFeeRateMaxAgeMs', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers', 'payoutsEnabled', 'payoutDailyCapAtoms', 'payoutMaxAtoms'].map(k => [k, settings[k]]))));
 export const senderKeyId = (seed, network) => {
   const k = requestKey(seed, '00'.repeat(32), network);
   try { return hash(k.address); } finally { k.privateKey.fill(0); }
@@ -63,6 +63,24 @@ export class MintSenderView {
     const refundReserveSats = refundReserve(this.settings, { payer, ...this.feeObservation() });
     return { address: this.address(id), satoshis: refundReserveSats, refundReserveSats,
       feeRate: this.settings.maxRefundFeeRate, label: 'possible ticker fee refund' };
+  }
+  // One approval for an additional ticker: the fee payment also sets aside the deploy inscription's Bitcoin
+  // (plus the refund reserve), bound to the request when it is created. Null keeps the two-step page flow.
+  tickerDeployFunding(id, payer, contentBytes) {
+    if (!this.settings.enabled || !this.settings.tickerDeploysEnabled || !validDestination(payer, this.network)) return null;
+    const quote = { payer, ...this.feeObservation() };
+    let refundReserveSats, deploySats;
+    try { refundReserveSats = this.settings.refundsEnabled ? refundReserve(this.settings, quote) : 0; deploySats = deployBudget(this.settings, contentBytes, quote); }
+    catch { return null; }
+    const satoshis = deploySats + refundReserveSats;
+    if (satoshis > this.settings.maxFundingSats) return null;
+    return { address: this.address(id), satoshis, deploySats, refundReserveSats, feeRate: this.settings.feeRate, label: 'your ticker deploy inscription' };
+  }
+  // The minter's own projection of a ticker deploy it sends (status/<id>.json), as for mints.
+  tickerDeploySender(job) {
+    const snapshot = readSenderJSON(join(this.settings.directory, 'status', job.id + '.json'));
+    return snapshot?.keyId === this.keyId && snapshot.requestId === job.id && snapshot.payer === job.receiver &&
+      snapshot.receiver === job.receiver && SENDER_STATES.has(snapshot.mintSender?.state) ? snapshot.mintSender : null;
   }
   status() {
     const h = readSenderJSON(join(this.settings.directory, 'health.json'));

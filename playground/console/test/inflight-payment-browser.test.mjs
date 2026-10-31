@@ -15,7 +15,7 @@ import { rules } from '../../../service/src/rules.mjs';
 import { temp } from '../../../service/test/helpers.mjs';
 
 const SENT = 'Payment sent — waiting for Bitcoin confirmation';
-const shots = process.env.IF2_SHOTS;
+const shots = process.env.DMW_SHOTS;
 async function shoot(page, name) {
   if (!shots) return;
   for (const [suffix, width] of [['desktop', 1280], ['390', 390]]) {

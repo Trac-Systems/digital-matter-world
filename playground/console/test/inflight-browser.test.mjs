@@ -12,7 +12,7 @@ import { provisioningFixture } from '../../../service/test/provisioning-fixture.
 import { hash } from '../../../service/src/util.mjs';
 
 const SENT = 'Inscription sent — waiting for Bitcoin confirmation';
-const shots = process.env.IF1_SHOTS;
+const shots = process.env.DMW_SHOTS;
 async function shoot(page, name) {
   if (!shots) return;
   for (const [suffix, width] of [['desktop', 1280], ['390', 390]]) {

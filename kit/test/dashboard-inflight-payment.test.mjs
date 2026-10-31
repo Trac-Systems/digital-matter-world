@@ -6,7 +6,7 @@ import { dashboardFixture } from './fixtures/dashboard-service.mjs';
 import { cleanup } from './helpers.mjs';
 
 const SENT = 'Payment sent — waiting for Bitcoin confirmation';
-const shots = process.env.IF2_SHOTS;
+const shots = process.env.DMW_SHOTS;
 const token = '0x' + '7a'.repeat(20), escrow = '0x' + '8b'.repeat(20);
 
 // The gateway's link status carries the payment it checked on Bitcoin; the dashboard shows it on My agent and on its

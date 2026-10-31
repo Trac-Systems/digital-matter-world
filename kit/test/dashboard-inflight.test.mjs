@@ -6,7 +6,7 @@ import { dashboardFixture } from './fixtures/dashboard-service.mjs';
 import { cleanup } from './helpers.mjs';
 
 const SENT = 'Inscription sent — waiting for Bitcoin confirmation';
-const shots = process.env.IF1_SHOTS;
+const shots = process.env.DMW_SHOTS;
 
 // The gateway's deployment state carries the in-flight record it checked on Bitcoin; the dashboard shows it
 // on My agent and on its deployment page (the site's page through the dashboard) without offering a second inscription.

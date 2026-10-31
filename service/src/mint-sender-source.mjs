@@ -116,6 +116,19 @@ export class MintSenderGateway {
     const page = await this.http.request('/internal/mint-sender/ticker-returns?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
     check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
   }
+  async tickerDeploys(after, limit) {
+    const page = await this.http.request('/internal/mint-sender/ticker-deploys?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
+    check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;
+  }
+  tickerDeployStatus(id) { return this.http.request('/internal/mint-sender/ticker-deploys/' + id, { authorization: this.authorization }); }
+  // The same public reports the deploy page makes: the in-flight deploy, then its registration once confirmed.
+  reportTickerDeploy(id, plan) {
+    return this.http.request('/mint/inflight', { method: 'POST', body: { kind: 'ticker', ref: id, phase: 'deployment', attempt: 0,
+      commitTxid: plan.commitTxid, revealTxid: plan.revealTxid, inscriptionId: plan.inscriptionId } });
+  }
+  registerTickerDeploy(asset, id, inscription) {
+    return this.http.request('/mint/deploy-ticker', { method: 'POST', body: { asset, requestId: id, inscription, phase: 'deployment' } });
+  }
   tickerReturnStatus(id) { return this.http.request('/internal/mint-sender/ticker-returns/' + id, { authorization: this.authorization }); }
   async refund(id) {
     const result = await this.http.request('/internal/mint-sender/refunds/' + id, { authorization: this.authorization });

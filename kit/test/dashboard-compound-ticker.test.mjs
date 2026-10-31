@@ -8,7 +8,7 @@ import { decodeTracAddress } from '../../rules/src/trac-address.js';
 import { dashboardFixture } from './fixtures/dashboard-service.mjs';
 import { cleanup } from './helpers.mjs';
 
-const shots = process.env.CT1_SHOTS, COMPOUND = 'c2:' + 'ab'.repeat(32);
+const shots = process.env.DMW_SHOTS, COMPOUND = 'c2:' + 'ab'.repeat(32);
 
 // My agent → Your compounds: the first maker chooses the compound's official ticker; the agent signs it.
 test('Your compounds: the first maker sets and changes the ticker, then the deploy link appears', async t => {

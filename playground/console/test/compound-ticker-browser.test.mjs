@@ -12,7 +12,7 @@ import { Inflight, revealText } from '../../../service/src/inflight.mjs';
 import { provisioningFixture } from '../../../service/test/provisioning-fixture.mjs';
 import { hash } from '../../../service/src/util.mjs';
 
-const shots = process.env.CT1_SHOTS;
+const shots = process.env.DMW_SHOTS;
 async function shoot(page, name) {
   if (!shots) return;
   for (const [suffix, width] of [['desktop', 1280], ['390', 390]]) {
