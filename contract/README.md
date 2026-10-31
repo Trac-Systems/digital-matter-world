@@ -12,8 +12,8 @@ fixed-format requirements before choosing launch identities.
 Use Node 24.22.1. The dependency lock preserves the tested RESET dependency graph,
 including these exact source commits:
 
-- trac-peer: `d0e3e5fd5fb971bf69289f2c6dc21194a4edae15`
-- trac-msb: `b18da4d81c0b2ca8ee2d2aee7b5a9f824735e30d`
+- trac-peer: `25ab03a5851aa600abd26a17775e7bb9b1e7bdd7`
+- trac-msb: `23ce0d7fa0e428856bda2c307bfec5cedf3c16f8`
 - @noble/curves: `1.9.7`; @noble/hashes: `1.8.0`; trac-wallet: `1.0.1`
 
 ```sh
