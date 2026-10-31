@@ -28,7 +28,9 @@ const COMPOUND = /^c2:[0-9a-f]{64}$/;
 // merged: older compound ids and the compound each became (from /api/info); an old id opens the compound it is now.
 let merged = {};
 const assetHref = asset => site.href('table', COMPOUND.test(asset) ? { c: merged[asset] ?? asset } : { p: asset });
-const assetLink = (asset, name) => h('a', { href: assetHref(asset) }, name ?? assetName(asset));
+// The site's own name when it knows the asset (plain names, merged compounds); else the server's.
+const nameOf = (asset, name) => store.pattern(asset) || store.compound(asset) || !name ? assetName(asset) : name;
+const assetLink = (asset, name) => h('a', { href: assetHref(asset) }, nameOf(asset, name));
 // A compound's name is its recipe and can be long: it wraps inside its cell instead of pushing the columns aside.
 const matter = (asset, name) => h(COMPOUND.test(asset) ? 'span' : 'span.nowrap', {}, h('span.swatch', { style: { background: mineral(asset) } }), assetLink(asset, name));
 const agentLink = (address, label) => h('a.mono', { href: site.href('agents', { a: address }), title: address }, label ?? short(address));
@@ -177,7 +179,7 @@ export function mount(el) {
   };
   // The clicked button and a toast both show progress; a mint takes seconds.
   const mint = (row, button) => act('', async () => {
-    const label = `${row.name ?? assetName(row.asset)} · block ${row.block}`;
+    const label = `${nameOf(row.asset, row.name)} · block ${row.block}`;
     const status = toast({ what: 'Minting ' + label, detail: 'Your agent is signing the mint request…', state: 'queued' });
     const idle = button?.textContent;
     if (button) { button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy'); }
@@ -223,7 +225,7 @@ export function mount(el) {
     const shown = (patterns ?? []).filter(p => p.claims > 0 || p.id === claimAsset);
     if (!shown.length) { clear(filter); return; }
     const total = shown.reduce((n, p) => n + (p.claims ?? 0), 0), plus = shown.some(p => p.moreClaims);
-    clear(filter, tabs([['all', `All · ${countText(total, plus)}`], ...shown.map(p => [p.id, `${p.name} · ${countText(p.claims, p.moreClaims)}`])],
+    clear(filter, tabs([['all', `All · ${countText(total, plus)}`], ...shown.map(p => [p.id, `${nameOf(p.asset ?? p.id, p.name)} · ${countText(p.claims, p.moreClaims)}`])],
       id => pick(id === 'all' ? undefined : id), claimAsset ?? 'all'));
   };
   const showClaims = p => { pick(p.id); claimsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
@@ -245,7 +247,7 @@ export function mount(el) {
             : h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
               p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null,
           p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null,
-          p.token === 'deployed' ? tickersButton(p.asset, p.name ?? assetName(p.asset), patternTickers, false) : null); } },
+          p.token === 'deployed' ? tickersButton(p.asset, nameOf(p.asset, p.name), patternTickers, false) : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
         h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null) },
     ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
@@ -317,7 +319,7 @@ export function mount(el) {
     const to = h('input.input.mono', { value: row.to, placeholder: 'trac1…', spellcheck: 'false', autocomplete: 'off', 'aria-label': `Recipient Trac address, row ${i + 1}`,
       oninput: e => { row.to = e.target.value; row.error = null; errorEl.textContent = ''; checkAddress(); } });
     const showUnit = () => { const u = unitOf(row.unit); clear(unitHint, u ? keyLine(u) : null); };
-    const pickUnit = select([['', 'Choose units…'], ...spendable.map(u => [u.asset, `${u.name}${u.tier ? ' · T' + u.tier : ''} · ${fmtInt(u.available)} available`])],
+    const pickUnit = select([['', 'Choose units…'], ...spendable.map(u => [u.asset, `${nameOf(u.asset, u.name)}${u.tier ? ' · T' + u.tier : ''} · ${fmtInt(u.available)} available`])],
       { value: row.unit, 'aria-label': `Units, row ${i + 1}`, onchange: e => { row.unit = e.target.value; row.error = null; errorEl.textContent = ''; showUnit(); } });
     const amount = h('input.input.mono', { value: row.amount, inputmode: 'numeric', placeholder: '0', 'aria-label': `Amount, row ${i + 1}`, style: { width: '96px' },
       oninput: e => { row.amount = e.target.value; row.error = null; errorEl.textContent = ''; } });
@@ -717,7 +719,7 @@ export function mount(el) {
         h('button.btn.sm.primary', { disabled: c.available === '0', onclick: event => mintCompound(c, amount.value.trim(), event.currentTarget) }, 'Make real on TAP')),
         h('div.small.muted', {}, `Quoted fee ${fee} per mint from your TAP Wallet (all tiers share one amount under flat fees); the units leave your agent and arrive as TAP tokens at your payout wallet.`),
         tickerPicks.get(c.asset)?.label() ? h('div.small.muted', {}, 'into ', h('a.mono', { href: assetHref(c.asset) }, tickerPicks.get(c.asset).label())) : null,
-        tickersButton(c.asset, c.name, compoundTickers, true));
+        tickersButton(c.asset, nameOf(c.asset, c.name), compoundTickers, true));
     }
     if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
       h('button.btn.sm', { disabled: true, title: 'Refine its tier first.' }, 'Deploy its TAP token'),
@@ -730,7 +732,7 @@ export function mount(el) {
   };
   const mintCompound = (c, amount, button) => act('', async () => {
     if (!/^[1-9][0-9]*$/.test(amount) || BigInt(amount) > BigInt(c.available)) { say(`Enter a whole number of units from 1 to ${fmtInt(c.available)}.`, 'bad'); return; }
-    const status = toast({ what: `Making ${amount} ${c.name} real`, detail: 'Your agent is signing the mint request…', state: 'queued' });
+    const status = toast({ what: `Making ${amount} ${nameOf(c.asset, c.name)} real`, detail: 'Your agent is signing the mint request…', state: 'queued' });
     button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy');
     let result;
     const deployment = tickerPicks.get(c.asset)?.value();

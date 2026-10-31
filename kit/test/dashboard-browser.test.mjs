@@ -221,7 +221,7 @@ test('My agent lists the agent’s patterns with Deploy for a new one, and the p
   await row('dmwfresh').getByRole('link', { name: 'Deploy pattern' }).waitFor();
   assert.equal(await row('dmwfresh').getByRole('link', { name: 'Deploy pattern' }).getAttribute('href'), '/mint/p2:2?owner=' + encodeURIComponent(f.agent.address));
   assert.equal(await row('dmwfresh').getByRole('button', { name: 'Show claims' }).count(), 0);
-  for (const name of ['dmwtest', 'dmwother']) {
+  for (const name of ['Test', 'dmwother']) {
     await row(name).getByText('deployed', { exact: true }).waitFor();
     assert.equal(await row(name).getByRole('link').filter({ hasText: /Deploy|deployment/ }).count(), 0);
   }
@@ -232,12 +232,12 @@ test('My agent lists the agent’s patterns with Deploy for a new one, and the p
   await claims.getByRole('tab', { name: 'dmwother · 1', selected: true }).waitFor();
   await assertEventually(async () => await claims.locator('tbody tr').count() === 1);
   assert.equal(await claims.locator('tbody tr').filter({ hasText: 'dmwother' }).getByRole('button', { name: 'Mint', exact: true }).count(), 1);
-  await claims.getByRole('tab', { name: 'dmwtest · 2' }).click();
-  await assertEventually(async () => (await claims.locator('tbody tr').allTextContents()).join().includes('dmwtest') && await claims.locator('tbody tr').count() === 2);
+  await claims.getByRole('tab', { name: 'Test · 2' }).click();
+  await assertEventually(async () => (await claims.locator('tbody tr').allTextContents()).join().includes('Test') && await claims.locator('tbody tr').count() === 2);
   await claims.getByRole('tab', { name: 'All · 3' }).click();
   await assertEventually(async () => await claims.locator('tbody tr').count() === 3);
   if (process.env.DMW_DASHBOARD_SCREENSHOT) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: process.env.DMW_DASHBOARD_SCREENSHOT, fullPage: true }); }
-  await assertReferences(page, ['dmwtest', 'dmwfresh', 'dmwother']);
+  await assertReferences(page, ['Test', 'dmwfresh', 'dmwother']);
   assert.equal(await row('dmwfresh').getByRole('link', { name: 'dmwfresh' }).getAttribute('href'), '/pattern/p2:2');
   assert.equal(await page.getByRole('link', { name: '9', exact: true }).first().getAttribute('href'), '/block/9');
   assert.equal(f.calls.some(c => c.path.startsWith('/mint/deployment/')), false);
@@ -275,7 +275,7 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   await send.getByText('not a Bitcoin or TAP token transfer and not an inscription').first().waitFor();
   // Units are offered by name, tier and available amount; the key is a muted detail.
   const unit = send.getByRole('combobox', { name: 'Units, row 1' });
-  assert.deepEqual((await unit.locator('option').allTextContents()).slice(1), ['dmwtest · T3 · 100 available', 'dmwmuffinite · T2 · 7 available']);
+  assert.deepEqual((await unit.locator('option').allTextContents()).slice(1), ['Test · T3 · 100 available', 'dmwmuffinite · T2 · 7 available']);
   await send.getByRole('textbox', { name: 'Recipient Trac address, row 1' }).fill(to(1).slice(0, -1) + 'x');
   await send.getByText('Not a valid Trac address').waitFor();
   await send.getByRole('textbox', { name: 'Recipient Trac address, row 1' }).fill(to(1));
@@ -290,7 +290,7 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   await send.getByRole('textbox', { name: 'Amount, row 2' }).fill('5');
   await shot('send', send);
   await send.getByRole('button', { name: 'Review send' }).click();
-  await send.getByText('Send 2 dmwmuffinite, 5 dmwtest to 2 Trac addresses?').waitFor();
+  await send.getByText('Send 2 dmwmuffinite, 5 Test to 2 Trac addresses?').waitFor();
   await assertReferences(page, ['dmwmuffinite']);
   await send.getByText('Free, arrives with the next Bitcoin block.', { exact: false }).waitFor();
   assert.equal(calls.length, 0, 'review signs nothing');
@@ -303,7 +303,7 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   events.push({ id: sha('v2-event/transfer/' + sha('m' + calls[0].actionId) + '/' + sha('n' + calls[0].actionId)), type: 'transfer', provenance: { batch: '42' } });
   await recent.getByText('Confirmed in batch 42').waitFor({ timeout: 10000 });
   await shot('progress', recent);
-  await assertReferences(page, ['dmwmuffinite', 'dmwtest']);
+  await assertReferences(page, ['dmwmuffinite', 'Test']);
   assert.equal(await recent.getByRole('link', { name: 'batch 42' }).first().getAttribute('href'), '/records/batches/42');
   assert.equal(await recent.getByRole('link', { name: 'dmwmuffinite' }).first().getAttribute('href'), '/pattern/p2:2');
   assert.equal(await recent.locator(`a[href="/agents/${to(1)}"]`).count(), 1);
