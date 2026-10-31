@@ -75,6 +75,11 @@ export function tickerList(asset, { title = 'Tokens on TAP', label = true } = {}
   const box = h('div', { hidden: true });
   tickers(asset).then(rows => {
     if (!rows) return;
+    // No token yet: one plain line, no empty table or page bar (the deploy form stays quiet).
+    if (!rows.length) {
+      clear(box, label ? h('div.section-label', {}, title) : null, h('p.small.muted', { style: { margin: 0, padding: '8px 14px 12px' } }, OFFICIAL_FIRST));
+      box.hidden = false; return;
+    }
     const list = pagedTable({ path: path(asset), key: 'rows', limit: 25, cursorParam: 'after',
       empty: OFFICIAL_FIRST, onError: () => { box.hidden = true; return true; },
       // Three columns fit the side panel and a phone; the deploy inscription link sits under its ticker.
@@ -117,8 +122,9 @@ export function deployTickerForm(asset, { request, open, compound = false, compa
   const el = h('div', { hidden: true, style: padded ? { padding: '10px 14px' } : {} });
   tickers(asset).then(rows => {
     if (!rows) return;
+    // No token yet: the ticker list above already says the official one comes first.
+    if (!rows.length) return;
     el.hidden = false;
-    if (!rows.length) { clear(el, h('p.small.muted', { style: { margin: 0 } }, OFFICIAL_FIRST)); return; }
     if (toggle) clear(el, h('button.btn.sm', { type: 'button', onclick: () => form(rows) }, 'Deploy your own ticker'));
     else form(rows);
   });
