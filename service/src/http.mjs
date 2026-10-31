@@ -21,11 +21,13 @@ async function body(req, maxBytes) {
   for await (const chunk of req) { size += chunk.length; check(size <= maxBytes, 'body_limit', 413); chunks.push(chunk); }
   return Buffer.concat(chunks).toString('utf8');
 }
-export async function serve({ listener, intake, files, headers, mints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
+export async function serve({ listener, intake, files, headers, mints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, inflight, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
   check(Number.isSafeInteger(responseTimeoutMs) && responseTimeoutMs > 0 && responseTimeoutMs <= 2000, 'response_timeout');
   check(Number.isSafeInteger(bitmapSubmitBytes) && bitmapSubmitBytes > 0, 'bitmap_submit_bytes');
   check(host === '127.0.0.1', 'local_listener_required'); let inFlight = 0;
   const unauthenticated = new Limiter({ capacity: rateCapacity, burst: rateBurst, perSecond: ratePerSecond });
+  // A wallet-broadcast inscription Bitcoin has not confirmed yet, shown beside the unchanged state.
+  const shown = (kind, result) => inflight ? inflight.decorate(kind, result) : result;
   const handler = async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (inFlight >= maxInFlight) {
@@ -81,7 +83,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(result)); return;
       }
       if (mints?.public && ['GET', 'HEAD'].includes(req.method) && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) {
-        const result = mints.public(req.url.slice(6), req.headers['x-mint-requester-secret']);
+        const result = shown('mint', mints.public(req.url.slice(6), req.headers['x-mint-requester-secret']));
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('Vary', 'Accept, X-Mint-Requester-Secret');
         res.end(req.method === 'HEAD' ? undefined : JSON.stringify(publicIdentities(result))); return;
@@ -207,40 +209,41 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/mint\/ticker-state\/[^/?#]+(?:\?|$)/.test(req.url)) {
         const url = new URL(req.url, 'http://local');
         check([...url.searchParams.keys()].every(k => k === 'selector') && url.searchParams.has('selector'), 'ticker_query');
-        result = await operator.provisioner.tickers.state(decodeURIComponent(url.pathname.split('/').at(-1)), url.searchParams.get('selector'));
+        result = shown('ticker', await operator.provisioner.tickers.state(decodeURIComponent(url.pathname.split('/').at(-1)), url.searchParams.get('selector')));
       }
       else if (operator?.provisioner?.tickers && req.method === 'POST' && ['/mint/ticker-payment', '/api/ticker-payment'].includes(req.url)) {
         result = await operator.provisioner.tickers.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       }
       else if (operator?.provisioner?.tickers && req.method === 'POST' && ['/mint/deploy-ticker', '/api/deploy-ticker'].includes(req.url)) {
         const input = JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096));
-        result = input.inscription ? await operator.provisioner.tickers.submit(input.asset, input) : await operator.provisioner.tickers.request(input.asset, input);
+        result = shown('ticker', input.inscription ? await operator.provisioner.tickers.submit(input.asset, input) : await operator.provisioner.tickers.request(input.asset, input));
       }
       else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment-state\/[^/?#]+$/.test(req.url)) {
         const asset = decodeURIComponent(req.url.split('/').at(-1)); check(deploymentAssetId(asset), 'deployment_asset');
-        result = await operator.provisioner.state(asset);
+        result = shown('deployment', await operator.provisioner.state(asset));
       }
       else if (operator?.provisioner && req.method === 'GET' && /^\/mint\/deployment\/[^/?#]+$/.test(req.url)) {
         const asset = decodeURIComponent(req.url.split('/').at(-1)); check(deploymentAssetId(asset), 'deployment_asset');
-        result = await operator.provisioner.request(asset);
+        result = shown('deployment', await operator.provisioner.request(asset));
       }
       else if (operator?.provisioner && req.method === 'POST' && req.url === '/mint/deployment') {
         const input = JSON.parse(await body(req, 4096)); check(deploymentAssetId(input.asset), 'deployment_asset');
-        result = input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input);
+        result = shown('deployment', input.phase === undefined && input.inscription === undefined ? await operator.provisioner.request(input.asset) : await operator.provisioner.submit(input.asset, input));
       }
+      else if (inflight && req.method === 'POST' && req.url === '/mint/inflight') result = await inflight.report(JSON.parse(await body(req, inflight.settings.requestBytes)));
       else if (mints?.publicMints && req.method === 'POST' && ['/public-mints/quote', '/public-mints/start'].includes(req.url)) {
         result = await mints.publicMints.quote(JSON.parse(await body(req, mints.document.values.moveBytes)), req.url.endsWith('/start'), { clientIP: publicMintClientIP(req), requesterSecret: req.headers['x-mint-requester-secret'] });
         if (req.url.endsWith('/quote') && mints.mintSender) result = mints.mintSender.estimate(result);
       }
       else if (mints && req.method === 'POST' && req.url === '/mint/quote') result = await mints.quote(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)));
       else if (mints && req.method === 'POST' && req.url === '/mint/request') result = await mints.request(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 8192)));
-      else if (mints && req.method === 'POST' && req.url === '/mint/payment') result = await mints.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)), req.headers['x-mint-requester-secret']);
+      else if (mints && req.method === 'POST' && req.url === '/mint/payment') result = shown('mint', await mints.payment(JSON.parse(await body(req, intake.settings?.document?.values.moveBytes ?? 4096)), req.headers['x-mint-requester-secret']));
       else if (mints?.refund && req.method === 'POST' && req.url === '/mint/refund') result = await mints.refund(JSON.parse(await body(req, intake.settings.document.values.moveBytes)));
       else if (financialActions && req.method === 'POST' && req.url === '/financial/action') result = await financialActions.submit(JSON.parse(await body(req, intake.settings.document.values.moveBytes)));
       else if (financialActions && req.method === 'GET' && /^\/financial\/action\/[0-9a-f]{64}$/.test(req.url)) result = financialActions.status(req.url.split('/').at(-1));
       else if (custody && req.method === 'POST' && req.url === '/financial/custody/payment') result = await custody.payment(JSON.parse(await body(req, intake.settings.document.values.moveBytes)));
       else if (custody && req.method === 'GET' && /^\/financial\/custody\/[0-9a-f]{64}$/.test(req.url)) result = await custody.status(req.url.split('/').at(-1));
-      else if (mints && req.method === 'GET' && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) result = mints.public(req.url.slice(6));
+      else if (mints && req.method === 'GET' && /^\/mint\/[0-9a-f]{64}$/.test(req.url)) result = shown('mint', mints.public(req.url.slice(6)));
       else { res.statusCode = 404; res.end('{"error":"not_found"}'); return; }
       res.end(JSON.stringify(req.url === '/moves' ? result : publicIdentities(result)));
     } catch (error) {

@@ -325,6 +325,8 @@ export class DashboardState {
     const token = tokenState(deployment);
     return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? (detail && detail.name !== p.asset ? detail.name : 'Pattern #' + p.asset.slice(3)), tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
       token, deploymentState: deployment?.state ?? null,
+      // A wallet-sent inscription the gateway saw on Bitcoin, until its state moves on.
+      inflight: token !== 'deployed' && /^[0-9a-f]{64}$/.test(deployment?.inflight?.revealTxid ?? '') ? deployment.inflight : null,
       ...((p.amountMode ?? deployment?.definition?.amountMode ?? detail?.amountMode) === 'field-value' ? { amountMode: 'field-value' } : {}),
       // The deployed ticker can differ from the name (a taken ticker gets a word added).
       ticker: token === 'deployed' ? deployment?.entry?.tick ?? null : null,
@@ -895,9 +897,11 @@ export class DashboardState {
     const refine = this.savedCrafts(CRAFT_RECENT * 3).find(c => c.kind === 'refine' && c.asset === u.asset);
     const p = record?.properties ?? {}, maker = record ? wireIdentities(record).firstMaker : null;
     const firstMaker = !!maker && maker === this.agent.owner, token = await this.compoundToken(u.asset);
+    const inflight = token === 'not_deployed' ? await this.craftRead('i/' + u.asset, async () => (await this.service.deploymentState(u.asset))?.inflight ?? null).catch(() => null) : null;
     return { asset: u.asset, name: u.name, amount: u.amount, available: u.available, tier, recipe: record?.recipe ?? null, from,
       generation: p.generation === undefined ? null : String(p.generation), charge: p.charge ?? null, spectrum: p.spectrum ?? null,
       firstMaker, token, ticker: token === 'deployed' ? await this.compoundTicker(u.asset) : null,
+      inflight: /^[0-9a-f]{64}$/.test(inflight?.revealTxid ?? '') ? inflight : null,
       // The first maker deploys the token on the same deployment page as patterns, with the agent's address filled in.
       deploymentLink: firstMaker && token === 'not_deployed' ? this.service.deploymentLink(u.asset, this.agent.address, this.agent.paymentOrigin) : null,
       needsRefine: !!record && tier === null, refine: refine ? await this.craftView(refine) : null };

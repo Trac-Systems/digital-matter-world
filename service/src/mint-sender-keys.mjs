@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { credentialDirectoryOk, credentialFileOk } from './systemd-credential.mjs';
 import { check } from './util.mjs';
+import { refundRedeemBytes } from './mint-refund-payload.mjs';
 import { buildInscription, fundingAddress, hex, networkFor } from '../../kit/lib/inscription-core.mjs';
 const require = createRequire(new URL('../../kit/package.json', import.meta.url));
 const { HDKey } = require('@scure/bip32');
@@ -50,16 +51,36 @@ export function inscriptionBudget(settings, contentBytes = settings.contentBytes
 export function refundBudget(settings) {
   return inscriptionBudget(settings, settings.refundContentBytes, settings.maxRefundFeeRate, 1);
 }
-export function fundingAmount(settings) {
-  // The reserve is an operator setting; a refund that does not fit it at current fees waits for lower fees.
-  if (settings.refundsEnabled) check(settings.refundReserveSats >= settings.postageSats + settings.dustSats, 'mint_sender_refund_reserve');
-  const satoshis = inscriptionBudget(settings) + (settings.refundsEnabled ? settings.refundReserveSats : 0);
+export function refundReserve(settings, { payer, feeRate, feeRateAt, now = Date.now() } = {}) {
+  if (settings.refundReserveMode !== 'dynamic' || typeof payer !== 'string' || !Number.isFinite(feeRate) || feeRate < 1 ||
+      feeRate > settings.maxFeeRate || !Number.isSafeInteger(feeRateAt) || feeRateAt < 0 || feeRateAt > now || now - feeRateAt > settings.refundFeeRateMaxAgeMs)
+    return settings.refundReserveSats;
+  const bytes = refundRedeemBytes(payer);
+  check(bytes <= settings.refundContentBytes, 'mint_refund_content');
+  // The shared builder accepts up to 1000 sat/vB. At that rate this envelope
+  // already exceeds the largest allowed reserve (maxFundingSats <= 100000),
+  // so higher headroom-adjusted rates have the same clamped result.
+  const cost = inscriptionBudget(settings, bytes, Math.min(1000, feeRate * settings.refundFeeHeadroom), 1);
+  return Math.min(settings.refundReserveMaxSats, Math.max(settings.refundReserveMinSats, cost));
+}
+export function boundRefundReserve(record, settings) {
+  if (record.refundReserveSats === undefined) return Math.min(settings.maxFeeSats, settings.refundReserveSats);
+  check(Number.isSafeInteger(record.refundReserveSats) && record.refundReserveSats >= 0, 'mint_sender_refund_binding');
+  return record.refundReserveSats;
+}
+export function fundingAmount(settings, quote = {}) {
+  const reserve = settings.refundsEnabled ? quote.refundReserveSats ?? refundReserve(settings, quote) : 0;
+  if (settings.refundsEnabled) check(Number.isSafeInteger(reserve) && reserve >= settings.postageSats + settings.dustSats, 'mint_sender_refund_reserve');
+  const satoshis = inscriptionBudget(settings) + (settings.refundsEnabled ? reserve : 0);
   check(satoshis <= settings.maxFundingSats, 'mint_sender_funding_cap');
   return satoshis;
 }
-export function fundingQuote(seed, id, network, settings) {
+export function fundingQuote(seed, id, network, settings, quote = {}) {
   const key = requestKey(seed, id, network);
-  try { return { address: key.address, satoshis: fundingAmount(settings), feeRate: settings.feeRate, label: 'your mint inscription' }; }
+  try {
+    const refundReserveSats = settings.refundsEnabled ? quote.refundReserveSats ?? refundReserve(settings, quote) : 0;
+    return { address: key.address, satoshis: fundingAmount(settings, { refundReserveSats }), refundReserveSats, feeRate: settings.feeRate, label: 'your mint inscription' };
+  }
   finally { key.privateKey.fill(0); }
 }
 export async function readMintSeed(filename, { credentialsDirectory = process.env.CREDENTIALS_DIRECTORY, rootOwned = process.platform === 'linux' } = {}) {

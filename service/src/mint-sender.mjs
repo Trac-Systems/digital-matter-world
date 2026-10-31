@@ -3,7 +3,7 @@ import { MintRefundSender } from './mint-refund-sender.mjs';
 import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { mintSenderError } from './mint-sender-errors.mjs';
 import { join } from 'node:path';
-import { requestKey, btc, validRequestId, validDestination } from './mint-sender-keys.mjs';
+import { requestKey, btc, validRequestId, validDestination, boundRefundReserve } from './mint-sender-keys.mjs';
 import { senderJSON } from './mint-sender-journal.mjs';
 import { senderKeyId, senderPolicy } from './mint-sender-view.mjs';
 import { check } from './util.mjs';
@@ -53,8 +53,10 @@ export class MintSender {
       check(status.fundingAddress === address, 'mint_sender_funding_binding');
       const old = this.journal.get(id);
       check(!old || old.payer === status.payer && old.receiver === status.receiver && old.address === address, 'mint_sender_request_changed');
+      if (status.refundReserveSats !== undefined) boundRefundReserve(status, this.settings);
+      check(!old || old.refundReserveSats === status.refundReserveSats, 'mint_sender_refund_binding');
       // Existing work is never rewritten by a concurrent discovery response.
-      if (!old) this.journal.save({ id, ...(status.tickerReturn ? { tickerReturn: true, fundingId: status.fundingId } : {}), payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted, fundingReference: status.fundingReference });
+      if (!old) this.journal.save({ id, ...(status.tickerReturn ? { tickerReturn: true, fundingId: status.fundingId } : {}), ...(status.refundReserveSats === undefined ? {} : { refundReserveSats: status.refundReserveSats }), payer: status.payer, receiver: status.receiver, address, state: 'waiting_funding', createdAt: this.now(), nextAttempt: 0, counted: status.counted, fundingReference: status.fundingReference });
       else if (!this.active.has(id) && (status.counted !== old.counted || status.fundingReference !== old.fundingReference)) this.journal.save({ ...old, counted: status.counted, fundingReference: status.fundingReference });
     }
     if (returns) this.journal.meta('tickerReturnCursor', returns.next ?? '');
@@ -177,7 +179,7 @@ export class MintSender {
     const refundAlarm = refundStuck || !!(refundCounts.refund_waiting_funds || refundCounts.refund_needs_operator) || this.settings.refundsEnabled &&
       (refundFloat.authority.state !== 'active' || !refundFloat.checkedAt || this.now() - refundFloat.checkedAt > this.settings.heartbeatMaxAgeMs);
     const payouts = this.payouts.status();
-    senderJSON(join(this.settings.directory, 'health.json'), { payouts, keyId: this.keyId, policy: this.policy, at: this.now(), ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
+    senderJSON(join(this.settings.directory, 'health.json'), { payouts, keyId: this.keyId, policy: this.policy, at: this.now(), ready, ...this.feeObservation, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
     this.log({ event: 'mint_sender_health', payouts, ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
     if (refundStuck) this.log({ event: 'mint_refund_stuck', refundId: pendingRefund.id, requestId: pendingRefund.record.id, state: pendingRefund.state, waitingMs: this.now() - pendingRefund.createdAt });
     for (const row of stuck)
@@ -202,6 +204,15 @@ export class MintSender {
       try { await this.discover(); } catch (error) { this.log({ event: 'mint_sender_discovery_retry', code: mintSenderError(error) }); }
       try { await this.refunds.discover(); } catch (error) { this.log({ event: 'mint_refund_discovery_retry', code: mintSenderError(error) }); }
       if (this.sourceVerified) {
+        if (this.settings.refundsEnabled && this.settings.refundReserveMode === 'dynamic' &&
+            (this.lastFeeCheck === undefined || this.now() - this.lastFeeCheck >= this.settings.healthMs)) {
+          try {
+            const feeRate = await this.bitcoin.feeRate();
+            check(Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= this.settings.maxFeeRate, 'mint_sender_fee_unavailable');
+            this.feeObservation = { feeRate, feeRateAt: this.now() };
+          } catch (error) { this.log({ event: 'mint_sender_fee_retry', code: mintSenderError(error) }); }
+          finally { this.lastFeeCheck = this.now(); }
+        }
         if (!this.payoutJob && this.now() >= (this.journal.meta('payoutNextAttempt') ?? 0) &&
             (this.gateway.payouts || this.payouts.payments.pending()) && this.active.size < this.settings.concurrency) {
           const job = this.payouts.attempt().catch(() => this.log({ event: 'mint_payout_journal_error' }))

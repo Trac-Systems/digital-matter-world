@@ -100,6 +100,7 @@ export class MintSenderJournal {
   save(row) {
     check(validRequestId(row.id) && SENDER_STATES.has(row.state), 'mint_sender_request');
     const prior = this.get(row.id);
+    check(!prior || prior.refundReserveSats === row.refundReserveSats, 'mint_sender_refund_binding');
     check(!prior || prior.payer === row.payer && prior.receiver === row.receiver && prior.address === row.address, 'mint_sender_binding_changed');
     check(!prior?.plan && !prior?.returnPlan || JSON.stringify(prior.coin) === JSON.stringify(row.coin), 'mint_sender_coin_immutable');
     check(!prior?.plan || JSON.stringify(prior.plan) === JSON.stringify(row.plan), 'mint_sender_plan_immutable');

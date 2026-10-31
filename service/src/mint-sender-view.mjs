@@ -4,11 +4,11 @@ import { acceptedRefund, refundPage, decorateRefund } from './mint-refund-view.m
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { openSync, readFileSync, closeSync, fstatSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { requestKey, refundFloatKey, payoutFloatKey, fundingAmount, validDestination, validRequestId } from './mint-sender-keys.mjs';
+import { requestKey, refundFloatKey, payoutFloatKey, fundingAmount, fundingQuote, refundReserve, validDestination, validRequestId } from './mint-sender-keys.mjs';
 import { check, hash } from './util.mjs';
 
 export const senderToken = (seed, network) => createHmac('sha256', seed).update('dmw-mint-sender-api-v1|' + network).digest('hex');
-export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'refundReserveSats', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers', 'payoutsEnabled', 'payoutDailyCapAtoms', 'payoutMaxAtoms'].map(k => [k, settings[k]]))));
+export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'refundReserveSats', 'refundReserveMode', 'refundFeeHeadroom', 'refundReserveMinSats', 'refundReserveMaxSats', 'refundFeeRateMaxAgeMs', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers', 'payoutsEnabled', 'payoutDailyCapAtoms', 'payoutMaxAtoms'].map(k => [k, settings[k]]))));
 export const senderKeyId = (seed, network) => {
   const k = requestKey(seed, '00'.repeat(32), network);
   try { return hash(k.address); } finally { k.privateKey.fill(0); }
@@ -50,6 +50,20 @@ export class MintSenderView {
     return h?.keyId === this.keyId && h.policy === this.policy && h.ready === true && Number.isSafeInteger(h.at) &&
       h.at <= this.now() && this.now() - h.at <= this.settings.heartbeatMaxAgeMs;
   }
+  feeObservation() {
+    const h = readSenderJSON(join(this.settings.directory, 'health.json'));
+    return h?.keyId === this.keyId && h.policy === this.policy ? { feeRate: h.feeRate, feeRateAt: h.feeRateAt, now: this.now() } : {};
+  }
+  bind(row) {
+    if (row.mintFunding || !this.settings.enabled || row.kind !== 'tap' ||
+        !validDestination(row.payer, this.network) || !validDestination(row.receiver, this.network)) return row;
+    return { ...row, mintFunding: fundingQuote(this.seed, row.id, this.network, this.settings, { payer: row.payer, ...this.feeObservation() }) };
+  }
+  refundFunding(id, payer) {
+    const refundReserveSats = refundReserve(this.settings, { payer, ...this.feeObservation() });
+    return { address: this.address(id), satoshis: refundReserveSats, refundReserveSats,
+      feeRate: this.settings.maxRefundFeeRate, label: 'possible ticker fee refund' };
+  }
   status() {
     const h = readSenderJSON(join(this.settings.directory, 'health.json'));
     const matching = h?.keyId === this.keyId && h.policy === this.policy;
@@ -64,7 +78,7 @@ export class MintSenderView {
     if (!this.settings.enabled || !this.ready() || !status.publicMint || status.kind !== 'tap' || status.state !== 'awaiting_payment' || status.requestId) return status;
     // A preview has no payable request/address. Expose only its Bitcoin budget;
     // the start response supplies the request-bound funding output separately.
-    return { ...status, mintFundingEstimate: { satoshis: this.satoshis, feeRate: this.settings.feeRate } };
+    return { ...status, mintFundingEstimate: { satoshis: fundingAmount(this.settings, { payer: status.payer ?? status.receiver, ...this.feeObservation() }), feeRate: this.settings.feeRate } };
   }
   decorate(row, status) {
     if (row.kind !== 'tap' || !validDestination(row.payer, this.network) || !validDestination(row.receiver, this.network)) return status;
@@ -73,7 +87,7 @@ export class MintSenderView {
       snapshot.receiver === row.receiver && SENDER_STATES.has(snapshot.mintSender?.state) ? snapshot.mintSender : null;
     const offer = this.settings.enabled && status.payable && ['awaiting_payment', 'partly_paid'].includes(status.state) && this.ready() &&
       (!sender || sender.state === 'waiting_funding');
-    return { ...status, ...(Array.isArray(status.refunds) ? { refunds: status.refunds.map(r => this.decorateRefund(r)) } : {}), ...(offer ? { mintFunding: { address: this.address(row.id), satoshis: this.satoshis, feeRate: this.settings.feeRate, label: 'your mint inscription' } } : {}),
+    return { ...status, ...(Array.isArray(status.refunds) ? { refunds: status.refunds.map(r => this.decorateRefund(r)) } : {}), ...(offer ? { mintFunding: row.mintFunding ?? { address: this.address(row.id), satoshis: this.satoshis, feeRate: this.settings.feeRate, label: 'your mint inscription' } } : {}),
       ...(sender || offer ? { mintSender: sender ?? { state: 'waiting_funding' } } : {}) };
   }
   page(mints, params) {
@@ -85,6 +99,7 @@ export class MintSenderView {
       .map(({ id, value }) => {
         const winner = value.publicMint ? mints.store.get('accountRecords', publicScanKey(publicPlotId(value.request.asset, value.request.block)))?.winner : null;
         return { requestId: id, receiver: value.receiver, payer: value.payer,
+          ...(value.mintFunding ? { refundReserveSats: value.mintFunding.refundReserveSats } : {}),
           ...(winner?.id === id ? { fundingReference: winner.reference } : {}),
           payBy: { rail: value.kind, untilBlock: value.expiry ?? value.request.expires }, counted, fundingAddress: this.address(id) };
       }),

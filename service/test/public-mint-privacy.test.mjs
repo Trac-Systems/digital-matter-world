@@ -173,3 +173,18 @@ test('a full registration queue still returns the requester secret and retries w
   concealed((await f.request('/mint/' + f.id)).value);
   assert.equal((await f.start()).value.requesterSecret, undefined, 'retry cannot reissue the private capability');
 });
+
+test('public mint start persists its Bitcoin quote before returning and retries retain it', async t => {
+  const f = await fixture(t), { reserveView } = await import('./refund-reserve-fixture.mjs');
+  const funding = await reserveView(t, f.store.directory); f.mints.mintSender = funding.view; funding.publish(1);
+  const first = await f.start(); assert.equal(first.response.status, 200);
+  const quote = first.value.mintFunding;
+  assert.ok(quote.refundReserveSats < 3000); assert.deepEqual(f.store.get('mints', f.id).mintFunding, quote);
+  funding.publish(10);
+  assert.deepEqual((await f.start()).value.mintFunding, quote);
+  f.mints.mintSender = funding.restart({ refundReserveSats: 9000, feeMargin: 3 }); funding.publish(10);
+  const status = await f.request('/mint/' + f.id, { headers: { 'x-mint-requester-secret': first.value.requesterSecret } });
+  assert.deepEqual(status.value.mintFunding, quote);
+  const page = funding.view.page(f.mints, new URLSearchParams());
+  assert.equal(page.rows[0].refundReserveSats, quote.refundReserveSats);
+});

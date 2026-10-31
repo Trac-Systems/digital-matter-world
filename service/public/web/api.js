@@ -57,7 +57,7 @@ export const site = {
     if (view === 'feed') return '/feed';
     return '/' + view;
   },
-  // A pattern's or compound's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inscribed' | 'none', label, kind,
+  // A pattern's or compound's token on Bitcoin: { step: 'deployed' | 'confirming' | 'inflight' | 'inscribed' | 'none', label, kind, inflight,
   // tick (the deployed ticker, which can differ from the name), deployer (who may deploy until when) }, or null when
   // the gateway does not know the asset. Read-only; pages ask only for what is on screen.
   token(asset) {
@@ -83,12 +83,14 @@ async function slot(read) {
   reading++;
   try { return await read(); } finally { reading--; queue.shift()?.(); }
 }
-const TOKEN_STEPS = { deployed: ['Token deployed', 'minted'], confirming: ['Token being confirmed', 'info'], inscribed: ['Pattern inscribed — deploy token next', 'info'], none: ['Token not deployed', 'warn'] };
+// 'inflight': a wallet-sent inscription the gateway saw on Bitcoin (words.js INFLIGHT_TEXT).
+const TOKEN_STEPS = { deployed: ['Token deployed', 'minted'], confirming: ['Token being confirmed', 'info'], inflight: ['Inscription sent — waiting for Bitcoin confirmation', 'info'], inscribed: ['Pattern inscribed — deploy token next', 'info'], none: ['Token not deployed', 'warn'] };
 const JOB_STATES = new Set(['not_started', 'queued', 'awaiting_player_deploy', 'inscribed', 'deploying', 'confirming']);
 function tokenStep(job) {
   const step = job?.state === 'registered' ? 'deployed' : !JOB_STATES.has(job?.state) ? null
-    : job.state === 'confirming' && job.entry ? 'confirming' : job.elementId ? 'inscribed' : 'none';
+    : job.state === 'confirming' && job.entry ? 'confirming' : job.inflight ? 'inflight' : job.elementId ? 'inscribed' : 'none';
   return step && { step, label: TOKEN_STEPS[step][0], kind: TOKEN_STEPS[step][1], tick: step === 'deployed' ? job.entry?.tick ?? null : null,
+    ...(step === 'inflight' ? { inflight: job.inflight } : {}),
     deployer: step === 'deployed' ? null : job.deployer ?? null };
 }
 

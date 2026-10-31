@@ -237,3 +237,51 @@ test('flat-fee refund float sends the original full paid amount without repricin
   await f.restart(); await f.tick();
   assert.deepEqual(f.row.plan, saved);
 });
+
+test('refund sender retains a bound reserve across restart and ignores later reserve policy', async t => {
+  const f = await fixture(t, { withMint: true });
+  f.record.refundReserveSats = 1500; f.status.refundReserveSats = 1500; f.fee(5);
+  await f.tick(); assert.equal(f.row.state, 'refund_pending'); assert.equal(f.row.plan, undefined);
+  assert.equal(f.sender.journal.get(f.id).refundReserveSats, 1500);
+  await f.restart({ refundReserveSats: 9000, refundReserveMinSats: 9000, refundReserveMaxSats: 9000 });
+  await f.tick(); assert.equal(f.row.state, 'refund_pending'); assert.equal(f.sent.length, 0);
+  f.fee(2); await f.tick(); assert.equal(f.row.state, 'refund_sent');
+  assert.ok(Number(f.row.plan.feeSats) <= 1500);
+  assert.throws(() => f.sender.journal.save({ ...f.sender.journal.get(f.id), refundReserveSats: 9000 }), /refund_binding/);
+});
+
+test('bound refund budget remains usable when today\'s fallback and generic fee limit are smaller', async t => {
+  const f = await fixture(t); f.record.refundReserveSats = 6000;
+  await f.restart({ refundReserveSats: 1500, maxFeeSats: 1500 }); f.fee(5);
+  await f.tick(); assert.equal(f.row.state, 'refund_sent'); assert.ok(Number(f.row.plan.feeSats) > 1500);
+  assert.ok(Number(f.row.plan.feeSats) <= 6000);
+});
+
+test('old unbound refunds keep the current fallback and generic fee cap', async t => {
+  const f = await fixture(t); f.fee(5);
+  await f.restart({ refundReserveSats: 1500 }); await f.tick();
+  assert.equal(f.row.state, 'refund_pending'); assert.equal(f.sent.length, 0);
+  await f.restart({ refundReserveSats: 6000, maxFeeSats: 1500 }); await f.tick();
+  assert.equal(f.row.state, 'refund_pending'); assert.equal(f.sent.length, 0);
+  await f.restart({ refundReserveSats: 6000, maxFeeSats: f.settings.maxFeeSats }); await f.tick();
+  assert.equal(f.row.state, 'refund_sent'); assert.equal(f.row.record.refundReserveSats, undefined);
+});
+
+test('zero bound reserve never authorizes refund fees after refunds are enabled', async t => {
+  const f = await fixture(t); f.record.refundReserveSats = 0;
+  await f.tick(); assert.equal(f.row.state, 'refund_pending'); assert.equal(f.sent.length, 0);
+  assert.equal(f.row.failures, 0);
+});
+
+test('minter health publishes fee observation and a failed refresh never renews its timestamp', async t => {
+  const f = await fixture(t, { funded: false }); f.fee(3);
+  await f.tick();
+  const path = join(f.directory, 'health.json'), before = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(before.feeRate, 3); assert.equal(before.feeRateAt, before.at);
+  f.bitcoin.feeRate = async () => { throw Error('private source failure'); };
+  await f.tick();
+  const after = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(after.feeRate, 3); assert.equal(after.feeRateAt, before.feeRateAt); assert.ok(after.at > before.at);
+  assert.ok(f.logs.some(r => r.event === 'mint_sender_fee_retry'));
+  assert.ok(!JSON.stringify(f.logs).includes('private source failure'));
+});

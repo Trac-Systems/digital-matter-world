@@ -87,7 +87,7 @@ export class PublicMints {
     if (!start) return { ...publicMint(row), id: null, requestId: null, payable: false, reservation: 'none' };
     const plot = rules.publicPlotId(resolved.asset, block);
     const secret = newRequesterSecret();
-    const admitted = await this.admission.admit({ ...row, requesterSecretHash: requesterSecretHash(secret) }, ipHash, admitted => this.store.transact([{ space: 'mints', id: row.id, value: admitted }, { space: 'publicMintRequests', id: row.id, value: true },
+    const admitted = await this.admission.admit({ ...(this.parent.mintSender?.bind(row) ?? row), requesterSecretHash: requesterSecretHash(secret) }, ipHash, admitted => this.store.transact([{ space: 'mints', id: row.id, value: admitted }, { space: 'publicMintRequests', id: row.id, value: true },
       ...(q.registration ? [{ space: 'publicMintCommitments', id: q.registration.commitment, value: row.id }] : []),
       { space: 'publicMintPlots', id: plot, value: { asset: resolved.asset, block } }]));
     if (admitted.row.paymentRegistration) {

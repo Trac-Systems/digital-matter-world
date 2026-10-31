@@ -2,7 +2,7 @@
 // inscribe its deploy from the same wallet, and the page registers it once it is in a Bitcoin block.
 import { h, clear, kv, pill, hashEl, panel, table, stepper, confirmModal, fmtInt } from './console/js/dom.js';
 import { tap, splitTable } from './console/js/money.js';
-import { assetName, mineral, addressLink, inscriptionLink } from './console/js/words.js';
+import { assetName, mineral, addressLink, inscriptionLink, inflightNote, inflightLine, inflightTxid } from './console/js/words.js';
 import { site } from './console/js/api.js';
 import { walletError } from './console/js/wallet-errors.js';
 import { TapWalletMint, BrowserMintJournal, tapWalletCapabilities } from './console/js/inscribe/wallet.js';
@@ -32,7 +32,7 @@ export function tickerPage(root, { asset, id }) {
     h('p.lead-text', {}, `Your ticker is another TAP token for ${compound ? 'this compound' : 'this pattern'}. It shares the units of the official token: a unit minted into one ticker cannot be minted into another. Every mint into your ticker pays the same rewards, plus a share to whoever holds your deploy inscription.`),
     h('div.flow', {}, progress, h('div.grid.cols-main', {},
       h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions)), body), side))));
-  let stopped = false, busy = false, timer, target, wallet, job, lastRegister = 0;
+  let stopped = false, busy = false, timer, target, wallet, job, lastRegister = 0, lastInflight = 0;
   const journal = new BrowserMintJournal();
   const attempt = async (fn, clicked) => {
     if (busy || stopped) return; busy = true;
@@ -52,6 +52,11 @@ export function tickerPage(root, { asset, id }) {
     lastRegister = Date.now();
     try { await api('/mint/deploy-ticker', { asset, requestId: id, inscription, phase: 'deployment' }); forgetTickers(asset); }
     catch (error) { if (!notYet(error)) throw error; }
+  };
+  // The sent deploy, checked on Bitcoin by the gateway and shown to every viewer until it is registered.
+  const reportInflight = async inscription => {
+    lastInflight = Date.now();
+    try { await api('/mint/inflight', { kind: 'ticker', ref: id, phase: 'deployment', attempt: 0, ...inscription }); } catch {}
   };
   const report = async paymentId => {
     try { await api('/mint/ticker-payment', { id, paymentIds: [paymentId] }); }
@@ -78,10 +83,12 @@ export function tickerPage(root, { asset, id }) {
     } else if (job.state === 'awaiting_fee' && fee?.state === 'paid' || job.state === 'awaiting_fee' && free) {
       lead.append(h('div.callout.busy', {}, 'Fee paid. Your deploy inscription is being prepared; this page updates by itself.'));
     } else if (job.state === 'awaiting_player_deploy') {
+      const inflight = inflightTxid(job.inflight) ? job.inflight : null;
       if (receipt) {
-        lead.append(h('div.callout.info', {}, 'Sent. Waiting for the next Bitcoin block (about 10 minutes). This page registers it automatically; keep it open or come back to this link.'));
+        lead.append(inflightNote(inflight ?? { phase: 'deployment', revealTxid: receipt.inscriptionId.slice(0, 64) }, { detail: 'Sent. Waiting for the next Bitcoin block (about 10 minutes). This page registers it automatically; keep it open or come back to this link.' }));
         next.push(button('Check now', async () => { await register(receipt.inscriptionId); await refresh(); }, 'primary'));
-      } else next.push(button('Deploy ticker', deploy, 'primary'));
+      } else if (inflight) lead.append(inflightNote(inflight, { detail: 'This page updates by itself once it is in a block.' }));
+      else next.push(button('Deploy ticker', deploy, 'primary'));
     } else {
       const reason = job.reason ?? fee?.reason;
       lead.append(h('div.callout.bad', {}, reason ? tickerWords(reason) : 'This request stopped.', fee?.refunds?.length ? ' Your fee is refunded to your TAP Wallet.' : ''));
@@ -106,10 +113,12 @@ export function tickerPage(root, { asset, id }) {
       fee?.refundFunding && PAY_STATES.includes(fee.state) ? ['Bitcoin set aside', h('div', {}, h('span.mono', {}, `${fmtInt(fee.refundFunding.satoshis)} sats`),
         h('div.small.muted', {}, 'Returned to you after the deploy is registered, minus the Bitcoin network fee.'))] : null,
       job.receiver ? ['Your wallet', addressLink(job.receiver)] : null,
-      receipt ? ['Your inscription', inscriptionLink(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', inscriptionLink(job.entry.id)] : null,
+      receipt ? ['Your inscription', inscriptionLink(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', inscriptionLink(job.entry.id)] : !registered && inflightTxid(job.inflight) ? ['Inscription sent', inflightLine(job.inflight)] : null,
     ]), { flush: true }));
     // A sent fee or inscription is reported again until it counts.
     if (paid?.paymentId && PAY_STATES.includes(fee?.state) && Date.now() - lastRegister > 30000) { lastRegister = Date.now(); void report(paid.paymentId).catch(() => {}); }
+    if (receipt && job.state === 'awaiting_player_deploy' && job.inflight?.revealTxid !== receipt.inscriptionId.slice(0, 64) && Date.now() - lastInflight > 30000)
+      void reportInflight({ revealTxid: receipt.inscriptionId.slice(0, 64), inscriptionId: receipt.inscriptionId });
     if (receipt && job.state === 'awaiting_player_deploy' && Date.now() - lastRegister > 30000) void register(receipt.inscriptionId).then(() => refresh()).catch(error => { if (!stopped) say(TICKER_ERROR(error), 'bad'); });
   };
   async function pay() {
@@ -135,6 +144,7 @@ export function tickerPage(root, { asset, id }) {
     const result = await wallet.inscribeTickerDeployment(fresh, { validateTicker: chosenTicker, maxFeeSats: '1000000', confirm: confirmFees });
     if (result.state !== 'broadcast') return;
     await journal.put(receiptKey(), { inscriptionId: result.inscriptionId });
+    await reportInflight({ commitTxid: result.commitTxid, revealTxid: result.revealTxid, inscriptionId: result.inscriptionId });
     await register(result.inscriptionId); await refresh();
   }
   async function refresh() {

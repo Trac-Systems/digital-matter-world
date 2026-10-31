@@ -1,6 +1,6 @@
 import { h, clear, table, kv, pill, hashEl, fmtInt, seg, inspectBtn, tierBadge, cell, panel } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
-import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText, namedText, assetLink, agentLink, currentAsset } from '../words.js';
+import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText, namedText, assetLink, agentLink, currentAsset, inflightLine } from '../words.js';
 import { compoundMintFlow, wallet } from '../flows.js';
 import * as flows from '../flows.js';
 import { tickerList, deployTickerForm } from '../tickers.js';
@@ -170,7 +170,7 @@ export function tokenStatus(asset, { owner, lazy = false, action = true, none = 
     if (!t) { clear(el, none ? h('span.faint', {}, none) : null); return; }
     if (none && t.step === 'none') { clear(el, h('span.faint', {}, none)); return; }
     const agent = wallet?.player?.()?.agent ?? owner, week = t.deployer?.onlyDiscoverer ? t.deployer : null;
-    clear(el, pill(t.label, t.kind), t.tick ? h('span.mono', {}, t.tick) : null, action && ['none', 'inscribed'].includes(t.step) && (!week || agent === week.discoverer)
+    clear(el, pill(t.label, t.kind), t.tick ? h('span.mono', {}, t.tick) : null, t.step === 'inflight' ? h('span.small', {}, inflightLine(t.inflight)) : null, action && ['none', 'inscribed'].includes(t.step) && (!week || agent === week.discoverer)
       ? h('a.btn.sm.primary', { href: site.deployHref(asset, agent) }, t.step === 'none' ? 'Inscribe & deploy' : 'Deploy token') : null,
       action && week ? h('span.small.faint', {}, `Only its discoverer can deploy it until block ${week.until}.`) : null);
   }, () => clear(el, h('span.faint', {}, 'unavailable')));

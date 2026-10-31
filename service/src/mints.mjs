@@ -130,8 +130,9 @@ export class Mints {
     const accepted = rules.acceptMintRequest({ request, sig: signature, network: this.network, counted, compound, find: context.find, link: context.link,
       currentHolder: holder?.agent, minted, balance: (balance - reserved).toString(), settings: { pendingBlocks: this.pendingBlocks } });
     const creditIds = await selectCredits(this.store, { owner: request.owner, payer, rail: kind, fees: quote.fees }, this.resources);
-    const row = { id, request, signature, receiver, payer, kind, authorization: body.authorization, requestedFeeQuote: body.feeQuote ?? null,
+    let row = { id, request, signature, receiver, payer, kind, authorization: body.authorization, requestedFeeQuote: body.feeQuote ?? null,
       quote, context, feeAuthorization, key, state: 'reserving', acceptedAt: counted, deadline: request.until, op: accepted.op, paymentIds: [], creditIds };
+    row = this.mintSender?.bind(row) ?? row;
     await this.store.transact([{ space: 'mints', id, value: row }, { space: 'activeMints', id, value: true },
       { space: activeOwnerSpace(request.owner), id, value: true }, { space: reservingSpace(row), id, value: request.amount },
       ...creditIds.map(sourceId => ({ space: 'creditClaims', id: sourceId, value: id })),

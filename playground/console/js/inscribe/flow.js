@@ -2,7 +2,7 @@ import { h, clear, kv, pill, hashEl, fmtInt, input, field, confirmModal, inspect
 import { get, post, store, site } from '../api.js';
 import { run, sheet } from '../flows.js';
 import { pagedTable } from '../paged.js';
-import { assetName } from '../words.js';
+import { assetName, inflightNote, inflightTxid } from '../words.js';
 import { tap, legacyDeployPaymentText } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal } from './wallet.js';
 import { walletError } from '../wallet-errors.js';
@@ -10,6 +10,8 @@ import { walletError } from '../wallet-errors.js';
 const LABELS = { awaiting_payment: 'Awaiting payment', partly_paid: 'Partly paid', paid: 'Payment confirmed', permit_issued: 'Permit ready — you can inscribe', minted: 'Minted on Bitcoin', expired: 'Expired before payment' };
 const publicId = result => result?.requestId ?? result?.request?.requestId ?? result?.request?.id;
 const readStatus = id => get(`/gateway/mint/${id}`);
+// A broadcast is reported so the gateway can check it on Bitcoin and show it to every viewer.
+const reportInflight = value => post('/gateway/mint/inflight', value).catch(() => null);
 const savedKey = () => `dmw-player-mints/${store.player?.address ?? ''}`;
 const intentKey = () => savedKey() + '/quote-intents';
 export function savedMintIntents() {
@@ -67,7 +69,7 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
       ['Request', hashEl(id)], ['State', pill(LABELS[status.state] ?? String(status.state).replace(/_/g, ' '), status.state === 'minted' ? 'good' : 'warn')],
       ['Matter', `${assetName(status.asset)} · ${fmtInt(status.amount)} units`], ['Receiver', hashEl(status.receiver)],
       status.inscription ? ['Inscription', hashEl(status.inscription)] : null,
-    ]), missing.length ? h('div', {}, h('h3', {}, 'Still missing'),
+    ]), status.state === 'permit_issued' ? inflightNote(status.inflight) : null, missing.length ? h('div', {}, h('h3', {}, 'Still missing'),
       ...missing.map(item => h('p.small', {}, `${item.role}: ${tap(item.amount)} · `, item.tt === 'b' ? 'native burn' : hashEl(item.to)))) : h('p.small', {}, 'No missing fee items.'),
     status.reservation === 'pending' ? h('p.small', {}, 'Waiting for the unit reservation to be confirmed before payment.') : null,
     status.fullFees?.length > status.fees.length ? h('p.small', {}, 'Shares payable to your own wallet stay with you and are omitted from payment.') : null,
@@ -96,9 +98,10 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
       if (!await confirmModal({ title: 'Release the escrow payment?', lead: 'The committee has authorized this split. Your wallet submits the release and pays its gas.', rows: [['Request', hashEl(id)]], confirm: 'Release from my wallet' })) return;
       await ethereum.release(id); await refresh(); clear(note, 'Release submitted. Waiting for final payment and your mint permit.');
     }));
-    if (status.state === 'permit_issued') actions.push(button('Inscribe mint', async () => {
+    if (status.state === 'permit_issued' && !inflightTxid(status.inflight)) actions.push(button('Inscribe mint', async () => {
       await connect();
       const result = await wallet.inscribe(id, { maxFeeSats: '1000000', confirm: confirmFees });
+      if (result.state === 'broadcast') await reportInflight({ kind: 'mint', ref: id, phase: 'mint', attempt: 0, commitTxid: result.commitTxid, revealTxid: result.revealTxid, inscriptionId: result.inscriptionId });
       await refresh();
       clear(note, result.state === 'broadcast' ? 'Inscription broadcast. Waiting for the indexer to show it as minted.' : 'No new transaction was sent.');
     }));
@@ -109,10 +112,13 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
   const deployReceiptKey = job => `${savedKey()}/deployment/${intent.asset}/${job.phase}/${job.phase === 'element' ? job.elementAttempt : job.tickerAttempt}`;
   const deployReview = job => {
     let receipt; try { receipt = JSON.parse(localStorage.getItem(deployReceiptKey(job)) ?? 'null'); } catch {}
+    if (receipt && job.state === 'awaiting_player_deploy' && job.inflight?.inscriptionId !== receipt.inscriptionId && /^[0-9a-f]{64}i0$/.test(receipt.inscriptionId ?? ''))
+      void reportInflight({ kind: 'deployment', ref: intent.asset, phase: job.phase, attempt: job.phase === 'element' ? job.elementAttempt : job.tickerAttempt, revealTxid: receipt.inscriptionId.slice(0, 64), inscriptionId: receipt.inscriptionId });
     const firstMaker = job.kind === 'dmt' || job.definition?.firstMaker === store.player?.address;
+    const inflight = job.state === 'awaiting_player_deploy' && job.inflight?.phase === job.phase && inflightTxid(job.inflight) ? job.inflight : null;
     clear(s.body, seg([['tap', 'TAP on Bitcoin'], ['ethereum', 'Bridged TAP on Ethereum']], intent.kind ?? 'tap', kind => { if (intent.receiver) return; intent.kind = kind; review(); }), kv([['Matter', assetName(intent.asset)], ['Deployment', String(job.state).replace(/_/g, ' ')], [job.kind === 'dmt' ? 'Phase' : 'First maker', job.kind === 'dmt' ? job.phase : hashEl(job.definition?.firstMaker)]]),
       h('p.small', {}, 'The first minter pays for the pattern’s element and deployment. Each phase is ready once its inscription is included in a block. Compounds are deployed by their first maker.'),
-      !firstMaker ? h('p.small', {}, 'Wait for the first maker to deploy this compound.') : null,
+      !firstMaker ? h('p.small', {}, 'Wait for the first maker to deploy this compound.') : null, inflightNote(inflight),
       receipt ? h('div', {}, h('p.small', {}, 'Deployment broadcast. Once it is included in a Bitcoin block, register this same inscription here:'),
         h('pre', {}, JSON.stringify({ asset: intent.asset, phase: job.phase, inscription: receipt.inscriptionId }, null, 2)),
         h('p.small', {}, 'Keep this receipt. Registration can be retried without another inscription.')) : null,
@@ -122,12 +128,16 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
       await post('/gateway/mint/deployment', { asset: intent.asset, phase: job.phase, inscription: receipt.inscriptionId });
       await quote();
     }));
-    if (firstMaker && job.state === 'awaiting_player_deploy') actions.push(button(receipt ? 'Resume deployment' : job.phase === 'element' ? 'Inscribe pattern element' : job.kind === 'dmt' ? 'Inscribe pattern deploy' : 'Inscribe compound deploy', async () => {
+    if (firstMaker && job.state === 'awaiting_player_deploy' && (receipt || !inflight)) actions.push(button(receipt ? 'Resume deployment' : job.phase === 'element' ? 'Inscribe pattern element' : job.kind === 'dmt' ? 'Inscribe pattern deploy' : 'Inscribe compound deploy', async () => {
       await connect();
       const binding = await get(`/gateway/payout-bindings/${encodeURIComponent(store.player.address)}/tap`);
       const fresh = await get(`/gateway/mint/deployment/${intent.asset}`);
       const result = await wallet.inscribeDeployment(fresh, { owner: store.player.address, binding: binding.binding, maxFeeSats: '1000000', confirm: confirmFees });
-      if (result.state === 'broadcast') localStorage.setItem(deployReceiptKey(fresh), JSON.stringify({ inscriptionId: result.inscriptionId }));
+      if (result.state === 'broadcast') {
+        localStorage.setItem(deployReceiptKey(fresh), JSON.stringify({ inscriptionId: result.inscriptionId }));
+        await reportInflight({ kind: 'deployment', ref: intent.asset, phase: fresh.phase, attempt: fresh.phase === 'element' ? fresh.elementAttempt : fresh.tickerAttempt,
+          commitTxid: result.commitTxid, revealTxid: result.revealTxid, inscriptionId: result.inscriptionId });
+      }
       deployReview(fresh);
     }));
     clear(s.foot, ...actions); setBusy(busy);

@@ -9,7 +9,7 @@ import { createViews } from './views.mjs';
 import { Jobs,serveControl } from './http.mjs';
 import { createReadAPI,projectJob } from './api.mjs';
 import { botsOnce } from './bots.mjs';
-import { forwardDeployment } from './deployment-proxy.mjs';
+import { forwardDeployment, forwardInflight } from './deployment-proxy.mjs';
 import { paymentPlan,fundWallet } from './wallets.mjs';
 import { bitcoin,mine } from '../local/common.mjs';
 import { reloadBaseFee } from '../service/scripts/base-fee.mjs';
@@ -49,6 +49,7 @@ async function route(method,url,args,context){
   if(method==='GET'&&path.startsWith('jobs/'))return createReadAPI({views,engine,jobs,events,paymentPlan})(url);
   check(engine&&manifest.state==='ready','playground_not_ready');
   if(method==='POST'&&path==='gateway/mint/deployment')return forwardDeployment(engine,args);
+  if(method==='POST'&&path==='gateway/mint/inflight')return forwardInflight(engine,args);
   if(method==='POST')return projectJob(await jobs.submit(path,args));
   check(method==='GET','method_not_allowed');
   return createReadAPI({views,engine,jobs,events,paymentPlan})(url,context);

@@ -3,7 +3,7 @@
 // /mint/<request> page with the header's TAP Wallet / MetaMask connection.
 import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper, fmtInt } from '/web/console/js/dom.js';
 import { isTracAddress } from '/rules/src/trac-address.js';
-import { assetName, mineral } from '/web/console/js/words.js';
+import { assetName, mineral, INFLIGHT_TEXT, inflightLine } from '/web/console/js/words.js';
 import { store, site } from '/web/console/js/api.js';
 import { feePrice } from '/web/console/js/money.js';
 import { tickerList, tickerChoice, deployTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
@@ -239,13 +239,13 @@ export function mount(el) {
       // During the discoverer's week only the discoverer deploys; the deploy inscription stays with whoever deploys.
       { key: 'token', label: 'Token', render: p => { const week = p.deployer?.onlyDiscoverer ? p.deployer : null, waits = week && !p.ownWeek && p.token !== 'unknown';
         return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-          pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(p.asset) }, p.ticker)) : null,
-          TOKEN_NOTE[p.token] && !waits ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
+          p.inflight ? pill(INFLIGHT_TEXT, 'info') : pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(p.asset) }, p.ticker)) : null,
+          p.inflight ? h('div.small.muted', {}, inflightLine(p.inflight)) : TOKEN_NOTE[p.token] && !waits ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
           week ? h('div.small.muted', {}, p.ownWeek ? 'Only you, its discoverer, can deploy it until block ' : 'Only its discoverer can deploy it until block ', blockLink(week.until), p.ownWeek ? '. After that anyone can.' : '. After that you can.')
             : p.deployer ? h('div.small.muted', {}, 'Anyone can deploy it now.') : null,
           p.deploymentLink ? waits ? h('button.btn.sm', { disabled: true, title: `Only its discoverer, until block ${week.until}` }, 'Deploy pattern')
-            : h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
-              p.token === 'inscribed' ? 'Continue deployment' : p.token === 'unknown' ? 'Open deployment' : 'Deploy pattern') : null,
+            : h(p.token === 'unknown' || p.inflight ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
+              p.inflight || p.token === 'unknown' ? 'Open deployment' : p.token === 'inscribed' ? 'Continue deployment' : 'Deploy pattern') : null,
           p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null,
           p.token === 'deployed' ? tickersButton(p.asset, nameOf(p.asset, p.name), patternTickers, false) : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
@@ -721,6 +721,8 @@ export function mount(el) {
         tickerPicks.get(c.asset)?.label() ? h('div.small.muted', {}, 'into ', h('a.mono', { href: assetHref(c.asset) }, tickerPicks.get(c.asset).label())) : null,
         tickersButton(c.asset, nameOf(c.asset, c.name), compoundTickers, true));
     }
+    if (c.token === 'not_deployed' && c.inflight) return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(INFLIGHT_TEXT, 'info'),
+      h('div.small.muted', {}, inflightLine(c.inflight)), c.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(c.deploymentLink) }, 'Open deployment') : null);
     if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
       h('button.btn.sm', { disabled: true, title: 'Refine its tier first.' }, 'Deploy its TAP token'),
       h('div.small.muted', {}, 'You made it first, so you deploy its TAP token once. Refine its tier first; then deploy it here.'));

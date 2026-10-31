@@ -8,3 +8,10 @@ export async function forwardDeployment(engine, body) {
   }
   return engine.post('/mint/deployment', body);
 }
+// A wallet-broadcast inscription, which the gateway checks on Bitcoin before showing it as in flight.
+export async function forwardInflight(engine, body) {
+  if (!body || Object.keys(body).some(k => !['kind', 'ref', 'phase', 'attempt', 'commitTxid', 'revealTxid', 'inscriptionId'].includes(k))) {
+    throw Object.assign(Error('invalid_inflight_report'), { status: 400 });
+  }
+  return engine.post('/mint/inflight', body);
+}

@@ -1,4 +1,4 @@
-import { requestKey, refundFloatKey, validRequestId, btc } from './mint-sender-keys.mjs';
+import { requestKey, refundFloatKey, validRequestId, boundRefundReserve, btc } from './mint-sender-keys.mjs';
 import { tokenAuth, refundAmounts, refundRedeem } from './mint-refund-protocol.mjs';
 import { buildInscription, signCommit, unhex, hex, networkFor } from '../../kit/lib/inscription-core.mjs';
 import { check, hash } from './util.mjs';
@@ -117,15 +117,15 @@ export class MintRefundSender {
       const amounts = refundAmounts(record, this.network, this.settings);
       if (Object.entries(amounts).some(([tick, amount]) => BigInt(float.balances[tick]) < BigInt(amount)))
         return this.save(row, { state: 'refund_waiting_funds', message: 'Refund waiting for operator funds.' });
-      const feeRate = await this.bitcoin.feeRate();
-      if (!Number.isFinite(feeRate) || feeRate < 1 || feeRate > this.settings.maxRefundFeeRate)
+      const feeRate = await this.bitcoin.feeRate(), maxFeeSats = boundRefundReserve(record, this.settings);
+      if (!maxFeeSats || !Number.isFinite(feeRate) || feeRate < 1 || feeRate > this.settings.maxRefundFeeRate)
         return this.save(row, { state: 'refund_pending', message: 'Refund pending; waiting for Bitcoin fees to fit the payer reserve.' });
       const floatKey = refundFloatKey(this.seed, this.network);
       try { redeem = refundRedeem(record, authority.plan.inscriptionId, floatKey.privateKey, this.network, this.settings); }
       finally { floatKey.privateKey.fill(0); }
       try {
         plan = signCommit(buildInscription({ text: redeem.text, receiver: record.tapAddress, publicKey: key.publicKey, network: this.network,
-          utxos: [coin], feeRate, maxFeeSats: String(Math.min(this.settings.maxFeeSats, this.settings.refundReserveSats)), postage: this.settings.postageSats,
+          utxos: [coin], feeRate, maxFeeSats: String(maxFeeSats), postage: this.settings.postageSats,
           changeAddress: record.tapAddress, allowUnconfirmed: true, dustSats: this.settings.dustSats }), key.privateKey);
       } catch (error) {
         if (['bitcoin_funding_insufficient', 'bitcoin_fee_limit'].includes(error.code))

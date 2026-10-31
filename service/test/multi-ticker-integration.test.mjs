@@ -168,3 +168,23 @@ test('late payment after an unpaid expiry remains refundable and repeated report
   const repeated = await f.pay(job); assert.equal(repeated.fee.state, 'refund_pending');
   assert.equal(f.store.list('publicMintRefunds', { limit: 10 }).length, 1);
 });
+
+test('ticker refund quote persists through market changes and reaches the accepted refund sender record', async t => {
+  const f = await setup(t, 2), { reserveView } = await import('./refund-reserve-fixture.mjs');
+  const { acceptedRefund } = await import('../src/mint-refund-view.mjs');
+  const funding = await reserveView(t, f.store.directory, 'mainnet');
+  f.operator.mintSender = funding.view; funding.publish(1);
+  const job = await f.operator.tickers.request(f.asset, { ticker: 'bound refund', receiver: address });
+  const quote = job.fee.refundFunding;
+  assert.equal(quote.satoshis, 1844); assert.deepEqual(f.store.get('tickerProvisioning', job.id).refundFunding, quote);
+  funding.publish(10);
+  assert.deepEqual((await f.operator.tickers.request(f.asset, { ticker: 'bound refund', receiver: address })).fee.refundFunding, quote);
+  f.operator.mintSender = funding.restart({ refundReserveSats: 9000 }); funding.publish(10);
+  assert.deepEqual((await f.operator.tickers.state(f.asset, job.id)).fee.refundFunding, quote);
+  const paid = await f.pay(job);
+  f.deployments.set(job.indexTick, { tick: job.indexTick, ins: r.hash('bound-refund-winner') + 'i0' });
+  const refused = await f.operator.tickers.refuse(paid, 'ticker_occupied');
+  assert.equal(refused.fee.state, 'refund_pending'); assert.equal(refused.fee.refunds.length, 1);
+  const record = acceptedRefund({ store: f.store }, refused.fee.refunds[0].refundId);
+  assert.equal(record.refundReserveSats, quote.satoshis);
+});

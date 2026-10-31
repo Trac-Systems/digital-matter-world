@@ -2,7 +2,7 @@ import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, 
 import { tap, legacyDeployPaymentText } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities, discovererOnly } from './wallet.js';
 import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from '../wallet-errors.js';
-import { PAYMENT_STATE, assetName, rememberCompound } from '../words.js';
+import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid } from '../words.js';
 import { validateTracAddress } from '../../../../rules/src/trac-address.js';
 import { rememberRequester, requesterHeaders } from '../requester-storage.js';
 
@@ -91,6 +91,15 @@ export function mount(root, { id, onPublicMint }) {
   // there and the next status read shows the result, so this is progress, not a failure.
   const stillWorking = error => error?.message === 'request_pending';
   let registering = false, lastRegister = 0;
+  // A sent inscription is reported to the gateway, which checks it on Bitcoin and shows it to every viewer.
+  // A receipt saved before that existed, or whose report was lost, is reported again from this page.
+  const inflightReports = new Map();
+  const reportInflight = (value, shown) => {
+    const key = `${value.kind}/${value.ref}/${value.phase}/${value.revealTxid}`;
+    if (!inflightTxid(value) || shown?.revealTxid === value.revealTxid || Date.now() - (inflightReports.get(key) ?? 0) < 30000) return Promise.resolve(null);
+    inflightReports.set(key, Date.now());
+    return api('/mint/inflight', value).catch(() => null);
+  };
   let owner = assetPage ? new URLSearchParams(location.search).get('owner') ?? '' : '';
   const journal = new BrowserMintJournal();
   const attempt = async (fn, clicked) => {
@@ -114,6 +123,10 @@ export function mount(root, { id, onPublicMint }) {
     const receipt = receiptKey ? await journal.get(receiptKey) : null;
     if (stopped) return;
     const registered = job.state === 'registered', isPublic = publicMode || status?.publicMint === true;
+    // Seen on Bitcoin by the gateway for this same phase and attempt: every viewer waits for it, nobody inscribes again.
+    const inflight = !registered && job.state === 'awaiting_player_deploy' && job.inflight?.phase === phase && inflightTxid(job.inflight) ? job.inflight : null;
+    if (receipt && current && job.state === 'awaiting_player_deploy' && !busy) void reportInflight({ kind: 'deployment', ref: job.asset, phase, attempt: current.attempt,
+      revealTxid: receipt.inscriptionId.slice(0, 64), inscriptionId: receipt.inscriptionId }, inflight).then(result => { if (result?.inflight && !stopped && !busy) return refresh(); }).catch(() => {});
     // Who may deploy a pattern's token now: during its discoverer's week only the discoverer, after it anyone.
     const week = !compound && !registered && job.deployer?.onlyDiscoverer ? job.deployer : null;
     if (assetPage && !compound && !registered && job.deployer) intro.textContent = (week
@@ -121,7 +134,7 @@ export function mount(root, { id, onPublicMint }) {
       : 'This pattern has no token on Bitcoin yet. Whoever mints it first inscribes the pattern and deploys its token, once, from their own TAP Wallet.')
       + ' Whoever deploys holds the deploy inscription and can add art to it later. After that, every mint of it works the normal way.';
     // A sent inscription is registered by this page once it is in a block; until then the gateway cannot read it.
-    const waiting = !registered && receipt;
+    const waiting = !registered && receipt, sent = waiting || inflight;
     if (waiting && !registering && Date.now() - lastRegister > 30000) {
       registering = true; lastRegister = Date.now();
       api('/mint/deployment', { asset: job.asset, phase, inscription: receipt.inscriptionId })
@@ -134,20 +147,20 @@ export function mount(root, { id, onPublicMint }) {
     clear(progress, compound ? stepper(['Deploy token', 'Make real'], registered ? 1 : 0) : stepper(['Inscribe pattern', 'Deploy token', isPublic ? 'Pay & mint' : 'Mint'], at));
     const done = text => h('span', {}, h('strong', {}, 'Done: '), text);
     clear(lead, registered ? h('p.lead', {}, h('strong', {}, 'The token is deployed. '), compound ? 'Make your units real from My agent → Your compounds.' : isPublic ? 'Continue to review the public mint fee and pay from your TAP Wallet.' : 'Ask your agent to mint now, then open the payment link it gives you.')
-      : waiting ? h('div.callout.info', {}, waitText) : null);
+      : sent ? inflightNote(inflight ?? { phase, revealTxid: receipt.inscriptionId.slice(0, 64) }, { detail: waiting ? waitText : 'This page updates by itself once it is in a block.' }) : null);
     if (compound && job.definition && Array.isArray(job.definition.inputs)) rememberCompound({ ...job.definition, id: job.asset });
     clear(body, ...(compound ? [panel('Steps', h('ol.numbered', {},
         h('li', {}, h('span', {}, 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent, the compound’s first maker. Your agent’s address is filled in below.')),
         h('li', {}, h('span', {}, h('strong', {}, 'Deploy the token. '), registered ? done('the token is deployed.')
-          : waiting ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Deploy token” and approve it in TAP Wallet.')),
+          : sent ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Deploy token” and approve it in TAP Wallet.')),
         h('li', {}, h('span', {}, 'Make units real: My agent → Your compounds → Make real on TAP. You pay the fee per mint from your TAP Wallet; the tokens arrive at your payout wallet.'))),
       ),
       h('p.small.muted', { style: { margin: 0 } }, 'The inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page and open this same link again to continue.')] : [panel('Steps', h('ol.numbered', {},
         h('li', {}, h('span', {}, isPublic ? 'Connect the TAP Wallet receiving your public mint. No agent or payout binding is needed.' : 'Connect TAP Wallet in the header. It must be the payout wallet linked to your agent. Enter your agent’s address (trac1…) below.')),
         h('li', {}, h('span', {}, h('strong', {}, 'Inscribe the pattern. '), job.elementId ? done('the pattern is inscribed and in a block.')
-          : waiting && phase === 'element' ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Inscribe pattern” and approve it in TAP Wallet.')),
+          : sent && phase === 'element' ? 'Sent. Waiting for the next Bitcoin block.' : 'Press “Inscribe pattern” and approve it in TAP Wallet.')),
         h('li', {}, h('span', {}, h('strong', {}, 'Deploy the token. '), registered ? done('the token is deployed.')
-          : waiting && phase === 'deployment' ? 'Sent. Waiting for the next Bitcoin block.' : job.elementId ? 'Press “Deploy token” and approve it in TAP Wallet.' : 'Once the pattern is in a block, press “Deploy token” and approve it.')),
+          : sent && phase === 'deployment' ? 'Sent. Waiting for the next Bitcoin block.' : job.elementId ? 'Press “Deploy token” and approve it in TAP Wallet.' : 'Once the pattern is in a block, press “Deploy token” and approve it.')),
         h('li', {}, h('span', {}, isPublic ? 'Continue to payment after the token is deployed. Review the public mint quote, pay every fee in one TAP payment, then inscribe your permit. Nothing is reserved.' : 'Mint as usual: ask your agent to mint a block of this pattern. It reserves your units and gives you a payment link. Open it, pay the fee in TAP, then inscribe the mint. The tokens arrive in your TAP Wallet.'))),
       ),
       h('p.small.muted', { style: { margin: 0 } }, 'Each inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'),
@@ -156,7 +169,7 @@ export function mount(root, { id, onPublicMint }) {
       registered && job.entry?.tick ? ['Ticker', h('span.mono', {}, job.entry.tick)] : null,
       !compound && !registered && job.deployer ? ['Who can deploy', week ? `Only its discoverer, until block ${week.until}. After that, anyone.` : 'Anyone'] : null,
       week ? ['Discoverer', hashEl(week.discoverer)] : null,
-      job.receiver ? ['Your wallet', hashEl(job.receiver)] : null, receipt ? ['Your inscription', hashEl(receipt.inscriptionId)] : null,
+      job.receiver ? ['Your wallet', hashEl(job.receiver)] : null, receipt ? ['Your inscription', hashEl(receipt.inscriptionId)] : inflight ? ['Inscription sent', inflightLine(inflight)] : null,
       job.reason ? ['Status', job.reason.replace(/_/g, ' ')] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')];
     if (!registered && assetPage && !isPublic) lead.append(field('Your agent’s address', input({ value: owner, placeholder: 'trac1…',
@@ -178,7 +191,7 @@ export function mount(root, { id, onPublicMint }) {
     else if (!registered && job.state !== 'awaiting_player_deploy') next.push(button('Start', async () => {
       await api('/mint/deployment', { asset: job.asset }); await refresh();
     }, 'primary'));
-    if (job.state === 'awaiting_player_deploy' && !receipt) next.push(button(phase === 'element' ? 'Inscribe pattern' : 'Deploy token', async () => {
+    if (job.state === 'awaiting_player_deploy' && !receipt && !inflight) next.push(button(phase === 'element' ? 'Inscribe pattern' : 'Deploy token', async () => {
       let binding;
       if (!isPublic) {
         if (!assetPage) owner = (await api('/web-api/mint/' + id)).owner;
@@ -198,6 +211,7 @@ export function mount(root, { id, onPublicMint }) {
       const result = await wallet.inscribeDeployment(fresh, { owner, binding, ...(isPublic ? { publicRequest: publicRequest ?? status } : {}), maxFeeSats: '1000000', confirm: confirmFees });
       if (result.state !== 'broadcast') return;
       await journal.put(receiptKey, { inscriptionId: result.inscriptionId });
+      await reportInflight({ kind: 'deployment', ref: job.asset, phase: result.phase, attempt: current.attempt, commitTxid: result.commitTxid, revealTxid: result.revealTxid, inscriptionId: result.inscriptionId });
       try { await api('/mint/deployment', { asset: job.asset, phase: result.phase, inscription: result.inscriptionId }); }
       catch (error) {
         await refresh();
@@ -277,15 +291,23 @@ export function mount(root, { id, onPublicMint }) {
       await ethereum.release(id); await refresh();
     }, 'primary'));
     const local = status.state === 'permit_issued' ? await wallet.sentInscription(id, status.receiver).catch(() => null) : null;
-    const sent = local ?? (status.state === 'permit_issued' && status.sentInscription ? { inscriptionId: status.sentInscription, revealTxid: status.sentInscription.slice(0, 64) } : null)
+    const shown = status.state === 'permit_issued' && inflightTxid(status.inflight) ? status.inflight : null;
+    // This browser's broadcast, or a wallet-reported one, is checked on Bitcoin by the gateway so every viewer sees it.
+    const reportable = local ?? (status.state === 'permit_issued' && /^[0-9a-f]{64}i0$/.test(status.sentInscription ?? '') ? { inscriptionId: status.sentInscription, revealTxid: status.sentInscription.slice(0, 64) } : null);
+    if (reportable && !busy) void reportInflight({ kind: 'mint', ref: id, phase: 'mint', attempt: 0, ...(txid(reportable.commitTxid) ? { commitTxid: reportable.commitTxid } : {}),
+      revealTxid: reportable.revealTxid, inscriptionId: reportable.inscriptionId }, shown).then(result => { if (result?.inflight && !stopped && !busy) return refresh(); }).catch(() => {});
+    const sent = local ?? (shown ? { inscriptionId: shown.inscriptionId, revealTxid: shown.revealTxid } : null) ?? (status.state === 'permit_issued' && status.sentInscription ? { inscriptionId: status.sentInscription, revealTxid: status.sentInscription.slice(0, 64) } : null)
       ?? (status.state === 'permit_issued' && ms && !SENDER_STOPPED.includes(ms.state) && txid(ms.revealTxid) ? { inscriptionId: /^[0-9a-f]{64}i0$/.test(ms.inscriptionId ?? '') ? ms.inscriptionId : ms.revealTxid + 'i0', revealTxid: ms.revealTxid } : null);
-    if (sent) lead.append(h('div.callout.info', {}, 'Your mint inscription was sent: ', h('a', { href: 'https://mempool.space/tx/' + sent.revealTxid, target: '_blank', rel: 'noreferrer noopener' }, sent.inscriptionId),
-      '. It completes by itself once Bitcoin confirms it; nothing else to do.'));
+    if (sent) lead.append(inflightNote({ phase: 'mint', revealTxid: sent.revealTxid, confirmations: shown?.revealTxid === sent.revealTxid ? shown.confirmations : null },
+      { detail: 'It completes by itself once Bitcoin confirms it; nothing else to do.' }));
     // With a set-aside the server sends the mint; Inscribe mint stays the fallback when it cannot (or never had one).
     if (status.state === 'permit_issued' && !sent && (!ms || SENDER_STOPPED.includes(ms.state))) next.push(button('Inscribe mint', async () => {
       await wallet.connect();
       const result = await wallet.inscribe(id, { maxFeeSats: '1000000', confirm: confirmFees });
-      if (result.state === 'broadcast') await api('/mint/payment', { id, inscription: result.inscriptionId });
+      if (result.state === 'broadcast') {
+        await api('/mint/payment', { id, inscription: result.inscriptionId });
+        await reportInflight({ kind: 'mint', ref: id, phase: 'mint', attempt: 0, commitTxid: result.commitTxid, revealTxid: result.revealTxid, inscriptionId: result.inscriptionId });
+      }
       await refresh();
     }, 'primary'));
     if (status.payBy.rail === 'tap' && !['permit_issued', 'minted'].includes(status.state)) {

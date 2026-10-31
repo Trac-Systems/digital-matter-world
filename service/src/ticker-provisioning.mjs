@@ -48,6 +48,8 @@ export class TickerProvisioning {
         job = { id, ...(requestNonce ? { requestNonce } : {}), asset, catalogAsset: resolved.catalogAsset, definition: resolved.definition, network, ticker: tick, indexTick,
           receiver: input.receiver, officialDeployment: official.id, kind: official.kind, generation: 1, privilege: official.privilege, elementId: official.elementId, elementName: official.elementName,
           salt: randomBytes(32).toString('hex'), state: 'awaiting_fee', createdHeight: height };
+        if (this.p.mintSender?.settings.refundsEnabled && this.p.mintSender.refundFunding)
+          job.refundFunding = this.p.mintSender.refundFunding(id, input.receiver);
         await store.transact([{ space: 'tickerProvisioning', id, value: job }, { space: 'tickerRequestHeads', id: initialId, value: id }]);
       }
       const parent = registry.asset?.(asset, job.officialDeployment) ?? official;
@@ -130,7 +132,7 @@ export class TickerProvisioning {
   present(job) {
     const view = this.p.mintSender;
     return view && job.fee ? { ...job, fee: { ...job.fee,
-      ...(job.fee.payable && view.settings.refundsEnabled && view.ready() ? { refundFunding: {
+      ...(job.fee.payable && view.settings.refundsEnabled && view.ready() ? { refundFunding: job.refundFunding ?? {
         address: view.address(job.id), satoshis: view.settings.refundReserveSats, feeRate: view.settings.maxRefundFeeRate,
         label: 'possible ticker fee refund' } } : {}),
       ...(job.fee.refunds ? { refunds: job.fee.refunds.map(r => view.decorateRefund(r)) } : {}) } } : job;

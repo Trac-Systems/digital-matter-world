@@ -1,4 +1,12 @@
 import { mintSenderSettings } from './src/mint-sender-settings.mjs';
+import { Inflight, ordInflightReads } from './src/inflight.mjs';
+// An unconfirmed reveal for the in-flight display: one GET by txid from a public explorer; 404 means unknown.
+const mempoolTransaction = async txid => {
+  const response = await fetch(`https://mempool.space/api/tx/${txid}/hex`, { redirect: 'error', signal: AbortSignal.timeout(8000) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw Object.assign(new Error('mempool_unavailable'), { status: 503 });
+  return (await response.text()).trim();
+};
 import { MintSenderView } from './src/mint-sender-view.mjs';
 import { readMintSeed } from './src/mint-sender-keys.mjs';
 import { supportedNode } from '../node-version.mjs';
@@ -130,6 +138,8 @@ async function startGateway(config, controller) {
     operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
     if (mints) mints.provisioner = operator.provisioner;
     if (operator.provisioner) { operator.provisioner.financial = v2?.financial; if (mintSender) operator.provisioner.mintSender = mintSender; }
+    // Wallet-reported broadcasts, checked against the ord source and shown until the state moves on.
+    const inflight = adapters.reads.client ? new Inflight({ store, provisioner: operator.provisioner, mints, bitcoin: ordInflightReads(adapters.reads.client, { mempoolTransaction: config.mode === 'regtest' ? null : mempoolTransaction }), settings: config.inflight }) : undefined;
     const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);
@@ -137,7 +147,7 @@ async function startGateway(config, controller) {
       snapshotLifetimeMs: () => closureTimeouts(v2?.settings.document, config.v2?.resources)?.evidenceMs }) : undefined;
     const headers = new HeaderFiles({ history, files, network: config.mode === 'prod' ? 'mainnet' : 'regtest', chunkSettings: config.headerChunkSettings, secret, signingEpoch: config.headerSigningEpoch });
     controller.signal.throwIfAborted();
-    await serve({ listener: http, evidence, web, operator, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
+    await serve({ listener: http, evidence, web, operator, inflight, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
     await atomicWrite(join(config.data, 'process.json'), JSON.stringify({ pid: process.pid }));
     controller.signal.throwIfAborted();
     const workerStatus = new WorkerStatus(store), recordError = (e, worker) => workerStatus.failed(e, worker);

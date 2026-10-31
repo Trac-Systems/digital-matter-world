@@ -10,7 +10,8 @@ export function acceptedRefund(mints, id) {
   const record = mints.store.get('accountRecords', 'fp/public-refund/' + id);
   if (!record) return null;
   check(record.state === 'owed' && publicRefundKey(record) === 'fp/public-refund/' + id, 'mint_refund_binding');
-  return { ...record, refundId: id };
+  const funding = mints.store.get('mints', record.id)?.mintFunding ?? mints.store.get('tickerProvisioning', record.id)?.refundFunding;
+  return { ...record, refundId: id, ...(funding ? { refundReserveSats: funding.refundReserveSats } : {}) };
 }
 export function refundPage(view, mints, params) {
   for (const name of params.keys()) check(['after', 'limit'].includes(name), 'mint_sender_page');

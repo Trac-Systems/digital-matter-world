@@ -8,7 +8,7 @@ const codes = new Set(['mint_payout_journal', 'mint_payout_pending', 'mint_payou
   'mint_sender_utxos', 'mint_sender_coin', 'mint_sender_transaction_missing', 'mint_sender_coin_binding',
   'mint_sender_fee_unavailable', 'mint_sender_transaction_binding', 'mint_sender_broadcast_binding',
   'mint_sender_gateway_unavailable', 'mint_sender_gateway_identity', 'mint_sender_gateway_binding',
-  'mint_sender_funding_binding', 'mint_sender_request_changed', 'mint_sender_status_binding',
+  'mint_sender_funding_binding', 'mint_sender_refund_binding', 'mint_sender_request_changed', 'mint_sender_status_binding',
   'mint_sender_coin_changed', 'mint_sender_permit_changed', 'mint_sender_plan_immutable',
   'mint_sender_return_immutable', 'mint_sender_coin_immutable', 'mint_sender_spend_conflict']);
 export const mintSenderError = error => codes.has(error?.message) ? error.message : 'mint_sender_dependency_unavailable';

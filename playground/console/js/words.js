@@ -109,6 +109,20 @@ export function txLink(chain, txid, label) {
   const href = chain === 'bitcoin' && /^[0-9a-f]{64}$/.test(txid ?? '') ? explorer('mempool.space/tx/' + txid) : null;
   return href ? h('a.mono', { href, title: txid, ...EXTERNAL }, label ?? short(txid, 8, 6)) : hashEl(txid, label);
 }
+// An inscription a wallet has broadcast and the gateway has seen on Bitcoin, not yet confirmed and indexed.
+// Every page shows it in these words, with its phase and the transaction linked.
+export const INFLIGHT_TEXT = 'Inscription sent — waiting for Bitcoin confirmation';
+export const INFLIGHT_PHASE = { element: 'Pattern inscription', deployment: 'Token deployment', mint: 'Mint', link: 'Bitmap link' };
+export const inflightTxid = inflight => /^[0-9a-f]{64}$/.test(inflight?.revealTxid ?? '') ? inflight.revealTxid : null;
+export function inflightLine(inflight, { asset } = {}) {
+  const txid = inflightTxid(inflight); if (!txid) return null;
+  const confirmations = Number.isSafeInteger(inflight.confirmations) && inflight.confirmations > 0 ? inflight.confirmations : 0;
+  return h('span', {}, INFLIGHT_PHASE[inflight.phase] ?? 'Inscription', asset ? [' of ', assetLink(asset)] : null, ' · ', txLink('bitcoin', txid),
+    confirmations ? ` · ${fmtInt(confirmations)} confirmation${confirmations === 1 ? '' : 's'}` : '');
+}
+export function inflightNote(inflight, { asset, detail } = {}) {
+  return inflightTxid(inflight) ? h('div.callout.info', {}, h('strong', {}, INFLIGHT_TEXT), h('div.small', {}, inflightLine(inflight, { asset })), detail ? h('div.small', {}, detail) : null) : null;
+}
 // A wallet: its agent page for a Trac key, the Bitcoin explorer for a mainnet Bitcoin address.
 export function addressLink(address, label) {
   if (agentHref(address)) return agentLink(address, label);

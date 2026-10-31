@@ -33,7 +33,7 @@ function compoundPage(root, id, back) {
     back,
     h('div.grid.cols-main', {}, facts,
       panel('How it works', kv([
-        ['1 · Deploy its token', 'Once, by its first maker, from their agent dashboard (My agent → Your compounds). Until then nobody can mint it.'],
+        ['1 · Deploy its token', 'Once, by its first maker, with the TAP Wallet bound to their agent: here or in their agent dashboard (My agent → Your compounds). Until then nobody can mint it.'],
         ['2 · Make units real', 'Whoever holds its units opens My agent → Your compounds → Make real on TAP. The agent signs the request; you pay the fee per mint from your TAP Wallet, and the tokens go to your payout wallet.'],
         ['Funds', 'Before your wallet opens, the page checks that it can pay the fee and the inscription. If it cannot, it says why and nothing is sent.'],
       ]), { flush: true }))));
@@ -43,9 +43,20 @@ function compoundPage(root, id, back) {
     const c = r.compounds?.find(row => row.id === id);
     if (!c) { clear(facts, panel('Compound', h('div.note', { role: 'alert' }, 'This compound was not found.'))); return; }
     rememberCompound(c);
+    // What happens next for this compound, said plainly: who can deploy it, or how to make units real.
+    const next = h('div.stack', { style: { gap: '8px', padding: '12px 14px' } }, h('div.faint', {}, 'Loading…')), say = (...parts) => h('p', { style: { margin: 0 } }, ...parts);
     clear(facts, h('section.panel', {},
       h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, h('a', { href: site.href('table', { c: id }) }, assetName(id)))),
-      compoundFacts(c)));
+      compoundFacts(c)), panel('Next step', next, { flush: true }));
+    const agent = wallet.player()?.agent ?? null;
+    site.token(id).then(t => {
+      if (stopped) return;
+      if (t && !['none', 'inscribed'].includes(t.step)) clear(next, say('Its TAP token is deployed. Whoever holds its units makes them real from My agent → Your compounds → Make real on TAP.'));
+      else if (agent && agent === c.firstMaker) clear(next, say('You made it first, so you deploy its TAP token once with your TAP Wallet: one inscription that costs only Bitcoin network fees. Then holders can make units real.'),
+        h('div.row', {}, h('a.btn.primary', { href: site.deployHref(id, agent) }, t?.step === 'inscribed' ? 'Continue deployment' : 'Deploy its token')));
+      else clear(next, say('Its TAP token is not deployed yet. Only its first maker, ', c.firstMaker ? agentLink(c.firstMaker) : 'the agent that made it first', ', can deploy it. Until then nobody can make its units real.'),
+        h('p.small.muted', { style: { margin: 0 } }, 'Are you its first maker? Connect the TAP Wallet bound to that agent (Connect wallet, top right); the Deploy button appears here.'));
+    }, () => { if (!stopped) clear(next, say('Its token state could not be read right now. Reload the page to try again.')); });
   }, e => { if (!stopped) clear(facts, panel('Compound', h('div.note.bad', { role: 'alert' }, `This compound could not be loaded (${walletError(e)}).`))); });
   return () => { stopped = true; };
 }
@@ -60,7 +71,7 @@ export function moneyPage(root, { type, id }) {
     return cleanup;
   }
   // The first maker's dashboard link (?owner=) opens the deployment steps; everyone else sees how it works.
-  if (type === 'mint' && /^c2:[0-9a-f]{64}$/.test(id) && !(globalThis.DMW_LOCAL_AGENT === true && new URLSearchParams(location.search).get('owner'))) return compoundPage(root, id, back);
+  if (type === 'mint' && /^c2:[0-9a-f]{64}$/.test(id) && !new URLSearchParams(location.search).get('owner')) return compoundPage(root, id, back);
   if (type === 'mint') {
     const cleanup = mintPage(root, { id, onPublicMint: mintPublic });
     root.querySelector('.page-head').after(back);

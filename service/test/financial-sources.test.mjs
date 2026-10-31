@@ -1206,3 +1206,21 @@ test('a charged reservation keeps its payment obligation when the operator switc
   await f.financial.linkReconciler.tick(height, await f.stamp()); await f.execute();
   assert.equal((await f.links.public(p.id)).state, 'accepted');
 });
+
+test('signed financial mint admission binds Bitcoin funding before acceptance and retains it on retry', async t => {
+  const f = await setup(t), { reserveView } = await import('./refund-reserve-fixture.mjs');
+  const funding = await reserveView(t, f.store.directory); f.mints.mintSender = funding.view; funding.publish(1);
+  const template = await f.prepare('reserve-template'), receiver = bitcoinAddress('regtest', 25), payer = bitcoinAddress('regtest', 26);
+  const request = { ...template.body.request, receive: r.hash(receiver), nonce: r.hash('bound-refund') };
+  const body = { ...template.body, request, receiver, payer,
+    signature: Buffer.from(ed25519.sign(financialMintDigest(network, request), f.owner.secret)).toString('hex') };
+  body.authorization = Buffer.from(ed25519.sign(payerDigest(network, body), f.owner.secret)).toString('hex');
+  const first = await f.mints.request(body), row = f.store.get('mints', first.id), quote = row.mintFunding;
+  assert.ok(quote.refundReserveSats > 1500 && quote.refundReserveSats < 3000);
+  funding.publish(10); await f.mints.request(body);
+  assert.deepEqual(f.store.get('mints', first.id).mintFunding, quote);
+  await f.reopen(); f.mints.mintSender = funding.restart({ refundReserveSats: 9000 }); funding.publish(10);
+  await f.mints.request(body);
+  assert.deepEqual(f.store.get('mints', first.id).mintFunding, quote);
+  assert.equal(funding.view.page(f.mints, new URLSearchParams()).rows[0].refundReserveSats, quote.refundReserveSats);
+});

@@ -146,6 +146,7 @@ export class FinancialMints extends Mints {
       const feeAuthorization = await this.reads.feeQuotes.accept(quote.feeQuote, mintFeeScope(r.asset, r.block, body.kind), id, r.expires, counted);
       row = { id, request: r, signature: body.signature, receiver: body.receiver, payer: body.payer, kind: body.kind, authorization: body.authorization,
         requestedFeeQuote: body.feeQuote, quote, feeAuthorization, state: 'authorizing', created: counted, expiry: r.expires, paymentIds: [] };
+      row = this.mintSender?.bind(row) ?? row;
       const at = await this.reads.batchStamp(), evidence = await this.reads.financialReservation(row, at), account = await this.reads.financialRecord('ar/' + r.owner, at);
       row.context = { deployment: evidence.deployment };
       row.reservationEvidence = evidence;
