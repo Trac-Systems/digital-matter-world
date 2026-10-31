@@ -32,9 +32,10 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
       if (t.type === 'reserve' || action === 'link-reserve') put('publicFinancialTerms', id, publicFinancialTerms(id, e, a));
       const terms = get('publicFinancialTerms', id), owner = e.owner ?? a?.owner ?? terms?.owner ??
         get('accountRecords', 'bc/' + id)?.owner ?? get('accountRecords', 'fc/' + (a?.operation?.credit ?? id))?.owner;
-      if (action === 'link-complete') linked.set(String(e.block ?? terms?.block), { requestId: id, acceptedOwner: owner });
+      const linkedFree = action === 'link-reserve' && e.fees.length === 0;
+      if (action === 'link-complete' || linkedFree) linked.set(String(e.block ?? terms?.block), { requestId: id, acceptedOwner: owner });
       financial.push({ id: rules.hashObject(['dmw-public-financial-event-v2', t]), type:
-        action === 'capacity-finish' ? 'mint_complete' : action === 'link-complete' ? 'link' : 'financial_' + action.replaceAll('-', '_'),
+        action === 'capacity-finish' ? 'mint_complete' : action === 'link-complete' || linkedFree ? 'link' : 'financial_' + action.replaceAll('-', '_'),
       data: clean({ requestId: id, owner, to: a?.operation?.to, asset: terms?.asset ?? e.asset, block: terms?.block ?? e.block,
         amount: terms?.amount ?? e.amount, action, state: e.state, credit: a?.operation?.credit }), provenance });
       if (t.type === 'fund' || t.type === 'surplus') for (const receipt of t.items) {

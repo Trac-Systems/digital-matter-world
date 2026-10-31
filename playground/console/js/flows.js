@@ -89,7 +89,7 @@ export function feeTerms(kind) {
   const baseFee = store.status?.feePolicy?.baseFee;
   if (!baseFee) return null;
   const multiplier = store.status?.feePolicy?.feeSettings?.link;
-  if (!Number.isSafeInteger(multiplier) || multiplier < 1) return null;
+  if (!Number.isSafeInteger(multiplier) || multiplier < 0) return null;
   const total = (BigInt(baseFee) * BigInt(multiplier)).toString();
   // The service exposes the pinned split only after the shared activation.
   const bps = store.status?.feePolicy?.linkBurnBps;
@@ -99,9 +99,9 @@ export function feeTerms(kind) {
 }
 export async function linkFlow(height) {
   const terms = feeTerms('link');
-  if (!await confirmModal({ title: `Link Bitmap ${fmtInt(height)}?`, lead: 'Paid once; the link stays with the Bitmap. Its holder earns the Bitmap holder share of mint fees here.',
-    rows: [['Plot', fmtInt(height)], ['Fee', terms ? tap(terms.total) : 'Read the current quote'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: 'Link and pay' })) return false;
-  try { const req = await run('Bitmap link', '/player/link', { height }); await payWhenReady(requestId(req), 'link'); return true; }
+  if (!await confirmModal({ title: `Link Bitmap ${fmtInt(height)}?`, lead: terms?.total === '0' ? 'Free. The link stays with the Bitmap.' : 'Paid once; the link stays with the Bitmap. Its holder earns the Bitmap holder share of mint fees here.',
+    rows: [['Plot', fmtInt(height)], ['Fee', terms?.total === '0' ? 'Free' : terms ? tap(terms.total) : 'Read the current quote'], ['Paid with', 'the test TAP wallet holding the Bitmap']], confirm: terms?.total === '0' ? 'Link for free' : 'Link and pay' })) return false;
+  try { const req = await run('Bitmap link', '/player/link', { height }); if (req.request?.price !== '0' && req.price !== '0') await payWhenReady(requestId(req), 'link'); return true; }
   catch { return false; }
 }
 

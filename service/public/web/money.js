@@ -6,12 +6,13 @@ import { tokenStatus, compoundFacts } from './console/js/views/table.js';
 import { pagedTable } from './console/js/paged.js';
 import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
-import { assetName, mineral, title, rememberCompound } from './console/js/words.js';
+import { assetName, mineral, title, rememberCompound, lookupName, assetLink, agentLink, addressLink, inscriptionLink, txLink } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
 import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, requireTapActions, WalletJournal, tapPaymentStep, ethereumPaymentStep, escrowPaymentToken, wait, hex, sha256, unhex, fail } from './wallets.js';
 import { wallet, walletSummary, connectButtons } from './connect.js';
 import { tickerPage } from './ticker-deploy.js';
 import { tickerChoice } from './console/js/tickers.js';
+import { validateChosenTicker } from '../../../rules/src/ticker-grammar.js';
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted', 'credited', 'refunded']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -108,43 +109,45 @@ async function request(app, type, id, target, progress) {
       table(steps, [
         { key: 'name', label: 'Step', render: r => STEPS[r.name] ?? r.name },
         { key: 'state', label: 'State', render: r => pill(r.state === 'done' ? 'done' : r.state, r.state === 'done' ? 'good' : 'warn') },
-        { key: 'result', label: 'Transaction', render: r => typeof r.result === 'string' ? hashEl(r.result) : r.result ? inspectBtn(STEPS[r.name] ?? r.name, r.result) : h('span.faint', {}, '–') },
+        { key: 'result', label: 'Transaction', render: r => typeof r.result === 'string' ? txLink(r.result.startsWith('0x') ? 'ethereum' : 'bitcoin', r.result) : r.result ? inspectBtn(STEPS[r.name] ?? r.name, r.result) : h('span.faint', {}, '–') },
       ], { sortable: false, empty: 'No wallet step yet.' }),
-      plan?.payment || plan?.inscription ? kv([plan.payment ? ['Indexed payment', hashEl(plan.payment)] : null, plan.inscription ? ['Bitcoin inscription', hashEl(plan.inscription)] : null]) : null,
+      plan?.payment || plan?.inscription ? kv([plan.payment ? ['Indexed payment', /i[0-9]+$/.test(plan.payment) ? inscriptionLink(plan.payment) : txLink('bitcoin', plan.payment)] : null, plan.inscription ? ['Bitcoin inscription', inscriptionLink(plan.inscription)] : null]) : null,
       h('div.row', { style: { padding: '10px 14px' } }, h('a.btn.sm.ghost', { href: ledger }, 'Public result ledger')),
     ], { flush: true }));
   };
   async function load() {
     plan = await api(`/web-api/${type}/${id}`);
-    const unit = plan.unit, labels = type === 'link' ? ['Prepare', 'Pay', 'Confirm', 'Linked'] : ['Pay', 'Confirm', 'Done'];
-    const at = complete.has(plan.state) ? labels.length : type === 'link' ? (plan.walletPreparation ? 0 : plan.payment ? 2 : 1) : plan.payment ? 1 : 0;
+    const free = type === 'link' && plan.price === '0';
+    app.querySelector('.next-step h2').textContent = free ? 'Bitmap link' : 'Payment';
+    const unit = plan.unit, labels = free ? ['Confirm', 'Linked'] : type === 'link' ? ['Prepare', 'Pay', 'Confirm', 'Linked'] : ['Pay', 'Confirm', 'Done'];
+    const at = complete.has(plan.state) ? labels.length : free ? 0 : type === 'link' ? (plan.walletPreparation ? 0 : plan.payment ? 2 : 1) : plan.payment ? 1 : 0;
     clear(progress, stepper(labels, at, { failed: stopped.has(plan.state) }));
-    clear(lead, plan.price && !complete.has(plan.state) ? h('div', {}, h('div.small.muted', {}, 'Fee'), h('div.price', {}, formatTap(plan.price, unit?.decimals))) : null);
+    clear(lead, plan.price && !complete.has(plan.state) ? h('div', {}, h('div.small.muted', {}, 'Fee'), h('div.price', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))) : null);
     clear(review,
       h('header', {}, h('h2', {}, 'Review request'), statePill(plan.state), h('div.grow'), inspectBtn('Request', plan)),
       kv([
         ['Request', hashEl(plan.id)],
-        plan.asset ? ['Matter', h('span', {}, h('span.swatch', { style: { background: mineral(plan.asset) } }), assetName(plan.asset))] : null,
+        plan.asset ? ['Matter', h('span', {}, h('span.swatch', { style: { background: mineral(plan.asset) } }), assetLink(plan.asset))] : null,
         plan.block !== null && plan.block !== undefined ? [type === 'mint' ? 'From block' : 'Block', blockLink(plan.block)] : null,
         plan.amount ? ['Units used up', h('span.mono', {}, fmtInt(plan.amount))] : null,
-        plan.kind ? ['Paid with', plan.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'] : null,
-        plan.price ? ['Fee', h('strong.mono', {}, formatTap(plan.price, unit?.decimals))] : null,
+        plan.kind ? ['Paid with', free ? 'No payment required' : plan.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'] : null,
+        plan.price ? ['Fee', h('strong.mono', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))] : null,
         plan.baseFee ? ['Base fee', h('span.mono', {}, formatTap(plan.baseFee, unit?.decimals))] : null,
         plan.networkFee && BigInt(plan.networkFee.sats ?? 0) > 0n ? ['Bitcoin inscription fee', h('span.mono', {}, `${btc(plan.networkFee.sats)} · ${fmtInt(plan.networkFee.sats)} sats`)] : null,
-        ['Payer', hashEl(plan.payer)],
-        plan.owner ? ['Agent', hashEl(plan.owner)] : null,
-        plan.receiver ? ['Receiver', hashEl(plan.receiver)] : null,
-        plan.deadline !== undefined ? ['Pay by block', h('span.mono', {}, fmtInt(plan.deadline))] : null,
+        ['Payer', addressLink(plan.payer)],
+        plan.owner ? ['Agent', agentLink(plan.owner)] : null,
+        plan.receiver ? ['Receiver', addressLink(plan.receiver)] : null,
+        plan.deadline !== undefined ? [free ? 'Request valid until block' : 'Pay by block', h('span.mono', {}, fmtInt(plan.deadline))] : null,
         plan.refundAfter !== undefined && plan.refundAfter !== null ? ['Refund after block', h('span.mono', {}, fmtInt(plan.refundAfter))] : null,
         plan.ethereumRefundAfter ? ['Escrow refund from', h('span.mono', {}, new Date(Number(plan.ethereumRefundAfter) * 1000).toLocaleString())] : null,
-        plan.counted !== undefined ? ['Counted', h('span.mono', {}, fmtInt(plan.counted))] : null,
+        plan.counted !== undefined ? ['Counted', blockLink(plan.counted)] : null,
         plan.reason ? ['Reason', publicMintMessages[plan.reason] ?? String(plan.reason).replace(/_/g, ' ')] : null,
       ]),
       plan.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(plan.split, plan.destinations ?? {}, plan.kind, unit))] : null,
-      h('div.body.small.muted', {}, type === 'link' ? 'Bitmap links are paid before publication. The link follows the Bitmap when it changes owners.'
+      h('div.body.small.muted', {}, type === 'link' ? free ? 'Free. No payment is required. The link follows the Bitmap when it changes owners.' : 'Bitmap links are paid before publication. The link follows the Bitmap when it changes owners.'
         : type === 'mint' ? 'Pay the remaining fees first. After payment is final, your units are consumed and your permanent permit is ready. You then inscribe it from your Bitcoin wallet, including when paying with Ethereum.' : 'The wallet can refund after the displayed deadline if payment remains unspent.'));
     if (type === 'mint' || plan.financialVersion === 2) {
-      if (!mayPay() && BEFORE_PAY.includes(plan.state)) review.append(h('div.callout.busy', {}, PAY_SOON));
+      if (!free && !mayPay() && BEFORE_PAY.includes(plan.state)) review.append(h('div.callout.busy', {}, PAY_SOON));
       else if (plan.blocked?.length) review.append(h('div.note.bad', {}, 'This payment is not currently available.'));
       if (plan.missing?.length) review.append(h('div.section-label', {}, 'Remaining fees'), table(plan.missing, [
         { key: 'role', label: 'Fee', render: f => String(f.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
@@ -152,6 +155,7 @@ async function request(app, type, id, target, progress) {
       if (plan.inscriptionText) review.append(h('div.section-label', {}, 'Permanent mint content'), h('div.body', {}, h('p', { style: { marginTop: 0 } }, 'Inscribe this exact content from your Bitcoin wallet to the receiver above. This permit does not expire.'), h('pre', {}, plan.inscriptionText)));
     }
     pay.disabled = busy || !mayPay();
+    if (free) pay.remove();
     pay.textContent = type === 'mint' && plan.ethereumRelease && plan.ethereumDepositStatus === 1 ? 'Release paid fees with wallet' : plan.walletPreparation ? 'Prepare Bitmap payment with wallet' : journal.data.lock || journal.data.deposit || journal.data.networkFee ? 'Resume payment' : 'Approve payment in wallet';
     refund.hidden = (type === 'mint' || plan.financialVersion === 2) && plan.kind === 'tap' || complete.has(plan.state) || (plan.kind === 'ethereum' ? !plan.ethereumRefundEligible : !(plan.payment || journal.data.paymentId) || plan.counted < plan.refundAfter);
     const words = v => String(v).replace(/_/g, ' ');
@@ -308,7 +312,7 @@ async function binding(app, id, target) {
   const status = note({ class: 'binding-status' });
   const button = h('button.btn.primary.binding-action', { type: 'button' }, 'Sign with wallet and bind');
   const review = h('section.panel', {}, h('header', {}, h('h2', {}, 'Review payout binding'), h('div.grow'), inspectBtn('Binding request', pending)),
-    kv([['Agent', hashEl(r.agent)], ['Rail', r.rail === 'ethereum' ? 'Ethereum' : 'TAP'], ['Wallet', hashEl(r.address)], ['Expires', h('span.mono', {}, new Date(r.expiry).toLocaleString())]]),
+    kv([['Agent', agentLink(r.agent)], ['Rail', r.rail === 'ethereum' ? 'Ethereum' : 'TAP'], ['Wallet', addressLink(r.address)], ['Expires', h('span.mono', {}, new Date(r.expiry).toLocaleString())]]),
     h('div.body', {}, h('div.stack', { style: { gap: '10px' } }, h('p.small.muted', { style: { margin: 0 } }, 'Linking connects this wallet to your agent’s player, so its earnings reach you and you can mint its finds. Your agent started this link; you confirm it by signing with the wallet shown. A new link replaces the old one for future quotes.'), status, h('div.row', {}, button))));
   app.append(review);
   function draw() { button.disabled = pending.state === 'accepted' || pending.request.expiry <= Date.now(); status.textContent = pending.state === 'accepted' ? 'Payout wallet bound.' : pending.request.expiry <= Date.now() ? 'Request expired. Ask your agent for a new binding link.' : 'Review the agent and wallet address before signing.'; }
@@ -323,7 +327,7 @@ async function binding(app, id, target) {
       else { const { eth, address } = await ethAccount(target, pending.request.address); walletSignature = await eth.request({ method: 'personal_sign', params: ['0x' + hex(new TextEncoder().encode(pending.message)), address] }); }
       const accepted = await api('/payout-bindings/complete', { id, walletSignature });
       pending.state = 'accepted'; draw(); void wallet.refresh();
-      app.append(panel('Accepted binding receipt', kv([['Binding', hashEl(accepted.id ?? id)], ['Accepted', accepted.acceptedAt ? h('span.mono', {}, new Date(accepted.acceptedAt).toLocaleString()) : null], ['Wallet', hashEl(accepted.request?.address)]]), { flush: true, actions: inspectBtn('Accepted binding', accepted) }));
+      app.append(panel('Accepted binding receipt', kv([['Binding', hashEl(accepted.id ?? id)], ['Accepted', accepted.acceptedAt ? h('span.mono', {}, new Date(accepted.acceptedAt).toLocaleString()) : null], ['Wallet', addressLink(accepted.request?.address)]]), { flush: true, actions: inspectBtn('Accepted binding', accepted) }));
     } catch (e) {
       // The gateway may finish the binding after this reply timed out; show the real outcome.
       try { const now = await api('/payout-bindings/requests/' + id); if (now.state === 'accepted') { pending = now; draw(); void wallet.refresh(); return; } } catch {}
@@ -353,7 +357,7 @@ const publicError = walletError;
 const notOpen = e => e?.status === 404 || ['not_found', 'public_mint_inactive', 'public_index_warming'].includes(e?.message);
 const PATTERN = /^(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))$/;
 const KIT_DOCS = 'https://github.com/Trac-Systems/digital-matter-world/tree/main/kit';
-const matter = asset => h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: site.href('table', { p: asset }) }, assetName(asset)));
+const matter = asset => h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), assetLink(asset, assetName(asset)));
 const tapTotal = fees => (fees ?? []).reduce((sum, f) => sum + BigInt(/^[0-9]+$/.test(f?.amount ?? '') ? f.amount : 0), 0n).toString();
 async function feeRate() {
   try {
@@ -411,6 +415,7 @@ async function mintPublic(row, notify, { deployment = null, ticker = null } = {}
 // On an agent owner's local dashboard the agent signs the link request with
 // one click; the link's payment page then proves the Bitmap and takes the fee.
 function localLink(initial) {
+  const free = feePrice(store.status?.feePolicy, 'link') === 'Free';
   const height = h('input.input', { style: { flex: '1 1 160px', width: 'auto' }, type: 'text', inputmode: 'numeric', value: initial ?? '', placeholder: 'Bitmap block, e.g. 611638', 'aria-label': 'Bitmap block' });
   const status = h('div.callout', { role: 'status' });
   const say = (text, kind) => { status.className = 'callout ' + kind; status.textContent = text; };
@@ -420,7 +425,7 @@ function localLink(initial) {
     if (!wallet.tap) { say('Connect the TAP Wallet that holds the Bitmap first (Connect wallet, top right).', 'bad'); return; }
     start.disabled = true; start.textContent = 'Your agent is signing…'; start.classList.add('busy'); say(`Signing the link request for ${value}.bitmap…`, 'busy');
     try {
-      await oneTxReady(wallet.tap.address);
+      if (!free) await oneTxReady(wallet.tap.address);
       const response = await fetch('/api/link', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ height: value, payer: wallet.tap.address }) });
       const result = await response.json().catch(() => ({ error: 'request_failed' }));
       if (!response.ok) throw Error(String(result.error ?? 'request_failed').replace(/_/g, ' '));
@@ -429,18 +434,33 @@ function localLink(initial) {
     } catch (error) { say(error.message, 'bad'); start.disabled = false; start.classList.remove('busy'); start.textContent = 'Link with my agent'; }
   } }, 'Link with my agent');
   return h('div.stack', { style: { gap: '8px' } }, h('div.row', { style: { gap: '8px' } }, height, start), status,
-    h('p.small.muted', { style: { margin: 0 } }, 'Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request here; then you review the fee and pay on the link page.'));
+    h('p.small.muted', { style: { margin: 0 } }, free ? 'Free. Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request; no payment is required.' : 'Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request here; then you review the fee and pay on the link page.'));
 }
 // A search field, not one control per pattern: there can be thousands. The server searches by name
-// (/patterns?q=) as you type and returns at most ten suggestions. Returns the label's contents.
+// (/patterns?q=) as you type and returns at most ten suggestions; a typed TAP ticker is one point read
+// (/tickers/<tick>, exact match) for the pattern or compound it belongs to. Returns the label's contents.
 const SUGGESTIONS = 10, P2 = /^p2:(0|[1-9][0-9]*)$/;
-const nameOf = p => assetName(p.asset) === p.asset ? title(p.name) : assetName(p.asset);
-function patternSearch(listId, value, say, onPick) {
+const nameOf = p => store.pattern(p.asset) ? assetName(p.asset) : title(p.name);
+const isTicker = text => { try { validateChosenTicker(/^dmt-/i.test(text) ? text.slice(4) : text); return true; } catch { return false; } };
+// The pattern or compound a typed ticker belongs to, as a suggestion, or null.
+async function tickerHit(text) {
+  if (!isTicker(text)) return null;
+  const r = await get('/tickers/' + encodeURIComponent(text)).catch(() => null);
+  if (!r?.asset || !(P2.test(r.asset) || /^c2:[0-9a-f]{64}$/.test(r.asset))) return null;
+  const name = await lookupName(r.asset), tickers = [...new Set([r.tick, r.ticker].map(t => String(t).toLowerCase()))];
+  // Named the way it was typed: "moon" or its indexed form "dmt-moon".
+  const tick = /^dmt-/i.test(text) ? tickers.at(-1) : tickers[0];
+  return { name, asset: r.asset, ticker: tick, tickers, label: `${name} · ticker ${tick}` };
+}
+function patternSearch(listId, value, say, onPick, { compounds = false } = {}) {
   const choices = h('datalist', { id: listId });
   let asked = 0, typing;
   // Up to ten { name, asset } suggestions for the typed text, or null when a newer search replaced this one.
   async function suggest(text) {
-    const seq = ++asked, q = text.trim().toLowerCase().replace(/ \([a-z0-9]+\)$/, ''), hits = [];
+    // A picked ticker suggestion reads "Name · ticker moon".
+    const typed = / · ticker (.+)$/.exec(text.trim());
+    const seq = ++asked, q = text.trim().toLowerCase().replace(/ \([a-z0-9]+\)$/, '').replace(/ · ticker .+$/, ''), hits = [];
+    const ticker = q ? tickerHit(typed ? typed[1] : text.trim()) : null;
     if (q) {
       const params = new URLSearchParams({ q, sort: 'name', limit: String(SUGGESTIONS) });
       // The name search is a bounded scan: follow its cursor a few pages while it has not found enough.
@@ -450,12 +470,16 @@ function patternSearch(listId, value, say, onPick) {
         if (!r.next) break; params.set('cursor', r.next);
       }
     }
+    const byTicker = await ticker;
     if (seq !== asked) return null;
     for (const hit of hits) if (hits.some(other => other.asset !== hit.asset && other.name === hit.name)) hit.label = `${hit.name} (${hit.wireName})`;
+    // The ticker's own asset comes first; public blocks are patterns only.
+    if (byTicker && (compounds || P2.test(byTicker.asset))) hits.splice(0, hits.length, byTicker, ...hits.filter(p => p.asset !== byTicker.asset));
+    else if (byTicker) hits.compound = byTicker;
     clear(choices, ...hits.slice(0, SUGGESTIONS).map(p => h('option', { value: p.label ?? p.name })));
-    return hits.slice(0, SUGGESTIONS);
+    return Object.assign(hits.slice(0, SUGGESTIONS), { compound: hits.compound ?? null });
   }
-  const search = h('input', { type: 'search', value, placeholder: 'Search a pattern by name',
+  const search = h('input', { type: 'search', value, placeholder: 'Search a pattern by name or ticker',
     'aria-label': 'Pattern', autocomplete: 'off',
     oninput: () => { clearTimeout(typing); typing = setTimeout(() => suggest(search.value).catch(() => {}), 250); },
     onchange: async () => {
@@ -467,8 +491,9 @@ function patternSearch(listId, value, say, onPick) {
       if (!hits) return;
       // The exact name, a pattern id, or the one pattern whose name contains the text ("null" finds Nullspar).
       const want = text.toLowerCase(), exact = hits.filter(p => p.name.toLowerCase() === want);
-      const pick = hits.find(p => p.wireName === want || p.label?.toLowerCase() === want) ??
+      const pick = hits.find(p => p.wireName === want || p.label?.toLowerCase() === want || p.tickers?.includes(want)) ??
         (exact.length === 1 ? exact[0] : P2.test(text) ? { asset: text, name: assetName(text) } : hits.length === 1 ? hits[0] : null);
+      if (!pick && hits.compound) { say(`Ticker ${hits.compound.ticker} belongs to the compound ${hits.compound.name}. Public blocks are patterns only.`); return; }
       if (!pick) { say(hits.length ? `${hits.length === SUGGESTIONS ? 'Many' : fmtInt(hits.length)} patterns match “${text}”. Pick one from the suggestions.` : `No pattern named “${text}”.`); return; }
       say(''); search.value = pick.label ?? pick.name;
       onPick(pick);
@@ -481,7 +506,8 @@ function patternSearch(listId, value, say, onPick) {
 function deployPanel() {
   const agent = wallet.player()?.agent ?? null, found = h('div'), note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
   const say = text => { note.textContent = text; };
-  const search = patternSearch('deploy-pattern-names', '', say, pick => clear(found, h('div.row', { style: { gap: '10px' } }, matter(pick.asset), tokenStatus(pick.asset, { owner: agent }))));
+  const search = patternSearch('deploy-pattern-names', '', say, pick => clear(found, h('div.row', { style: { gap: '10px' } }, matter(pick.asset),
+    pick.ticker ? h('span.small.muted', {}, `ticker ${pick.ticker}`) : null, tokenStatus(pick.asset, { owner: agent }))), { compounds: true });
   const mine = agent ? pagedTable({ path: `/agents/${encodeURIComponent(agent)}/discoveries`, key: 'discoveries', limit: 10, empty: 'Your agent has not discovered a pattern yet.',
     onError: () => true,
     columns: [
@@ -537,7 +563,7 @@ function walletsHome(root, type) {
     return h('span.row', { style: { gap: '6px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info', `Only the TAP Wallet holding ${r.block}.bitmap can mint this block.`) : null); };
   const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. ' + PUBLIC_MINT_COPY)); soon.hidden = false; list.el.hidden = true; return true; };
   let selectedAsset = chosen?.asset ?? (/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') ? asset : (store.patterns?.patterns ?? []).find(p => /^p2:(0|[1-9][0-9]*)$/.test(p.asset))?.asset ?? 'p2:0');
-  const search = patternSearch('public-pattern-names', assetName(selectedAsset) === selectedAsset ? '' : assetName(selectedAsset), text => { listNote.textContent = text; },
+  const search = patternSearch('public-pattern-names', store.pattern(selectedAsset) ? assetName(selectedAsset) : '', text => { listNote.textContent = text; },
     pick => { selectedAsset = pick.asset; drawToken(); list.reset(); });
   const picker = h('label.pager-ctl', {}, h('span', {}, 'Pattern'), ...search);
   // The picked pattern's token on Bitcoin; until it is deployed, the way to inscribe and deploy it.
@@ -548,7 +574,7 @@ function walletsHome(root, type) {
   const drawToken = () => { clear(tokenLine, tokenStatus(selectedAsset)); choice = tickerChoice(selectedAsset); choiceLine.replaceWith(choice.el); choiceLine = choice.el; };
   drawToken();
   list = pagedTable({ path: () => '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25, skipEmpty: true,
-    empty: () => `No public blocks of ${assetName(selectedAsset)} right now. ${PUBLIC_MINT_COPY}`,
+    empty: () => ['No public blocks of ', assetLink(selectedAsset), ` right now. ${PUBLIC_MINT_COPY}`],
     onError: e => notOpen(e) && opensSoon(e),
     onPage: (_rows, body) => { if (body.state === 'inactive') return opensSoon(); soon.hidden = true; list.el.hidden = false; },
     columns: [
@@ -602,7 +628,7 @@ function walletsHome(root, type) {
   const draw = () => {
     const any = wallet.connected();
     const out = [];
-    if (chosen) out.push(panel(`${assetName(chosen.asset)} from block ${fmtInt(chosen.block)}`, chosenBox));
+    if (chosen) out.push(panel([assetLink(chosen.asset, assetName(chosen.asset)), ' from block ', blockLink(chosen.block)], chosenBox));
     out.push(publicPanel, deploySection(), refundPanel());
     out.push(panel('Your wallets', h('div.stack', { style: { gap: '10px' } },
       h('p', { style: { margin: 0 } }, any ? 'The wallets connected in the header. TAP Wallet pays and inscribes public mints. A wallet linked to an agent’s player is its payout wallet: that agent’s earnings reach it. Your agent starts the link; you sign it on the link it gives you.'
@@ -611,11 +637,11 @@ function walletsHome(root, type) {
       wallet.ethereum && !wallet.tap ? h('p.small.muted', { style: { margin: 0 } }, 'Also connect TAP Wallet: mints are paid and inscribed on Bitcoin.') : null,
       primaryTap(connectButtons(undefined, status)), status), { id: 'wallets' }));
     out.push(panel('Link a Bitmap', h('div.stack', { style: { gap: '8px' } },
-      h('p', { style: { margin: 0 } }, 'Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
+      h('p', { style: { margin: 0 } }, feePrice(policy, 'link') === 'Free' ? 'Free. Your agent proves you hold the Bitmap. No link payment is required.' : 'Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
       globalThis.DMW_LOCAL_AGENT === true ? localLink(bitmap)
         : bitmap !== null ? h('div.small', {}, 'Block ', blockLink(bitmap), `: hold ${bitmap}.bitmap in TAP Wallet, then ask your agent to link it.`) : null,
       wallet.tap ? null : h('p.small.muted', { style: { margin: 0 } }, wallet.ethereum ? 'MetaMask cannot do this: Bitmaps live on Bitcoin. Connect TAP Wallet above.' : 'Needs TAP Wallet: connect it above.'),
-      globalThis.DMW_LOCAL_AGENT === true ? null : h('p.small.muted', { style: { margin: 0 } }, 'Your agent starts the link. Open the link request it gives you to review the fee and pay.')), { id: 'bitmap' }));
+      globalThis.DMW_LOCAL_AGENT === true ? null : h('p.small.muted', { style: { margin: 0 } }, feePrice(policy, 'link') === 'Free' ? 'Your agent starts the link. Open its request to follow confirmation. No payment is required.' : 'Your agent starts the link. Open the link request it gives you to review the fee and pay.')), { id: 'bitmap' }));
     // Keep mounted panels (and their loaded pages) when only the wallet changed.
     clear(app, ...out.filter(Boolean));
   };

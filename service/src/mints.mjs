@@ -67,7 +67,7 @@ export class Mints {
     await this.reads.feeQuotes.validate(feeQuote, scope);
     if (context.payouts) check(same(context.payouts, feeQuote.payouts), 'binding_snapshot_missing');
     if (feeQuote.mintOwnershipHash) check(mintOwnershipMatches(feeQuote, { bitmap: holder, link: context.link ?? null, assetRevision: context.assetRevision }), 'quote_recipient_changed');
-    const baseFee = feeQuote.baseFee, price = rules.feeFor(feeKind, baseFee, context.tier, feeQuote.feeSettings ?? context.feeSettings);
+    const baseFee = feeQuote.baseFee, price = rules.feeFor(feeKind, baseFee, context.tier, feeQuote.feeSettings ?? context.feeSettings, counted);
     const splitOptions = { kind: feeKind, linked: !!holder, discovered: !!(this.financial && feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
     const policy = this.financial && feeQuote.settingsHash ? await this.reads.financialSettings(feeQuote.settingsHash) : null;
     check(!this.financial || !rules.multiTickerActive(counted) || policy, 'financial_settings_required');

@@ -57,6 +57,8 @@ export class KeyedRegistry {
     });
   }
   officialName(name) { return this.read(db => get(db, 'officialNames', name.toLowerCase())); }
+  // The pattern or compound an additional ticker was registered for: { asset, deployment } or null.
+  tickerOwner(tick) { return this.read(db => get(db, 'tickerOwners', tick.toLowerCase())); }
   feeRevision(id) { return this.read(db => get(db, 'fees', id)); }
   currentFee() { const fee = this.feeRevision(this.metadata.feeCurrent); validateFeePolicy({ feePolicy: { current: fee?.id, revisions: [fee] } }); return fee; }
   page(space, { after = '', limit = this.settings.pageRows } = {}) {
@@ -149,14 +151,14 @@ export async function updateRegistryAsset(path, asset, update, settings = {}) {
     });
   } finally { await lock.close(); }
 }
-export async function updateRegistryFees(path, changes, now, settings = {}) {
+export async function updateRegistryFees(path, changes, now, settings = {}, executionHeight = '0') {
   const lock = await Store.open(path + '.fee-update');
   try {
     const marker = JSON.parse(await readFile(path, 'utf8'));
-    if (marker.version !== 2) { const next = changeFeePolicy(marker, changes, now); await atomicWrite(path, JSON.stringify(next) + '\n'); return next; }
+    if (marker.version !== 2) { const next = changeFeePolicy(marker, changes, now, executionHeight); await atomicWrite(path, JSON.stringify(next) + '\n'); return next; }
     await mutateKeyed(path, settings, (db, limits) => {
       const root = get(db, 'meta', 'root'), old = get(db, 'fees', root.feeCurrent);
-      const next = changeFeePolicy({ feePolicy: { current: old.id, revisions: [old] } }, changes, now).feePolicy;
+      const next = changeFeePolicy({ feePolicy: { current: old.id, revisions: [old] } }, changes, now, executionHeight).feePolicy;
       for (const revision of next.revisions) put(db, 'fees', revision.id, revision, limits);
       put(db, 'meta', 'root', { ...root, feeCurrent: next.current }, limits);
     });

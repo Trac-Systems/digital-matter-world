@@ -2,7 +2,7 @@
 // inscribe its deploy from the same wallet, and the page registers it once it is in a Bitcoin block.
 import { h, clear, kv, pill, hashEl, panel, table, stepper, confirmModal, fmtInt } from './console/js/dom.js';
 import { tap, splitTable } from './console/js/money.js';
-import { assetName, mineral } from './console/js/words.js';
+import { assetName, mineral, addressLink, inscriptionLink } from './console/js/words.js';
 import { site } from './console/js/api.js';
 import { walletError } from './console/js/wallet-errors.js';
 import { TapWalletMint, BrowserMintJournal, tapWalletCapabilities } from './console/js/inscribe/wallet.js';
@@ -95,7 +95,7 @@ export function tickerPage(root, { asset, id }) {
     clear(body, missing.length && !registered ? panel('Remaining fees', table(missing, [
       { key: 'role', label: 'Fee', render: f => String(f.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
       { key: 'amount', label: 'Amount', num: true, render: f => h('span.mono', {}, tap(f.amount, fee.unit)) },
-      { key: 'to', label: 'Paid to', render: f => f.to ? hashEl(f.to) : h('span.faint', {}, 'burn') }], { sortable: false }), { flush: true }) : null,
+      { key: 'to', label: 'Paid to', render: f => f.to ? addressLink(f.to) : h('span.faint', {}, 'burn') }], { sortable: false }), { flush: true }) : null,
     fee?.split && !free ? panel('Fee split', h('div', { style: { padding: '0 14px 4px' } }, splitTable(fee.split, fee.destinations ?? {}, 'tap', fee.unit)), { flush: true }) : null,
     h('p.small.muted', { style: { margin: 0 } }, 'The deploy inscription costs only Bitcoin network fees; TAP Wallet shows them before you approve. You can close this page between steps: open this same link again to continue.'));
     clear(side, panel(compound ? 'Compound' : 'Pattern', kv([
@@ -104,8 +104,8 @@ export function tickerPage(root, { asset, id }) {
       ['State', pill(registered ? 'deployed' : job.state === 'awaiting_player_deploy' ? 'ready to deploy' : job.state === 'awaiting_fee' ? 'fee due' : String(job.state).replace(/_/g, ' '), registered ? 'good' : job.state === 'refused' ? 'bad' : 'warn')],
       ['Deploy fee', quoteFeeText(fee)],
       fee?.refundFunding && PAY_STATES.includes(fee.state) ? ['Bitcoin set aside for a possible refund', `${fmtInt(fee.refundFunding.satoshis)} sats`, 'Returned to you after the deploy is registered, minus the Bitcoin network fee.'] : null,
-      job.receiver ? ['Your wallet', hashEl(job.receiver)] : null,
-      receipt ? ['Your inscription', hashEl(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', hashEl(job.entry.id)] : null,
+      job.receiver ? ['Your wallet', addressLink(job.receiver)] : null,
+      receipt ? ['Your inscription', inscriptionLink(receipt.inscriptionId)] : job.entry?.id ? ['Deploy inscription', inscriptionLink(job.entry.id)] : null,
     ]), { flush: true }));
     // A sent fee or inscription is reported again until it counts.
     if (paid?.paymentId && PAY_STATES.includes(fee?.state) && Date.now() - lastRegister > 30000) { lastRegister = Date.now(); void report(paid.paymentId).catch(() => {}); }

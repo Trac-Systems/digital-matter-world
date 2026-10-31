@@ -4,11 +4,11 @@ import { acceptedRefund, refundPage, decorateRefund } from './mint-refund-view.m
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { openSync, readFileSync, closeSync, fstatSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { requestKey, refundFloatKey, fundingAmount, validDestination, validRequestId } from './mint-sender-keys.mjs';
+import { requestKey, refundFloatKey, payoutFloatKey, fundingAmount, validDestination, validRequestId } from './mint-sender-keys.mjs';
 import { check, hash } from './util.mjs';
 
 export const senderToken = (seed, network) => createHmac('sha256', seed).update('dmw-mint-sender-api-v1|' + network).digest('hex');
-export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'refundReserveSats', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers'].map(k => [k, settings[k]]))));
+export const senderPolicy = settings => hash(JSON.stringify(Object.fromEntries(['feeRate', 'feeMargin', 'postageSats', 'dustSats', 'contentBytes', 'maxFundingSats', 'maxFeeSats', 'refundsEnabled', 'refundReserveSats', 'maxRefundFeeRate', 'refundContentBytes', 'refundTickers', 'payoutsEnabled', 'payoutDailyCapAtoms', 'payoutMaxAtoms'].map(k => [k, settings[k]]))));
 export const senderKeyId = (seed, network) => {
   const k = requestKey(seed, '00'.repeat(32), network);
   try { return hash(k.address); } finally { k.privateKey.fill(0); }
@@ -29,6 +29,7 @@ export class MintSenderView {
     Object.assign(this, { seed, network, settings, now });
     this.keyId = senderKeyId(seed, network); this.policy = senderPolicy(settings);
     const float = refundFloatKey(seed, network); this.floatAddress = float.address; float.privateKey.fill(0);
+    const payout = payoutFloatKey(seed, network); this.payoutAddress = payout.address; payout.privateKey.fill(0);
     this.token = senderToken(seed, network); this.satoshis = fundingAmount(settings); this.addresses = new Map();
   }
   authorized(header) {
@@ -52,7 +53,7 @@ export class MintSenderView {
   status() {
     const h = readSenderJSON(join(this.settings.directory, 'health.json'));
     const matching = h?.keyId === this.keyId && h.policy === this.policy;
-    return { ready: this.ready(), refundsEnabled: this.settings.refundsEnabled,
+    return { ready: this.ready(), payouts: matching && h.payouts ? h.payouts : { enabled: this.settings.payoutsEnabled, float: { address: this.payoutAddress, balances: null, btcSats: null, authority: { state: 'unknown' } }, paid24hAtoms: null, queuedCount: null, dailyCapAtoms: this.settings.payoutDailyCapAtoms, maxAtoms: this.settings.payoutMaxAtoms }, refundsEnabled: this.settings.refundsEnabled,
       float: matching && h.refundFloat ? h.refundFloat : { address: this.floatAddress, balances: null, authority: { state: 'unknown' } },
       refundCounts: matching ? h.refundCounts ?? {} : {}, refundAlarm: !this.ready() || (matching ? h.refundAlarm ?? false : true) };
   }

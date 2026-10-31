@@ -87,7 +87,7 @@ export class WebCheckout {
     if (type === 'link' && this.links?.financialVersion === 2 && this.store.get('financialLinks', id)) {
       const status = await this.links.public(id);
       return publicIdentities({ ...status, type, kind: 'tap', financialVersion: 2, target: this.target, counted: await this.reads.counted(), deadline: status.payBy.untilBlock,
-        submit: '/link/payment', walletPreparation: false, bitcoinWalletRequired: true, refundAfter: null, networkFee: null,
+        submit: '/link/payment', walletPreparation: false, bitcoinWalletRequired: status.price !== '0', refundAfter: null, networkFee: null,
         redeem: { items: status.payable ? rules.walletFeeItems(status.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] } });
     }
     const row = this.store.get(type === 'mint' ? 'mints' : type + 'Intents', id);
@@ -111,7 +111,7 @@ export class WebCheckout {
     if (mint) { state = row.state; payment = row.paymentId; }
     else { state = this.store.get('linkStatus', id)?.state ?? 'waiting_payment'; payment = this.store.get('linkRequests', id)?.paymentId; }
     if (state === 'waiting_payment' && counted > (mint ? row.expiry : row.request.until)) state = 'expired';
-    const quote = mint ? row.quote : { price: rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings), baseFee: row.terms.baseFee, feeSettings: row.terms.feeSettings ?? rules.FEE_DEFAULTS,
+    const quote = mint ? row.quote : { price: rules.feeFor(type, row.terms.baseFee, 1, row.terms.feeSettings, counted), baseFee: row.terms.baseFee, feeSettings: row.terms.feeSettings ?? rules.FEE_DEFAULTS,
       destinations: { treasury: row.terms.treasury }, split: (await linkFeePlan(this.reads, row.terms, { counted })).split };
     const payer = mint ? row.payer : row.terms.payer, refundAfter = mint ? row.expiry + 144 : row.refundAfter ?? row.request.until + 144;
     const plan = { id, type, kind, state, payer, owner: row.request.owner, receiver: row.receiver ?? null,

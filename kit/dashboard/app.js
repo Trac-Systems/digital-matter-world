@@ -1,5 +1,7 @@
 import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
 const formatUnits = n => String(n ?? '–').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+// A pattern or compound by its name; its key only ever as a short "#…".
+const assetLabel = row => row.name ?? (/^c2:[0-9a-f]{64}$/.test(row.asset ?? '') ? 'Compound #' + row.asset.slice(3, 11) : /^p2:(0|[1-9][0-9]*)$/.test(row.asset ?? '') ? 'Pattern #' + row.asset.slice(3) : row.asset);
 
 // One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
@@ -16,6 +18,15 @@ function senderWords(status, ms) {
   return 'Waiting for your payment to confirm on Bitcoin.';
 }
 function txLink(label, value) { const link = el('a', label, 'mono'); link.href = 'https://mempool.space/tx/' + value; link.target = '_blank'; link.rel = 'noreferrer noopener'; return link; }
+// Every pattern, compound, block, agent and request links to its page on the site (served through this dashboard).
+const pageLink = (label, href, className) => { const link = el('a', label, className); link.href = href; return link; };
+const assetLink = row => pageLink(assetLabel(row), (/^c2:[0-9a-f]{64}$/.test(row.asset ?? '') ? '/compound/' : '/pattern/') + row.asset);
+const blockLink = block => block === undefined || block === null ? '—' : pageLink(String(block), '/block/' + block, 'mono');
+// A Bitcoin address opens on the explorer the transaction links use; regtest addresses stay text.
+const EXPLORER = { mainnet: 'https://mempool.space', testnet: 'https://mempool.space/testnet', signet: 'https://mempool.space/signet' };
+const addressLink = address => { const base = EXPLORER[info?.bitcoinNetwork]; if (!base || !address) return document.createTextNode(address ?? '–'); const link = pageLink(address, `${base}/address/${address}`, 'mono'); link.target = '_blank'; link.rel = 'noreferrer noopener'; return link; };
+// "<name> · block <n> · <state>" with the name and block linked.
+const assetLine = (row, ...rest) => append(el('span'), assetLink(row), ' · block ', blockLink(row.block), ...rest.map(text => ' · ' + text));
 
 const el = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
 const append = (parent, ...nodes) => { parent.append(...nodes.filter(Boolean)); return parent; };
@@ -40,7 +51,7 @@ class LocalWalletJournal {
 }
 const root = document.getElementById('app'), page = el('div', undefined, 'page');
 const note = el('p', '', 'note'); note.role = 'status'; note.setAttribute('aria-live', 'polite');
-const payout = el('p', '', 'mono'), owner = el('p', '', 'small muted');
+const payout = el('p', '', 'mono'), owner = el('p', undefined, 'small muted');
 const rows = el('tbody'), requests = el('div', undefined, 'stack'), payment = el('div', undefined, 'stack');
 const table = el('table'), head = el('tr');
 for (const label of ['Pattern', 'Block', 'Units / balance', 'Eligibility / state', '']) head.append(el('th', label));
@@ -94,7 +105,7 @@ async function refreshClaims() {
     if (row.canMint) { const mintButton = button('Mint', () => mint(row)); disabled(mintButton, !info.payoutAddress); action.append(mintButton); }
     else if (!row.minted && row.requestId) action.append(button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }));
     else if (row.deploymentLink) action.append(externalLink('Deploy pattern', row.deploymentLink));
-    append(tr, el('td', row.name), el('td', row.block, 'num'), el('td', `${formatUnits(row.count)} / ${formatUnits(row.balance)}${row.balanceCurrent ? '' : ' (unverified)'}`, 'num'), state, action); rows.append(tr);
+    append(tr, append(el('td'), assetLink(row)), append(el('td', undefined, 'num'), blockLink(row.block)), el('td', `${formatUnits(row.count)} / ${formatUnits(row.balance)}${row.balanceCurrent ? '' : ' (unverified)'}`, 'num'), state, action); rows.append(tr);
   }
   if (!data.claims.length) { const td = el('td', data.next ? 'No eligible claimed blocks on this page. Continue to the next page.' : 'No eligible claimed blocks on this page.'); td.colSpan = 5; rows.append(append(el('tr'), td)); }
   disabled(more, !next); disabled(first, !cursor);
@@ -103,9 +114,9 @@ async function refreshRequests() {
   const data = await api('/api/requests?' + new URLSearchParams({ offset: String(requestOffset), limit: '25' }));
   requests.replaceChildren();
   if (data.batch) requests.append(el('p', `Mint all: ${data.batch.state} · ${data.batch.completed} prepared · ${data.batch.failed} failed${data.batch.error ? ' · ' + data.batch.error : ''}`));
-  for (const error of data.batch?.errors ?? []) requests.append(el('p', `${error.asset} / ${error.block}: ${error.error}`, 'small'));
-  for (const row of data.batch?.deploymentNeeded ?? []) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block} · ${mintState(row.state)}`), row.deploymentLink ? externalLink('Deploy pattern', row.deploymentLink) : null));
-  for (const row of data.requests) requests.append(append(el('div', undefined, 'row'), el('span', `${row.asset} · block ${row.block ?? '—'} · ${mintState(row.state)}`),
+  for (const error of data.batch?.errors ?? []) requests.append(append(el('p', undefined, 'small'), assetLink(error), ' / ', blockLink(error.block), `: ${error.error}`));
+  for (const row of data.batch?.deploymentNeeded ?? []) requests.append(append(el('div', undefined, 'row'), assetLine(row, mintState(row.state)), row.deploymentLink ? externalLink('Deploy pattern', row.deploymentLink) : null));
+  for (const row of data.requests) requests.append(append(el('div', undefined, 'row'), assetLine(row, mintState(row.state)),
     button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }),
     ['unknown', 'authorizing'].includes(row.state) && row.block !== undefined ? button('Resume request', () => mint(row)) : null));
   if (requestOffset) requests.append(button('Newest requests', async () => { requestOffset = 0; await refreshRequests(); }));
@@ -124,8 +135,8 @@ async function refreshPayment() {
       if (reportedPayments.has(id)) note.textContent = 'Your payment was found on Bitcoin and reported. The permit follows with the next batch.';
     }
   }
-  payment.replaceChildren(el('h2', 'Mint payment'), el('p', activeId, 'mono'), el('p', 'State: ' + mintState(status.state)), el('p', 'Receiver: ' + status.receiver, 'mono'));
-  for (const item of status.missing) payment.append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → ${item.to}${item.role === 'treasury' && status.split?.legacyDeploy ? ` (includes ${formatTap(status.split.legacyDeploy)} TAP from burn for older deploy holders, paid through the payout ledger)` : ''}`));
+  payment.replaceChildren(el('h2', 'Mint payment'), append(el('p'), pageLink(activeId, '/mint/' + activeId, 'mono')), el('p', 'State: ' + mintState(status.state)), append(el('p', 'Receiver: ', 'mono'), addressLink(status.receiver)));
+  for (const item of status.missing) payment.append(append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → `), addressLink(item.to), item.role === 'treasury' && status.split?.legacyDeploy ? ` (includes ${formatTap(status.split.legacyDeploy)} TAP from burn for older deploy holders, paid through the payout ledger)` : ''));
   const funding = status.payBy?.rail === 'tap' && Number.isSafeInteger(status.mintFunding?.satoshis) ? status.mintFunding : null;
   const ms = SENDER_STATES.includes(status.mintSender?.state) ? status.mintSender : null, senderStopped = SENDER_STOPPED.includes(ms?.state);
   if (funding) payment.append(el('p', `Bitcoin set aside for the mint inscription: ${funding.satoshis} sats`));
@@ -164,8 +175,9 @@ async function refreshPayment() {
 }
 function formatTap(value) { const n = BigInt(value), unit = 10n ** 18n; return `${n / unit}.${(n % unit).toString().padStart(18, '0')}`.replace(/\.?0+$/, ''); }
 async function refresh() {
-  info = await api('/api/info'); owner.textContent = info.address;
-  payout.textContent = info.payoutAddress ? 'Payout TAP address: ' + info.payoutAddress : 'Bind a TAP payout wallet with bind_payout_wallet before minting. ' + info.payoutError;
+  info = await api('/api/info'); owner.replaceChildren(pageLink(info.address, '/agents/' + info.address));
+  if (info.payoutAddress) payout.replaceChildren('Payout TAP address: ', addressLink(info.payoutAddress));
+  else payout.textContent = 'Bind a TAP payout wallet with bind_payout_wallet before minting. ' + info.payoutError;
   disabled(mintAll, !info.payoutAddress || info.batch?.state === 'running');
   wallet ??= new TapWalletMint({ network: info.bitcoinNetwork, journal: new LocalWalletJournal(), readStatus: id => api('/api/requests/' + id),
     readPaymentPlan: id => api('/api/requests/' + id + '/plan'), notify: text => { note.textContent = text; } });

@@ -95,6 +95,15 @@ export async function createMintSenderBitcoin({ config, settings, network, signa
 }
 export class MintSenderGateway {
   constructor({ http, token }) { this.http = http; this.authorization = 'Bearer ' + token; }
+  payouts(after, limit) {
+    return this.http.request('/internal/mint-sender/payouts?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
+  }
+  preparePayout(record) {
+    return this.http.request('/internal/mint-sender/payouts/prepare', { method: 'POST', body: record, authorization: this.authorization });
+  }
+  recordPayout(record) {
+    return this.http.request('/internal/mint-sender/payouts/record', { method: 'POST', body: record, authorization: this.authorization });
+  }
   async list(after, limit) {
     const page = await this.http.request('/internal/mint-sender/requests?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
     check(page && Array.isArray(page.rows), 'mint_sender_gateway_unavailable'); return page;

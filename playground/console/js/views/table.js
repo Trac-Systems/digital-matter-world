@@ -1,6 +1,6 @@
 import { h, clear, table, kv, pill, hashEl, fmtInt, seg, inspectBtn, tierBadge, cell, panel } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
-import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText } from '../words.js';
+import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText, namedText, assetLink, agentLink, currentAsset } from '../words.js';
 import { compoundMintFlow, wallet } from '../flows.js';
 import * as flows from '../flows.js';
 import { tickerList, deployTickerForm } from '../tickers.js';
@@ -33,12 +33,12 @@ export function mount(root, params = {}) {
       onRow: p => choose(p, null), selected: p => pick && p.number === pick.number,
       columns: [
         { key: 'number', label: '#', num: true },
-        { key: 'name', label: 'Pattern', render: p => h('span', {}, h('span.swatch', { style: { background: mineral(p.asset ?? p.number) } }), title(p.name)) },
+        { key: 'name', label: 'Pattern', render: p => h('span', {}, h('span.swatch', { style: { background: mineral(p.asset ?? p.number) } }), assetLink(p.asset, title(p.name))) },
         { key: 'pat', label: 'Rule', render: p => h('code', {}, p.pat) },
         { key: 'fld', label: 'Field', render: p => h('span.small', {}, fieldName(p)) },
         { key: 'tier', label: 'Tier', render: p => tierBadge(p.tier) },
         { key: 'rarity', label: 'Blocks', num: true, tip: (site.words?.rarityBlocks ?? 'Blocks in local history where this pattern occurs. Fewer blocks = rarer = higher tier.') },
-        { key: 'discoverer', label: 'Discoverer', render: p => p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : h('span.faint', {}, 'seed') },
+        { key: 'discoverer', label: 'Discoverer', render: p => p.discoverer ? agentLink(p.discoverer) : h('span.faint', {}, 'seed') },
         { key: 'supply', label: 'Units on Trac', num: true, render: p => h('span.mono', {}, fmtInt(supplyOf(p))) },
         { key: 'minted', label: 'Minted', num: true, render: p => h('span.mono', {}, fmtInt(mintedOf(p))), tip: 'Blocks of this pattern already minted on Bitcoin.' },
         ...(site.token ? [{ key: 'token', label: 'On Bitcoin', render: p => tokenStatus(p.asset, { lazy: true, action: false }) }] : []),
@@ -77,7 +77,7 @@ export function mount(root, params = {}) {
         { key: 'id', label: 'Compound', render: c => compoundLabel(rememberCompound(c)) },
         { key: 'tier', label: 'Tier', render: c => tierBadge(c.tier) },
         { key: 'generation', label: 'Generation', num: true, render: c => h('span.mono', {}, c.properties?.generation ?? '–') },
-        { key: 'firstMaker', label: 'First maker', render: c => c.firstMaker ? hashEl(c.firstMaker, who(c.firstMaker)) : h('span.faint', {}, '–') },
+        { key: 'firstMaker', label: 'First maker', render: c => c.firstMaker ? agentLink(c.firstMaker) : h('span.faint', {}, '–') },
         { key: 'supply', label: 'Units on Trac', num: true, render: c => h('span.mono', {}, fmtInt(c.supply ?? c.units)) },
         { key: 'token', label: 'On Bitcoin', render: c => site.token ? tokenStatus(c.id ?? c.asset, { lazy: true, action: false, none: 'not yet' }) : c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet') },
         { key: 'act', label: '', render: c => h('button.btn.sm', { onclick: e => { e.stopPropagation(); compoundMintFlow(c.id ?? c.asset); } }, site.public ? 'Make real on TAP' : 'Mint On-Chain') },
@@ -101,7 +101,7 @@ export function mount(root, params = {}) {
         ['Field', fieldName(p)],
         ['Blocks with it', h('span.mono', {}, fmtInt(p.rarity)), (p.countMeaning === 'verified_submitted_blocks' ? 'Verified submitted blocks; more matches may exist.' : site.words?.rarityHistory ?? 'In the local history. Sets the tier.')],
         ['Tier', `${p.tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'find', p.tier)}`],
-        ['Discoverer', p.discoverer ? hashEl(p.discoverer, who(p.discoverer)) : 'Seed pattern'],
+        ['Discoverer', p.discoverer ? agentLink(p.discoverer) : 'Seed pattern'],
         ['Units on Trac', h('span.mono', {}, fmtInt(supplyOf(p)))],
         ['Blocks minted', h('span.mono', {}, fmtInt(mintedOf(p)))],
         site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'During its first week only its discoverer can inscribe it and deploy its token, once, from their own TAP Wallet. After that anyone can. Whoever deploys holds the deploy inscription and can add art to it later.'] : null,
@@ -119,7 +119,7 @@ export function mount(root, params = {}) {
         { key: 'block', label: 'Block', num: true, render: r => h('a.mono', { href: site.href('world', { b: r.block }) }, fmtInt(r.block)) },
         { key: 'count', label: 'Units', num: true },
         { key: 'found', label: 'Found', render: r => cell(r.found) },
-        { key: 'finder', label: 'Finder', render: r => r.finder ? hashEl(r.finder, who(r.finder)) : h('span.faint', {}, '–') },
+        { key: 'finder', label: 'Finder', render: r => r.finder ? agentLink(r.finder) : h('span.faint', {}, '–') },
         { key: 'minted', label: 'Minted', render: r => r.minted ? pill('Minted', 'minted') : h('span.faint', {}, 'no') },
         { key: 'link', label: 'Bitmap', render: r => r.link ? pill('linked', 'ink') : h('span.faint', {}, '–') },
       ],
@@ -129,7 +129,7 @@ export function mount(root, params = {}) {
     rememberCompound(c);
     const id = c.id ?? c.asset, name = assetName(id);
     return h('section.panel', {},
-      h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, name), tierBadge(c.tier), h('div.grow'), inspectBtn(name, c)),
+      h('header', {}, h('span.swatch', { style: { background: mineral(id), width: '14px', height: '14px' } }), h('h2', {}, namedText(() => assetName(id), compoundInputs(c).map(i => i.asset))), tierBadge(c.tier), h('div.grow'), inspectBtn(name, c)),
       compoundFacts(c), tickerList(id), ownTicker(id, true),
       h('div.row', { style: { padding: '10px 14px' } }, h('button.btn.sm.primary', { onclick: () => compoundMintFlow(id) }, site.public ? 'Make real on TAP' : 'Mint On-Chain')));
   }
@@ -140,16 +140,18 @@ export function mount(root, params = {}) {
   }
   // A pattern or compound named in the address opens beside the table.
   async function open(asset, compound) {
+    asset = currentAsset(asset);
     const seq = ++selectionSeq, key = compound ? 'compounds' : 'patterns', label = compound ? 'Compound' : 'Pattern';
+    const named = assetName(asset), what = named.startsWith(label) ? named : `${label} ${named}`;
     clear(detail, panel(label, h('div.empty', {}, 'Loading…')));
     try {
       const found = (compound ? store.compound(asset) : store.pattern(asset)) ?? (await get(`/${key}?asset=${encodeURIComponent(asset)}&limit=1`))?.[key]?.[0];
       if (seq !== selectionSeq) return;
       if (found) { pick = compound ? null : found; pickC = compound ? found : null; drawDetail(); }
-      else clear(detail, panel(label, h('div.note', { role: 'alert' }, `${label} ${asset} was not found.`)));
+      else clear(detail, panel(label, h('div.note', { role: 'alert' }, `${what} was not found.`)));
     } catch (e) {
       if (seq !== selectionSeq) return;
-      clear(detail, panel(label, h('div.note.bad', { role: 'alert' }, `${label} ${asset} could not be loaded (${e.message}). `,
+      clear(detail, panel(label, h('div.note.bad', { role: 'alert' }, `${what} could not be loaded (${e.message}). `,
         h('button.btn.sm', { onclick: () => open(asset, compound) }, 'Retry'))));
     }
   }
@@ -182,7 +184,7 @@ export function tokenStatus(asset, { owner, lazy = false, action = true, none = 
 // A compound's name, with its short key as a small copyable detail.
 export function compoundLabel(c) {
   const id = c.id ?? c.asset;
-  return h('div', {}, h('span', {}, h('span.swatch', { style: { background: mineral(id) } }), assetName(id)),
+  return h('div', {}, h('span', {}, h('span.swatch', { style: { background: mineral(id) } }), assetLink(id, namedText(() => assetName(id), compoundInputs(c).map(i => i.asset)))),
     h('div.small.faint', {}, hashEl(id, '#' + compoundKey(id))));
 }
 // What a person can read about a compound: never its mass commitment or other hashes.
@@ -190,12 +192,12 @@ export function compoundFacts(c) {
   const id = c.id ?? c.asset, p = c.properties ?? {}, tier = tierOf(c.tier);
   return kv([
     ['Recipe', c.recipe ? title(c.recipe) : null],
-    ['Ingredients', compoundInputs(c).map(i => `${fmtInt(i.amount)} ${assetName(i.asset)}`).join(' + ') || null],
+    ['Ingredients', compoundInputs(c).length ? h('span', {}, compoundInputs(c).flatMap((i, n) => [n ? ' + ' : '', `${fmtInt(i.amount)} `, assetLink(i.asset)])) : null],
     ['Tier', tier ? `${tier} of 5 · fee ${feePrice(store.status?.feePolicy, 'compound', tier)} per mint` : null, 'Rarer compounds have higher tiers. The flat fee policy charges the same amount per mint.'],
     ['Charge', p.charge ?? null],
     ['Spectrum', p.spectrum === undefined ? null : spectrumText(p.spectrum), 'The block header fields its ingredients were found in.'],
     ['Generation', p.generation === undefined ? null : generationText(p.generation), 'How many crafting steps it is away from plain patterns.'],
-    ['First maker', c.firstMaker ? hashEl(c.firstMaker, who(c.firstMaker)) : null],
+    ['First maker', c.firstMaker ? agentLink(c.firstMaker) : null],
     ['Units on Trac', h('span.mono', {}, fmtInt(c.supply ?? c.units))],
     ['Made real', h('span.mono', {}, fmtInt(c.madeReal))],
     ['On Bitcoin', site.token ? tokenStatus(id, { action: false, none: 'not yet' }) : c.token || c.deployed ? pill('Token deployed', 'minted') : h('span.faint', {}, 'not yet'),

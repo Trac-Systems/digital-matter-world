@@ -4,7 +4,7 @@
 import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper, fmtInt } from '/web/console/js/dom.js';
 import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral } from '/web/console/js/words.js';
-import { store } from '/web/console/js/api.js';
+import { store, site } from '/web/console/js/api.js';
 import { feePrice } from '/web/console/js/money.js';
 import { tickerList, tickerChoice, deployTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
@@ -21,7 +21,25 @@ async function api(path, body) {
 const words = value => String(value ?? '').replace(/_/g, ' ');
 const localPath = href => { try { const url = new URL(href, location.href); return url.pathname + url.search; } catch { return null; } };
 const STATE_KIND = { awaiting_payment: 'warn', partly_paid: 'warn', permit_issued: 'info', paid: 'info', minted: 'good', expired: 'bad', failed: 'bad' };
-const matter = (asset, name) => h('span.nowrap', {}, h('span.swatch', { style: { background: mineral(asset) } }), h('a', { href: '/pattern/' + asset }, name ?? assetName(asset)));
+// A unit's key as a short detail: "#e9f0843e" for a compound, "#7" for pattern p2:7, imported keys as they are.
+const unitKey = asset => /^c2:[0-9a-f]{64}$/.test(asset) ? '#' + asset.slice(3, 11) : /^p2:(0|[1-9][0-9]*)$/.test(asset) ? '#' + asset.slice(3) : asset;
+// Every mention is a link to its page on the site: a pattern or compound, an agent (any trac1… address), a block, a batch.
+const COMPOUND = /^c2:[0-9a-f]{64}$/;
+// merged: older compound ids and the compound each became (from /api/info); an old id opens the compound it is now.
+let merged = {};
+const assetHref = asset => site.href('table', COMPOUND.test(asset) ? { c: merged[asset] ?? asset } : { p: asset });
+const assetLink = (asset, name) => h('a', { href: assetHref(asset) }, name ?? assetName(asset));
+// A compound's name is its recipe and can be long: it wraps inside its cell instead of pushing the columns aside.
+const matter = (asset, name) => h(COMPOUND.test(asset) ? 'span' : 'span.nowrap', {}, h('span.swatch', { style: { background: mineral(asset) } }), assetLink(asset, name));
+const agentLink = (address, label) => h('a.mono', { href: site.href('agents', { a: address }), title: address }, label ?? short(address));
+const blockLink = block => h('a.mono', { href: site.href('world', { b: block }) }, String(block));
+const batchLink = batch => h('a', { href: '/records/batches/' + batch }, 'batch ' + batch);
+// Bitcoin addresses have no page on the site; they open on the explorer its transaction links use.
+const EXPLORER = { mainnet: 'https://mempool.space', testnet: 'https://mempool.space/testnet', signet: 'https://mempool.space/signet' };
+const addressLink = (address, network) => EXPLORER[network ?? 'mainnet']
+  ? h('a.mono', { href: `${EXPLORER[network ?? 'mainnet']}/address/${address}`, target: '_blank', rel: 'noreferrer noopener', title: address }, short(address, 8, 6)) : hashEl(address);
+// "2 Florite, 3 Nullspar fusion": amounts with linked names.
+const assetList = (items, sep = ', ') => items.map((i, n) => [n ? sep : '', `${fmtInt(i.amount)} `, assetLink(i.asset, i.name)]);
 const go = path => { history.pushState(null, '', path); dispatchEvent(new PopStateEvent('popstate')); };
 // A pattern's token: deployed once (inscribe the pattern, then deploy the token) before anyone can mint it.
 const TOKEN = { deployed: ['deployed', 'good'], inscribed: ['pattern inscribed', 'info'], not_deployed: ['not deployed', 'warn'], unknown: ['unknown', ''] };
@@ -82,7 +100,7 @@ const SEND_STATE = {
   waiting: ['waiting', ''], sending: ['sending…', 'info'], received: ['sent to the gateway', 'info'], confirmed: ['confirmed', 'good'],
   queued: ['next block', 'warn'], uncertain: ['unclear', 'warn'], failed: ['not sent', 'bad'], stale: ['sign again', 'warn'], replaced: ['signed again', ''],
 };
-const unitText = units => units.map(u => `${fmtInt(u.amount)} ${u.name}`).join(', ');
+
 // Craft: plain words for the recipe, the properties and every outcome.
 const CRAFT_NOTE = 'Crafting combines units of your patterns into a new compound. It uses up the units you put in, is free, and happens with the next batch on Trac.';
 const RECIPES = {
@@ -123,6 +141,8 @@ const CRAFT_STATE = {
   queued: ['next block', 'warn'], uncertain: ['unclear', 'warn'], failed: ['not crafted', 'bad'],
 };
 const CRAFT_STEPS = ['Signed', 'Sent to the gateway', 'Confirmed in a batch'];
+// A craft's result: an existing compound links to its page; a new one has no page until the craft is confirmed.
+const resultName = r => r.existing && COMPOUND.test(r.id ?? '') ? assetLink(r.id, r.label) : r.label;
 
 export function mount(el) {
   let stopped = false, cursor, next, offset = 0, busy = false;
@@ -145,7 +165,7 @@ export function mount(el) {
   const tickersButton = (asset, name, box, compound) => whenTickers(asset, h('button.btn.sm.ghost', { type: 'button', onclick: () => {
     const choice = choiceOf(asset);
     clear(box, h('div', { style: { borderTop: '1px solid var(--rule-2)' } },
-      h('div.section-label', {}, `${name} · Tokens on TAP`), tickerList(asset, { label: false }),
+      h('div.section-label', {}, assetLink(asset, name), ' · Tokens on TAP'), tickerList(asset, { label: false }),
       h('div.stack', { style: { gap: '12px', padding: '10px 14px 14px' } },
         h('div', {}, h('div.small.muted', { style: { marginBottom: '4px' } }, compound ? 'Make real into' : 'Mint into'), choice.el),
         deployTickerForm(asset, { compound, request: ticker => api('/api/deploy-ticker', { asset, ticker }), open: job => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id })) }))));
@@ -157,7 +177,7 @@ export function mount(el) {
   };
   // The clicked button and a toast both show progress; a mint takes seconds.
   const mint = (row, button) => act('', async () => {
-    const label = `${row.name ?? row.asset} · block ${row.block}`;
+    const label = `${row.name ?? assetName(row.asset)} · block ${row.block}`;
     const status = toast({ what: 'Minting ' + label, detail: 'Your agent is signing the mint request…', state: 'queued' });
     const idle = button?.textContent;
     if (button) { button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy'); }
@@ -175,8 +195,8 @@ export function mount(el) {
   // Summary tiles: who the agent is, where its payouts go, and what waits on the pages shown below.
   const drawProfile = () => info && clear(profile,
     figures([
-      ['Agent', h('a.mono', { href: '/agents/' + info.address, style: { fontSize: '15px' } }, short(info.address))],
-      ['Payout TAP wallet', info.payoutAddress ? hashEl(info.payoutAddress) : pill('not bound', 'bad')],
+      ['Agent', h('a.mono', { href: site.href('agents', { a: info.address }), style: { fontSize: '15px' } }, short(info.address))],
+      ['Payout TAP wallet', info.payoutAddress ? addressLink(info.payoutAddress, info.bitcoinNetwork) : pill('not bound', 'bad')],
       ['Ready to mint', mintable ?? '–', more.claims ? 'on this page; more on the next' : null],
       ['Open requests', open ?? '–', more.requests ? 'on this page; older ones follow' : null],
     ]),
@@ -185,11 +205,11 @@ export function mount(el) {
   const drawClaims = data => {
     lastClaims = data; next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile();
     clear(claims, data.claims.length ? table(data.claims, [
-      { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', h('a.mono', { href: '/block/' + r.block }, String(r.block)))) },
+      { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', blockLink(r.block))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${fmtInt(r.count)} / ${fmtInt(r.balance)}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
       { key: 'state', label: 'Who may mint', render: r => h('div', {}, pill(words(r.eligibility ?? r.state), r.canMint ? 'good' : r.reason ? 'warn' : ''), r.reason ? h('div.small.muted', {}, r.reason === 'insufficient_balance' ? `Needs ${fmtInt(r.count)} units, you hold ${fmtInt(r.balance)}` : words(r.reason)) : null) },
       { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, 'Mint'),
-          tickerPicks.get(r.asset)?.label() ? h('div.small.muted', {}, 'into ', h('span.mono', {}, tickerPicks.get(r.asset).label())) : null)
+          tickerPicks.get(r.asset)?.label() ? h('div.small.muted', {}, 'into ', h('a.mono', { href: assetHref(r.asset) }, tickerPicks.get(r.asset).label())) : null)
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
     ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));
@@ -212,14 +232,14 @@ export function mount(el) {
     patterns = data.patterns; drawFilter();
     clear(patternList, patterns.length ? table(patterns, [
       { key: 'name', label: 'Pattern', render: p => h('div', {}, h('strong', {}, matter(p.asset, p.name)),
-        h('div.small.muted', {}, h('span.mono', {}, p.asset), p.amountMode === 'field-value' ? ' · field value ' : ' ', p.tier ? tierBadge(p.tier) : null), p.discovered ? h('div.small.muted', {}, 'discovered by your agent') : null) },
+        h('div.small.muted', {}, h('span.mono', {}, unitKey(p.asset)), p.amountMode === 'field-value' ? ' · field value ' : ' ', p.tier ? tierBadge(p.tier) : null), p.discovered ? h('div.small.muted', {}, 'discovered by your agent') : null) },
       // Each next step sits under its state, so a phone shows it without scrolling sideways.
       // During the discoverer's week only the discoverer deploys; the deploy inscription stays with whoever deploys.
       { key: 'token', label: 'Token', render: p => { const week = p.deployer?.onlyDiscoverer ? p.deployer : null, waits = week && !p.ownWeek && p.token !== 'unknown';
         return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-          pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, p.ticker)) : null,
+          pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(p.asset) }, p.ticker)) : null,
           TOKEN_NOTE[p.token] && !waits ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
-          week ? h('div.small.muted', {}, p.ownWeek ? `Only you, its discoverer, can deploy it until block ${week.until}. After that anyone can.` : `Only its discoverer can deploy it until block ${week.until}. After that you can.`)
+          week ? h('div.small.muted', {}, p.ownWeek ? 'Only you, its discoverer, can deploy it until block ' : 'Only its discoverer can deploy it until block ', blockLink(week.until), p.ownWeek ? '. After that anyone can.' : '. After that you can.')
             : p.deployer ? h('div.small.muted', {}, 'Anyone can deploy it now.') : null,
           p.deploymentLink ? waits ? h('button.btn.sm', { disabled: true, title: `Only its discoverer, until block ${week.until}` }, 'Deploy pattern')
             : h(p.token === 'unknown' ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
@@ -237,7 +257,7 @@ export function mount(el) {
   const drawRequests = data => {
     open = data.requests.length; more.requests = data.next !== null; drawProfile();
     clear(requests, data.requests.length ? table(data.requests, [
-      { key: 'asset', label: 'Pattern', render: r => matter(r.asset, r.name) }, { key: 'block', label: 'Block', num: true, render: r => r.block === undefined || r.block === null ? '—' : h('a.mono', { href: '/block/' + r.block }, String(r.block)) },
+      { key: 'asset', label: 'Pattern', render: r => matter(r.asset, r.name) }, { key: 'block', label: 'Block', num: true, render: r => r.block === undefined || r.block === null ? '—' : blockLink(r.block) },
       { key: 'state', label: 'State', render: r => pill(words(r.state), STATE_KIND[r.state] ?? '') },
       { key: 'action', label: '', render: r => ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
         ? h('button.btn.sm', { onclick: event => mint(r, event.currentTarget) }, 'Resume')
@@ -253,9 +273,9 @@ export function mount(el) {
   const links = h('div'), linkPager = h('div.pager-foot');
   const drawLinks = data => {
     clear(links, data.links.length ? table(data.links, [
-      { key: 'block', label: 'Bitmap', render: r => r.block !== null ? h('a', { href: '/block/' + r.block }, `${r.block}.bitmap`) : '—' },
+      { key: 'block', label: 'Bitmap', render: r => r.block !== null ? h('a', { href: site.href('world', { b: r.block }) }, `${r.block}.bitmap`) : '—' },
       { key: 'state', label: 'State', render: r => pill(words(r.state), r.state === 'linked' || r.state === 'accepted' ? 'good' : r.payable ? 'warn' : '') },
-      { key: 'action', label: '', render: r => !r.payable && BEFORE_PAY.includes(r.state) ? h('a.btn.sm.busy', { href: r.paymentLink, title: PAY_SOON }, 'Preparing…') : h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
+      { key: 'action', label: '', render: r => r.price === '0' ? h('a.btn.sm', { href: r.paymentLink }, 'Free') : !r.payable && BEFORE_PAY.includes(r.state) ? h('a.btn.sm.busy', { href: r.paymentLink, title: PAY_SOON }, 'Preparing…') : h('a.btn.sm', { href: r.paymentLink }, r.payable ? 'Pay' : 'Open') },
     ], { sortable: false }) : h('div.empty', {}, linkOffset ? 'No more link requests.' : 'No Bitmap link requests yet.'));
     clear(linkPager, h('span.pager-total', {}, data.links.length ? `${linkOffset + 1}–${linkOffset + data.links.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !linkOffset, onclick: () => { linkOffset = 0; act('Loading…', loadLinks); } }, 'Newest'),
@@ -279,7 +299,7 @@ export function mount(el) {
     if (!stopped) drawClaims(data);
   }
   async function load() {
-    info = await api('/api/info'); if (stopped) return; drawProfile(); drawReceive();
+    info = await api('/api/info'); if (stopped) return; merged = info.merged ?? {}; drawProfile(); drawReceive();
     await loadPatterns(); await loadClaims(); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
     await loadSends(); await loadCraft(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadRequests(); await loadLinks();
   }
@@ -290,7 +310,7 @@ export function mount(el) {
   const blankRow = () => ({ to: '', unit: '', amount: '' });
   const grow = (el, flex) => { el.style.flex = flex; return el; };
   const unitOf = asset => units?.find(u => u.asset === asset);
-  const keyLine = u => h('div.small.faint', {}, h('span.mono', { title: u.asset }, short(u.asset, 10, 6)), u.kind === 'legacy' ? ' · imported units' : u.kind === 'compound' ? ' · crafted compound' : '');
+  const keyLine = u => h('div.small.faint', {}, h('span.mono', {}, unitKey(u.asset)), u.kind === 'legacy' ? ' · imported units' : u.kind === 'compound' ? ' · crafted compound' : '');
   const sendRowEl = (row, i, spendable) => {
     const hint = h('div.hint'), unitHint = h('div'), errorEl = h('div.small', { style: { color: 'var(--bad)' } }, row.error ? sendWords(row.error) : '');
     const checkAddress = () => { const v = row.to.trim(); hint.textContent = v && !isTracAddress(v) ? sendWords('send_address') : ''; hint.style.color = 'var(--bad)'; };
@@ -338,8 +358,8 @@ export function mount(el) {
   });
   const confirmText = r => {
     const g = r.groups, recipients = new Set(g.map(x => x.to)).size;
-    return g.length === 1 && g[0].assets.length === 1 ? `Send ${g[0].assets[0][1]} ${g[0].labels[0]} to ${short(g[0].to)} on Trac?`
-      : `Send ${r.totals.map(t => `${fmtInt(t.amount)} ${t.name}`).join(', ')} to ${recipients} Trac address${recipients === 1 ? '' : 'es'}?`;
+    return g.length === 1 && g[0].assets.length === 1 ? ['Send ', `${g[0].assets[0][1]} `, assetLink(g[0].assets[0][0], g[0].labels[0]), ' to ', agentLink(g[0].to), ' on Trac?']
+      : ['Send ', assetList(r.totals), ` to ${recipients} Trac address${recipients === 1 ? '' : 'es'}?`];
   };
   const drawReview = () => {
     const back = h('button.btn.ghost', { onclick: () => { review = null; drawSend(); } }, 'Back to edit');
@@ -347,8 +367,8 @@ export function mount(el) {
       clear(sendBody, h('div.callout.bad', { style: { marginBottom: '12px' } }, 'Some rows need a fix. Nothing was signed.'),
         table(review.rows.filter(r => r.error), [
           { key: 'line', label: sendMode === 'paste' ? 'Line' : 'Row', num: true, render: r => String(r.line) },
-          { key: 'to', label: 'To', render: r => h('span.mono', {}, r.to ? short(r.to) : '–') },
-          { key: 'unit', label: 'Units', render: r => `${r.amount || '–'} ${r.name ?? r.unit ?? ''}` },
+          { key: 'to', label: 'To', render: r => r.to && isTracAddress(r.to) ? agentLink(r.to) : h('span.mono', {}, r.to ? short(r.to) : '–') },
+          { key: 'unit', label: 'Units', render: r => [`${r.amount || '–'} `, r.asset ? assetLink(r.asset, r.name) : r.name ?? r.unit ?? ''] },
           { key: 'error', label: 'What to fix', render: r => sendWords(r.error) }], { sortable: false }),
         h('div.row', { style: { marginTop: '12px' } }, back));
       return;
@@ -360,9 +380,9 @@ export function mount(el) {
       h('p.muted.small', { style: { margin: '0 0 12px' } }, 'The units move on the Trac network to these trac1… addresses. This is not a Bitcoin or TAP token transfer and not an inscription.',
         review.groups.length > 1 ? ` Your agent signs ${review.groups.length} transfers, one per address (up to 16 units each), and sends them one after another.` : ''),
       table(review.groups, [
-        { key: 'to', label: 'To (Trac address)', render: g => hashEl(g.to) },
-        { key: 'assets', label: 'Units', render: g => h('div', {}, g.assets.map(([, amount], i) => h('div', {}, h('span.mono', {}, fmtInt(amount)), ' ', g.labels[i]))) }], { sortable: false }),
-      h('div.small.muted', { style: { margin: '10px 0 0' } }, 'Total: ', review.totals.map(t => `${fmtInt(t.amount)} of ${fmtInt(t.available)} available ${t.name}`).join(' · ')),
+        { key: 'to', label: 'To (Trac address)', render: g => agentLink(g.to) },
+        { key: 'assets', label: 'Units', render: g => h('div', {}, g.assets.map(([asset, amount], i) => h('div', {}, h('span.mono', {}, fmtInt(amount)), ' ', assetLink(asset, g.labels[i])))) }], { sortable: false }),
+      h('div.small.muted', { style: { margin: '10px 0 0' } }, 'Total: ', review.totals.map((t, i) => [i ? ' · ' : '', `${fmtInt(t.amount)} of ${fmtInt(t.available)} available `, assetLink(t.asset, t.name)])),
       h('div.row', { style: { marginTop: '14px' } }, back, go));
   };
   const confirmSend = button => act('', async () => {
@@ -378,8 +398,8 @@ export function mount(el) {
   const stateNote = g => ({
     waiting: g.signed ? 'Signed and saved; sends in turn.' : 'Saved; your agent signs and sends it in turn.',
     sending: 'Your agent is signing and sending it on Trac…',
-    received: g.batch ? `Sent to the gateway. Confirms in batch ${g.batch}, normally with the next Bitcoin block.` : 'Sent to the gateway. Confirms with the next Bitcoin block.',
-    confirmed: g.batch ? `Confirmed in batch ${g.batch}. The units are at the recipient.` : 'Confirmed. The units are at the recipient.',
+    received: g.batch ? ['Sent to the gateway. Confirms in ', batchLink(g.batch), ', normally with the next Bitcoin block.'] : 'Sent to the gateway. Confirms with the next Bitcoin block.',
+    confirmed: g.batch ? ['Confirmed in ', batchLink(g.batch), '. The units are at the recipient.'] : 'Confirmed. The units are at the recipient.',
     uncertain: 'No clear answer from the gateway. Retry sends this same transfer again; it cannot arrive twice.',
     replaced: 'Signed again below; this signature can no longer be used.',
   }[g.state] ?? sendWords(g.error));
@@ -396,8 +416,8 @@ export function mount(el) {
       newest ? h('div', { style: { padding: '4px 14px' } }, stepper(SEND_STEPS, at, { failed: stuck && at < 3 })) : null,
       send.waiting ? h('div.callout.warn', { style: { margin: '6px 14px' } }, sendWords(send.waiting.reason), ` Next try about ${new Date(send.waiting.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`) : null,
       table(send.groups, [
-        { key: 'to', label: 'To (Trac address)', render: g => hashEl(g.to) },
-        { key: 'assets', label: 'Units', render: g => h('div', {}, unitText(g.assets), h('div.small.faint.mono', {}, g.assets.map(a => a.asset).join(' · '))) },
+        { key: 'to', label: 'To (Trac address)', render: g => agentLink(g.to) },
+        { key: 'assets', label: 'Units', render: g => h('div', {}, assetList(g.assets), h('div.small.faint.mono', {}, g.assets.map(a => unitKey(a.asset)).join(' · '))) },
         { key: 'state', label: 'State', render: g => h('div', {}, pill(...(SEND_STATE[g.state] ?? [words(g.state), ''])), h('div.small.muted', {}, stateNote(g))) },
         ...(send.groups.some(g => g.state === 'stale') && !send.running
           ? [{ key: 'action', label: '', render: g => g.state === 'stale' ? h('button.btn.sm', { onclick: event => resign(send, g, event.currentTarget) }, 'Sign again') : '' }] : []),
@@ -412,7 +432,7 @@ export function mount(el) {
     clear(sendsBody, list.length ? list.map((send, i) => sendCard(send, i === 0)) : h('div.empty', {}, 'No sends yet. Units you send on Trac appear here with their progress.'));
   };
   // The agent's one trac1… address: it receives units and TNK alike.
-  const addressBox = () => [h('div.mono', { style: { wordBreak: 'break-all', padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--paper)' } }, info.address),
+  const addressBox = () => [h('div.mono', { style: { wordBreak: 'break-all', padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--paper)' } }, h('a', { href: site.href('agents', { a: info.address }) }, info.address)),
     h('div.row', { style: { marginTop: '10px' } }, h('button.btn.sm', { onclick: () => copy(info.address) }, 'Copy address'))];
   const drawReceive = () => info && clear(receiveBody,
     h('p.muted', { style: { margin: '0 0 10px' } }, 'Other players send units to this address on the Trac network. It is not a Bitcoin address: minted Bitcoin tokens go to your payout TAP wallet.'),
@@ -476,9 +496,9 @@ export function mount(el) {
     const r = tnkReview, back = h('button.btn.ghost', { onclick: () => { tnkReview = null; drawTnkSend(); } }, 'Back to edit');
     const send = h('button.btn.primary', { onclick: () => confirmTnk(send) }, 'Send TNK');
     clear(tnkBody,
-      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `Send ${tnkText(r.amount)} to ${short(r.to)}? Network fee ${tnkText(r.feeTnk)}.`),
+      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `Send ${tnkText(r.amount)} to `, agentLink(r.to), `? Network fee ${tnkText(r.feeTnk)}.`),
       h('p.muted.small', { style: { margin: '0 0 12px' } }, 'This sends TNK, the Trac network’s coin with real value — not game units. A TNK send cannot be undone.'),
-      figures([['To (Trac address)', hashEl(r.to)], ['Total from your agent', tnkText(r.totalTnk), 'amount + fee'], ['Left after the send', tnkText(r.remainingTnk)]]),
+      figures([['To (Trac address)', agentLink(r.to)], ['Total from your agent', tnkText(r.totalTnk), 'amount + fee'], ['Left after the send', tnkText(r.remainingTnk)]]),
       h('div.row', { style: { marginTop: '14px' } }, back, send));
   };
   const confirmTnk = button => act('', async () => {
@@ -506,7 +526,7 @@ export function mount(el) {
     clear(tnkSendsBody, list.length ? [
       h('div', { style: { padding: '10px 14px 4px' } }, stepper(TNK_STEPS, tnkStep(newest), { failed: ['failed', 'uncertain', 'waiting'].includes(newest.state) })),
       table(list, [
-        { key: 'to', label: 'To (Trac address)', render: s => h('div', {}, hashEl(s.to), h('div.small.faint', {}, new Date(s.createdAt).toLocaleString())) },
+        { key: 'to', label: 'To (Trac address)', render: s => h('div', {}, agentLink(s.to), h('div.small.faint', {}, new Date(s.createdAt).toLocaleString())) },
         { key: 'amount', label: 'TNK', render: s => h('div', {}, h('span.mono', {}, tnkText(s.amount)), h('div.small.faint', {}, `fee ${tnkText(s.feeTnk)}`)) },
         { key: 'state', label: 'State', render: s => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(...(TNK_STATE[s.state] ?? [words(s.state), ''])), h('div.small.muted', {}, tnkNote(s)),
           s.retry ? h('button.btn.sm', { title: 'Sends the same saved transfer again; it cannot arrive twice.', onclick: event => retryTnk(s, event.currentTarget) }, s.state === 'sent' ? 'Send again' : 'Retry') : null) },
@@ -579,16 +599,16 @@ export function mount(el) {
     if (!preview?.result) return frame(head, h('div.empty', { style: { padding: '18px 0' } }, 'Working out the result…'));
     const r = preview.result;
     return frame(head, h('div', { style: { opacity: preview.loading ? '0.55' : '1', transition: 'opacity .15s' } },
-      h('div', { style: { fontFamily: 'var(--serif)', fontSize: '18px', marginBottom: '8px' } }, `${r.existing ? `Adds ${fmtInt(r.amount)} units to` : 'Creates'} ${r.label}`),
+      h('div', { style: { fontFamily: 'var(--serif)', fontSize: '18px', marginBottom: '8px' } }, r.existing ? `Adds ${fmtInt(r.amount)} units to ` : 'Creates ', resultName(r)),
       figures([['You get', `${fmtInt(r.amount)} unit${r.amount === '1' ? '' : 's'}`], ['Tier', r.tier ? tierBadge(r.tier) : pill('settles later', 'warn'), r.tier ? null : 'Refine sets it after crafting'],
         ['Charge', String(r.properties.charge)], ['Spectrum', softValue(spectrumText(r.properties.spectrum))]]),
-      h('div.small.muted', { style: { marginTop: '8px' } }, `Generation ${r.properties.generation}: ${r.properties.generation === '1' ? 'made straight from patterns' : `its newest ingredient is generation ${BigInt(r.properties.generation) - 1n}`}. `, 'Uses ', preview.inputs.map(i => `${fmtInt(i.amount)} ${i.name} (${fmtInt(i.left)} left)`).join(' + '), '.'),
+      h('div.small.muted', { style: { marginTop: '8px' } }, `Generation ${r.properties.generation}: ${r.properties.generation === '1' ? 'made straight from patterns' : `its newest ingredient is generation ${BigInt(r.properties.generation) - 1n}`}. `, 'Uses ', preview.inputs.map((i, n) => [n ? ' + ' : '', `${fmtInt(i.amount)} `, assetLink(i.asset, i.name), ` (${fmtInt(i.left)} left)`]), '.'),
       previewError ? h('div.small', { style: { color: 'var(--bad)', marginTop: '6px' } }, craftWords(previewError)) : null));
   };
   const warningsBox = () => (preview?.warnings ?? []).map(w => w.code === 'craft_uses_mint_units'
-    ? h('div.callout.warn', { style: { marginTop: '10px' } }, `You have ${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of ${w.name} waiting to mint that need ${w.units} units. After this craft ${w.left} are left, so some of those blocks could not be minted.`)
-    : w.code === 'craft_mint_units_ok' ? h('div.small.muted', { style: { marginTop: '8px' } }, `${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of ${w.name} waiting to mint need ${w.units} units; ${w.left} are left after this craft — enough.`)
-    : h('div.callout.warn', { style: { marginTop: '10px' } }, `Could not check your claimed blocks of ${w.name}. Look under Claimed blocks before you craft.`));
+    ? h('div.callout.warn', { style: { marginTop: '10px' } }, `You have ${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of `, assetLink(w.asset, w.name), ` waiting to mint that need ${w.units} units. After this craft ${w.left} are left, so some of those blocks could not be minted.`)
+    : w.code === 'craft_mint_units_ok' ? h('div.small.muted', { style: { marginTop: '8px' } }, `${w.blocks}${w.more ? '+' : ''} claimed block${w.blocks === 1 ? '' : 's'} of `, assetLink(w.asset, w.name), ` waiting to mint need ${w.units} units; ${w.left} are left after this craft — enough.`)
+    : h('div.callout.warn', { style: { marginTop: '10px' } }, 'Could not check your claimed blocks of ', assetLink(w.asset, w.name), '. Look under Claimed blocks before you craft.'));
   const drawCraft = () => {
     if (!craft) { clear(craftBody, h('div.empty', {}, 'Loading your ingredients…')); return; }
     if (craftReview && preview?.result) { drawCraftReview(); return; }
@@ -637,7 +657,7 @@ export function mount(el) {
     const go = h('button.btn.primary', { onclick: () => confirmCraft(go) }, 'Craft now');
     const risky = p.warnings.filter(w => w.code !== 'craft_mint_units_ok');
     clear(craftBody,
-      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, `${r.existing ? `Adds ${fmtInt(r.amount)} units to ${r.label}` : `Creates ${r.label} with ${fmtInt(r.amount)} units`} from ${p.inputs.map(i => `${fmtInt(i.amount)} ${i.name}`).join(' + ')}?`),
+      h('p', { style: { margin: '0 0 6px', fontWeight: 700 } }, r.existing ? [`Adds ${fmtInt(r.amount)} units to `, resultName(r)] : ['Creates ', resultName(r), ` with ${fmtInt(r.amount)} units`], ' from ', assetList(p.inputs, ' + '), '?'),
       h('p.muted.small', { style: { margin: '0 0 12px' } }, `Your agent signs this ${RECIPES[p.recipe][0].toLowerCase()} craft. It is free. The ${fmtInt(p.inputs.reduce((n, i) => n + BigInt(i.amount), 0n))} units you put in are used up, and the compound arrives with the next batch on Trac. A craft cannot be undone.`),
       table(p.inputs, [
         { key: 'name', label: 'Ingredient', render: i => matter(i.asset, i.name) },
@@ -662,8 +682,8 @@ export function mount(el) {
   const craftNote = c => ({
     waiting: 'Saved; your agent signs and sends it in turn.',
     crafting: c.kind === 'refine' ? 'Your agent is working out the tier…' : 'Your agent is signing and sending the craft…',
-    received: c.batch ? `Sent to the gateway. Confirms in batch ${c.batch}, normally with the next Bitcoin block.` : 'Sent to the gateway. Confirms with the next Bitcoin block.',
-    confirmed: c.kind === 'refine' ? 'Done.' : c.batch ? `Confirmed in batch ${c.batch}. The compound is in your units.` : 'Confirmed. The compound is in your units.',
+    received: c.batch ? ['Sent to the gateway. Confirms in ', batchLink(c.batch), ', normally with the next Bitcoin block.'] : 'Sent to the gateway. Confirms with the next Bitcoin block.',
+    confirmed: c.kind === 'refine' ? 'Done.' : c.batch ? ['Confirmed in ', batchLink(c.batch), '. The compound is in your units.'] : 'Confirmed. The compound is in your units.',
     uncertain: c.error && CRAFT_WORDS[c.error] ? craftWords(c.error) : 'No clear answer from the gateway. Retry sends this same signed craft again; it cannot happen twice.',
   }[c.state] ?? craftWords(c.error));
   const craftStep = c => c.state === 'confirmed' ? 3 : c.state === 'received' ? 2 : c.signed || c.state === 'uncertain' ? 1 : 0;
@@ -679,8 +699,8 @@ export function mount(el) {
       h('div', { style: { padding: '10px 14px 4px' } }, stepper(newest.state === 'confirmed' && newest.batch ? [...CRAFT_STEPS.slice(0, 2), `Confirmed in batch ${newest.batch}`] : CRAFT_STEPS,
         craftStep(newest), { failed: ['failed', 'uncertain', 'queued'].includes(newest.state) })),
       table(list, [
-        { key: 'label', label: 'Compound', render: c => h('div', {}, h('strong', {}, c.label ?? 'Compound'), h('div.small.faint', {}, new Date(c.createdAt).toLocaleString(), ' · ', RECIPES[c.recipe]?.[0] ?? c.recipe)) },
-        { key: 'inputs', label: 'Used', render: c => h('div.small', {}, c.inputs.map(i => `${fmtInt(i.amount)} ${i.name}`).join(' + '), c.amount ? h('div.muted', {}, `→ ${fmtInt(c.amount)} unit${c.amount === '1' ? '' : 's'}`) : null) },
+        { key: 'label', label: 'Compound', render: c => h('div', {}, h('strong', {}, c.asset ? assetLink(c.asset, c.label ?? undefined) : c.label ?? 'Compound'), h('div.small.faint', {}, new Date(c.createdAt).toLocaleString(), ' · ', RECIPES[c.recipe]?.[0] ?? c.recipe)) },
+        { key: 'inputs', label: 'Used', render: c => h('div.small', {}, assetList(c.inputs, ' + '), c.amount ? h('div.muted', {}, `→ ${fmtInt(c.amount)} unit${c.amount === '1' ? '' : 's'}`) : null) },
         { key: 'state', label: 'State', render: c => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(...(CRAFT_STATE[c.state] ?? [words(c.state), ''])), h('div.small.muted', {}, craftNote(c)),
           ['failed', 'uncertain', 'queued', 'waiting'].includes(c.state) && c.error !== 'craft_rejected' && !['craft_authorization', 'craft_output', 'craft_outcome_unknown'].includes(c.error)
             ? h('button.btn.sm', { title: 'Sends the same saved craft again; it cannot happen twice.', onclick: event => retryCraft(c, event.currentTarget) }, 'Retry') : null) },
@@ -693,10 +713,10 @@ export function mount(el) {
     if (c.token === 'deployed') {
       const amount = input({ value: c.available, inputmode: 'numeric', 'aria-label': 'Units to make real', style: { width: '72px', height: '30px' } });
       const fee = c.tier ? feePrice(store.status?.feePolicy, 'compound', c.tier) : 'the compound fee';
-      return stack(c.ticker ? h('div.small.muted', {}, 'Ticker ', h('span.mono', {}, c.ticker)) : null, h('div.row', { style: { gap: '6px' } }, amount,
+      return stack(c.ticker ? h('div.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(c.asset) }, c.ticker)) : null, h('div.row', { style: { gap: '6px' } }, amount,
         h('button.btn.sm.primary', { disabled: c.available === '0', onclick: event => mintCompound(c, amount.value.trim(), event.currentTarget) }, 'Make real on TAP')),
         h('div.small.muted', {}, `Quoted fee ${fee} per mint from your TAP Wallet (all tiers share one amount under flat fees); the units leave your agent and arrive as TAP tokens at your payout wallet.`),
-        tickerPicks.get(c.asset)?.label() ? h('div.small.muted', {}, 'into ', h('span.mono', {}, tickerPicks.get(c.asset).label())) : null,
+        tickerPicks.get(c.asset)?.label() ? h('div.small.muted', {}, 'into ', h('a.mono', { href: assetHref(c.asset) }, tickerPicks.get(c.asset).label())) : null,
         tickersButton(c.asset, c.name, compoundTickers, true));
     }
     if (c.token === 'not_deployed' && c.firstMaker && c.needsRefine) return stack(
@@ -728,13 +748,13 @@ export function mount(el) {
   const drawCompounds = () => {
     const list = craft?.compounds ?? [];
     clear(compoundsBody, list.length ? table(list, [
-      { key: 'name', label: 'Compound', render: c => h('div', {}, h('strong', {}, h('span.swatch', { style: { background: mineral(c.asset) } }), c.name), h('div.small.faint', {}, hashEl(c.asset, '#' + c.asset.slice(3, 11)))) },
+      { key: 'name', label: 'Compound', render: c => h('div', {}, h('strong', {}, h('span.swatch', { style: { background: mineral(c.asset) } }), assetLink(c.asset, c.name)), h('div.small.faint', {}, hashEl(c.asset, '#' + c.asset.slice(3, 11)))) },
       { key: 'tier', label: 'Tier', render: c => c.needsRefine ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill('not settled', 'warn', REFINE_NOTE),
         c.refine && ['crafting', 'received', 'waiting'].includes(c.refine.state) ? h('div.small.muted', {}, craftNote(c.refine))
           : h('button.btn.sm', { title: REFINE_NOTE, onclick: event => refine(c.asset, event.currentTarget) }, 'Refine'),
         c.refine?.state === 'failed' ? h('div.small', { style: { color: 'var(--bad)' } }, craftWords(c.refine.error)) : null) : tierBadge(c.tier) },
       { key: 'amount', label: 'Units', num: true, render: c => h('div', {}, h('span.mono', {}, fmtInt(c.amount)), c.available !== c.amount ? h('div.small.faint', {}, `${fmtInt(c.available)} available`) : null) },
-      { key: 'from', label: 'Made from', render: c => c.from.length ? h('div.small', {}, c.from.map(i => assetName(i.asset) === i.asset ? i.name : assetName(i.asset)).join(' + '),
+      { key: 'from', label: 'Made from', render: c => c.from.length ? h('div.small', {}, c.from.map((i, n) => [n ? ' + ' : '', assetLink(i.asset, store.pattern(i.asset) || store.compound(i.asset) || !i.name ? assetName(i.asset) : i.name)]),
         h('div.muted', {}, [RECIPES[c.recipe]?.[0] ?? c.recipe, 'recipe ' + c.from.map(i => i.amount).join(' : '), c.generation === null || c.generation === undefined ? null : 'generation ' + c.generation].filter(Boolean).join(' · '))) : h('span.faint', {}, '–') },
       { key: 'token', label: 'On TAP', render: compoundToken },
     ], { sortable: false }) : h('div.empty', {}, 'No compounds yet. Craft one above; it appears here and under Send units.'));

@@ -1,5 +1,5 @@
 import { hashObject } from '../rules/src/core.js';
-import { settingsSuccessor, effectiveSettings, RECEIPT_RENEWABLE_LIMITS } from '../rules/src/settings-v2.js';
+import { settingsSuccessor, effectiveSettings, validateSettingsDocument, RECEIPT_RENEWABLE_LIMITS } from '../rules/src/settings-v2.js';
 import { decimalV2, compareUint } from '../rules/src/integers-v2.js';
 import { accountSettings } from '../rules/src/account-settings.js';
 
@@ -21,6 +21,7 @@ export async function proposeSettings(state, document, height) {
   if (!previous) return 'settings_inactive';
   if (await state.get('v2/settings-next')) return 'settings_amendment_pending';
   settingsSuccessor(previous, document);
+  validateSettingsDocument(document, height);
   // A reservation already acknowledged under the predecessor must still fit.
   // Lowering these envelopes needs an authenticated drain/renewal transition;
   // a pinned quorum-receipt deployment can renew admission/grouping work
@@ -37,9 +38,10 @@ export async function proposeSettings(state, document, height) {
   state.put('ad/p/settings', { value: document, at });
   return null;
 }
-export async function authorizeSettings(state, document) {
+export async function authorizeSettings(state, document, height = '0') {
   const previous = await state.get('v2/settings');
   settingsSuccessor(previous, document);
+  validateSettingsDocument(document, height);
   if (await state.get('v2/settings-next')) return 'settings_amendment_pending';
   if (compareUint(document.effectiveBatch, decimalV2((await state.batchLast()).n)) <= 0) return 'settings_amendment_boundary';
   // Quotes pinned to the outgoing document must keep resolving it by hash.

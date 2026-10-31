@@ -1,4 +1,5 @@
 import { indexOfficialNames } from './official-ticker-names.mjs';
+import { payoutIndexOperation } from './payout-index.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { openSync, closeSync, unlinkSync } from 'node:fs';
 import { readIndexSchema } from './read-index-storage.mjs';
@@ -184,6 +185,14 @@ export class Store {
   hasRows(space) { return this.countUint(space) !== '0'; }
   count(space) { return rules.safeNumberV2(this.countUint(space)); }
   applyOperation(op) {
+    if (op.space === 'payoutTotals') this.applyOperation(payoutIndexOperation(String(op.id), op.value));
+    // This private work index has no public representation or revision. Its
+    // point writes still share the original transaction and count triggers.
+    if (op.space === 'payoutPayable') {
+      if (op.value === undefined) this.delStmt.run(op.space, String(op.id));
+      else this.putStmt.run(op.space, String(op.id), JSON.stringify(op.value));
+      return;
+    }
     if (op.space === 'meta' && op.id === 'ruleState') this.publicProjectionActive = op.value?.batchVersion === 2;
     if (this.publicProjectionActive) {
       projectRevision(this, op);

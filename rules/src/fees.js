@@ -1,4 +1,5 @@
 import { assert, integer } from './core.js';
+import { freeLinkActive } from './free-link-activation.js';
 import { multiTickerActive } from './multi-ticker-activation.js';
 import { TICKER_DEPLOY_SETTINGS } from './settings-v2.js';
 // All fee math, indexed payments, escrow amounts and payouts use this unit.
@@ -32,7 +33,8 @@ export function feeFor(kind, base, tier = 1, settings = {}, executionHeight = '0
   }
   const s = { ...FEE_DEFAULTS, ...settings };
   assert(integer(tier) && tier >= 1 && tier <= 5 && s.tierMultipliers.length === 5 &&
-    [...s.tierMultipliers, s.compoundMinimum, s.link].every(n => integer(n) && n > 0), 'fee_settings');
+    [...s.tierMultipliers, s.compoundMinimum].every(n => integer(n) && n > 0) &&
+    integer(s.link) && (s.link > 0 || s.link === 0 && freeLinkActive(executionHeight)), 'fee_settings');
   let multiplier;
   if (kind === 'find') multiplier = s.tierMultipliers[tier - 1];
   else if (kind === 'compound') multiplier = Math.max(s.compoundMinimum, s.tierMultipliers[tier - 1]);

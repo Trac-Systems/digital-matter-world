@@ -1,3 +1,4 @@
+import { MintPayoutSender } from './mint-payout-sender.mjs';
 import { MintRefundSender } from './mint-refund-sender.mjs';
 import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { mintSenderError } from './mint-sender-errors.mjs';
@@ -33,6 +34,7 @@ export class MintSender {
     this.keyId = senderKeyId(seed, network); this.policy = senderPolicy(settings); this.active = new Map(); this.lastHealth = 0; this.lastDiscovery = 0;
     this.cursor = journal.meta('cursor') ?? ''; this.sourceReady = false; this.sourceVerified = false; this.lastSourceCheck = 0; this.stopped = false;
     this.refunds = new MintRefundSender(this); this.refundJob = null;
+    this.payouts = new MintPayoutSender(this); this.payoutJob = null;
   }
   async discover() {
     const page = await this.gateway.list(this.cursor, this.settings.pageSize);
@@ -174,8 +176,9 @@ export class MintSender {
     const pendingRefund = this.journal.pendingRefund(), refundStuck = !!pendingRefund && this.now() - pendingRefund.createdAt >= this.settings.stuckMs;
     const refundAlarm = refundStuck || !!(refundCounts.refund_waiting_funds || refundCounts.refund_needs_operator) || this.settings.refundsEnabled &&
       (refundFloat.authority.state !== 'active' || !refundFloat.checkedAt || this.now() - refundFloat.checkedAt > this.settings.heartbeatMaxAgeMs);
-    senderJSON(join(this.settings.directory, 'health.json'), { keyId: this.keyId, policy: this.policy, at: this.now(), ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
-    this.log({ event: 'mint_sender_health', ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
+    const payouts = this.payouts.status();
+    senderJSON(join(this.settings.directory, 'health.json'), { payouts, keyId: this.keyId, policy: this.policy, at: this.now(), ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
+    this.log({ event: 'mint_sender_health', payouts, ready, counts, oldestWaitingMs, refundCounts, refundFloat, refundAlarm });
     if (refundStuck) this.log({ event: 'mint_refund_stuck', refundId: pendingRefund.id, requestId: pendingRefund.record.id, state: pendingRefund.state, waitingMs: this.now() - pendingRefund.createdAt });
     for (const row of stuck)
       this.log({ event: 'mint_sender_stuck', requestId: row.id, state: row.state, waitingMs: this.now() - Math.max(row.permitAt, row.fundedAt) });
@@ -199,6 +202,12 @@ export class MintSender {
       try { await this.discover(); } catch (error) { this.log({ event: 'mint_sender_discovery_retry', code: mintSenderError(error) }); }
       try { await this.refunds.discover(); } catch (error) { this.log({ event: 'mint_refund_discovery_retry', code: mintSenderError(error) }); }
       if (this.sourceVerified) {
+        if (!this.payoutJob && this.now() >= (this.journal.meta('payoutNextAttempt') ?? 0) &&
+            (this.gateway.payouts || this.payouts.payments.pending()) && this.active.size < this.settings.concurrency) {
+          const job = this.payouts.attempt().catch(() => this.log({ event: 'mint_payout_journal_error' }))
+            .finally(() => { this.active.delete('payout'); this.payoutJob = null; });
+          this.payoutJob = job; this.active.set('payout', job);
+        }
         if (this.settings.refundsEnabled && this.now() - this.refunds.lastFloat >= this.settings.healthMs) {
           try { await this.refunds.refreshFloat(); } catch (error) { this.log({ event: 'mint_refund_float_retry', code: mintSenderError(error) }); }
         }

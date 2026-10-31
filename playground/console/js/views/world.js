@@ -1,7 +1,7 @@
-import { h, clear, table, kv, pill, hashEl, fmtInt, inspectBtn, tipIcon, cell, confirmModal } from '../dom.js';
+import { h, clear, table, kv, pill, hashEl, fmtInt, inspectBtn, tipIcon, cell, confirmModal, short } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
 import { heightToPlot, plotToHeight } from '../spiral.js';
-import { mineral, assetName, mintRule, fieldName, who, isMe, title } from '../words.js';
+import { mineral, assetName, mintRule, fieldName, who, isMe, title, assetHref, assetLink, agentLink, addressLink, blockLink } from '../words.js';
 import { mintFlow, linkFlow, run, wallet } from '../flows.js';
 import { pagedTable } from '../paged.js';
 
@@ -329,7 +329,7 @@ export function mount(root, params) {
     out.push(ownerOnly ? h('div.small.muted', { style: { padding: '0 14px 10px' } }, 'Connect a wallet linked to your agent to see what you may mint here.') : pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: site.public ? [] : [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
       empty: 'Nothing to mint here yet: no agent has a settled find in this block.',
       columns: [
-        { key: 'asset', label: 'Pattern', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
+        { key: 'asset', label: 'Pattern', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetLink(r.asset)) },
         { key: 'amount', label: 'Units', num: true },
         { key: 'rule', label: 'May mint', render: r => {
           if (me && mayMint(r)) { const rule = mintRule(r, counted); return h('span', {}, pill('You may mint', 'good'), tipIcon(`${rule.label}. ${rule.text}`)); }
@@ -343,10 +343,10 @@ export function mount(root, params) {
     out.push(pagedTable({ ...small, path: `/blocks/${H}/matches${site.public ? '' : '?positive=true'}`, key: 'matches', sorts: site.public ? [] : [['number:asc', 'Pattern'], ['count:desc', 'Most units']],
       empty: 'No pattern occurs in this block.',
       columns: [
-        { key: 'name', label: 'Pattern', render: m0 => { const m = normMatch(m0, b); return h('span', {}, h('span.swatch', { style: { background: mineral(m.asset) } }), m.name); } },
+        { key: 'name', label: 'Pattern', render: m0 => { const m = normMatch(m0, b); return h('span', {}, h('span.swatch', { style: { background: mineral(m.asset) } }), assetLink(m.asset, m.name)); } },
         { key: 'field', label: 'Field', render: m0 => h('span.small', {}, normMatch(m0, b).field) },
         { key: 'count', label: 'Units', num: true, tip: 'How often the pattern matches this block\'s field. Winning the find credits that many units.' },
-        { key: 'finder', label: 'Finder', render: m0 => { const m = normMatch(m0, b); return m.finder ? h('span', { class: isMe(m.finder) ? '' : 'mono' }, hashEl(m.finder, who(m.finder))) : h('span.faint', {}, 'unfound'); } },
+        { key: 'finder', label: 'Finder', render: m0 => { const m = normMatch(m0, b); return m.finder ? h('span', { class: isMe(m.finder) ? '' : 'mono' }, agentLink(m.finder)) : h('span.faint', {}, 'unfound'); } },
         { key: 'minted', label: 'Minted', render: m0 => normMatch(m0, b).minted ? pill('Minted', 'minted') : h('span.faint', {}, 'no') },
       ] }).el);
 
@@ -356,8 +356,8 @@ export function mount(root, params) {
       empty: 'No claims on this block.',
       columns: [
         { key: 'window', label: 'Round', num: true },
-        { key: 'who', label: 'Claimed by', render: r => who(r.agent ?? r.owner ?? r.claimer) },
-        { key: 'patterns', label: 'Patterns', render: r => (r.patterns ?? (r.pattern !== undefined ? [r.pattern] : [])).slice(0, 4).map(x => assetName(store.pattern(x)?.asset ?? x)).join(', ') || '–' },
+        { key: 'who', label: 'Claimed by', render: r => agentLink(r.agent ?? r.owner ?? r.claimer) },
+        { key: 'patterns', label: 'Patterns', render: r => h('span', {}, (r.patterns ?? (r.pattern !== undefined ? [r.pattern] : [])).slice(0, 4).flatMap((x, i) => [i ? ', ' : '', assetLink(store.pattern(x)?.asset ?? (/^\d+$/.test(String(x)) ? 'p2:' + x : x))])) },
         { key: 'header', label: 'Header sent', render: r => r.header ? pill('Sent', 'good', 'Sent this block’s header. Unclaimed patterns are drawn among its correct header senders.') : h('span.faint', {}, '–') },
         { key: 'receipt', label: '', render: r => inspectBtn('Claim receipt', r) },
       ] }).el);
@@ -372,14 +372,14 @@ export function mount(root, params) {
       ['Nonce', h('span.mono', {}, fmtInt(hd.nonce)), 'Patterns on the nonce match its decimal digits.'],
       ['Difficulty bits', hd.bits !== undefined ? h('span.mono', {}, `${fmtInt(hd.bits)} · 0x${Number(hd.bits).toString(16)}`) : null, 'Patterns on bits match decimal or lowercase hex digits.'],
       ['Time', hd.time ? h('span.mono', {}, new Date(hd.time * 1000).toISOString().replace('T', ' ').slice(0, 19)) : null],
-      ['Previous', hashEl(hd.prev ?? hd.previousblockhash ?? hd.prevHash)],
+      ['Previous', (hd.prev ?? hd.previousblockhash ?? hd.prevHash) && H > 0 ? blockLink(H - 1, short(hd.prev ?? hd.previousblockhash ?? hd.prevHash, 8, 6)) : hashEl(hd.prev ?? hd.previousblockhash ?? hd.prevHash)],
       ['Merkle root', hashEl(hd.merkle ?? hd.merkleroot ?? hd.merkleRoot)],
       ['Version', hd.version !== undefined ? h('span.mono', {}, String(hd.version)) : null],
     ]));
     if (b.link) {
       out.push(h('div.section-label', {}, 'Bitmap link'));
       out.push(kv([
-        b.link ? ['Bitmap holder', hashEl(b.link.holder ?? b.link.owner ?? b.link.address)] : null,
+        b.link ? ['Bitmap holder', addressLink(b.link.holder ?? b.link.owner ?? b.link.address)] : null,
         b.link ? ['Linked at block', h('span.mono', {}, fmtInt(b.link.linkHeight ?? b.link.height))] : null,
       ]));
     }
@@ -389,7 +389,7 @@ export function mount(root, params) {
     const p = store.pattern(m.asset ?? m.number ?? m.pattern);
     const right = (b.mintRights ?? []).find(r => r.asset === (m.asset ?? p?.asset));
     const find = (b.finds ?? []).find(f => (f.asset && f.asset === (m.asset ?? p?.asset)) || (f.pattern !== undefined && f.pattern === (m.pattern ?? p?.number)));
-    return { asset: m.asset ?? p?.asset ?? m.pattern, name: p ? title(p.name) : (m.name ? title(m.name) : String(m.pattern)), field: fieldName(p ?? m), count: m.count ?? m.units,
+    return { asset: m.asset ?? p?.asset ?? (/^\d+$/.test(String(m.pattern)) ? 'p2:' + m.pattern : m.pattern), name: p ? title(p.name) : (m.name ? title(m.name) : assetName(m.asset ?? (/^\d+$/.test(String(m.pattern)) ? 'p2:' + m.pattern : m.pattern))), field: fieldName(p ?? m), count: m.count ?? m.units,
       finder: m.finder ?? find?.finder ?? right?.finder ?? null, minted: !!(m.minted ?? find?.minted ?? right?.minted) };
   }
   function drawTable(rows, b) {
@@ -401,10 +401,10 @@ export function mount(root, params) {
     if (settled.some(d => d.void)) return h('div.empty', {}, 'Draw void: a reorg changed the deciding block before it settled.');
     if (!list.length) return h('div.empty', {}, `No winning find in this block${settled[0]?.claims !== undefined ? ` (${fmtInt(settled[0].claims)} claim${settled[0].claims === 1 ? '' : 's'} in its round)` : ''}.`);
     return table(list, [
-      { key: 'pattern', label: 'Pattern', render: r => { const p = store.pattern(r.asset ?? r.pattern); return h('span', {}, h('span.swatch', { style: { background: mineral(p?.asset ?? r.asset) } }), p ? title(p.name) : String(r.asset ?? r.pattern)); } },
+      { key: 'pattern', label: 'Pattern', render: r => { const p = store.pattern(r.asset ?? r.pattern); const asset = p?.asset ?? r.asset ?? (/^\d+$/.test(String(r.pattern)) ? 'p2:' + r.pattern : r.pattern); return h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), assetLink(asset, p ? title(p.name) : undefined)); } },
       { key: 'count', label: 'Units won', num: true, render: r => h('span.mono', {}, fmtInt(r.count ?? r.amount ?? '')) },
-      { key: 'winner', label: 'Winner', render: r => r.winner ? h('strong', {}, hashEl(r.winner, who(r.winner))) : h('span.faint', {}, 'nobody') },
-      { key: 'window', label: 'Claim round', num: true, tip: 'The round in which these historical slots were claimed.', render: r => r.window !== undefined ? h('a.mono', { href: site.href('world', { b: r.window }) }, fmtInt(r.window)) : h('span.faint', {}, '–') },
+      { key: 'winner', label: 'Winner', render: r => r.winner ? h('strong', {}, agentLink(r.winner)) : h('span.faint', {}, 'nobody') },
+      { key: 'window', label: 'Claim round', num: true, tip: 'The round in which these historical slots were claimed.', render: r => r.window !== undefined ? blockLink(r.window) : h('span.faint', {}, '–') },
       { key: 'i', label: '', sortable: false, render: r => inspectBtn('Draw', r.settlement) },
     ], { sortable: false });
   }

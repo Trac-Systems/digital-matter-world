@@ -1,9 +1,9 @@
 import { h, clear, table, pill, hashEl, fmtInt, panel, figures, inspectBtn, clock, short, input } from '../dom.js';
 import { get, bus, store, site } from '../api.js';
 import { pagedTable } from '../paged.js';
-import { mineral, assetName, title, isMe, describe, fieldName } from '../words.js';
+import { mineral, assetName, title, isMe, describe, fieldName, lookupName, assetHref, assetLink, agentLink, blockLink, inscriptionLink, addressLink, eventSentence, rememberCompound } from '../words.js';
 import { tap } from '../money.js';
-import { groupKey, groupFinds, groupText, inspectGroup } from './feed.js';
+import { groupKey, groupFinds, groupSentence, inspectGroup } from './feed.js';
 
 // What each bot strategy goes after, in plain words.
 const HUNTS = { prospector: 'Claims finds across history and mints what it wins.', discoverer: 'Searches history for new pattern types and proposes them.', crafter: 'Combines pattern units into compounds.' };
@@ -48,9 +48,9 @@ export function mount(root, params) {
 
   const me = () => store.status?.player?.address ?? store.player?.address;
   const nameOf = key => {
-    if (isMe(key)) return h('strong', {}, 'You');
+    if (isMe(key)) return agentLink(key, h('strong', {}, 'You'));
     const bot = (store.bots ?? []).find(b => b.address === key);
-    return bot ? h('span', {}, bot.name, h('span.muted.small', {}, ` · ${bot.strategy}`)) : hashEl(key);
+    return bot ? h('span', {}, agentLink(key, bot.name), h('span.muted.small', {}, ` · ${bot.strategy}`)) : agentLink(key);
   };
   const leaderboard = pagedTable({
     path: () => `/agents${q ? `?q=${encodeURIComponent(q)}` : ''}`, key: 'agents', limit: 20,
@@ -126,8 +126,8 @@ export function mount(root, params) {
         empty: 'No public actions yet.',
         columns: [
           { key: 'at', label: 'Time', render: r => { const e = r.events?.[0] ?? r; return h('span.mono.muted', {}, e.at ? clock(e.at) : '–'); } },
-          { key: 'text', label: 'What happened', render: r => r.events ? groupText(r) : describe(r).text },
-          { key: 'block', label: 'Block', num: true, render: r => { if (r.events) return ''; const b = describe(r).block; return b !== null && b !== undefined ? h('a.mono', { href: site.href('world', { b }) }, fmtInt(b)) : ''; } },
+          { key: 'text', label: 'What happened', render: r => r.events ? groupSentence(r) : eventSentence(r) },
+          { key: 'block', label: 'Block', num: true, render: r => { if (r.events) return ''; const b = describe(r).block; return b !== null && b !== undefined ? blockLink(b) : ''; } },
           { key: 'i', label: '', render: r => r.events ? h('button.linkbtn', { onclick: () => inspectGroup(r) }, 'Inspect') : inspectBtn('Event', r) },
         ],
       })), { flush: true }),
@@ -135,7 +135,7 @@ export function mount(root, params) {
         path: `/compounds?firstMaker=${key}`, key: 'compounds', limit: 5, sorts: [['supply:desc', 'Most units'], ['name:asc', 'Name']],
         empty: 'None yet.',
         columns: [
-          { key: 'id', label: 'Compound', render: c => h('span', {}, h('span.swatch', { style: { background: mineral(c.id) } }), assetName(c.id)) },
+          { key: 'id', label: 'Compound', render: c => h('span', {}, h('span.swatch', { style: { background: mineral(c.id) } }), assetLink(rememberCompound(c).id)) },
           { key: 'supply', label: 'Units on Trac', num: true },
           { key: 'madeReal', label: 'Made real', num: true },
         ],
@@ -144,11 +144,11 @@ export function mount(root, params) {
         path: `/results/mints?owner=${key}&state=minted`, key: 'mints', limit: 5, sorts: [['block:desc', 'Block'], ['price:desc', 'Highest fee']],
         empty: 'Nothing minted yet.',
         columns: [
-          { key: 'asset', label: 'Matter', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) },
-          { key: 'block', label: 'Block', num: true, render: r => r.block !== undefined && r.block !== null ? h('a.mono', { href: site.href('world', { b: r.block }) }, fmtInt(r.block)) : h('span.faint', {}, 'compound') },
+          { key: 'asset', label: 'Matter', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetLink(r.asset)) },
+          { key: 'block', label: 'Block', num: true, render: r => r.block !== undefined && r.block !== null ? blockLink(r.block) : h('span.faint', {}, 'compound') },
           { key: 'amount', label: 'Tokens', num: true },
           { key: 'price', label: 'Paid', num: true, render: r => h('span.mono', {}, tap(r.price, r.unit)) },
-          { key: 'inscription', label: 'Inscription', render: r => r.inscription ? h('span', {}, h('span.pill.minted', { style: { marginRight: '6px' } }, 'on-chain'), hashEl(r.inscription)) : h('span.faint', {}, '–') },
+          { key: 'inscription', label: 'Inscription', render: r => r.inscription ? h('span', {}, h('span.pill.minted', { style: { marginRight: '6px' } }, 'on-chain'), inscriptionLink(r.inscription)) : h('span.faint', {}, '–') },
         ],
       })), { flush: true }));
     if (site.public) sections.push(panel('Payout wallets', track(payoutWallets(key)), { flush: true, tip: 'Wallets this agent bound for its payouts. Replacements apply to future quotes.' }));
@@ -174,16 +174,17 @@ export function mount(root, params) {
   // Resolve only the visible page's missing names, never download the whole catalog.
   const names = new Map();
   function balanceName({ asset }) {
-    const text = h('span', {}, assetName(asset));
+    const text = h('span', {}, assetName(asset)), href = assetHref(asset);
     if (!store.pattern(asset) && !store.compound(asset)) {
-      const kind = /^p\d+$/.test(asset) ? 'patterns' : 'compounds';
-      if (!names.has(asset)) names.set(asset, get(`/${kind}?asset=${encodeURIComponent(asset)}&limit=1`).then(r => {
-        const row = r[kind]?.[0];
-        return row?.name ? (kind === 'patterns' ? title(row.name) : row.name.replace(/\bdmw([a-z0-9]{2,29})\b/g, (_, n) => title(n))) : asset;
-      }).catch(() => { names.delete(asset); return asset; }));
+      // Imported v1 ledger keys (p0, p1…) are named by their pattern row; catalog ids by lookupName.
+      const legacy = /^p[0-9a-z]{1,23}$/.test(asset);
+      if (!names.has(asset)) names.set(asset, legacy ? get(`/patterns?asset=${encodeURIComponent(asset)}&limit=1`).then(r => {
+        const row = r.patterns?.[0];
+        return row?.name ? title(row.name) : assetName(asset);
+      }).catch(() => { names.delete(asset); return assetName(asset); }) : lookupName(asset));
       names.get(asset).then(name => { if (!disposed) text.textContent = name; });
     }
-    return h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), text);
+    return h('span', {}, h('span.swatch', { style: { background: mineral(asset) } }), href ? h('a', { href }, text) : text);
   }
 
   // Public discoveries; another agent's sealed proposals appear only as a count and the block they open at.
@@ -218,7 +219,7 @@ export function mount(root, params) {
           h('button.btn.sm', { onclick: e => { e.currentTarget.disabled = true; load(); } }, 'Retry')) : null,
         table(rows, [
           { key: 'rail', label: 'Paid with', render: r => r.rail === 'ethereum' ? 'Bridged TAP' : 'TAP' },
-          { key: 'address', label: 'Wallet', render: r => r.error ? h('span.muted', {}, 'Unavailable') : r.binding ? hashEl(r.binding.request?.address) : h('span.faint', {}, 'none bound') },
+          { key: 'address', label: 'Wallet', render: r => r.error ? h('span.muted', {}, 'Unavailable') : r.binding ? addressLink(r.binding.request?.address) : h('span.faint', {}, 'none bound') },
           { key: 'acceptedAt', label: 'Bound', render: r => r.binding?.acceptedAt ? h('span.mono.muted', {}, new Date(r.binding.acceptedAt).toLocaleString()) : '' },
           { key: 'i', label: '', render: r => r.binding ? inspectBtn('Payout binding', r.binding) : '' },
         ], { sortable: false }));
@@ -234,8 +235,8 @@ export function mount(root, params) {
       path: `/agents/${key}/history?type=claim`, key: 'history', limit: 5, sorts: [['sequence:desc', 'Newest first']],
       empty: 'No claims yet. Claim historical matches from My player.',
       columns: [
-        { key: 'block', label: 'Block', num: true, render: e => h('a.mono', { href: site.href('world', { b: e.data?.block }) }, fmtInt(e.data?.block)) },
-        { key: 'patterns', label: 'Patterns', render: e => (e.data?.patterns ?? []).slice(0, 4).map(x => assetName(store.pattern(x)?.asset ?? x)).join(', ') || '–' },
+        { key: 'block', label: 'Block', num: true, render: e => blockLink(e.data?.block) },
+        { key: 'patterns', label: 'Patterns', render: e => h('span', {}, (e.data?.patterns ?? []).slice(0, 4).flatMap((x, i) => [i ? ', ' : '', assetLink(store.pattern(x)?.asset ?? (/^\d+$/.test(String(x)) ? 'p2:' + x : x))])) },
         { key: 'draw', label: 'Drawn by block', num: true, tip: 'The first block after the round closes decides its draw. Check the public result for credited finds.', render: e => e.data?.window !== undefined ? h('span.mono', {}, fmtInt(e.data.window + 2)) : '–' },
         { key: 'state', label: 'State', render: e => e.data?.window === undefined ? '–' : counted() >= e.data.window + 2 ? pill('Check result', '') : pill('Waiting for the draw', 'warn') },
       ],

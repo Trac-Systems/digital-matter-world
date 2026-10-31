@@ -22,7 +22,7 @@ export function installLinkSources(reads, { network, bitcoinNetwork, financialFe
     feeQuote ??= await reads.feeQuotes.issue(scope, counted, { treasury }, undefined, rules.hashObject(bitmap));
     const terms = await reads.feeQuotes.validate(feeQuote, scope);
     check(terms.payouts?.treasury === treasury && terms.mintOwnershipHash === rules.hashObject(bitmap), 'financial_link_quote_changed');
-    const document = await reads.financialSettings(terms.settingsHash), price = rules.feeFor('link', terms.baseFee, 1, terms.feeSettings);
+    const document = await reads.financialSettings(terms.settingsHash), price = rules.feeFor('link', terms.baseFee, 1, terms.feeSettings, at?.executionHeight ?? counted);
     const split = financialSplit(price, { kind: 'link' }, document), destinations = { treasury };
     const fees = reads.identifyFinancialFees(rules.mintFeeItems(split, destinations, id, payer, 'tap', bitcoinNetwork), 'tap');
     return { feeQuote, price, split, destinations, fees, bitmap, settingsHash: terms.settingsHash };

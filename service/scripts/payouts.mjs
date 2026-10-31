@@ -7,12 +7,13 @@ import { Payouts } from '../src/payouts.mjs';
 import { check } from '../src/util.mjs';
 check(supportedNode(), 'node_version');
 const [filename, command, beneficiary, amount, txid, reference] = process.argv.slice(2);
-check(['record', 'publish', 'prepare'].includes(command), 'payout_command');
+check(['record', 'publish', 'prepare', 'rebuild-index'].includes(command), 'payout_command');
 const config = await loadConfig(filename), store = await Store.open(config.data);
 try {
   const ledger = new Payouts({ store, files: new Files(join(config.data, 'static')) });
   if (command === 'prepare') console.log(JSON.stringify(ledger.prepare(beneficiary)));
   else if (command === 'record') await ledger.record({ beneficiary, amount, txid, reference });
+  else if (command === 'rebuild-index') await ledger.rebuildIndex();
   else await ledger.publish();
   if (command !== 'prepare') console.log('Payout ledger updated.');
 } finally { await store.close(); }

@@ -421,7 +421,7 @@ export class StateTransition {
       if (compareUint(decimalV2(height), decimalV2(action.at)) < 0) return 'admin_delay';
       if (value.id === 'admin') return 'admin_accept_required';
       if (value.id === 'settings') {
-        try { const error = await authorizeSettings(this, action.value); if (error) return error; } catch (error) { return error.message; }
+        try { const error = await authorizeSettings(this, action.value, height); if (error) return error; } catch (error) { return error.message; }
       } else if (value.id === 'key') {
         if (!this.options.v2 && await this.committeeEpoch() === Number.MAX_SAFE_INTEGER) return 'committee_epoch_exhausted';
         const epoch = this.clock.add(await this.committeeEpoch());

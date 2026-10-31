@@ -1,6 +1,6 @@
 import { h, clear, table, kv, pill, hashEl, fmtInt, tabs, panel, figures, cell, inspectBtn, labelFor } from '../dom.js';
 import { get, bus, site } from '../api.js';
-import { mineral, assetName, who } from '../words.js';
+import { mineral, assetName, who, assetLink, agentLink, blockLink, inscriptionLink, txLink, addressLink, requestLink } from '../words.js';
 import { tap, bridged, fee } from '../money.js';
 import { pagedTable } from '../paged.js';
 
@@ -75,28 +75,28 @@ export function mount(root, params = {}) {
   }
   const unit = () => data?.unit;
   const STATE = s => pill(String(s ?? '–').replace(/_/g, ' '), s === 'minted' || s === 'complete' || s === 'released' ? 'good' : /fail|cancel/.test(String(s)) ? 'bad' : /refund/.test(String(s)) ? '' : 'warn');
-  const matter = r => r.asset ? h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetName(r.asset)) : h('span.faint', {}, '–');
+  const matter = r => r.asset ? h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetLink(r.asset)) : h('span.faint', {}, '–');
   const ROLE = { of: 'finder', bn: 'burn', lo: 'Bitmap holder', tr: 'treasury' };
   const KNOWN = {
     mints: [
       { key: 'asset', label: 'Matter', render: matter, sort: r => r.asset },
-      { key: 'block', label: 'Block', num: true, render: r => r.block !== undefined && r.block !== null ? h('a.mono', { href: site.href('world', { b: r.block }) }, fmtInt(r.block)) : h('span.faint', {}, 'compound'), sort: r => r.block },
+      { key: 'block', label: 'Block', num: true, render: r => r.block !== undefined && r.block !== null ? blockLink(r.block) : h('span.faint', {}, 'compound'), sort: r => r.block },
       { key: 'amount', label: 'Tokens', num: true },
       { key: 'kind', label: 'Paid with', render: r => r.kind === 'ethereum' ? 'Bridged TAP' : 'TAP' },
       { key: 'price', label: 'Fee', num: true, render: r => h('span.mono', {}, fee(r.price, r.kind, r.unit)) },
       { key: 'state', label: 'State', render: r => STATE(r.state) },
-      { key: 'inscription', label: 'Inscription', render: r => r.inscription ? h('span', {}, h('span.pill.minted', { style: { marginRight: '6px' } }, 'on-chain'), hashEl(r.inscription)) : h('span.faint', {}, '–'), sortable: false },
-      { key: 'receiver', label: 'Owner', render: r => hashEl(r.receiver), sortable: false },
+      { key: 'inscription', label: 'Inscription', render: r => r.inscription ? h('span', {}, h('span.pill.minted', { style: { marginRight: '6px' } }, 'on-chain'), inscriptionLink(r.inscription)) : h('span.faint', {}, '–'), sortable: false },
+      { key: 'receiver', label: 'Owner', render: r => addressLink(r.receiver), sortable: false },
     ],
     payments: [
-      { key: 'blck', label: 'Bitcoin block', num: true, render: r => h('span.mono', {}, fmtInt(r.consumed?.blck ?? r.block)), sort: r => r.consumed?.blck },
+      { key: 'blck', label: 'Bitcoin block', num: true, render: r => blockLink(r.consumed?.blck ?? r.block), sort: r => r.consumed?.blck },
       { key: 'action', label: 'Action', render: r => r.consumed?.action === 'claim' ? 'Released' : r.consumed?.action === 'refund' ? 'Refunded' : cell(r.consumed?.action ?? r.action) },
       { key: 'total', label: 'Total', num: true, render: r => h('span.mono', {}, tap(r.consumed?.total ?? r.consumed?.amt ?? r.amount ?? r.total, unit())) },
       { key: 'split', label: 'Split', sortable: false, render: r => h('span.small', {}, [...(r.consumed?.target ? [`${tap(r.consumed.amt, unit())} treasury`] : []), ...(!r.consumed && r.role ? [`${tap(r.amount, unit())} ${r.role}`] : []), ...(r.consumed?.al ?? []).map(a => `${tap(a.amt, unit())} ${ROLE[a.rl] ?? a.rl}`)].join(' · ')) },
-      { key: 'tx', label: 'Transaction', render: r => hashEl(r.consumed?.tx ?? r.reference), sortable: false },
+      { key: 'tx', label: 'Transaction', render: r => txLink('bitcoin', r.consumed?.tx ?? r.reference), sortable: false },
     ],
     payouts: [
-      { key: 'beneficiary', label: 'Paid to', render: r => hashEl(r.beneficiary ?? r.to), sortable: false },
+      { key: 'beneficiary', label: 'Paid to', render: r => addressLink(r.beneficiary ?? r.to), sortable: false },
       { key: 'accrued', label: 'Earned', num: true, render: r => h('span.mono', {}, tap(r.accrued, unit())) },
       { key: 'paid', label: 'Paid out', num: true, render: r => h('span.mono', {}, tap(r.paid, unit())) },
       { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit()) + (r.legacyDeploy ? ` · ${r.eligible ? 'ready for payout' : 'payout from ' + tap(r.payoutMinAtoms, unit())}` : '')) },
@@ -104,22 +104,22 @@ export function mount(root, params = {}) {
     owed: [
       { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
-      { key: 'to', label: 'Paid to', render: r => hashEl(r.to), sortable: false },
-      { key: 'inscription', label: 'From mint', render: r => hashEl(r.inscription), sortable: false },
+      { key: 'to', label: 'Paid to', render: r => addressLink(r.to), sortable: false },
+      { key: 'inscription', label: 'From mint', render: r => inscriptionLink(r.inscription), sortable: false },
     ],
     paid: [
       { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
-      { key: 'agent', label: 'Agent', render: r => hashEl(r.agent ?? r.beneficiary), sortable: false },
-      { key: 'address', label: 'Paid to', render: r => hashEl(r.address ?? r.to), sortable: false },
+      { key: 'agent', label: 'Agent', render: r => addressLink(r.agent ?? r.beneficiary), sortable: false },
+      { key: 'address', label: 'Paid to', render: r => addressLink(r.address ?? r.to), sortable: false },
       { key: 'state', label: 'State', render: r => (r.state === 'paid' || r.evidence === 'independently_verified_settlement') ? pill('paid', 'good') : STATE(r.state) },
     ],
     links: [
-      { key: 'block', label: 'Bitmap', num: true, render: r => h('a.mono', { href: site.href('world', { b: r.block }) }, `${fmtInt(r.block)}.bitmap`) },
-      { key: 'linkHeight', label: 'Linked at block', num: true },
+      { key: 'block', label: 'Bitmap', num: true, render: r => blockLink(r.block, `${fmtInt(r.block)}.bitmap`) },
+      { key: 'linkHeight', label: 'Linked at block', num: true, render: r => blockLink(r.linkHeight) },
     ],
     ethereum: [
-      { key: 'requestId', label: 'Request', render: r => hashEl(r.requestId ?? r.id), sortable: false },
+      { key: 'requestId', label: 'Request', render: r => requestLink('mint', r.requestId ?? r.id), sortable: false },
       { key: 'amount', label: 'Held', num: true, render: r => h('span.mono', {}, tap(r.deposit?.amount ?? r.amount, r.unit)) },
       { key: 'status', label: 'Escrow', render: r => { const st = { 0: 'empty', 1: 'held', 2: 'released', 3: 'refunded' }[r.deposit?.status ?? r.status] ?? r.deposit?.status ?? r.status; return STATE(st === 'held' ? 'held' : st === 'released' ? 'released' : st); } },
       { key: 'split', label: 'Split on release', sortable: false, render: r => { const d = r.deposit?.split ?? r.split ?? {}; return h('span.small', {}, [['finder', d.finderAmount], ['discoverer', d.discovererAmount], ['Bitmap holder', d.landownerAmount], ['burn', d.burnAmount], ['treasury', d.treasuryAmount]].filter(([, v]) => v && v !== '0').map(([k, v]) => `${tap(v, r.unit)} ${k}`).join(' · ')); } },

@@ -6,12 +6,13 @@ import { assetResources } from './asset-resources.mjs';
 // projections, never substitutes for accepted financial records or evidence.
 export function financialTerminalOperations(store, input, batch) {
   const t = input.transition, a = t.action, id = t.id, writes = [];
+  const freeLink = a?.type === 'link-reserve' && input.evidence.fees.length === 0;
   if (t.type === 'consume') writes.push({ space: 'financialCustodyPending', id, value: true });
   if (a?.type === 'link-reserve') {
     writes.push({ space: 'financialLinkIntents', id, value: { id, owner: a.owner, block: a.block, until: a.until } },
       { space: 'activeFinancialLinks', id, value: true }, { space: 'activeFinancialLinksByOwner/' + a.owner, id, value: true });
   }
-  const terminal = ['consume', 'refund'].includes(t.type) || ['link-complete', 'link-exit', 'legacy-link-complete', 'legacy-link-exit', 'capacity-finish'].includes(a?.type);
+  const terminal = freeLink || ['consume', 'refund'].includes(t.type) || ['link-complete', 'link-exit', 'legacy-link-complete', 'legacy-link-exit', 'capacity-finish'].includes(a?.type);
   if (!terminal) return writes;
   for (const space of ['mints', 'linkRequests', 'financialLinkIntents', 'financialLinks']) {
     const row = store.get(space, id);
@@ -19,12 +20,12 @@ export function financialTerminalOperations(store, input, batch) {
   }
   if (a?.type.startsWith('link-') || a?.type.startsWith('legacy-link-')) {
     const row = store.get('financialLinkIntents', id) ?? store.get('linkIntents', id);
-    const owner = row?.owner ?? row?.request?.owner;
+    const owner = row?.owner ?? row?.request?.owner ?? a.owner;
     writes.push(...['activeFinancialLinks', 'financialLinkRecovery', 'financialLinkFailures', 'activeLinks', 'linkRecovery'].map(space => ({ space, id })),
       ...(owner ? [{ space: 'activeFinancialLinksByOwner/' + owner, id }, { space: 'activeLinksByOwner/' + owner, id }] : []),
       { space: 'financialPendingLinks', id }, ...(owner ? [{ space: 'financialLinkOwner/' + owner, id }] : []),
       ...(store.get('financialLinks', id)?.work ? [{ space: 'financialQueue', id: store.get('financialLinks', id).work }, { space: 'financialDeferred', id: store.get('financialLinks', id).work }] : []),
-      { space: 'linkStatus', id, value: { state: a.type.endsWith('link-complete') ? 'accepted' : input.evidence.state === 'credit' ? 'credited' : 'refunded', batch } });
+      { space: 'linkStatus', id, value: { state: freeLink || a.type.endsWith('link-complete') ? 'accepted' : input.evidence.state === 'credit' ? 'credited' : 'refunded', batch } });
     for (const type of ['link-complete', 'link-exit']) {
       const queued = rules.hashObject(['dmw-financial-transition-v2', { type: 'lifecycle', id, action: { type, id } }]);
       writes.push({ space: 'financialQueue', id: queued }, { space: 'financialDeferred', id: queued });

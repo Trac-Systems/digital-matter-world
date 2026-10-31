@@ -1,7 +1,7 @@
-import { hashEl, h, clear, seg, clock, fmtInt, inspect, pill } from '../dom.js';
+import { h, clear, seg, clock, fmtInt, inspect, pill } from '../dom.js';
 import { bus, stream, get, store, site } from '../api.js';
 import { pagedTable } from '../paged.js';
-import { describe, isMe, assetName } from '../words.js';
+import { describe, isMe, assetName, assetLink, agentLink, blockLink, eventSentence } from '../words.js';
 
 // The live view keeps only the newest WINDOW rows; older history is read page by page from the server.
 const WINDOW = 200;
@@ -24,6 +24,17 @@ export function groupText(g) {
   const blocks = g.events.map(e => Number(e.data?.block)).filter(Number.isFinite);
   const units = g.events.reduce((sum, e) => sum + BigInt(e.data?.count ?? e.data?.amount ?? '0'), 0n);
   return `won ${fmtInt(units)} ${assetName(g.events[0].data?.asset)} in ${fmtInt(g.events.length)} blocks (${fmtInt(Math.min(...blocks))} – ${fmtInt(Math.max(...blocks))})`;
+}
+// The same sentence with the matter and both end blocks linked.
+export function groupSentence(g) {
+  const blocks = g.events.map(e => Number(e.data?.block)).filter(Number.isFinite);
+  const units = g.events.reduce((sum, e) => sum + BigInt(e.data?.count ?? e.data?.amount ?? '0'), 0n);
+  return h('span', {}, `won ${fmtInt(units)} `, assetLink(g.events[0].data?.asset), ` in ${fmtInt(g.events.length)} blocks (`, blockLink(Math.min(...blocks)), ' – ', blockLink(Math.max(...blocks)), ')');
+}
+// Who did it: an agent's name links to its page.
+export function actorEl(e) {
+  const { actor } = describe(e), d = e.data ?? {}, address = d.actor ?? d.agent ?? d.owner ?? d.finder ?? d.winner ?? d.from ?? d.firstMaker ?? d.discoverer;
+  return address?.startsWith('trac1') ? agentLink(address, actor === 'You' ? h('strong', {}, 'You') : actor) : actor === 'You' ? h('strong', {}, 'You') : actor;
 }
 export const inspectGroup = g => inspect(`${fmtInt(g.events.length)} finds`, g.events);
 
@@ -52,9 +63,9 @@ export function mount(root) {
       columns: [
         { key: 'at', label: 'Time', render: r => h('span.mono.muted', {}, clock((r.events?.[0] ?? r).at)) },
         { key: 'kind', label: 'Kind', render: r => { const e = r.events?.[0] ?? r, [k, kind] = KIND[e.type] ?? [e.type, '']; return pill(k, kind); } },
-        { key: 'who', label: 'Who', render: r => describe(r.events?.[0] ?? r).actor },
-        { key: 'text', label: 'What happened', render: r => r.events ? groupText(r) : describe(r).text },
-        { key: 'block', label: 'Block', num: true, render: r => { if (r.events) return ''; const b = describe(r).block; return b !== null && b !== undefined ? h('a.mono', { href: site.href('world', { b }) }, fmtInt(b)) : ''; } },
+        { key: 'who', label: 'Who', render: r => actorEl(r.events?.[0] ?? r) },
+        { key: 'text', label: 'What happened', render: r => r.events ? groupSentence(r) : eventSentence(r) },
+        { key: 'block', label: 'Block', num: true, render: r => { if (r.events) return ''; const b = describe(r).block; return b !== null && b !== undefined ? blockLink(b) : ''; } },
         { key: 'i', label: '', render: r => h('button.linkbtn', { onclick: () => r.events ? inspectGroup(r) : inspect(`Event ${r.sequence ?? ''}`, r) }, 'Inspect') },
       ],
     });
@@ -92,30 +103,29 @@ export function mount(root) {
   };
   let missed = 0;
   function row(e) {
-    const { actor, text, block } = describe(e);
-    const d = e.data ?? {}, address = d.actor ?? d.agent ?? d.owner ?? d.finder ?? d.winner ?? d.from ?? d.firstMaker ?? d.discoverer;
+    const { actor, block } = describe(e);
     const [k, kind] = KIND[e.type] ?? [e.type, ''];
     const failed = e.data?.state === 'failed' || e.type === 'error' || (e.type === 'bot' && !!e.data?.error);
     return h('tr.feed-row', {},
       h('td.mono.muted', {}, clock(e.at)),
       h('td', {}, pill(e.type === 'job' && failed ? 'Failed' : k, failed ? 'bad' : kind)),
-      h('td', { class: actor === 'You' ? '' : 'mono small' }, address?.startsWith('trac1') ? hashEl(address, actor) : actor === 'You' ? h('strong', {}, 'You') : actor),
-      h('td', { style: failed ? { color: 'var(--bad)' } : {} }, text),
-      h('td.num', {}, block !== null && block !== undefined ? h('a.mono', { href: site.href('world', { b: block }) }, fmtInt(block)) : ''),
+      h('td', { class: actor === 'You' ? '' : 'mono small' }, actorEl(e)),
+      h('td', { style: failed ? { color: 'var(--bad)' } : {} }, eventSentence(e)),
+      h('td.num', {}, block !== null && block !== undefined ? blockLink(block) : ''),
       h('td', {}, h('button.linkbtn', { onclick: () => inspect(`Event ${e.sequence ?? ''}`, e) }, 'Inspect')));
   }
   // A block event is the separator: everything above it happened after that block.
   function blockRow(e) {
-    const { text, block } = describe(e);
-    return h('tr.blockrow', {}, h('td.mono', {}, clock(e.at)), h('td', { colSpan: 3 }, text),
-      h('td.num', {}, block !== null && block !== undefined ? h('a.mono', { href: site.href('world', { b: block }) }, fmtInt(block)) : ''),
+    const { block } = describe(e);
+    return h('tr.blockrow', {}, h('td.mono', {}, clock(e.at)), h('td', { colSpan: 3 }, eventSentence(e)),
+      h('td.num', {}, block !== null && block !== undefined ? blockLink(block) : ''),
       h('td', {}, h('button.linkbtn', { onclick: () => inspect(`Event ${e.sequence ?? ''}`, e) }, 'Inspect')));
   }
   function groupRow(g) {
     const tr = row(g.events[0]);
     tr._group = g;
     if (g.events.length === 1) return tr;
-    tr.children[3].textContent = groupText(g);
+    clear(tr.children[3], groupSentence(g));
     clear(tr.children[4]);
     clear(tr.children[5], h('button.linkbtn', { onclick: () => inspectGroup(g) }, 'Inspect'));
     return tr;

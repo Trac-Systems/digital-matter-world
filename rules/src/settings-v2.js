@@ -1,3 +1,4 @@
+import { freeLinkActive } from './free-link-activation.js';
 import { tapAtoms } from './fees.js';
 import { assert, exactKeys, hashObject, networkId } from './core.js';
 import { uintV2, compareUint, nextUint } from './integers-v2.js';
@@ -61,7 +62,7 @@ export function freezeDocument(value) {
   if (value && typeof value === 'object') { for (const v of Object.values(value)) freezeDocument(v); Object.freeze(value); }
   return value;
 }
-export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
+export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES, executionHeight = '0') {
   // Retained documents keep their original execution. New profiles opt into
   // bounded closure as a complete group, authenticated by the settings hash.
   const bounded = Object.hasOwn(values, 'closureWorkBudget');
@@ -89,7 +90,7 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES) {
       }), 'settings_tiers');
     } else if (key === 'feePolicyRevision') assert(value === '0' || typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), 'settings_fee_revision');
     else if (typeof SETTINGS_PROFILE[key] === 'string' || key === 'publicMintActivationHeight' || key === 'claimsNeverCloseHeight' || key === 'bitmapMintOpenHeight' || key === 'publicPaymentV2Height') uintV2(value);
-    else assert(Number.isSafeInteger(value) && value >= (zeroAllowed.has(key) ? 0 : 1), 'settings_value');
+    else assert(Number.isSafeInteger(value) && value >= (zeroAllowed.has(key) || key === 'linkMultiplier' && freeLinkActive(executionHeight) ? 0 : 1), 'settings_value');
     if (Object.hasOwn(capabilities, key)) assert(value <= capabilities[key], 'settings_capability');
   }
   assert(values.minMatchingBlocks <= values.occurrencePageSize && values.occurrencePageSize <= values.namedPairBudget, 'settings_witness_budget');
@@ -117,16 +118,16 @@ export function settingsRevision({ network, effectiveBatch, effectiveBitcoinWind
   if (previous) validateSettingsDocument(previous);
   const document = { version: 1, ruleset: 'dmw-v2', network, revision: previous ? nextUint(previous.revision) : '0',
     effectiveBatch, effectiveBitcoinWindow, previousRevisionHash: previous ? hashObject(previous) : null,
-    values: structuredClone(validateSettings(values)) };
+    values: structuredClone(validateSettings(values, undefined, effectiveBitcoinWindow)) };
   validateSettingsDocument(document);
   return freezeDocument(document);
 }
-export function validateSettingsDocument(document) {
+export function validateSettingsDocument(document, executionHeight = document?.effectiveBitcoinWindow) {
   assert(exactKeys(document, ['version', 'ruleset', 'network', 'revision', 'effectiveBatch', 'effectiveBitcoinWindow', 'previousRevisionHash', 'values']) &&
     document.version === 1 && document.ruleset === 'dmw-v2', 'settings_version');
   networkId(document.network); uintV2(document.revision); uintV2(document.effectiveBatch); uintV2(document.effectiveBitcoinWindow);
   assert(document.previousRevisionHash === null || /^[0-9a-f]{64}$/.test(document.previousRevisionHash), 'settings_previous');
-  validateSettings(document.values); return document;
+  validateSettings(document.values, undefined, executionHeight); return document;
 }
 export function settingsSuccessor(previous, document) {
   validateSettingsDocument(previous); validateSettingsDocument(document);
@@ -159,6 +160,7 @@ export function effectiveSettings(current, scheduled, batch, window) {
   if (scheduled) settingsSuccessor(current, scheduled);
   const selected = scheduled && settingsEffective(scheduled, batch, window) ? scheduled : current;
   assert(settingsEffective(selected, batch, window), 'settings_not_effective');
+  validateSettingsDocument(selected, window);
   return selected;
 }
 export class SettingsHistory {

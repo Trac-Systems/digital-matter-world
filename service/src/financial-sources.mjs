@@ -115,7 +115,7 @@ export function installFinancialSources(reads, options) {
       check(await reads.isMinted(d.id, d.tick, r.block, at) === false, 'financial_already_minted');
     }
     const kind = d.kind === 'dmt' ? 'find' : 'compound';
-    const price = rules.feeFor(kind, terms.baseFee, context.tier, terms.feeSettings);
+    const price = rules.feeFor(kind, terms.baseFee, context.tier, terms.feeSettings, at?.executionHeight ?? counted);
     const options = { kind, linked: !!holder, discovered: !!(row.quote.feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
     const baseSplit = row.quote.feeQuote.settingsHash ? financialSplit(price, options, original) : rules.splitFee(price, options);
     const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind, deployment: d,

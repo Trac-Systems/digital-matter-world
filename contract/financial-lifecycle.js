@@ -1,3 +1,4 @@
+import { freeLinkActive } from '../rules/src/free-link-activation.js';
 import { multiTickerActive } from '../rules/src/multi-ticker-activation.js';
 import { releaseFinancialCapacity } from './financial-capacity.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
@@ -77,9 +78,12 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
     check(uint(a.block) && hex(a.terms) && !await get('fl/' + a.id) && !await get('fl/slot/' + a.block) &&
       !await get('k/link/' + BigInt(a.block).toString(36)), 'link_reserved');
     const funding = await get('fp/' + a.id);
-    check(funding?.state === 'open' && funding.owner === a.owner && funding.terms === a.terms, 'link_funding');
-    put('fl/' + a.id, { state: 'reserved', owner: a.owner, block: a.block, terms: a.terms, until: a.until });
-    put('fl/slot/' + a.block, a.id);
+    check(limits.linkMultiplier !== 0 || freeLinkActive(height), 'link_funding');
+    const free = freeLinkActive(height) && limits.linkMultiplier === 0;
+    check(free ? !funding : funding?.state === 'open' && funding.owner === a.owner && funding.terms === a.terms, 'link_funding');
+    put('fl/' + a.id, { state: free ? 'complete' : 'reserved', owner: a.owner, block: a.block, terms: a.terms, until: a.until });
+    if (free) put('k/link/' + BigInt(a.block).toString(36), canonicalJSON({ block: a.block, linkHeight: String(height) }));
+    else put('fl/slot/' + a.block, a.id);
   } else if (a.type === 'link-complete' || a.type === 'link-exit') {
     exact([]);
     const row = await get('fl/' + a.id), funding = await get('fp/' + a.id);

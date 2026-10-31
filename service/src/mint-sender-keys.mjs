@@ -26,6 +26,14 @@ export function refundFloatKey(seed, network) {
   try { return { privateKey: child.privateKey.slice(), publicKey: hex(child.publicKey), address: fundingAddress(child.publicKey, network), path }; }
   finally { child.wipePrivateData(); root.wipePrivateData(); }
 }
+// Separate from refund branch 2 and request branches 0/1.
+export function payoutFloatKey(seed, network) {
+  networkFor(network);
+  const path = `m/86'/${network === 'mainnet' ? 0 : 1}'/0'/3/0`;
+  const root = HDKey.fromMasterSeed(seed), child = root.derive(path);
+  try { return { privateKey: child.privateKey.slice(), publicKey: hex(child.publicKey), address: fundingAddress(child.publicKey, network), path }; }
+  finally { child.wipePrivateData(); root.wipePrivateData(); }
+}
 export function validDestination(address, network) {
   try { const decoded = btc.Address(networkFor(network)).decode(address); return ['tr', 'wpkh', 'wsh', 'pkh', 'sh'].includes(decoded.type); }
   catch { return false; }

@@ -130,7 +130,7 @@ export function prepareFinancialMigration({ rows, records, snapshot, network, do
       a.network === network && a.id === id && a.until === request.until && a.counted >= q.validFrom && a.until > a.counted && a.until <= q.validUntil &&
       a.at >= q.issuedAt && a.at <= q.expiresAt, 'pending_link_quote');
     if (r.multiTickerActive(height)) check(terms.settingsHash === r.hashObject(document), 'pending_link_settings');
-    const rail = terms.chainId ? 'ethereum' : 'tap', price = r.feeFor('link', terms.baseFee, 1, terms.feeSettings), split = r.linkPaymentSplit(price, document, height);
+    const rail = terms.chainId ? 'ethereum' : 'tap', price = r.feeFor('link', terms.baseFee, 1, terms.feeSettings, height), split = r.linkPaymentSplit(price, document, height);
     const feeItems = identifyFinancialFees(r.mintFeeItems(split, { treasury: terms.treasury }, id, terms.payer, rail, network === 'dmw-mainnet' ? 'mainnet' : 'regtest'),
       { network, rail, bitcoinNetwork: network === 'dmw-mainnet' ? 'mainnet' : 'regtest', escrow: snapshot.escrow });
     const normalized = { id, request, signature: row.sig, payer: terms.payer, receiver: terms.payer, kind: rail,

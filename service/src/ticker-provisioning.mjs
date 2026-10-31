@@ -183,6 +183,21 @@ export class TickerProvisioning {
     const entry = selectedDeployment(await this.p.reads.registry(), resolved.asset, selector);
     check(entry, 'deployment_unknown'); return { asset: resolved.asset, catalogAsset: resolved.catalogAsset, state: 'registered', entry };
   }
+  // The pattern or compound a TAP ticker belongs to, by point reads only: anyone's own ticker, then the
+  // official one. Case-insensitive, bare ("moon") or indexed ("dmt-moon"); asset is null when none matches.
+  async find(ticker) {
+    const tick = (await this.checks()).indexedTicker(ticker), registry = await this.p.reads.registry();
+    check(typeof registry.tickerOwner === 'function', 'registry_migration_required');
+    for (const name of tick.startsWith('dmt-') ? [tick] : [tick, 'dmt-' + tick]) {
+      const owner = registry.tickerOwner(name), asset = owner?.asset ?? registry.officialName(name);
+      const entry = asset ? owner ? registry.deployment(asset, owner.deployment) : registry.asset(asset) : null;
+      // The official names also hold pattern names and labels; only a deployed ticker counts here.
+      if (!entry || ![entry.tick, entry.indexTick].some(t => typeof t === 'string' && t.toLowerCase() === name)) continue;
+      const resolved = await mintAssetDefinition(this.p.store, asset);
+      return { ticker: entry.indexTick ?? entry.tick, tick: entry.tick, asset: resolved.catalogAsset, official: !owner, ordinal: entry.ordinal ?? '1' };
+    }
+    return { ticker: tick, asset: null };
+  }
   async list(asset, { after = '', limit = 50 } = {}) {
     await this.active(); const { store, reads } = this.p, resolved = await mintAssetDefinition(store, asset);
     const registry = await reads.registry(), official = registry.assets[resolved.asset];

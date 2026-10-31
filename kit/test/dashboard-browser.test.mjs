@@ -45,6 +45,7 @@ async function open(t, { provider = true } = {}) {
 test('browser click → signed request → TAP payment → permit inscription; reload does not pay twice', async t => {
   const { f, dashboard, page, errors, wallet, signed, pushed } = await open(t);
   assert.equal(await page.getByRole('button', { name: 'Mint', exact: true }).count(), 2);
+  await assertReferences(page, [f.patterns[0].name], '#app');
   assert.equal(await page.evaluate(() => document.cookie), '', 'signer session is HttpOnly');
   await page.getByRole('button', { name: 'Mint', exact: true }).first().click();
   await page.getByRole('button', { name: 'Pay missing items', exact: true }).waitFor();
@@ -173,6 +174,23 @@ async function assertEventually(check) {
   for (let i = 0; i < 100; i++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
   assert.fail('Expected browser action did not finish');
 }
+// Complete references: the rendered page shows no raw pattern/compound key and no trac1… address outside a link,
+// and every named pattern or compound in its text is a link. Form controls (options, tabs, buttons, labels) are exempt.
+async function assertReferences(page, names, root = 'main') {
+  const bad = await page.evaluate(([names, root]) => {
+    const out = [], walker = document.createTreeWalker(document.querySelector(root), NodeFilter.SHOW_TEXT);
+    for (let node; (node = walker.nextNode());) {
+      const text = node.textContent, el = node.parentElement;
+      if (!text.trim() || el.closest('select, textarea, button, label, [role=tab], .toast, script, style')) continue;
+      const linked = !!el.closest('a');
+      if (/\b(?:p2:[0-9]|c2:[0-9a-f])/.test(text)) out.push('raw key: ' + text);
+      if (/trac1[0-9a-z]{4}/.test(text) && !linked) out.push('address not linked: ' + text);
+      for (const name of names) if (text.includes(name) && !linked) out.push(`${name} not linked: ${text}`);
+    }
+    return out;
+  }, [names, root]);
+  assert.deepEqual(bad, []);
+}
 
 test('dashboard explains a public mint claim refusal without preparing a payment', async t => {
   const { page, f, wallet, errors } = await open(t);
@@ -219,6 +237,9 @@ test('My agent lists the agent’s patterns with Deploy for a new one, and the p
   await claims.getByRole('tab', { name: 'All · 3' }).click();
   await assertEventually(async () => await claims.locator('tbody tr').count() === 3);
   if (process.env.DMW_DASHBOARD_SCREENSHOT) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: process.env.DMW_DASHBOARD_SCREENSHOT, fullPage: true }); }
+  await assertReferences(page, ['dmwtest', 'dmwfresh', 'dmwother']);
+  assert.equal(await row('dmwfresh').getByRole('link', { name: 'dmwfresh' }).getAttribute('href'), '/pattern/p2:2');
+  assert.equal(await page.getByRole('link', { name: '9', exact: true }).first().getAttribute('href'), '/block/9');
   assert.equal(f.calls.some(c => c.path.startsWith('/mint/deployment/')), false);
   assert.deepEqual(errors, []);
 });
@@ -259,7 +280,7 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   await send.getByText('Not a valid Trac address').waitFor();
   await send.getByRole('textbox', { name: 'Recipient Trac address, row 1' }).fill(to(1));
   await unit.selectOption('p2:2');
-  await send.getByText('p2:2').waitFor();
+  await send.getByText('#2', { exact: true }).waitFor();
   await send.getByRole('button', { name: 'Max' }).click();
   assert.equal(await send.getByRole('textbox', { name: 'Amount, row 1' }).inputValue(), '7');
   await send.getByRole('textbox', { name: 'Amount, row 1' }).fill('2');
@@ -270,6 +291,7 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   await shot('send', send);
   await send.getByRole('button', { name: 'Review send' }).click();
   await send.getByText('Send 2 dmwmuffinite, 5 dmwtest to 2 Trac addresses?').waitFor();
+  await assertReferences(page, ['dmwmuffinite']);
   await send.getByText('Free, arrives with the next Bitcoin block.', { exact: false }).waitFor();
   assert.equal(calls.length, 0, 'review signs nothing');
   await shot('confirm', send);
@@ -281,6 +303,10 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   events.push({ id: sha('v2-event/transfer/' + sha('m' + calls[0].actionId) + '/' + sha('n' + calls[0].actionId)), type: 'transfer', provenance: { batch: '42' } });
   await recent.getByText('Confirmed in batch 42').waitFor({ timeout: 10000 });
   await shot('progress', recent);
+  await assertReferences(page, ['dmwmuffinite', 'dmwtest']);
+  assert.equal(await recent.getByRole('link', { name: 'batch 42' }).first().getAttribute('href'), '/records/batches/42');
+  assert.equal(await recent.getByRole('link', { name: 'dmwmuffinite' }).first().getAttribute('href'), '/pattern/p2:2');
+  assert.equal(await recent.locator(`a[href="/agents/${to(1)}"]`).count(), 1);
   await shot('receive', receive);
   // A pasted list by pattern name; a wrong line is explained and nothing is signed.
   await send.getByRole('button', { name: 'Paste a list' }).click();
@@ -325,6 +351,7 @@ test('My agent shows TNK apart from units: balance, fee and funding address; one
   await shot('send', send);
   await send.getByRole('button', { name: 'Review TNK send' }).click();
   await send.getByText(/^Send 1\.25 TNK to trac1\S+…\S+\? Network fee 0\.01 TNK\.$/).waitFor();
+  await assertReferences(page, []);
   await send.getByText('not game units', { exact: false }).waitFor();
   assert.equal(msb.signed, 0, 'review signs nothing');
   await shot('review', send);
@@ -338,6 +365,8 @@ test('My agent shows TNK apart from units: balance, fee and funding address; one
   msb.confirmed.set(packet.tro.tx, { decoded: packet });
   await recent.getByText('Confirmed. The TNK is at the recipient.').waitFor({ timeout: 15000 });
   await shot('confirmed', recent);
+  await assertReferences(page, []);
+  assert.equal(await recent.locator(`a[href="/agents/${to}"]`).count(), 1);
   assert.equal(msb.signed, 1);
   assert.deepEqual(errors, []);
 });
@@ -422,6 +451,7 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   await assertEventually(async () => !await craft.getByRole('button', { name: 'Review craft' }).isDisabled());
   await craft.getByRole('button', { name: 'Review craft' }).click();
   await craft.getByText('Creates Nullspar + Muffinite fusion with 2 units from 2 dmwnullspar + 2 dmwmuffinite?').waitFor();
+  await assertReferences(page, ['dmwmuffinite']);
   await shot('confirm', craft);
   assert.ok(previews.length > 0); assert.equal(crafts.length, 0, 'review signs nothing');
   await craft.getByRole('button', { name: 'Craft now' }).click();
@@ -438,6 +468,8 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   await mine.getByRole('button', { name: 'Refine' }).waitFor({ timeout: 20000 });
   await mine.getByText('2 dmwnullspar', { exact: false }).count();
   await shot('compounds', mine);
+  await assertReferences(page, ['dmwnullspar', 'dmwmuffinite', 'Nullspar + Muffinite fusion']);
+  assert.equal(await mine.getByRole('link', { name: 'Nullspar + Muffinite fusion' }).getAttribute('href'), '/compound/c2:' + 'ef'.repeat(32));
   // The new compound is offered under Send units with its label.
   const unit = section('Send units on Trac').getByRole('combobox', { name: 'Units, row 1' });
   await assertEventually(async () => (await unit.locator('option').allTextContents()).some(o => o.startsWith('Nullspar + Muffinite fusion')));

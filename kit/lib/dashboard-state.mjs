@@ -1,6 +1,6 @@
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runTool } from './tools.mjs';
-import { stableJSON, compoundIdentityV4Active } from '../../rules/src/index.js';
+import { stableJSON, compoundIdentityV4Active, COMPOUND_IDENTITY_V4_MERGES, validateCompoundMerges } from '../../rules/src/index.js';
 import { nextCursor, isAsset } from './api-values.mjs';
 import { safeCode } from './errors.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
@@ -154,8 +154,11 @@ export class DashboardState {
     let payoutAddress = null, payoutError = null;
     try { payoutAddress = await this.payout(); } catch (error) { payoutError = dashboardError(error); }
     return { address: this.agent.address, network: this.agent.network, bitcoinNetwork: this.agent.bitcoinNetwork,
-      payoutAddress, payoutError, batch: this.batch };
+      payoutAddress, payoutError, batch: this.batch, merged: Object.fromEntries(this.merged()) };
   }
+  // Older compound ids merged into the compound they became (the published merge record of this network):
+  // saved sends and crafts that name an old id show and link the compound it is now.
+  merged() { return this.mergedIds ??= COMPOUND_IDENTITY_V4_MERGES.network === this.agent.network ? validateCompoundMerges(COMPOUND_IDENTITY_V4_MERGES) : new Map(); }
   async candidate(slot) {
     dashboardCheck(assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
     const rows = await this.context.candidates(slot.asset, { block: slot.block, kind: 'tap' });
@@ -361,7 +364,7 @@ export class DashboardState {
       const id = row.result.request?.id ?? row.result.next[0].arguments.id;
       let status; try { status = await this.service.linkStatus(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
       links.push({ requestId: id, block: status.block ?? row.body?.request?.block ?? row.body?.request?.height ?? null, state: status.state,
-        payable: status.state === 'awaiting_payment', error: status.error ?? null, paymentLink: '/link/' + id });
+        ...(status.price === '0' ? { price: '0' } : {}), payable: status.price !== '0' && status.state === 'awaiting_payment', error: status.error ?? null, paymentLink: '/link/' + id });
     }
     return { links, next: offset + limit < saved.length ? offset + limit : null };
   }
@@ -467,15 +470,15 @@ export class DashboardState {
           seen.add(key);
           if (!row.canMint) {
             if (row.deploymentLink && this.batch.deploymentNeeded.length < 20)
-              this.batch.deploymentNeeded.push({ asset: row.asset, block: row.block, state: 'deployment_needed', deploymentLink: row.deploymentLink });
+              this.batch.deploymentNeeded.push({ asset: row.asset, name: row.name, block: row.block, state: 'deployment_needed', deploymentLink: row.deploymentLink });
             continue;
           }
           try {
             const result = await this.mint({ asset: row.asset, block: row.block });
             if (result.requestId) this.batch.completed++;
-            else if (this.batch.deploymentNeeded.length < 20) this.batch.deploymentNeeded.push({ asset: row.asset, block: row.block, state: result.state, deploymentLink: result.deploymentLink });
+            else if (this.batch.deploymentNeeded.length < 20) this.batch.deploymentNeeded.push({ asset: row.asset, name: row.name, block: row.block, state: result.state, deploymentLink: result.deploymentLink });
           }
-          catch (error) { this.batch.failed++; if (this.batch.errors.length < 20) this.batch.errors.push({ asset: row.asset, block: row.block, error: dashboardError(error) }); }
+          catch (error) { this.batch.failed++; if (this.batch.errors.length < 20) this.batch.errors.push({ asset: row.asset, name: row.name, block: row.block, error: dashboardError(error) }); }
         }
         cursor = page.next;
         dashboardCheck(!cursor || !cursors.has(cursor), 'repeated_cursor', 502); cursors.add(cursor);
@@ -489,7 +492,8 @@ export class DashboardState {
   async unitLabel(asset) {
     if (this.labels.has(asset)) return this.labels.get(asset);
     let label, final = true;
-    if (asset.startsWith('c2:')) {
+    if (this.merged().has(asset)) label = { ...await this.unitLabel(this.merged().get(asset)), mergedInto: this.merged().get(asset) };
+    else if (asset.startsWith('c2:')) {
       let row = null;
       try { row = (await this.service.compounds({ asset, limit: 1 })).compounds?.find(c => c.id === asset || c.asset === asset) ?? null; } catch { final = false; }
       const all = compoundInputs(row), inputs = all.filter(i => i[0] !== asset).slice(0, 4);
@@ -538,7 +542,8 @@ export class DashboardState {
     const { units } = await this.units(), totals = new Map();
     const find = unit => {
       const text = String(unit ?? '').trim(), lower = text.toLowerCase();
-      const exact = units.filter(u => u.asset === text);
+      // A key as shown under a unit's name: "#7" is pattern p2:7, "#e9f0843e" a compound key prefix.
+      const exact = units.filter(u => u.asset === text || /^#(0|[1-9][0-9]*)$/.test(text) && u.asset === 'p2:' + text.slice(1));
       if (exact.length) return exact;
       return units.filter(u => u.name.toLowerCase() === lower || u.kind === 'compound' && lower.length >= 8 && u.asset.slice(3).startsWith(lower.replace(/^(compound\s*)?#?/, '')));
     };

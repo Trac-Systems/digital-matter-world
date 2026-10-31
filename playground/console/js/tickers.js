@@ -5,6 +5,7 @@
 // control here stays hidden.
 import { h, clear, hashEl, pill, fmtInt, field, input, select, kv, short } from './dom.js';
 import { pagedTable } from './paged.js';
+import { addressLink } from './words.js';
 import { get, store } from './api.js';
 import { tap } from './money.js';
 import { validateChosenTicker } from '../../../rules/src/ticker-grammar.js';
@@ -85,7 +86,7 @@ export function tickerList(asset, { title = 'Tokens on TAP', label = true } = {}
       // Three columns fit the side panel and a phone; the deploy inscription link sits under its ticker.
       columns: [
         { key: 'tick', label: 'Ticker', render: r => h('div', {}, tickerLabel(r), h('div.small', {}, inscriptionLink(r.deploymentId))) },
-        { key: 'deployer', label: 'Deployer', render: r => r.deployer ? hashEl(r.deployer, short(r.deployer)) : h('span.faint', {}, '–') },
+        { key: 'deployer', label: 'Deployer', render: r => r.deployer ? addressLink(r.deployer, short(r.deployer)) : h('span.faint', {}, '–') },
         { key: 'unitsMinted', label: 'Units minted', num: true, render: r => r.unitsMinted === null || r.unitsMinted === undefined ? h('span.faint', {}, '–') : h('span.mono', {}, fmtInt(r.unitsMinted)) },
       ] });
     list.el.classList.add('public-mints');

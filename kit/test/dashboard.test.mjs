@@ -273,6 +273,8 @@ test('mint all reports deployment requirements without pretending a request was 
   await call('/api/mint-all', {}); await dashboard.state.batchTask;
   assert.equal(dashboard.state.batch.completed, 0); assert.equal(dashboard.state.batch.deploymentNeeded.length, 2);
   assert.ok(dashboard.state.batch.deploymentNeeded[0].deploymentLink.startsWith(f.service.origin + '/mint/'));
+  // The page names each row; the raw asset key is never its label.
+  for (const row of dashboard.state.batch.deploymentNeeded) assert.ok(row.name && row.name !== row.asset, row.name);
   assert.equal(f.packets.length, 0); assert.equal(f.journal.recent().length, 0);
   assert.equal(f.calls.some(call => call.path.startsWith('/mint/deployment/')), false);
 });

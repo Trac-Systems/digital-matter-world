@@ -42,8 +42,8 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
   const asset = options.legacyElement ? 'p2:0' : 'c1', bitcoinNetwork = options.legacyElement ? 'mainnet' : 'regtest';
   let store = await Store.open(await temp('g3b-sources-')); t.after(() => store.close());
   const owner = agent(100), signerSecret = new Uint8Array(32).fill(2), publicKey = Buffer.from(secp256k1.getPublicKey(signerSecret)).toString('hex');
-  const feePolicy = createFeePolicy(options.baseFee ?? '100', 0, options.feeSettings);
-  let document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: { ...r.SETTINGS_PROFILE, feePolicyRevision: feePolicy.current, linkMultiplier: options.feeSettings?.link ?? r.FEE_DEFAULTS.link, ...values } });
+  const feePolicy = createFeePolicy(options.baseFee ?? '100', 0, options.feeSettings, options.feeHeight ?? '0');
+  let document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: options.feeHeight ?? '100', values: { ...r.SETTINGS_PROFILE, feePolicyRevision: feePolicy.current, linkMultiplier: options.feeSettings?.link ?? r.FEE_DEFAULTS.link, ...values } });
   const privilege = r.hash('privilege') + 'i0';
   const d = { id: r.hash('deploy') + 'i0', tick: 'dmwcompound', kind: options.legacyElement ? 'dmt' : 'compound', ...(options.legacyElement ? { elementId: options.legacyElement, dt: 'n', privilege } : {}), active: true, privilegePublicKey: publicKey, decimals: 0, remaining: '100', limit: '0' };
   const context = { deployment: d, find: options.legacyElement ? { asset, block: '42', count: '3', finder: owner.address, findHeight: '100', finderUntil: '101', settingsHash: r.hashObject(document) } : null, link: null, tier: 1, treasury: 'regtest-treasury', firstMakerAddress: options.custody ? null : 'regtest-maker',
@@ -1077,4 +1077,132 @@ test('deployer share admission follows execution height even with an older quote
   const old = await buildFinancialExecution({ store: f.store, transitions: [transition], reads: f.reads, document: f.document, height: before, at });
   assert.equal(old.inputs[0].evidence.deployer, undefined);
   await assert.rejects(buildFinancialExecution({ store: f.store, transitions: [transition], reads: f.reads, document: f.document, height: r.MULTI_TICKER_HEIGHT, at }), /financial_fee_destinations/);
+});
+
+test('free Bitmap links use HTTP kit and public checkout flows, independent signer replay and no payment record', async t => {
+  const { makeFinancialLink } = await import('../../kit/lib/financial-link.mjs');
+  const { ServiceClient } = await import('../../kit/lib/service-client.mjs');
+  const { Journal } = await import('../../kit/lib/journal.mjs');
+  const { WebCheckout } = await import('../src/web-checkout.mjs');
+  const { createWeb } = await import('../src/web.mjs');
+  const { wireIdentities } = await import('../../rules/src/trac-address.js');
+  const f = await setup(t, {}, r.FREE_LINK_HEIGHT, { feeSettings: { ...r.FEE_DEFAULTS, link: 0 }, feeHeight: r.FREE_LINK_HEIGHT });
+  const checkout = new WebCheckout({ store: f.store, reads: f.reads, links: f.links,
+    config: { network, mode: 'regtest', local: { escrow: { chainId: '31337' } }, endpoints: { ethereum: 'http://127.0.0.1:1' } } });
+  let payments = 0;
+  const payment = f.links.payment.bind(f.links); f.links.payment = (...args) => { payments++; return payment(...args); };
+  const http = await serve({ intake: { store: f.store }, files: { serve: async () => false }, links: f.links, web: createWeb(checkout), publicAPI: { handles: path => !path.startsWith('/link-status/'), read: () => ({}) }, rateBurst: 1000 });
+  t.after(() => http.close());
+  const service = new ServiceClient({ origin: http.url, network });
+  const journal = await Journal.open(await temp('free-link-kit-'), network, { intervalMs: 0 }); t.after(() => journal.close());
+  const agent = { journal, service, network, owner: f.owner.address, wallet: { sign: bytes => ed25519.sign(bytes, f.owner.secret) },
+    trac: { head: async () => ({ counted: r.FREE_LINK_HEIGHT, tip: { height: r.FREE_LINK_HEIGHT } }) } };
+  const context = { settings: f.document, settingsHash: r.hashObject(f.document) };
+  const result = await makeFinancialLink(agent, { actionId: 'free-kit', height: '42', payer: 'regtest-payer' }, context);
+  assert.equal(result.fee, 'Free'); assert.deepEqual(result.next.map(x => x.tool), ['poll_link']);
+  const id = result.request.id;
+  const before = wireIdentities(await service.linkStatus(id));
+  assert.equal(before.price, '0'); assert.equal(before.fee, 'Free'); assert.equal(before.payable, false); assert.deepEqual(before.fees, []);
+  await f.execute();
+  assert.equal((await service.linkStatus(id)).state, 'accepted');
+  assert.equal(f.store.get('accountRecords', 'fp/' + id), null);
+  assert.equal(f.store.get('accountRecords', 'fl/' + id).state, 'complete');
+  assert.equal(f.store.count('financialPendingLinks'), 0); assert.equal(f.store.count('financialLinkOwner/' + f.owner.address), 0);
+  assert.equal((await makeFinancialLink(agent, { actionId: 'free-kit', height: '42', payer: 'regtest-payer' }, context)).replayed, true);
+  await assert.rejects(f.links.quote({ block: '42', payer: 'regtest-payer' }), /link_exists/);
+  f.holder({ agent: agent.owner, address: 'regtest-payer' });
+  const p = await f.prepareLink('public-free', '43');
+  await service.requestLink({ ...p.body, reserve: p.action });
+  const plan = await (await fetch(http.url + '/web-api/link/' + p.id)).json();
+  assert.equal(plan.price, '0'); assert.equal(plan.payable, false); assert.equal(plan.walletPreparation, false);
+  assert.deepEqual(plan.redeem.items, []); assert.deepEqual(plan.redeem.actions, []);
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage(), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === http.url ? route.continue() : route.fulfill({ status: 404, body: '' }));
+  await page.goto(http.url + '/link/' + p.id);
+  await page.getByText('Free', { exact: true }).first().waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Approve payment in wallet' }).isVisible(), false);
+  assert.equal(await page.locator('.steps').getByText('Pay', { exact: true }).count(), 0);
+  await f.execute();
+  await page.getByRole('button', { name: 'Refresh receipt' }).click();
+  await page.getByText('Confirmed: accepted.', { exact: true }).waitFor();
+  assert.deepEqual(errors, []);
+  const complete = await (await fetch(http.url + '/web-api/link/' + p.id)).json();
+  assert.equal(complete.state, 'accepted'); assert.equal(f.store.get('accountRecords', 'fp/' + p.id), null);
+  assert.equal(payments, 0); assert.equal(f.transfers.size, 0);
+  assert.equal(f.store.count('activeFinancialLinks'), 0);
+  assert.deepEqual(JSON.parse(f.store.get('accountRecords', 'k/link/17')), { block: '43', linkHeight: r.FREE_LINK_HEIGHT });
+});
+
+test('free link signer refuses changed fees, charged settings and pre-activation execution; holder proof remains required', async t => {
+  const f = await setup(t, {}, r.FREE_LINK_HEIGHT, { feeSettings: { ...r.FEE_DEFAULTS, link: 0 }, feeHeight: r.FREE_LINK_HEIGHT });
+  const p = await f.prepareLink('free-signer'); await f.links.request({ ...p.body, reserve: p.action });
+  const result = await f.financial.build({ height: r.FREE_LINK_HEIGHT, at: await f.stamp() });
+  const args = { files: [{ ops: result.operations, financialOperations: result.inputs }], reads: f.independent,
+    document: f.document, network, height: r.FREE_LINK_HEIGHT, at: await f.stamp() };
+  await verifyFinancialExecution(args);
+  await assert.rejects(verifyFinancialExecution({ ...args, height: String(BigInt(r.FREE_LINK_HEIGHT) - 1n) }), /fee_settings|financial_link_reservation/);
+  const charged = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: r.FREE_LINK_HEIGHT,
+    values: { ...f.document.values, linkMultiplier: 1 } });
+  await assert.rejects(verifyFinancialExecution({ ...args, document: charged }), /financial_link_price/);
+  const bad = structuredClone(args.files); bad[0].financialOperations[0].evidence.fees = [{ key: r.hash('forged-fee'), amount: '100' }];
+  await assert.rejects(verifyFinancialExecution({ ...args, files: bad }), /financial_evidence/);
+  f.holder({ agent: agent(9999).address, address: 'regtest-other' });
+  await assert.rejects(verifyFinancialExecution(args), /financial_link_quote_changed|financial_link_owner/);
+});
+
+test('switching free linking back to a positive multiplier requires payment again and refuses stale free admission', async t => {
+  const { changeFeePolicy, currentFee } = await import('../src/fees.mjs');
+  const height = r.FREE_LINK_HEIGHT;
+  const f = await setup(t, {}, height, { feeSettings: { ...r.FEE_DEFAULTS, link: 0 }, feeHeight: height });
+  const stale = await f.prepareLink('stale-free', '41');
+  const registry = await f.reads.registry();
+  registry.feePolicy = changeFeePolicy(registry, { link: 2 }, Date.now(), height).feePolicy;
+  const paid = r.settingsRevision({ network, previous: f.document, effectiveBatch: '2', effectiveBitcoinWindow: height,
+    values: { ...f.document.values, linkMultiplier: 2, feePolicyRevision: currentFee(registry).id } });
+  f.useSettings(paid);
+  await assert.rejects(f.links.request({ ...stale.body, reserve: stale.action }), /financial_link_price/);
+  const p = await f.prepareLink('charged-again');
+  assert.equal((await f.links.public(p.id)).price, '200');
+  await f.links.request({ ...p.body, reserve: p.action });
+  const preview = await f.financial.build({ height, at: await f.stamp() });
+  await assert.rejects(verifyFinancialExecution({ files: [{ ops: preview.operations, financialOperations: preview.inputs }], reads: f.independent,
+    document: f.document, network, height, at: await f.stamp() }), /financial_link_price/);
+  await f.execute();
+  assert.equal((await f.links.public(p.id)).payable, true);
+  assert.equal(f.store.get('accountRecords', 'fp/' + p.id).state, 'open');
+  assert.equal(f.store.get('accountRecords', 'k/link/16'), null);
+  const row = f.store.get('financialLinks', p.id), reference = r.hash('paid-after-free') + 'i0';
+  f.transfers.set(reference, row.quote.fees.map(fee => ({ ins: reference, fail: false, int: true, addr: row.payer,
+    taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  await f.links.payment({ id: p.id, paymentId: reference }); await f.execute();
+  await f.financial.linkReconciler.tick(height, await f.stamp()); await f.execute();
+  assert.equal((await f.links.public(p.id)).state, 'accepted');
+  assert.equal(f.store.get('accountRecords', 'fp/' + p.id).state, 'consumed');
+});
+
+test('a charged reservation keeps its payment obligation when the operator switches new links to free', async t => {
+  const { changeFeePolicy, currentFee } = await import('../src/fees.mjs');
+  const height = r.FREE_LINK_HEIGHT, f = await setup(t, {}, height);
+  const p = await f.prepareLink('retained-charged'); await f.links.request({ ...p.body, reserve: p.action }); await f.execute();
+  const registry = await f.reads.registry();
+  registry.feePolicy = changeFeePolicy(registry, { link: 0 }, Date.now(), height).feePolicy;
+  const free = r.settingsRevision({ network, previous: f.document, effectiveBatch: '2', effectiveBitcoinWindow: height,
+    values: { ...f.document.values, linkMultiplier: 0, feePolicyRevision: currentFee(registry).id } });
+  f.useSettings(free);
+  await f.financial.linkReconciler.tick(height, await f.stamp());
+  assert.equal((await f.links.public(p.id)).price, '2000'); assert.equal((await f.links.public(p.id)).payable, true);
+  assert.equal(f.store.get('accountRecords', 'k/link/16'), null);
+  await assert.rejects(f.reads.financialEvidence({ type: 'lifecycle', id: p.id, action: { type: 'link-complete', id: p.id } }, await f.stamp()), /financial_link_unpaid/);
+  assert.equal((await f.links.quote({ block: '43', payer: 'regtest-payer' })).price, '0');
+  // Other fee kinds remain paid while link=0 is selected.
+  const mint = await f.prepare('mint-while-free'); assert.equal(f.store.get('mints', mint.id).quote.price, '1000');
+  const row = f.store.get('financialLinks', p.id), reference = r.hash('retained-charged-payment') + 'i0';
+  f.transfers.set(reference, row.quote.fees.map(fee => ({ ins: reference, fail: false, int: true, addr: row.payer,
+    taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  await f.links.payment({ id: p.id, paymentId: reference }); await f.execute();
+  await f.financial.linkReconciler.tick(height, await f.stamp()); await f.execute();
+  assert.equal((await f.links.public(p.id)).state, 'accepted');
 });

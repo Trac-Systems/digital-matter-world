@@ -13,6 +13,6 @@ export async function linkFeePolicy(reads, terms, at) {
   return { executionHeight, document };
 }
 export async function linkFeePlan(reads, terms, at) {
-  const policy = await linkFeePolicy(reads, terms, at), price = rules.feeFor('link', terms.baseFee, 1, terms.feeSettings);
+  const policy = await linkFeePolicy(reads, terms, at), price = rules.feeFor('link', terms.baseFee, 1, terms.feeSettings, policy.executionHeight);
   return { ...policy, price, split: rules.linkPaymentSplit(price, policy.document, policy.executionHeight) };
 }

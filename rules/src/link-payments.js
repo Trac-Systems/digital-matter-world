@@ -22,7 +22,7 @@ export function verifyLinkInput(input, network, counted, options = {}) {
   assert(t?.payer === p.payer && typeof t.treasury === 'string' && t.treasury.length > 0 && hex(t.hash, 32), 'link_terms');
   const executionHeight = options?.executionHeight ?? counted, document = options?.document;
   if (multiTickerActive(executionHeight)) assert(document?.network === network && t.settingsHash === hash(stableJSON(document)), 'link_settings');
-  const total = feeFor('link', t.baseFee, 1, t.feeSettings), split = linkPaymentSplit(total, document, executionHeight);
+  const total = feeFor('link', t.baseFee, 1, t.feeSettings, executionHeight), split = linkPaymentSplit(total, document, executionHeight);
   assert(p.total === total && BigInt(total) > 0n, 'link_price');
   if (p.kind === 'tap') {
     const allocations = tapPaymentAllocations(split, {}, 'link');

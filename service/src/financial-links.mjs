@@ -24,7 +24,7 @@ export class FinancialLinks {
     const state = link?.state === 'complete' ? 'accepted' : ['credited', 'refunded'].includes(link?.state) ? link.state :
       !funding ? row.state : expired ? 'reconciling' : missing.length ? funding.paid.some(n => n !== '0') ? 'partly_paid' : 'awaiting_payment' : 'paid';
     return { id, requestId: id, financialVersion: 2, state, payer: row.payer, receiver: row.payer, owner: row.request.owner, block: row.request.block ?? row.request.height,
-      terms: { payer: row.payer }, price: row.quote.price, split: row.quote.split, fees: row.quote.fees, fullFees: row.quote.fees, missing,
+      terms: { payer: row.payer }, price: row.quote.price, ...(row.quote.price === '0' ? { fee: 'Free' } : {}), split: row.quote.split, fees: row.quote.fees, fullFees: row.quote.fees, missing,
       payable: !blocked && funding?.state === 'open' && !expired && missing.length > 0, payBy: { rail: 'tap', untilBlock: row.request.until },
       payableAmount: missing.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), unit: rules.TAP_UNIT, blocked: blocked ? [blocked] : [],
       funding: funding ? { state: funding.state, paid: funding.paid, root: funding.root } : null };

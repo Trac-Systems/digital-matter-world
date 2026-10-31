@@ -324,3 +324,17 @@ test('your patterns: who may deploy during the discoverer\'s week, and the deplo
   p = await row('p2:1');
   assert.deepEqual([p.token, p.ticker, p.deployer, p.deploymentLink], ['deployed', 'dmwfloriteamber', null, null]);
 });
+
+test('an older compound id merged on mainnet is named and linked as the compound it became', async t => {
+  const f = await dashboardFixture(t);
+  const { COMPOUND_IDENTITY_V4_MERGES } = await import('../../rules/src/index.js'), [row] = COMPOUND_IDENTITY_V4_MERGES.rows;
+  f.patterns.push({ number: '2', asset: 'p2:2', name: 'dmwmuffinite', tier: 2 });
+  f.agent.service.compounds = async ({ asset }) => ({ compounds: asset === row.newId ? [{ id: row.newId, recipe: 'fusion', inputs: [{ asset: 'p2:1', amount: '1' }, { asset: 'p2:2', amount: '1' }] }] : [] });
+  const regtest = new DashboardState(f.context);
+  assert.deepEqual((await regtest.info()).merged, {}, 'the merge record is the mainnet one');
+  f.agent.network = COMPOUND_IDENTITY_V4_MERGES.network;
+  const state = new DashboardState(f.context);
+  assert.equal((await state.info()).merged[row.oldId], row.newId);
+  assert.deepEqual(await state.unitLabel(row.oldId), { ...await state.unitLabel(row.newId), mergedInto: row.newId });
+  assert.equal((await state.unitLabel(row.oldId)).name, 'Test + Muffinite fusion');
+});

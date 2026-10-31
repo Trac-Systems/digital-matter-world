@@ -1,3 +1,4 @@
+import { Payouts } from './payouts.mjs';
 import { redactedError } from './error-log.mjs';
 import { publicIdentities, TRAC_ADDRESS_ERROR } from '../../rules/src/trac-address.js';
 import { createServer } from 'node:http';
@@ -42,6 +43,28 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       if (await web.handle(req, res, body)) return;
       if (headers && await headers.serve(req, res)) return;
       const operatorURL = new URL(req.url, 'http://127.0.0.1');
+      if (['/internal/mint-sender/payouts', '/internal/mint-sender/payouts/prepare', '/internal/mint-sender/payouts/record'].includes(operatorURL.pathname)) {
+        const view = mints?.mintSender;
+        check(view?.authorized(req.headers.authorization), 'not_found', 404);
+        const ledger = new Payouts({ store: intake.store, files });
+        let result;
+        if (req.method === 'GET' && operatorURL.pathname === '/internal/mint-sender/payouts') {
+          check([...operatorURL.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'payout_page');
+          const limit = Number(operatorURL.searchParams.get('limit') ?? view.settings.pageSize);
+          check(limit <= view.settings.pageSize, 'payout_page');
+          result = ledger.page({ after: operatorURL.searchParams.get('after') ?? '', limit }, view.network);
+        } else {
+          check(req.method === 'POST' && !operatorURL.search, 'not_found', 404);
+          const input = JSON.parse(await body(req, 4096));
+          if (operatorURL.pathname.endsWith('/prepare')) result = { record: await ledger.reserve(input, view.network) };
+          else {
+            check(operatorURL.pathname.endsWith('/record'), 'not_found', 404);
+            await ledger.record(input, { automatic: true }); result = { recorded: true };
+          }
+        }
+        res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify({ keyId: view.keyId, ...result })); return;
+      }
       if (req.method === 'GET' && operatorURL.pathname === '/internal/mint-sender/requests') {
         check(mints?.mintSender && mints.mintSender.authorized(req.headers.authorization), 'not_found', 404);
         res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
@@ -174,6 +197,12 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         check([...url.searchParams.keys()].every(k => ['after', 'limit'].includes(k)), 'ticker_query');
         result = await operator.provisioner.tickers.list(asset, { after: url.searchParams.get('after') ?? '',
           ...(url.searchParams.has('limit') ? { limit: Number(url.searchParams.get('limit')) } : {}) });
+      }
+      else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/(?:api\/)?tickers\/[^/?#]+(?:\?|$)/.test(req.url)) {
+        const url = new URL(req.url, 'http://local');
+        check([...url.searchParams.keys()].length === 0, 'ticker_query');
+        let ticker; try { ticker = decodeURIComponent(url.pathname.split('/').at(-1)); } catch { check(false, 'ticker_invalid'); }
+        result = await operator.provisioner.tickers.find(ticker);
       }
       else if (operator?.provisioner?.tickers && req.method === 'GET' && /^\/mint\/ticker-state\/[^/?#]+(?:\?|$)/.test(req.url)) {
         const url = new URL(req.url, 'http://local');

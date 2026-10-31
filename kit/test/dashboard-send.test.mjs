@@ -96,6 +96,9 @@ test('review checks every row before signing: checksum, own address, unit, amoun
   const ok = (await call('/api/send-review', { rows: [{ to: address(1), unit: 'p2:2', amount: '2' }, { to: address(1), unit: 'dmwflorite', amount: '5' }, { to: address(2), unit: 'abababab', amount: '1' }] })).body;
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.groups.map(g => [g.to, g.assets, g.labels]), [[address(1), [['p2:2', '2'], ['p0', '5']], ['dmwmuffinite', 'dmwflorite']], [address(2), [[COMPOUND, '1']], ['Muffinite + Test resonance']]]);
+  // The short keys shown under a unit's name pick that unit: "#2" for pattern p2:2, "#abababab" for the compound.
+  const keys = (await call('/api/send-review', { rows: [{ to: address(1), unit: '#2', amount: '1' }, { to: address(2), unit: '#abababab', amount: '1' }] })).body;
+  assert.deepEqual(keys.rows.map(r => [r.error, r.asset]), [[null, 'p2:2'], [null, COMPOUND]]);
   assert.equal((await call('/api/send', { rows: [{ to: bad, unit: 'p2:2', amount: '1' }] })).status, 400);
   assert.equal(transfers.length, 0);
 });

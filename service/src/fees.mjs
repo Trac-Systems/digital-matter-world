@@ -12,13 +12,17 @@ const withinQuote = (q, counted, until) => q.settingsHash ?
   rules.compareUint(rules.decimalV2(counted), q.validFrom) >= 0 && rules.compareUint(rules.decimalV2(until), rules.decimalV2(counted)) > 0 && rules.compareUint(rules.decimalV2(until), q.validUntil) <= 0 :
   integer(counted) && counted >= q.validFrom && integer(until) && until > counted && until <= q.validUntil;
 // Omitted settings retain the original revision hash and the original defaults.
-const revisionId = (baseFee, activeFrom, feeSettings) => hash(bytes('dmw-fee-policy-v1', { baseFee, activeFrom, ...settingsField(feeSettings) }));
+// Zero revisions record the operator's execution height, separately from wall time.
+// This authenticates stored policy only; admission always checks the batch height.
+const revisionHeight = executionHeight => executionHeight === undefined ? {} : { executionHeight };
+const revisionId = (baseFee, activeFrom, feeSettings, executionHeight) => hash(bytes('dmw-fee-policy-v1', { baseFee, activeFrom, ...settingsField(feeSettings), ...revisionHeight(executionHeight) }));
 export const LAUNCH_FEE_SETTINGS = Object.freeze({ ...rules.FEE_DEFAULTS, link: 3 });
-export function validateFeeSettings(settings) {
+export function validateFeeSettings(settings, executionHeight = '0') {
   const multiplier = n => Number.isSafeInteger(n) && n >= 1 && n <= 10000;
   check(settings && Object.keys(settings).sort().join(',') === 'compoundMinimum,link,tierMultipliers' &&
     Array.isArray(settings.tierMultipliers) && settings.tierMultipliers.length === 5 &&
-    [...settings.tierMultipliers, settings.compoundMinimum, settings.link].every(multiplier), 'fee_settings');
+    [...settings.tierMultipliers, settings.compoundMinimum].every(multiplier) &&
+    (multiplier(settings.link) || settings.link === 0 && rules.freeLinkActive(executionHeight)), 'fee_settings');
   return settings;
 }
 export const feeSettingsField = settingsField;
@@ -53,10 +57,11 @@ export async function validateQuotedTerms(reads, kind, row) {
   return row.terms;
 }
 
-export function createFeePolicy(baseFee, activeFrom = 0, feeSettings) {
+export function createFeePolicy(baseFee, activeFrom = 0, feeSettings, executionHeight = '0') {
   check(positive(baseFee) && integer(activeFrom), 'fee_policy');
-  if (feeSettings !== undefined) validateFeeSettings(feeSettings);
-  const revision = { id: revisionId(baseFee, activeFrom, feeSettings), baseFee, activeFrom, retiredAt: null, ...settingsField(feeSettings) };
+  if (feeSettings !== undefined) validateFeeSettings(feeSettings, executionHeight);
+  const height = feeSettings?.link === 0 ? rules.decimalV2(executionHeight) : undefined;
+  const revision = { id: revisionId(baseFee, activeFrom, feeSettings, height), baseFee, activeFrom, retiredAt: null, ...settingsField(feeSettings), ...revisionHeight(height) };
   return { current: revision.id, revisions: [revision] };
 }
 
@@ -68,10 +73,10 @@ export function validateFeePolicy(registry) {
   const ids = new Set();
   for (const [i, r] of p.revisions.entries()) {
     const next = p.revisions[i + 1];
-    if (r?.feeSettings !== undefined) validateFeeSettings(r.feeSettings);
-    check(r && positive(r.baseFee) && integer(r.activeFrom) && r.id === revisionId(r.baseFee, r.activeFrom, r.feeSettings) && !ids.has(r.id) &&
+    if (r?.feeSettings !== undefined) validateFeeSettings(r.feeSettings, r.executionHeight ?? '0');
+    check(r && positive(r.baseFee) && integer(r.activeFrom) && r.id === revisionId(r.baseFee, r.activeFrom, r.feeSettings, r.executionHeight) && !ids.has(r.id) &&
       (next ? integer(r.retiredAt) && r.retiredAt > r.activeFrom && r.retiredAt === next.activeFrom : r.retiredAt === null && r.id === p.current), 'fee_policy');
-    for (const kind of ['find', 'compound', 'link']) for (let tier = 1; tier <= 5; tier++) rules.feeFor(kind, r.baseFee, tier, r.feeSettings);
+    for (const kind of ['find', 'compound', 'link']) for (let tier = 1; tier <= 5; tier++) rules.feeFor(kind, r.baseFee, tier, r.feeSettings, r.executionHeight ?? '0');
     ids.add(r.id);
   }
   for (const configured of [registry.link, ...Object.values(registry.assets ?? {})]) {
@@ -99,15 +104,15 @@ export function validateFeeHistory(policy, pinned) {
 export function changeBaseFee(registry, baseFee, now = Date.now()) {
   return changeFeePolicy(registry, { baseFee }, now);
 }
-export function changeFeePolicy(registry, changes, now = Date.now()) {
+export function changeFeePolicy(registry, changes, now = Date.now(), executionHeight = '0') {
   check(changes && Object.keys(changes).length > 0 && Object.keys(changes).every(k => ['baseFee', 'link', 'tierMultipliers', 'compoundMinimum'].includes(k)), 'fee_changes');
   const previous = currentFee(registry);
   const { baseFee = previous.baseFee, ...multipliers } = changes;
   check(positive(baseFee) && integer(now) && now > 0, 'base_fee');
-  const feeSettings = Object.keys(multipliers).length ? validateFeeSettings({ ...rules.FEE_DEFAULTS, ...previous.feeSettings, ...multipliers }) : previous.feeSettings;
+  const feeSettings = Object.keys(multipliers).length ? validateFeeSettings({ ...rules.FEE_DEFAULTS, ...previous.feeSettings, ...multipliers }, executionHeight) : previous.feeSettings;
   if (previous.baseFee === baseFee && rules.stableJSON(settingsField(previous.feeSettings)) === rules.stableJSON(settingsField(feeSettings))) return registry;
   check(now > previous.activeFrom, 'fee_change_clock');
-  const next = createFeePolicy(baseFee, now, feeSettings).revisions[0];
+  const next = createFeePolicy(baseFee, now, feeSettings, executionHeight).revisions[0];
   const revisions = registry.feePolicy.revisions.map(r => r.id === previous.id ? { ...r, retiredAt: now } : r);
   const updated = { ...registry, feePolicy: { current: next.id, revisions: [...revisions, next] } };
   validateFeePolicy(updated); return updated;
@@ -128,8 +133,9 @@ export class FeeQuotes {
   async issue(scope, counted, payouts, deploymentId, mintOwnershipHash) {
     const started = this.now(), registry = await this.registry(), revision = currentFee(registry);
     const document = await this.settings?.() ?? this.document, policy = document?.values;
+    if (revision.feeSettings) validateFeeSettings(revision.feeSettings, counted);
     if (document) {
-      rules.validateSettingsDocument(document);
+      rules.validateSettingsDocument(document, counted);
       check(document.network === this.network && policy.feePolicyRevision === revision.id &&
         policy.linkMultiplier === (revision.feeSettings ?? rules.FEE_DEFAULTS).link, 'fee_settings_pin');
     }
@@ -156,7 +162,7 @@ export class FeeQuotes {
       check(policy.feePolicyRevision === q.revision && policy.linkMultiplier === (q.feeSettings ?? rules.FEE_DEFAULTS).link, 'fee_settings_pin');
     }
     check(q.network === this.network && q.scope === scope && rules.stableJSON(q.unit) === rules.stableJSON(rules.TAP_UNIT) && positive(q.baseFee) && revision && revision.id === q.revision && revision.baseFee === q.baseFee &&
-      revision.id === revisionId(revision.baseFee, revision.activeFrom, revision.feeSettings) &&
+      revision.id === revisionId(revision.baseFee, revision.activeFrom, revision.feeSettings, revision.executionHeight) &&
       rules.stableJSON(settingsField(q.feeSettings)) === rules.stableJSON(settingsField(revision.feeSettings)), 'fee_quote_policy');
     const heightWindow = policy ? rules.uintV2(q.validUntil) === rules.addUint(rules.uintV2(q.validFrom), String(policy.quoteLifetimeTips)) :
       integer(q.validFrom) && integer(q.validUntil) && q.validUntil === q.validFrom + QUOTE_BLOCKS;
@@ -166,6 +172,7 @@ export class FeeQuotes {
   }
   async accept(quote, scope, id, until, counted) {
     const q = await this.validate(quote, scope), at = this.now();
+    if (q.feeSettings) validateFeeSettings(q.feeSettings, counted);
     if (q.settingsHash) { counted = rules.decimalV2(counted); until = rules.decimalV2(until); }
     check(at >= q.issuedAt && at <= q.expiresAt && withinQuote(q, counted, until), 'fee_quote_expired', 409);
     return this.sign('dmw-fee-acceptance-v1', { network: this.network, quote, id, until, counted, at });

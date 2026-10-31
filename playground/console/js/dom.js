@@ -48,10 +48,16 @@ export const looksAddress = v => typeof v === 'string' && /^(trac1|bcrt1|tb1|bc1
 
 export function hashEl(v, label) {
   if (v === null || v === undefined || v === '') return h('span.faint', {}, '–');
-  return h('span.hash', { title: String(v), role: 'button', tabindex: 0, 'aria-label': `Copy ${v}`, onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copy(String(v)); } }, 'data-tip': `${v}\nClick to copy`, onclick: e => { e.stopPropagation(); copy(String(v)); } }, label ?? short(v, 8, 6));
+  // A compound's key is shown by its short form; the copy still takes the whole key.
+  const key = /^c2:[0-9a-f]{64}$/.test(v), shown = key ? `compound key #${String(v).slice(3, 11)}` : String(v);
+  return h('span.hash', { title: shown, role: 'button', tabindex: 0, 'aria-label': `Copy ${shown}`, onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copy(String(v)); } }, 'data-tip': `${shown}\nClick to copy`, onclick: e => { e.stopPropagation(); copy(String(v)); } }, label ?? (key ? '#' + String(v).slice(3, 11) : short(v, 8, 6)));
 }
+// Pattern and compound ids in generic cells read as names and agents, wallets and inscriptions link to their pages;
+// words.js supplies the namer and the links (it imports this file).
+let assetNamer = null, linkers = {};
+export function nameAssets(namer, links = {}) { assetNamer = namer; linkers = links; }
 export async function copy(text) {
-  try { await navigator.clipboard.writeText(text); toast({ what: 'Copied', detail: short(text, 18, 10), state: 'complete', ttl: 1800 }); }
+  try { await navigator.clipboard.writeText(text); toast({ what: 'Copied', detail: /^c2:[0-9a-f]{64}$/.test(text) ? `compound key #${text.slice(3, 11)}` : short(text, 18, 10), state: 'complete', ttl: 1800 }); }
   catch { toast({ what: 'Copy failed', detail: 'The browser refused clipboard access.', state: 'failed', ttl: 3000 }); }
 }
 export function pill(text, kind = '', tip) { return h(`span.pill${kind ? '.' + kind : ''}`, tip ? { 'data-tip': tip } : {}, text); }
@@ -155,6 +161,9 @@ export function cell(v) {
     // Long integers are atomic amounts whose unit this generic cell cannot know; they stay in Inspect.
     if (/^\d{13,}$/.test(v)) return h('button.linkbtn', { onclick: e => { e.stopPropagation(); inspect('Raw value', v); } }, 'raw amount');
     if (/^\d+$/.test(v)) return h('span.mono', {}, fmtInt(v));
+    if (assetNamer && /^(?:p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(v)) return linkers.asset ? linkers.asset(v) : v.startsWith('c2:') ? hashEl(v, assetNamer(v)) : assetNamer(v);
+    if (linkers.address && looksAddress(v)) return linkers.address(v);
+    if (linkers.inscription && /^[0-9a-f]{64}i[0-9]+$/.test(v)) return linkers.inscription(v);
     if (isHexId(v) || looksAddress(v) || v.length > 40) return hashEl(v);
     return v;
   }

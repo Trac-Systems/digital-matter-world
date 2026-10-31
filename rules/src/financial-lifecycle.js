@@ -1,3 +1,5 @@
+import { freeLinkActive } from './free-link-activation.js';
+import { feeFor } from './fees.js';
 import { multiTickerActive } from './multi-ticker-activation.js';
 import { ordinalCodec } from './integers-v2.js';
 import { assert, exactKeys, hashObject, stableJSON, hex } from './core.js';
@@ -46,11 +48,14 @@ export async function financialLifecyclePlan({ transition: t, evidence: e }, { r
     return [a.operation]; // The contract checks owner signature and revision.
   }
   if (a.type === 'link-reserve') {
+    const free = freeLinkActive(height) && document.values.linkMultiplier === 0;
+    if (freeLinkActive(height)) assert(e.settingsHash === hashObject(document) &&
+      (feeFor('link', e.quote?.baseFee, 1, e.quote?.feeSettings, height) === '0') === free, 'financial_link_price');
     assert(e.state === 'reservable' && a.terms === commitment && a.owner === e.owner && a.block === e.block && a.until === e.until &&
       typeof a.block === 'string' && /^(0|[1-9][0-9]*)$/.test(a.block) && BigInt(a.block) <= BigInt(height) &&
       clock.valid(a.until) && clock.compare(a.until, height) > 0 && clock.compare(a.until, clock.add(height, document.values.requestMaxBlocks)) <= 0 &&
-      Array.isArray(e.fees) && e.fees.length > 0 && e.fees.length <= document.values.paymentPage && e.bitmapOwner === a.owner && e.link === null, 'financial_link_reservation');
-    return [{ op: 'fp', v: 2, type: 'open', id: t.id, owner: a.owner, terms: a.terms, fees: e.fees }, op];
+      Array.isArray(e.fees) && (free ? e.fees.length === 0 : e.fees.length > 0) && e.fees.length <= document.values.paymentPage && e.bitmapOwner === a.owner && e.link === null, 'financial_link_reservation');
+    return free ? [op] : [{ op: 'fp', v: 2, type: 'open', id: t.id, owner: a.owner, terms: a.terms, fees: e.fees }, op];
   }
   if (a.type === 'link-complete' || a.type === 'link-exit') {
     const row = await read('fl/' + t.id), funding = await read('fp/' + t.id);

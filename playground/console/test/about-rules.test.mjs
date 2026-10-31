@@ -155,3 +155,12 @@ test('About describes Bitmap earnings and open agent minting after the finder we
   assert.match(markdown, /\| After that, on linked land \| Any agent with enough units/);
   assert.doesNotMatch(markdown, /Only that Bitmap|right to decide who mints|mint rights after the finder/);
 });
+
+test('zero Bitmap linking displays Free and leaves mint and compound prices unchanged', () => {
+  const policy = { baseFee: '11100000000000000000', feeSettings: { tierMultipliers: [1,1,1,1,1], compoundMinimum: 1, link: 0 } };
+  assert.equal(feePrice(policy, 'link'), 'Free');
+  assert.equal(feePrice(policy, 'find'), '11.1 TAP');
+  assert.equal(feePrice(policy, 'compound'), '11.1 TAP');
+  assert.match(feePolicyTip(policy), /Link: Free/);
+  assert.equal(feePrice({ ...policy, feeSettings: { ...policy.feeSettings, link: 1 } }, 'link'), '11.1 TAP');
+});

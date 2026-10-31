@@ -87,7 +87,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     await reads.feeQuotes.validate(q, mintFeeScope(asset, block, 'tap'));
     const original = await reads.financialSettings(q.settingsHash);
     check(rules.publicMintActive(original, q.validFrom) && q.deploymentId === c.deployment.id && same(q.payouts, c.payouts), 'public_quote_binding');
-    const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings), baseSplit = financialSplit(price,
+    const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings, at?.executionHeight ?? resolved.height), baseSplit = financialSplit(price,
       { kind: 'find', publicMint: true, linked: !!holder, discovered: !!(c.beneficiaries?.discoverer ?? c.discoverer) }, original);
     const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind: 'find', deployment: c.deployment,
       document: original, height: at?.executionHeight ?? resolved.height, bitcoinNetwork });

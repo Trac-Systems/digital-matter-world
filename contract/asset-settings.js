@@ -7,9 +7,9 @@ export const ASSET_V2_DEFAULTS = Object.freeze({
 });
 export function assetSettings(value = {}) {
   const result = { ...ASSET_V2_DEFAULTS, ...value };
-  if (result.version !== 2 || Object.keys(result).some(k => !Object.hasOwn(ASSET_V2_DEFAULTS, k) && !['publicMintActivationHeight', 'publicMintPageSize', 'claimsNeverCloseHeight', 'bitmapMintOpenHeight', 'publicPaymentV2Height'].includes(k))) throw Error('asset_settings');
+  if (result.version !== 2 || Object.keys(result).some(k => !Object.hasOwn(ASSET_V2_DEFAULTS, k) && !['linkMultiplier', 'publicMintActivationHeight', 'publicMintPageSize', 'claimsNeverCloseHeight', 'bitmapMintOpenHeight', 'publicPaymentV2Height'].includes(k))) throw Error('asset_settings');
   if (Object.hasOwn(result, 'publicMintActivationHeight') !== Object.hasOwn(result, 'publicMintPageSize')) throw Error('asset_settings');
-  for (const [k, n] of Object.entries(result)) if (['publicMintActivationHeight', 'claimsNeverCloseHeight', 'bitmapMintOpenHeight', 'publicPaymentV2Height'].includes(k) ? typeof n !== 'string' || !/^(0|[1-9][0-9]*)$/.test(n) : !Number.isSafeInteger(n) || n < 1) throw Error('asset_settings');
+  for (const [k, n] of Object.entries(result)) if (['publicMintActivationHeight', 'claimsNeverCloseHeight', 'bitmapMintOpenHeight', 'publicPaymentV2Height'].includes(k) ? typeof n !== 'string' || !/^(0|[1-9][0-9]*)$/.test(n) : !Number.isSafeInteger(n) || n < (k === 'linkMultiplier' ? 0 : 1)) throw Error('asset_settings');
   if (result.claimsNeverCloseHeight !== undefined && (result.publicMintActivationHeight === undefined || BigInt(result.claimsNeverCloseHeight) < BigInt(result.publicMintActivationHeight))) throw Error('asset_settings');
   if (result.publicPaymentV2Height !== undefined && (result.publicMintActivationHeight === undefined || BigInt(result.publicPaymentV2Height) < BigInt(result.publicMintActivationHeight))) throw Error('asset_settings');
   if (result.bitmapMintOpenHeight !== undefined && (result.publicMintActivationHeight === undefined || BigInt(result.bitmapMintOpenHeight) < BigInt(result.publicMintActivationHeight))) throw Error('asset_settings');

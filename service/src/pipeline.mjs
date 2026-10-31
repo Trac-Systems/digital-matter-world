@@ -1,3 +1,4 @@
+import { payoutGate } from './payout-index.mjs';
 import { assetCheckpoint } from './asset-provenance.mjs';
 import { storedRenewalSlice } from './receipt-cutoff-pages.mjs';
 import { successorStore, successorMismatch } from './pipeline-overlap.mjs';
@@ -477,13 +478,16 @@ export class Pipeline {
         operations.push({ space: 'receiptRenewals', id: renewal.id, value: { ...next, state: complete ? 'consumed' : 'reserved',
           ...(complete ? { consumed: { n: draft.proposal.batch.n, root: draft.proposal.batch.root } } : {}) } });
       }
-      operations.push(...new Payouts(this).accruals(draft), ...acceptedRetention(this.store, draft));
+      operations.push(...acceptedRetention(this.store, draft));
       // Admission counters and their accepted releases share the same lock.
       // A concurrent request cannot be lost between the read and checkpoint.
-      const commit = () => this.financial ? this.financial.gate(() => {
-        const accepted = [...operations, ...this.financial.acceptedOperations(draft)];
-        return this.store.transact([...accepted, ...publicFinancialOperations(this.store, draft, accepted)]);
-      }) : this.store.transact(operations);
+      const commit = () => payoutGate(this.store, () => {
+        const accrued = [...operations, ...new Payouts(this).accruals(draft)];
+        return this.financial ? this.financial.gate(() => {
+          const accepted = [...accrued, ...this.financial.acceptedOperations(draft)];
+          return this.store.transact([...accepted, ...publicFinancialOperations(this.store, draft, accepted)]);
+        }) : this.store.transact(accrued);
+      });
       if (this.intake.namedAdmission) await this.intake.namedAdmission.exclusive(commit); else await commit();
       await pruneDrafts(this.store);
       await this.reads.retireContexts?.(draft.proposal.batch.n);

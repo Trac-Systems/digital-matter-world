@@ -6,5 +6,6 @@ export function accountSettings(document) {
     ...(v.publicMintActivationHeight === undefined ? {} : { publicMintActivationHeight: v.publicMintActivationHeight, publicMintPageSize: v.publicMintPageSize }),
     ...(v.claimsNeverCloseHeight === undefined ? {} : { claimsNeverCloseHeight: v.claimsNeverCloseHeight }),
     ...(v.publicPaymentV2Height === undefined ? {} : { publicPaymentV2Height: v.publicPaymentV2Height }),
+    ...(v.linkMultiplier === 0 ? { linkMultiplier: 0 } : {}),
     ...(v.bitmapMintOpenHeight === undefined ? {} : { bitmapMintOpenHeight: v.bitmapMintOpenHeight }) };
 }

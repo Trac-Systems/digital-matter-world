@@ -1,5 +1,5 @@
-import { store } from './api.js';
-import { fmtInt, short } from './dom.js';
+import { get, store, site } from './api.js';
+import { h, fmtInt, short, hashEl, nameAssets } from './dom.js';
 import { tap } from './money.js';
 
 // 24 mineral swatches: six hue groups x four values, none in the reserved Bitcoin orange band.
@@ -27,13 +27,142 @@ export function symbol(pattern) {
   const t = title(pattern && typeof pattern === 'object' ? pattern.name : pattern);
   return t.length > 1 ? t[0] + t[1].toLowerCase() : t;
 }
+// A pattern or compound by its name, never its raw id: "Pattern #7" or "Compound #e9f0843e" until the name is known.
 export function assetName(asset) {
+  if (MERGED.has(asset)) return assetName(MERGED.get(asset));
   const p = store.pattern(asset);
   if (p) return title(p.name);
+  if (patternNames.has(asset)) return patternNames.get(asset);
+  if (/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '')) return `Pattern #${asset.slice(3)}`;
   const c = store.compound(asset) ?? compounds.get(asset);
-  if (c?.name && c.name !== c.id) return c.name.replace(/\bdmw([a-z0-9]{2,29})\b/g, (_, n) => title(n));
+  if (c?.name && c.name !== c.id && c.name !== asset) return c.name.replace(/\bdmw([a-z0-9]{2,29})\b/g, (_, n) => title(n));
   if (c || /^c2:[0-9a-f]{64}$/.test(asset ?? '')) return compoundName(c ?? { id: asset });
   return asset ?? '–';
+}
+// Compound ids merged into their deterministic id at block 973829 (rules/src/compound-merge-manifest.js, which the
+// pages cannot load): an old id is named and linked as the compound it became.
+const MERGED = new Map([
+  ['c2:1bafd6097265662a5da3cd6aecd4c1df945f866038ceb85151ee96ed6227e5d5', 'c2:e9f0843ea3da981ce457b38b35170e16e2448c9f93581c48c50c366013d34729'],
+  ['c2:2b91a38746504080d048ec76ed4234f22ab8555bcda7daffa925869a6d62552f', 'c2:e9f0843ea3da981ce457b38b35170e16e2448c9f93581c48c50c366013d34729'],
+]);
+export const MERGED_COMPOUNDS = MERGED;
+export const currentAsset = asset => MERGED.get(asset) ?? asset;
+// Names not loaded yet come from one point read per asset (never the whole catalog).
+const patternNames = new Map(), lookups = new Map();
+export const ASSET_ID = /^(?:p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/;
+const known = asset => { asset = currentAsset(asset); return !!(store.pattern(asset) || store.compound(asset) || patternNames.has(asset) || compounds.has(asset)); };
+export function lookupName(asset) {
+  asset = currentAsset(asset);
+  if (!ASSET_ID.test(asset ?? '') || known(asset)) return Promise.resolve(assetName(asset));
+  if (!lookups.has(asset)) {
+    const kind = asset.startsWith('p2:') ? 'patterns' : 'compounds';
+    lookups.set(asset, get(`/${kind}?asset=${encodeURIComponent(asset)}&limit=1`).then(async r => {
+      const row = r?.[kind]?.[0];
+      if (kind === 'patterns' && row?.name) { patternNames.set(asset, title(row.name)); if (patternNames.size > 500) patternNames.delete(patternNames.keys().next().value); }
+      // A compound's name lists its first ingredients: their patterns are read the same way.
+      if (kind === 'compounds' && row) { rememberCompound({ ...row, id: row.id ?? asset }); await Promise.all(compoundInputs(row).slice(0, 4).filter(i => i.asset.startsWith('p2:')).map(i => lookupName(i.asset))); }
+      return assetName(asset);
+    }, () => { lookups.delete(asset); return assetName(asset); }));
+    if (lookups.size > 500) lookups.delete(lookups.keys().next().value);
+  }
+  return lookups.get(asset);
+}
+// Text that names assets (a compound by its ingredients); it is redrawn once their missing names arrive.
+export function namedText(text, assets) {
+  const named = assets.flatMap(a => [a, ...compoundInputs(store.compound(a) ?? compounds.get(a)).slice(0, 4).map(i => i.asset)]);
+  const node = document.createTextNode(text()), missing = [...new Set(named)].filter(a => ASSET_ID.test(a ?? '') && !known(a));
+  if (missing.length) Promise.all(missing.map(lookupName)).then(() => { node.textContent = text(); });
+  return node;
+}
+// Complete references: every mention of a thing with its own page or public record is named in words and links
+// there. Pages are the site's own (site.href); inscriptions, Bitcoin transactions and addresses open the mainnet
+// explorers the pages already use, on the public pages only. Ethereum has no explorer page: its values stay copyable.
+const EXTERNAL = { target: '_blank', rel: 'noreferrer noopener' };
+export function assetHref(asset) {
+  const id = currentAsset(asset);
+  if (/^p(?:2:(?:0|[1-9][0-9]*)|[0-9a-z]{1,23})$/.test(id ?? '')) return site.href('table', { p: id });
+  if (/^c(?:2:[0-9a-f]{64}|[0-9a-z]{1,23})$/.test(id ?? '')) return site.href('table', { c: id });
+  return null;
+}
+export function assetLink(asset, label) {
+  const href = assetHref(asset), text = label ?? namedText(() => assetName(asset), [asset]);
+  return href ? h('a', { href }, text) : h('span', {}, text);
+}
+export const agentHref = address => /^trac1[0-9a-z]{20,}$/.test(address ?? '') ? site.href('agents', { a: address }) : null;
+export function agentLink(address, label) {
+  if (!address) return h('span.faint', {}, '–');
+  const href = agentHref(address);
+  return href ? h('a.mono', { href, title: address }, label ?? who(address)) : hashEl(address, label);
+}
+export const blockHref = height => height === null || height === undefined || height === '' ? null : site.href('world', { b: height });
+export function blockLink(height, label) {
+  const href = blockHref(height);
+  return href ? h('a.mono', { href }, label ?? fmtInt(height)) : h('span.faint', {}, '–');
+}
+const explorer = path => site.public ? 'https://' + path : null;
+export const inscriptionHref = id => /^[0-9a-f]{64}i[0-9]+$/.test(id ?? '') ? explorer('ordinals.com/inscription/' + id) : null;
+export function inscriptionLink(id, label) {
+  const href = inscriptionHref(id);
+  return href ? h('a.mono', { href, title: id, ...EXTERNAL }, label ?? short(id, 8, 6)) : hashEl(id, label);
+}
+export function txLink(chain, txid, label) {
+  const href = chain === 'bitcoin' && /^[0-9a-f]{64}$/.test(txid ?? '') ? explorer('mempool.space/tx/' + txid) : null;
+  return href ? h('a.mono', { href, title: txid, ...EXTERNAL }, label ?? short(txid, 8, 6)) : hashEl(txid, label);
+}
+// A wallet: its agent page for a Trac key, the Bitcoin explorer for a mainnet Bitcoin address.
+export function addressLink(address, label) {
+  if (agentHref(address)) return agentLink(address, label);
+  const href = /^(?:bc1|[13])[0-9a-zA-Z]{20,}$/.test(address ?? '') ? explorer('mempool.space/address/' + address) : null;
+  return href ? h('a.mono', { href, title: address, ...EXTERNAL }, label ?? short(address, 8, 6)) : hashEl(address, label);
+}
+// A request's own page on the public pages (mint, link and payout-binding requests).
+export function requestLink(kind, id, label) {
+  return site.public && /^[0-9a-f]{64}$/.test(id ?? '') ? h('a.mono', { href: `/${kind}/${id}`, title: id }, label ?? short(id, 8, 6)) : hashEl(id, label);
+}
+nameAssets(assetName, { asset: assetLink, address: addressLink, inscription: inscriptionLink });
+
+// Sentences keep their plain text; while one is described its references are noted in order, so the rendered
+// sentence links each named thing where its words appear.
+let noting = null;
+const note = (text, link) => { text = String(text); noting?.push({ text, link }); return text; };
+const A = asset => note(assetName(asset), () => assetLink(asset, assetName(asset)));
+const B = height => note(fmtInt(height), () => blockLink(height));
+const W = address => note(who(address), () => agentLink(address));
+const P = (text, asset) => note(text, () => assetHref(asset) ? h('a', { href: assetHref(asset) }, text) : text);
+export function describeRefs(e) {
+  const outer = noting, refs = noting = [];
+  try { return { ...describe(e), refs }; } finally { noting = outer; }
+}
+const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The text with each noted reference replaced by its link, matched in order as whole words.
+export function linkedText(text, refs = []) {
+  const out = [];
+  let at = 0;
+  for (const r of refs) {
+    if (!r.text || r.text === '–') continue;
+    const m = new RegExp(`(?<![0-9A-Za-z,.#])${escape(r.text)}(?![0-9A-Za-z]|[,.][0-9])`).exec(text.slice(at));
+    if (!m) continue;
+    if (m.index) out.push(text.slice(at, at + m.index));
+    out.push(r.link()); at += m.index + r.text.length;
+  }
+  out.push(text.slice(at));
+  return out;
+}
+// An event's sentence with links, redrawn once the names it uses arrive.
+export function eventSentence(e, describeWith = describeRefs) {
+  const el = h('span');
+  const draw = () => { const d = describeWith(e); el.replaceChildren(...linkedText(d.text, d.refs)); };
+  draw();
+  const missing = [...new Set(eventAssets(e).flatMap(a => [a, ...compoundInputs(store.compound(currentAsset(a)) ?? compounds.get(currentAsset(a))).slice(0, 4).map(i => i.asset)]))]
+    .filter(a => ASSET_ID.test(currentAsset(a) ?? '') && !known(a));
+  if (missing.length) Promise.all(missing.map(lookupName)).then(draw);
+  return el;
+}
+// The assets an event names.
+export function eventAssets(e) {
+  const d = e?.data ?? {}, r = d.result ?? {}, q = r.request ?? r;
+  return [d.asset, d.id, d.request?.asset, q.asset, r.compound?.id ?? r.compound, ...(d.assets ?? r.assets ?? []).map(a => Array.isArray(a) ? a[0] : a?.asset)]
+    .filter(a => typeof a === 'string');
 }
 // A compound is named by its recipe and ingredients ("Nullspar + Muffinite fusion"); its key is only a detail.
 const compounds = new Map();
@@ -48,9 +177,9 @@ export const compoundInputs = c => (Array.isArray(c?.inputs) ? c.inputs : [])
 export const compoundKey = id => { const s = String(id ?? ''); return s.startsWith('c2:') ? s.slice(3, 11) : short(s, 6, 3); };
 export function compoundName(c, depth = 0) {
   const inputs = compoundInputs(c), id = c?.id ?? c?.asset;
-  if (!inputs.length) return `Compound ${compoundKey(id)}`;
+  if (!inputs.length) return `Compound #${compoundKey(id)}`;
   const names = inputs.slice(0, 4).map(i => i.asset.startsWith('c') && depth < 1 && compounds.has(i.asset) ? compoundName(compounds.get(i.asset), depth + 1)
-    : i.asset.startsWith('c') ? `Compound ${compoundKey(i.asset)}` : assetName(i.asset));
+    : i.asset.startsWith('c') ? `Compound #${compoundKey(i.asset)}` : assetName(i.asset));
   return `${names.join(' + ')}${inputs.length > 4 ? ' + …' : ''} ${c.recipe === 'resonance' ? 'resonance' : 'fusion'}`;
 }
 // A v2 tier is { value, expression }.
@@ -125,20 +254,20 @@ export function describe(e) {
   switch (e.type) {
     case 'block': {
       const list = a => a.slice(0, 6).map(fmtInt).join(', ') + (a.length > 6 ? ` +${a.length - 6}` : '');
-      if (d.reorg || d.depth) text = `Reorg of ${d.depth ?? ''} block${d.depth === 1 ? '' : 's'}: new tip ${fmtInt(block)}`;
-      else text = `Block ${fmtInt(block)} mined${d.counted !== undefined ? ` · counted ${fmtInt(d.counted)}` : ''}`;
+      if (d.reorg || d.depth) text = `Reorg of ${d.depth ?? ''} block${d.depth === 1 ? '' : 's'}: new tip ${B(block)}`;
+      else text = `Block ${B(block)} mined${d.counted !== undefined ? ` · counted ${fmtInt(d.counted)}` : ''}`;
       break;
     }
     case 'job': {
       const name = jobName(d.type);
       text = d.state === 'complete' ? `${name} done` : d.state === 'failed' ? `${name} failed: ${plainError(d.error)}` : `${name} ${d.state ?? ''}`;
-      if (d.state === 'complete' && d.result?.mined !== undefined) text += ` · ${fmtInt(d.result.mined)} block${d.result.mined === 1 ? '' : 's'}, tip ${fmtInt(d.result.tip)}`;
+      if (d.state === 'complete' && d.result?.mined !== undefined) text += ` · ${fmtInt(d.result.mined)} block${d.result.mined === 1 ? '' : 's'}, tip ${B(d.result.tip)}`;
       if (d.state === 'complete' && d.result?.newHash) text += ` · ${fmtInt(d.result.depth)} replaced`;
       break;
     }
     case 'payment': {
       const r = d.request ?? d, asset = d.asset ?? r.asset;
-      const what = asset ? `${assetName(asset)}${(d.block ?? r.block) !== undefined && (d.block ?? r.block) !== null ? ` from block ${fmtInt(d.block ?? r.block)}` : ''}` : 'a request';
+      const what = asset ? `${A(asset)}${(d.block ?? r.block) !== undefined && (d.block ?? r.block) !== null ? ` from block ${B(d.block ?? r.block)}` : ''}` : 'a request';
       text = `Mint of ${what}: ${PAYMENT_STATE[r.state ?? d.state] ?? String(r.state ?? d.state ?? '').replace(/_/g, ' ')}${(r.kind ?? d.kind) ? ` · ${(r.kind ?? d.kind) === 'ethereum' ? 'bridged TAP escrow' : 'direct TAP payment'}` : ''}`;
       block = d.block ?? r.block ?? null;
       actor = 'Mint';
@@ -148,37 +277,37 @@ export function describe(e) {
       const list = d.settlements ?? [];
       const winners = list.reduce((n, x) => n + (x.total ?? x.winners?.length ?? 0), 0), claims = list.reduce((n, x) => n + (x.claims ?? 0), 0);
       const blocks = [...new Set(list.flatMap(x => (x.winners ?? []).map(w => w.block)))];
-      text = list.some(x => x.void) ? `Draw void after a reorg` : list.some(x => x.complete === false) ? 'Draw credits are continuing in the next batch' : `Draw settled: ${winners} find${winners === 1 ? '' : 's'} · ${list.reduce((n, x) => n + (x.headerFinds ?? (x.winners ?? []).filter(w => w.source === 'header').length), 0)} header finds · ${claims} claim${claims === 1 ? '' : 's'}${blocks.length ? ` · plots ${blocks.slice(0, 4).map(fmtInt).join(', ')}${blocks.length > 4 ? '…' : ''}` : ''}`;
+      text = list.some(x => x.void) ? `Draw void after a reorg` : list.some(x => x.complete === false) ? 'Draw credits are continuing in the next batch' : `Draw settled: ${winners} find${winners === 1 ? '' : 's'} · ${list.reduce((n, x) => n + (x.headerFinds ?? (x.winners ?? []).filter(w => w.source === 'header').length), 0)} header finds · ${claims} claim${claims === 1 ? '' : 's'}${blocks.length ? ` · plots ${blocks.slice(0, 4).map(B).join(', ')}${blocks.length > 4 ? '…' : ''}` : ''}`;
       actor = 'World';
       break;
     }
     case 'discovery': {
       if (d.state === 'revealed') { actor = actorName({ actor: d.agent }); text = `revealed a pattern proposal: ${title(d.name)} (being checked)`; break; }
-      if (d.state === 'accepted') { actor = actorName({ actor: d.agent ?? d.discoverer }); text = `discovered ${title(d.name)}: tier ${d.tier}, ${fmtInt(d.rarity)} blocks`; break; }
+      if (d.state === 'accepted') { actor = actorName({ actor: d.agent ?? d.discoverer }); text = `discovered ${P(title(d.name), d.asset)}: tier ${d.tier}, ${fmtInt(d.rarity ?? store.pattern(d.asset)?.rarity ?? d.knownMatchCount)} blocks`; block ??= d.anchor?.height ?? null; break; }
       const recs = (d.discoveries ?? []).map(x => x.record ?? x);
-      text = recs.length ? recs.map(r => `New pattern accepted: ${title(r.name)} (tier ${r.tier}, ${fmtInt(r.rarity)} blocks) by ${who(r.discoverer)}`).join('; ') : 'Discovery round closed';
+      text = recs.length ? recs.map(r => `New pattern accepted: ${P(title(r.name), r.asset)} (tier ${r.tier}, ${fmtInt(r.rarity ?? store.pattern(r.asset)?.rarity ?? r.knownMatchCount)} blocks) by ${W(r.discoverer)}`).join('; ') : 'Discovery round closed';
       actor = 'World';
       break;
     }
     case 'claim': {
       actor = actorName({ actor: d.agent });
       const n = (d.patterns ?? []).length;
-      text = `claimed ${n ? `${n} pattern${n === 1 ? '' : 's'}` : 'a find'} in block ${fmtInt(d.block)}${d.header ? ' (header sent)' : ''}`;
+      text = `claimed ${n ? `${n} pattern${n === 1 ? '' : 's'}` : 'a find'} in block ${B(d.block)}${d.header ? ' (header sent)' : ''}`;
       block = d.block ?? block; break;
     }
-    case 'header_find': actor = actorName({ actor: d.finder ?? d.winner }); text = `header find: received ${fmtInt(d.count ?? d.amount)} ${assetName(d.asset)} in block ${fmtInt(d.block)} for sending its header`; block = d.block ?? block; break;
-    case 'find': actor = actorName({ actor: d.finder ?? d.winner }); text = `won ${fmtInt(d.count ?? d.amount)} ${assetName(d.asset)} in block ${fmtInt(d.block)}`; block = d.block ?? block; break;
-    case 'craft': actor = actorName({ actor: d.owner ?? d.firstMaker }); text = `crafted ${d.amount ? `${fmtInt(d.amount)} ` : ''}${assetName(d.id ?? d.asset)}`; break;
-    case 'mint_request': actor = actorName({ actor: d.owner }); text = `asked to mint ${fmtInt(d.amount)} ${assetName(d.asset)}${d.block !== undefined ? ` from block ${fmtInt(d.block)}` : ''}`; block = d.block ?? block; break;
-    case 'mint_permit': actor = actorName({ actor: d.owner }); text = `received a permanent permit to mint ${fmtInt(d.amount)} ${assetName(d.asset)}${d.block !== undefined ? ` from block ${fmtInt(d.block)}` : ''}`; block = d.block ?? block; break;
-    case 'mint_complete': actor = actorName({ actor: d.owner }); text = `minted ${fmtInt(d.amount)} ${assetName(d.asset)}${d.block !== undefined ? ` from block ${fmtInt(d.block)}` : ''} on Bitcoin`; block = d.block ?? block; break;
-    case 'link': actor = actorName({ actor: d.owner }); text = `linked the Bitmap of block ${fmtInt(d.block)}`; block = d.block ?? block; break;
+    case 'header_find': actor = actorName({ actor: d.finder ?? d.winner }); text = `header find: received ${fmtInt(d.count ?? d.amount)} ${A(d.asset)} in block ${B(d.block)} for sending its header`; block = d.block ?? block; break;
+    case 'find': actor = actorName({ actor: d.finder ?? d.winner }); text = `won ${fmtInt(d.count ?? d.amount)} ${A(d.asset)} in block ${B(d.block)}`; block = d.block ?? block; break;
+    case 'craft': actor = actorName({ actor: d.owner ?? d.firstMaker }); text = `crafted ${d.amount ? `${fmtInt(d.amount)} ` : ''}${A(d.id ?? d.asset)}`; break;
+    case 'mint_request': actor = actorName({ actor: d.owner }); text = `asked to mint ${fmtInt(d.amount)} ${A(d.asset)}${d.block !== undefined ? ` from block ${B(d.block)}` : ''}`; block = d.block ?? block; break;
+    case 'mint_permit': actor = actorName({ actor: d.owner }); text = `received a permanent permit to mint ${fmtInt(d.amount)} ${A(d.asset)}${d.block !== undefined ? ` from block ${B(d.block)}` : ''}`; block = d.block ?? block; break;
+    case 'mint_complete': actor = actorName({ actor: d.owner }); text = `minted ${fmtInt(d.amount)} ${A(d.asset)}${d.block !== undefined ? ` from block ${B(d.block)}` : ''} on Bitcoin`; block = d.block ?? block; break;
+    case 'link': actor = actorName({ actor: d.owner }); text = `linked the Bitmap of block ${B(d.block)}`; block = d.block ?? block; break;
     case 'transfer': {
       actor = actorName({ actor: d.from });
-      const what = (d.assets ?? []).slice(0, 3).map(([a, n]) => `${fmtInt(n)} ${assetName(a)}`).join(', ');
-      text = `sent ${what || 'matter'} to ${who(d.to)}`; break;
+      const what = (d.assets ?? []).slice(0, 3).map(([a, n]) => `${fmtInt(n)} ${A(a)}`).join(', ');
+      text = `sent ${what || 'matter'} to ${W(d.to)}`; break;
     }
-    case 'receipts': text = `Gateway sealed ${fmtInt(d.count)} move${d.count === 1 ? '' : 's'} at tip ${fmtInt(d.tip)}`; actor = 'World'; block = d.tip ?? block; break;
+    case 'receipts': text = `Gateway sealed ${fmtInt(d.count)} move${d.count === 1 ? '' : 's'} at tip ${B(d.tip)}`; actor = 'World'; block = d.tip ?? block; break;
     case 'component': text = d.name ? `${d.name} is ${d.state ?? 'changed'}` : d.phase ? `Playground: ${d.phase}` : d.state ? `Playground ${d.state}` : 'System update'; break;
     case 'error': text = plainError(d.message ?? d.error ?? 'error'); break;
     default:
@@ -190,8 +319,8 @@ export function describe(e) {
   return { actor, text, block };
 }
 function moneyStep(d) {
-  const what = d.asset ? `${d.amount ? `${fmtInt(d.amount)} ` : ''}${assetName(d.asset)}` : null, from = d.block !== undefined ? ` from block ${fmtInt(d.block)}` : '';
-  const bitmap = `the Bitmap of block ${fmtInt(d.block)}`;
+  const block = () => B(d.block), what = d.asset ? `${d.amount ? `${fmtInt(d.amount)} ` : ''}${A(d.asset)}` : null, from = d.block !== undefined ? ` from block ${block()}` : '';
+  const bitmap = `the Bitmap of block ${block()}`;
   const steps = {
     reserve: () => `asked to mint ${what ?? 'matter'}${from}; awaiting payment`,
     fund: () => `paid the fees to mint ${what ?? 'matter'}${from}`,
@@ -210,25 +339,25 @@ function moneyStep(d) {
 function sentence(d) {
   const a = String(d.action ?? d.kind ?? '').toLowerCase().replace(/[/_.:]/g, '-');
   const r = d.result ?? {}, q = r.request ?? r;
-  const asset = d.asset ?? q.asset ? assetName(d.asset ?? q.asset) : null;
+  const asset = d.asset ?? q.asset ? A(d.asset ?? q.asset) : null;
   const at = d.block ?? q.block ?? d.height;
   const tip = r.receipt?.tip;
   const plural = (n, w) => `${fmtInt(n)} ${w}${n === 1 ? '' : 's'}`;
-  const things = list => (list ?? []).map(([x, n]) => `${fmtInt(n)} ${assetName(x)}`).join(', ');
+  const things = list => (list ?? []).map(([x, n]) => `${fmtInt(n)} ${A(x)}`).join(', ');
   const map = {
-    header: () => `sent the header for block ${fmtInt(tip ?? at)}`,
-    claim: () => d.plots?.length ? `claimed in ${plural(d.plots.length, 'plot')}` : `claimed finds${tip !== undefined ? ` at tip ${fmtInt(tip)}` : ''}`,
-    find: () => `won ${fmtInt(d.amount ?? d.count)} ${asset ?? ''} in block ${fmtInt(at)}`,
+    header: () => `sent the header for block ${B(tip ?? at)}`,
+    claim: () => d.plots?.length ? `claimed in ${plural(d.plots.length, 'plot')}` : `claimed finds${tip !== undefined ? ` at tip ${B(tip)}` : ''}`,
+    find: () => `won ${fmtInt(d.amount ?? d.count)} ${asset ?? ''} in block ${B(at)}`,
     'discovery-commit': () => 'committed a hidden pattern discovery',
     'discovery-reveal': () => `revealed a pattern discovery${d.name && d.name !== 'owner' && !/^bot/.test(d.name) ? `: ${title(d.name)}` : ''}`,
-    craft: () => `crafted ${r.compound ? assetName(r.compound.id ?? r.compound) : 'a compound'}`,
-    transfer: () => `sent ${things(d.assets ?? r.assets) || 'matter'}${(d.to ?? r.to) ? ` to ${who(d.to ?? r.to)}` : ''} on Trac`,
-    'mint-quote': () => `asked for the fee to mint ${asset ?? ''} from block ${fmtInt(at)}${r.price ? `: ${tap(r.price, r.unit)}` : ''}`,
-    mint: () => `asked to mint ${asset ?? 'matter'}${at !== undefined ? ` from block ${fmtInt(at)}` : ''}`,
+    craft: () => `crafted ${r.compound ? A(r.compound.id ?? r.compound) : 'a compound'}`,
+    transfer: () => `sent ${things(d.assets ?? r.assets) || 'matter'}${(d.to ?? r.to) ? ` to ${W(d.to ?? r.to)}` : ''} on Trac`,
+    'mint-quote': () => `asked for the fee to mint ${asset ?? ''} from block ${B(at)}${r.price ? `: ${tap(r.price, r.unit)}` : ''}`,
+    mint: () => `asked to mint ${asset ?? 'matter'}${at !== undefined ? ` from block ${B(at)}` : ''}`,
     'compound-mint': () => `asked to mint ${asset ?? 'a compound'} on-chain`,
     pay: () => q.inscription ? `paid and minted on Bitcoin${asset ? `: ${asset}` : ''}` : `paid ${q.price ? tap(q.price, q.unit) : ''}`.trim(),
-    bitmap: () => `inscribed a test Bitmap for block ${fmtInt(d.height ?? at)}`,
-    link: () => `linked the Bitmap of block ${fmtInt(d.height ?? at)}`,
+    bitmap: () => `inscribed a test Bitmap for block ${B(d.height ?? at)}`,
+    link: () => `linked the Bitmap of block ${B(d.height ?? at)}`,
   };
   const f = map[a] ?? Object.entries(map).find(([k]) => a.startsWith(k))?.[1];
   return f ? f().replace(/\s+/g, ' ').trim() : d.message ?? d.text ?? null;

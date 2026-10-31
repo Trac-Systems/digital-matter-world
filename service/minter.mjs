@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { check } from './src/util.mjs';
 import { mintSenderSettings } from './src/mint-sender-settings.mjs';
-import { readMintSeed, fundingAmount } from './src/mint-sender-keys.mjs';
+import { readMintSeed, fundingAmount, payoutFloatKey, refundBudget } from './src/mint-sender-keys.mjs';
 import { senderToken, senderKeyId } from './src/mint-sender-view.mjs';
 import { MintSenderJournal } from './src/mint-sender-journal.mjs';
 import { MintSender } from './src/mint-sender.mjs';
@@ -37,17 +37,29 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   try {
     const initialize = process.argv[2] === '--initialize', createRefundAuthority = process.argv[2] === '--create-refund-authority';
-    const filename = process.argv[initialize || createRefundAuthority ? 3 : 2]; check(isAbsolute(filename ?? '') && await realpath(filename) === filename, 'mint_sender_config_path');
+    const createPayoutAuthority = process.argv[2] === '--create-payout-authority', payoutAddress = process.argv[2] === '--payout-address';
+    const filename = process.argv[initialize || createRefundAuthority || createPayoutAuthority || payoutAddress ? 3 : 2]; check(isAbsolute(filename ?? '') && await realpath(filename) === filename, 'mint_sender_config_path');
     const config = JSON.parse(await readFile(filename, 'utf8'));
-    sender = await startMinter(config, { signal: controller.signal, initialize });
-    if (initialize) console.log('mint_sender_journal_initialized');
-    else if (createRefundAuthority) console.log(JSON.stringify({ event: 'mint_refund_authority', ...await sender.refunds.createAuthority() }));
-    else {
-      // Health is independent of discovery and per-request network work.
-      heartbeat = setInterval(() => { try { sender.health(true); } catch { console.error('mint_sender_health_write_failed'); } }, sender.settings.healthMs);
-      while (!controller.signal.aborted) {
-        try { await sender.tick(); } catch { console.error('mint_sender_loop_retry'); }
-        await sleep(sender.settings.pollMs, undefined, { signal: controller.signal });
+    if (payoutAddress) {
+      check(supportedNode() && ['regtest', 'prod'].includes(config.mode), 'mint_sender_config');
+      const settings = mintSenderSettings(config.mintSender), seed = await readMintSeed(settings.seedFile);
+      try {
+        const key = payoutFloatKey(seed, config.mode === 'regtest' ? 'regtest' : 'mainnet');
+        try { console.log(JSON.stringify({ address: key.address, path: key.path, conservativeFundingSatsPerPayout: refundBudget(settings), maxFeeSats: settings.maxFeeSats })); }
+        finally { key.privateKey.fill(0); }
+      } finally { seed.fill(0); }
+    } else {
+      sender = await startMinter(config, { signal: controller.signal, initialize });
+      if (initialize) console.log('mint_sender_journal_initialized');
+      else if (createPayoutAuthority) console.log(JSON.stringify({ event: 'mint_payout_authority', ...await sender.payouts.createAuthority() }));
+      else if (createRefundAuthority) console.log(JSON.stringify({ event: 'mint_refund_authority', ...await sender.refunds.createAuthority() }));
+      else {
+        // Health is independent of discovery and per-request network work.
+        heartbeat = setInterval(() => { try { sender.health(true); } catch { console.error('mint_sender_health_write_failed'); } }, sender.settings.healthMs);
+        while (!controller.signal.aborted) {
+          try { await sender.tick(); } catch { console.error('mint_sender_loop_retry'); }
+          await sleep(sender.settings.pollMs, undefined, { signal: controller.signal });
+        }
       }
     }
   } catch (error) { if (!controller.signal.aborted) { console.error(JSON.stringify({ event: 'mint_sender_startup_or_loop_failed', code: mintSenderError(error) })); process.exitCode = 1; } }

@@ -26,7 +26,8 @@ export function feePrice(policy, kind, tier = 1) {
   const settings = policy?.feeSettings;
   if (typeof policy?.baseFee !== 'string' || !/^(0|[1-9]\d*)$/.test(policy.baseFee) ||
       !Array.isArray(settings?.tierMultipliers) || settings.tierMultipliers.length !== 5 ||
-      ![...settings.tierMultipliers, settings.compoundMinimum, settings.link].every(n => Number.isSafeInteger(n) && n > 0) ||
+      ![...settings.tierMultipliers, settings.compoundMinimum].every(n => Number.isSafeInteger(n) && n > 0) ||
+      !Number.isSafeInteger(settings.link) || settings.link < 0 ||
       !Number.isInteger(tier) || tier < 1 || tier > 5) return 'current fee';
   let multiplier;
   if (kind === 'find') multiplier = settings.tierMultipliers[tier - 1];
@@ -34,7 +35,7 @@ export function feePrice(policy, kind, tier = 1) {
   else if (kind === 'compound-minimum') multiplier = Math.max(settings.compoundMinimum, Math.min(...settings.tierMultipliers));
   else if (kind === 'link') multiplier = settings.link;
   else return 'current fee';
-  return tap((BigInt(policy.baseFee) * BigInt(multiplier)).toString(), policy.unit);
+  return kind === 'link' && multiplier === 0 ? 'Free' : tap((BigInt(policy.baseFee) * BigInt(multiplier)).toString(), policy.unit);
 }
 export function feePolicyTip(policy) {
   const s = policy?.feeSettings;
@@ -107,7 +108,7 @@ export function legacyDeployPolicyText(status) {
   const policy = status?.legacyDeployShare;
   if (!policy?.active) return 'The older deployment share is inactive.';
   const bps = BigInt(policy.shareBps), share = String(bps / 100n) + (bps % 100n ? '.' + String(bps % 100n).padStart(2, '0').replace(/0+$/, '') : '');
-  return `${share} % of each qualifying pattern mint fee comes from the burn and is split equally among deployments before block ${policy.cutoff}, excluding the DMW authority. Their current Bitcoin holders accrue TAP in the public payout ledger, paid by the operator once an address is owed at least ${tap(policy.payoutMinAtoms, status.unit)}. With no qualifying deployment, that share stays in the burn.`;
+  return `${share} % of each qualifying pattern mint fee comes from the burn and is split equally among deployments before block ${policy.cutoff}, excluding the DMW authority. Their current Bitcoin holders accrue TAP in the public payout ledger, paid automatically from the payout wallet once an address is owed at least ${tap(policy.payoutMinAtoms, status.unit)}. With no qualifying deployment, that share stays in the burn.`;
 }
 
 // Every pattern and compound mint, whichever ticker it goes to, also pays the minted ticker's deploy holder.

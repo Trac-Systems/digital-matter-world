@@ -2,7 +2,7 @@
 import { h, clear, kv, pill, hashEl, fmtInt, panel, figures, inspectBtn, tierBadge, short } from './console/js/dom.js';
 import { get, site } from './console/js/api.js';
 import { pagedTable } from './console/js/paged.js';
-import { mineral, assetName, title, fieldName, rememberCompound, compoundName } from './console/js/words.js';
+import { mineral, assetName, title, fieldName, rememberCompound, compoundName, assetLink, agentLink, blockLink } from './console/js/words.js';
 
 export function mount(root, params = {}) {
   const top = h('div'), batch = h('div');
@@ -37,7 +37,7 @@ export function mount(root, params = {}) {
         path: '/agents', key: 'agents', limit: 10, sorts: [['discoveries:desc', 'Most discoveries'], ['finds:desc', 'Most finds']],
         empty: 'No agent has public results yet.',
         columns: [
-          { key: 'address', label: 'Agent', render: r => h('a.mono', { href: site.href('agents', { a: r.address }) }, short(r.address)) },
+          { key: 'address', label: 'Agent', render: r => agentLink(r.address) },
           { key: 'discoveries', label: 'Discoveries', num: true },
           { key: 'finds', label: 'Finds', num: true },
         ],
@@ -46,10 +46,10 @@ export function mount(root, params = {}) {
         path: '/finds', key: 'finds', limit: 10, sorts: [['findHeight:desc', 'Newest'], ['count:desc', 'Most units']],
         empty: 'No finds yet.',
         columns: [
-          { key: 'asset', label: 'Pattern', render: f => h('span', {}, h('span.swatch', { style: { background: mineral(f.asset) } }), assetName(f.asset)) },
+          { key: 'asset', label: 'Pattern', render: f => h('span', {}, h('span.swatch', { style: { background: mineral(f.asset) } }), assetLink(f.asset)) },
           { key: 'block', label: 'Block', num: true, render: f => h('a.mono', { href: site.href('world', { b: f.block }) }, fmtInt(f.block)) },
           { key: 'count', label: 'Units', num: true },
-          { key: 'finder', label: 'Finder', render: f => h('a.mono', { href: site.href('agents', { a: f.finder }) }, short(f.finder)) },
+          { key: 'finder', label: 'Finder', render: f => agentLink(f.finder) },
           { key: 'minted', label: 'Minted', render: f => f.minted ? pill('Minted', 'minted') : h('span.faint', {}, 'no') },
         ],
       }).el, { flush: true }),
@@ -58,7 +58,7 @@ export function mount(root, params = {}) {
         empty: 'No accepted batch yet.',
         columns: [
           { key: 'n', label: 'Batch', num: true, render: b => h('a.mono', { href: `/records/batches/${b.n}` }, `#${fmtInt(b.n)}`) },
-          { key: 'to', label: 'Counted blocks', num: true, render: b => h('span.mono', {}, b.from === b.to ? fmtInt(b.to) : `${fmtInt(b.from)}–${fmtInt(b.to)}`) },
+          { key: 'to', label: 'Counted blocks', num: true, render: b => h('span.mono', {}, b.from === b.to ? blockLink(b.to) : [blockLink(b.from), '–', blockLink(b.to)]) },
           { key: 'root', label: 'Root', render: b => hashEl(b.root) },
         ],
       }).el, { flush: true }),
@@ -74,7 +74,7 @@ export function mount(root, params = {}) {
       }).el, { flush: true, tip: 'Gateway seals over the moves it accepted at each tip.' }))));
 
   get('/records/highlights').then(r => {
-    const find = f => f ? [assetName(f.asset), `block ${fmtInt(f.block)} · ${fmtInt(f.rarity?.numerator)} of ${fmtInt(f.rarity?.denominator)} blocks`] : ['–', 'none yet'];
+    const find = f => f ? [assetLink(f.asset), h('span', {}, 'block ', blockLink(f.block), ` · ${fmtInt(f.rarity?.numerator)} of ${fmtInt(f.rarity?.denominator)} blocks`)] : ['–', 'none yet'];
     const c = r.highestTierCompound;
     clear(top, figures([
       ['Rarest find today', ...find(r.rarestFinds?.today)],
@@ -94,7 +94,7 @@ export function mount(root, params = {}) {
       clear(batch, h('section.panel', { style: { marginBottom: '16px' } },
         h('header', {}, h('h2', {}, `Batch #${fmtInt(b.n)}`), h('div.grow'), inspectBtn(`Batch ${b.n}`, r)),
         kv([
-          ['Counted blocks', h('span.mono', {}, b.from === b.to ? fmtInt(b.to) : `${fmtInt(b.from)}–${fmtInt(b.to)}`)],
+          ['Counted blocks', h('span.mono', {}, b.from === b.to ? blockLink(b.to) : [blockLink(b.from), '–', blockLink(b.to)])],
           ['Root', hashEl(b.root)],
           ['Operations', h('span.mono', {}, fmtInt(r.counts?.ops ?? b.ops?.length))],
           ['Deadline', b.deadline !== undefined ? h('span.mono', {}, fmtInt(b.deadline)) : null],

@@ -1,4 +1,4 @@
-import { hashObject, stableJSON, decimalV2, addUint, validateSettingsDocument } from '../../rules/src/index.js';
+import { hashObject, stableJSON, decimalV2, addUint, validateSettingsDocument, feeFor } from '../../rules/src/index.js';
 import { wireIdentities } from '../../rules/src/trac-address.js';
 import { financialLinkDigest, financialLinkId } from '../../rules/src/financial-link.js';
 import { lifecycleDigest } from '../../contract/financial-lifecycle.js';
@@ -17,7 +17,9 @@ export async function makeFinancialLink(agent, { actionId, height, payer }, cont
   check(quote.settingsHash === settingsHash, 'Link quote settings mismatch');
   const request = old?.body.request ?? { v: 2, kind: 'link', owner, block, payer, nonce: nonce(),
     until: addUint(decimalV2(head.counted), String(settings.values.pendingBlocks)), settingsHash, quoteHash: hashObject(quote) };
-  if (agent.dryRun) return { state: 'dry-run', action: 'link', request, payer, signed: false };
+  const free = settings.values.linkMultiplier === 0 && feeFor('link', quote.baseFee, 1, quote.feeSettings, head.counted) === '0';
+  check(settings.values.linkMultiplier !== 0 || free, 'Link fee mismatch');
+  if (agent.dryRun) return { state: 'dry-run', action: 'link', request, payer, signed: false, ...(free ? { fee: 'Free' } : {}) };
   const body = old?.body ?? { version: 2, request, feeQuote: quote, signature: signBytes(wallet, financialLinkDigest(network, request)) };
   const saved = journal.reserve(key, intent, body), id = financialLinkId(network, request), reservationKey = key + '/reservation-v2';
   await journal.waitTurn(() => agent.trac.head()); journal.mark(key, 'sending');
@@ -34,8 +36,10 @@ export async function makeFinancialLink(agent, { actionId, height, payer }, cont
     }
     const response = wireIdentities(await service.requestLink({ ...saved.body, reserve: reserved.body.reserve }));
     check(response.id === id && response.state !== 'authorizing', 'Link reservation not acknowledged');
+    check((response.price === '0') === free, 'Link fee mismatch');
     const result = { state: 'submitted', request: response, paymentLink: service.paymentLink(id, agent.paymentOrigin, 'link'),
-      next: [{ tool: 'poll_link', arguments: { id } }, { tool: 'pay_link', arguments: { id } }] };
+      ...(response.price === '0' ? { fee: 'Free' } : {}),
+      next: [{ tool: 'poll_link', arguments: { id } }, ...(response.price === '0' ? [] : [{ tool: 'pay_link', arguments: { id } }])] };
     journal.mark(reservationKey, 'submitted', { id }); journal.mark(key, 'submitted', result); return result;
   } catch (error) { journal.mark(key, 'unknown'); throw error; }
   finally { journal.finishTurn(); }

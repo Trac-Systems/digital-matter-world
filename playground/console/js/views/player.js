@@ -310,8 +310,8 @@ export function mount(root, params) {
   function bitmapForm() {
     const terms = feeTerms('link');
     return h('div.form', {},
-      h('p.small.muted', { style: { margin: 0 } }, 'Link a Bitmap you hold to its plot. Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. Paid once; the link stays with the Bitmap.'),
-      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link fee ${tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
+      h('p.small.muted', { style: { margin: 0 } }, terms?.total === '0' ? 'Free. Link a Bitmap you hold to its plot; the link stays with the Bitmap.' : 'Link a Bitmap you hold to its plot. Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. Paid once; the link stays with the Bitmap.'),
+      terms ? h('div', {}, h('div.small', {}, h('strong', {}, `Link fee ${terms.total === '0' ? 'Free' : tap(terms.total)}`), ' · once'), splitTable(terms.split)) : null,
       h('div.section-label', { style: { padding: '6px 0 0' } }, 'Your Bitmaps'),
       formPaged({
         path: '/player/bitmaps', key: 'bitmaps', limit: 10,
@@ -321,7 +321,7 @@ export function mount(root, params) {
         columns: [
           { key: 'height', label: 'Bitmap', num: true, render: b => h('a.mono', { href: `#/world?b=${b.height}` }, `${fmtInt(b.height)}.bitmap`) },
           { key: 'linked', label: 'Link', render: b => b.linked ? pill('Linked', 'ink') : pill('Not linked') },
-          { key: 'go', label: '', render: b => b.linked ? inspectBtn('Bitmap', b) : h('button.btn.sm.primary', { onclick: async () => { if (await linkFlow(b.height)) reloadLists(); } }, 'Link and pay') },
+          { key: 'go', label: '', render: b => b.linked ? inspectBtn('Bitmap', b) : h('button.btn.sm.primary', { onclick: async () => { if (await linkFlow(b.height)) reloadLists(); } }, terms?.total === '0' ? 'Link for free' : 'Link and pay') },
         ],
       }),
       h('div.row', {}, h('a.btn', { href: '#/world' }, 'Open the World map')));
