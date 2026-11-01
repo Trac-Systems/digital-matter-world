@@ -686,6 +686,7 @@ function walletsHome(root, type) {
       globalThis.DMW_LOCAL_AGENT === true ? localLink(bitmap)
         : bitmap !== null ? h('div.small', {}, 'Block ', blockLink(bitmap), `: hold ${bitmap}.bitmap in TAP Wallet, then ask your agent to link it.`) : null,
       wallet.tap ? null : h('p.small.muted', { style: { margin: 0 } }, wallet.ethereum ? 'MetaMask cannot do this: Bitmaps live on Bitcoin. Connect TAP Wallet above.' : 'Needs TAP Wallet: connect it above.'),
+      h('p.small.muted', { style: { margin: 0 } }, 'Your Bitmap is in UniSat or Xverse? ', h('a', { href: '/about#tap-wallet' }, 'Bring it into TAP Wallet'), '; nothing has to move.'),
       globalThis.DMW_LOCAL_AGENT === true ? null : h('p.small.muted', { style: { margin: 0 } }, feePrice(policy, 'link') === 'Free' ? 'Your agent starts the link. Open its request to follow confirmation. No payment is required.' : 'Your agent starts the link. Open the link request it gives you to review the fee and pay.')), { id: 'bitmap' }));
     // Keep mounted panels (and their loaded pages) when only the wallet changed.
     clear(app, ...out.filter(Boolean));

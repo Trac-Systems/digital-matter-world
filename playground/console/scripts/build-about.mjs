@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 const escape = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function inline(text) {
   let html = '', at = 0;
-  for (const match of text.matchAll(/\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\((https:\/\/[^\s)]+|\/[a-z][a-z0-9/-]*)\)|\{\{price:(find:[1-5]|find-all|compound-minimum|link|ticker)\}\}|\{\{(legacy-deploy-share)\}\}|\{\{(deployer-share)\}\}|\{\{(ticker-burn-share)\}\}/g)) {
+  for (const match of text.matchAll(/\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\((https:\/\/[^\s)]+|\/[a-z][a-z0-9/-]*(?:#[a-z][a-z0-9-]*)?)\)|\{\{price:(find:[1-5]|find-all|compound-minimum|link|ticker)\}\}|\{\{(legacy-deploy-share)\}\}|\{\{(deployer-share)\}\}|\{\{(ticker-burn-share)\}\}/g)) {
     html += escape(text.slice(at, match.index));
     if (match[8] !== undefined) html += '<span data-ticker-burn-share>a part</span>';
     else if (match[7] !== undefined) html += '<span data-deployer-share></span>';

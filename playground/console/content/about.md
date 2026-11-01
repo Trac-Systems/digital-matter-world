@@ -92,10 +92,34 @@ Most players work this way: the agent does the mining, and you decide what to ma
 You can take part with [TAP Wallet](https://chromewebstore.google.com/detail/tap-wallet/blcaacmeglnfblclocdgaomhopnfobof) alone.
 
 1. **Mint a public block.** When a finder's week is over, or a week after a pattern's release for a block nobody found, anyone can mint the block. Open [Mint & wallets](/mint) and choose from Public blocks. You need no units and no Trac key.
-2. **Link your Bitmap.** If you hold a Bitmap, link it once under [Link a Bitmap](/link). Current link fee: {{price:link}}. From then on you earn 15 % of every mint on that block, into every ticker, and the income moves with the Bitmap when it changes hands.
+2. **Link your Bitmap.** If you hold a Bitmap, link it once under [Link a Bitmap](/link). Current link fee: {{price:link}}. From then on you earn 15 % of every mint on that block, into every ticker, and the income moves with the Bitmap when it changes hands. Your Bitmap is in UniSat or Xverse? [Bring it into TAP Wallet](/about#tap-wallet) first; nothing has to move.
 3. **Deploy a ticker.** Open a pattern or compound in the [Periodic table](/table) and choose Deploy your own ticker. The deploy fee is {{price:ticker}}. Of that fee, {{ticker-burn-share}} is burned and the rest goes to the treasury. Whoever holds the deploy inscription earns a share of every mint into that ticker.
 4. **Play the game.** Walk the spiral of Bitcoin's blocks in [Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0), see the agents at work and every relic made real, and meet the other players.
 5. **Just look around.** Open any block on the [block map](/explore), browse the [Periodic table](/table), the agents and the results. Nothing to install.
+
+## TAP Wallet, UniSat and Xverse {#tap-wallet Wallets}
+
+Paying, minting and linking a Bitmap all work with [TAP Wallet](https://chromewebstore.google.com/detail/tap-wallet/blcaacmeglnfblclocdgaomhopnfobof) only. We are sorry about that, but UniSat and Xverse do not support the TAP protocol, so they cannot pay a TAP fee or sign what the game needs. TAP Wallet is a free browser extension for Chrome, Brave and other Chromium browsers.
+
+You do not have to move anything. Import the wallet you already use into TAP Wallet: the same recovery phrase gives the same addresses, so your Bitmaps, inscriptions and bitcoin show up in TAP Wallet as they are. Your old wallet keeps working next to it.
+
+**From UniSat**
+
+1. In UniSat's settings, show your secret recovery phrase, or export the private key of the account that holds your Bitmap. Note the address type the account uses, usually Taproot (bc1p…) or Native Segwit (bc1q…).
+2. Install [TAP Wallet](https://chromewebstore.google.com/detail/tap-wallet/blcaacmeglnfblclocdgaomhopnfobof), choose Restore Existing Wallet, then Restore from mnemonics (12-word or 24-word) or Restore from single private key.
+3. Choose the same address type. Check that the address TAP Wallet shows is exactly the UniSat address that holds your Bitmap.
+
+**From Xverse**
+
+Xverse keeps two addresses for one wallet: a Payment address that starts with 3, for bitcoin, and an Ordinals address that starts with bc1p, where your Bitmaps and other inscriptions are. The Bitmap is what you link, so you need the Ordinals address.
+
+1. In Xverse's settings, under security, show your recovery phrase.
+2. Install [TAP Wallet](https://chromewebstore.google.com/detail/tap-wallet/blcaacmeglnfblclocdgaomhopnfobof), choose Restore Existing Wallet, then Restore from mnemonics (12-word or 24-word).
+3. Choose Taproot (P2TR). That is your Xverse Ordinals address. Check that it matches the bc1p… address Xverse shows for ordinals.
+
+**Before you link.** The link fee is paid in TAP from the same address, together with a small Bitcoin network fee. Put the TAP for the fee and a little bitcoin on that address. With Xverse, your bitcoin sits on the Payment address, so send a little of it over to the Ordinals address first.
+
+Type your recovery phrase only into the wallet extension itself, never into a website, a form or a chat. Nobody from Digital Matter World will ever ask for it.
 
 ## What you can do with it {#uses What you can do}
 
