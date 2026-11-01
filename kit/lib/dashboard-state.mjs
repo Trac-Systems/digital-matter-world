@@ -243,13 +243,16 @@ export class DashboardState {
     if (requestId(id)) try { status = await this.status(id, row); } catch (error) { statusError = dashboardError(error); }
     if (statusError === 'not_your_request') { id = null; statusError = null; }
     if (saved && this.retireDead(saved, status, statusError, this.claimCounted)) return this.claim(row, c, balance);
+    // The gateway's hold can belong to a bulk order rather than a single request: no request page to open.
+    const bulkHold = !saved && !!c.pending && statusError === 'request_not_found';
+    if (bulkHold) { id = null; statusError = null; }
     // A saved request the gateway never took: Mint resumes it with the same signature.
     const resume = !!saved && !c.pending && statusError === 'request_not_found';
     if (resume) statusError = null;
     const minted = !!(row.minted || c.minted || status?.state === 'minted');
     const pending = !minted && status?.state !== 'expired' && !!(c.pending || (saved && !resume) || status);
-    const inOrder = !minted && !status && !!this.bulkHeld?.has(canonicalAsset(c.find.asset) + '/' + String(row.block));
-    const reason = statusError ?? (this.mintReason(c, balance) || (inOrder ? 'in_bulk_order' : null));
+    const inOrder = !minted && !status && !!this.bulkHeld?.has(canonicalAsset(c.find.asset) + '/' + String(row.block)) || !minted && bulkHold;
+    const reason = statusError ?? (inOrder ? 'in_bulk_order' : this.mintReason(c, balance) || null);
     return { asset: row.asset, block: String(row.block), ...(c.deployment ? { deployment: c.deployment } : {}), count: String(c.find.count),
       name: await this.name(row.asset, row.name ?? row.pattern?.name), minted, pending,
       payable: !minted && status?.payable === true, requestId: requestId(id) ? id : null,
