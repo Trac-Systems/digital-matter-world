@@ -406,3 +406,19 @@ test('three quick Mint clicks submit concurrently and duplicate clicks share one
   assert.equal(bodies[0].requestId, bodies[3].requestId);
   assert.equal(f.packets.length, 6);
 });
+
+test('a saved mint the gateway never took and that expired is retired and signed afresh on the next click', async t => {
+  const f = await dashboardFixture(t), { dashboard } = await start(t, f);
+  const { serviceError } = await import('../lib/errors.mjs');
+  const refuse = code => serviceError({ service: 'Gateway service', origin: 'http://gateway', route: '/mint/quote', method: 'POST', status: code === 'mint_capacity' ? 503 : 400, code });
+  const original = f.service.requestMint.bind(f.service), refusals = ['mint_capacity', 'financial_request_expired'], sent = [];
+  f.service.requestMint = async body => { if (!body.reserve) sent.push(body.request.nonce); if (!body.reserve && refusals.length) throw refuse(refusals.shift()); return original(body); };
+  const slot = { asset: 'p2:1', block: '12' };
+  await assert.rejects(dashboard.state.mint(slot), /mint_capacity/);
+  const result = await dashboard.state.mint(slot);
+  assert.match(result.requestId, /^[0-9a-f]{64}$/);
+  assert.equal(sent.length, 3); assert.equal(sent[0], sent[1]); assert.notEqual(sent[2], sent[1]);
+  const open = (await dashboard.state.requests()).requests.filter(r => r.block === '12');
+  assert.deepEqual(open.map(r => r.requestId), [result.requestId]);
+  assert.equal((await dashboard.state.mint(slot)).requestId, result.requestId);
+});

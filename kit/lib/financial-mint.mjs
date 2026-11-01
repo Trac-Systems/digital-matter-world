@@ -91,5 +91,10 @@ async function makeFinancialMintTimed(agent, intent, actionId, candidate, contex
     const result = { state: 'submitted', request: response, paymentLink: service.paymentLink(id, agent.paymentOrigin),
       next: [{ tool: 'poll_mint', arguments: { id } }, { tool: 'pay_mint', arguments: { id } }, { tool: 'inscribe_mint', arguments: { id } }] };
     journal.mark(reservationKey, 'submitted', { id }); journal.mark(key, 'submitted', result); return result;
-  } catch (error) { journal.mark(key, 'unknown'); throw error; }
+  } catch (error) {
+    // The gateway answers a request it already holds with its state, so this refusal means it never took this
+    // signed request and never will: the saved request is finished and a new click signs a fresh one.
+    const expired = error.code === 'financial_request_expired' && !journal.get(reservationKey);
+    journal.mark(key, expired ? 'rejected' : 'unknown', expired ? { reason: 'financial_request_expired' } : null); throw error;
+  }
 }

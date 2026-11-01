@@ -143,7 +143,13 @@ export class DashboardState {
   }
   savedMints() {
     return this.journal.db.prepare("SELECT id FROM actions WHERE scope=? AND id LIKE 'mint/%' AND id NOT LIKE '%/reservation-v2' ORDER BY rowid DESC")
-      .all(this.journal.scope).map(({ id }) => this.journal.get(id)).filter(row => row.body?.request);
+      .all(this.journal.scope).map(({ id }) => this.journal.get(id)).filter(row => row.body?.request && !(row.state === 'rejected' && row.result?.reason === 'financial_request_expired'));
+  }
+  // Saved requests of this block that expired before the gateway took them; each later click signs anew.
+  expiredSlot(slot) {
+    return this.journal.db.prepare("SELECT id FROM actions WHERE scope=? AND id LIKE 'mint/%' AND id NOT LIKE '%/reservation-v2' AND state='rejected'")
+      .all(this.journal.scope).map(({ id }) => this.journal.get(id)).filter(row => row.body?.request && row.result?.reason === 'financial_request_expired' &&
+        sameSlot(row.body.request, slot) && (row.body.request.deployment ?? null) === (slot.deployment ?? null)).length;
   }
   savedSlot(slot) { return this.savedMints().find(row => sameSlot(row.body.request, slot) && (row.body.request.deployment ?? null) === (slot.deployment ?? null)); }
   idOf(row) { return financialMintId(this.agent.network, row.body.request); }
@@ -432,7 +438,7 @@ export class DashboardState {
     }
     dashboardCheck(false, 'saved_mint_intent_unavailable', 409);
   }
-  async mintNow(slot) {
+  async mintNow(slot, retried = false) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
     if (slot.deployment !== undefined) dashboardCheck(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(slot.deployment), 'invalid_deployment');
     const debug = process.env.DMW_DASHBOARD_DEBUG === '1', readsAt = Date.now();
@@ -457,9 +463,16 @@ export class DashboardState {
     const body = old?.body;
     dashboardCheck(!body || body.receiver === payout && body.payer === payout && body.kind === 'tap', 'saved_payout_changed', 409);
     const args = old ? this.savedArguments(old, slot) : {
-      actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '')).slice(0, 48),
+      actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '')).slice(0, 48) +
+        (this.expiredSlot(slot) ? '-' + this.expiredSlot(slot) : ''),
       asset: slot.asset, block: String(slot.block), ...(slot.deployment === undefined ? {} : { deployment: slot.deployment }), amount: String(c.find.count), receiver: payout, payer: payout, kind: 'tap', compound: false };
-    const result = await runTool(this.context, 'mint_on_chain', args);
+    let result;
+    try { result = await runTool(this.context, 'mint_on_chain', args); }
+    catch (error) {
+      // A saved request that expired before the gateway took it is retired; sign a fresh one once.
+      if (old && !retried && /financial_request_expired/.test(error.code ?? error.message)) return this.mintNow(slot, true);
+      throw error;
+    }
     const saved = this.savedSlot(slot), id = saved ? this.idOf(saved) : result.request?.id ?? result.request?.requestId;
     if (!requestId(id)) return { state: result.state, signed: result.signed === true, deploymentLink: result.deploymentLink ?? null };
     // A delayed status read must never erase a successfully saved signature.
