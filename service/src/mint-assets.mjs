@@ -55,7 +55,13 @@ export function selectedMintScope(store, asset, deployment, height) {
   const generation = store.get('accountRecords', 'fd/external/' + rules.hashObject(deployment));
   const row = generation && store.get('accountRecords', 'fd/' + generation);
   const catalog = patternCatalogId(asset), ledger = catalog && store.get('patternsByAsset', catalog)?.legacy?.asset || asset;
-  check(row?.asset === ledger && row.deployment === deployment, 'financial_deployment_pending', 409);
+  if (!row) {
+    // A registered additional ticker gets its Trac record with its first mint; until then nothing is minted into it.
+    const registered = store.get('publicTickerDeployments', deployment);
+    check([asset, ledger].includes(registered?.asset), 'financial_deployment_pending', 409);
+    return rules.perTickerSupplyActive(height) ? deployment : null;
+  }
+  check(row.asset === ledger && row.deployment === deployment, 'financial_deployment_pending', 409);
   return rules.tickerSupplyScope(row, height);
 }
 export function acceptedPlotStatus(store, asset, block, scope = null) {

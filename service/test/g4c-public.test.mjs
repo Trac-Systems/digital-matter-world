@@ -170,8 +170,11 @@ test('queued corrections fence prior owners and registry refresh remains bounded
     assert.equal((await api.read('/agents/' + address)).discoveryCount, '0');
     let revision = 1, visits = 0;
     const registry = new PublicRegistry({ store, rows: 1, registry: async () => ({ revision, settings: { pageRows: 10 },
-      page: (_, { after, limit }) => { assert.equal(limit, 1); visits++; return ['p2:0', 'p2:1'].filter(id => id > after).slice(0, limit).map(id => ({ id, value: { id: 'verified', generation: 1, suspended: revision === 2 } })); } }) });
+      page: (space, { after, limit }) => {
+        if (space.startsWith('deployments/')) return space === 'deployments/p2:0' && !after ? [{ id: rules.hash('extra') + 'i0', value: { id: rules.hash('extra') + 'i0' } }] : [];
+        assert.equal(limit, 1); visits++; return ['p2:0', 'p2:1'].filter(id => id > after).slice(0, limit).map(id => ({ id, value: { id: 'verified', generation: 1, suspended: revision === 2 } })); } }) });
     await registry.tick(); assert.equal(store.count('publicDeployments'), 1);
+    assert.equal(store.get('publicTickerDeployments', rules.hash('extra') + 'i0').asset, 'p2:0');
     await registry.tick(); await registry.tick(); await registry.tick(); assert.equal(visits, 3);
     revision = 2; await registry.tick(); assert.equal(store.get('publicDeployments', 'p2:0').suspended, true);
     assert.notEqual(store.get('publicDeployments', 'p2:1').registryRevision, store.get('meta', 'publicRegistryRevision'));
@@ -262,6 +265,11 @@ test('mint rights and block detail retain official status while an additional ti
     await store.put('minted', rules.mintPlotKey(asset, '1'), { id: rules.hash('official-mint') });
     assert.equal((await right()).allowed, false); assert.equal((await right(deployment)).minted.id, mint);
     await assert.rejects(right(rules.hash('unregistered') + 'i0'), /financial_deployment_pending/);
+    // A registered ticker without its first mint yet has every block open.
+    const unopened = rules.hash('unopened') + 'i0';
+    await store.put('publicTickerDeployments', unopened, { asset, registryRevision: '1' });
+    const fresh = await right(unopened); assert.equal(fresh.allowed, true); assert.equal(fresh.minted, null); assert.equal(fresh.pending, null);
+    await assert.rejects(right(unopened.replace(/^./, c => c === 'a' ? 'b' : 'a')), /financial_deployment_pending/);
   } finally { await store.close(); }
 });
 
