@@ -68,7 +68,7 @@ No layout, CSS or browser flow is changed. Designer-facing additions:
 ## Settings and release preparation
 
 `deployerShareBps` is a new optional settings group, absent/zero by default.
-The owner's proposed 500 is an operator settings-successor choice, never a code
+A share such as 500 is an operator settings-successor choice, never a code
 default. `--deployer-share-bps` sets it; `--legacy-deploy-payout-min-atoms` sets
 the shared native TAP payout minimum. Positive shares require a positive minimum.
 Validation requires deployer + legacy share <= find burn and deployer <= compound
