@@ -136,21 +136,22 @@ export async function checkBitcoinFunds({ provider, address, requiredSats, estim
   return { available, needed, coins };
 }
 
-export async function bitcoinFeeRate(fetchImpl = fetch, signal) {
+// `fast`: TAP Wallet's fee bar offers mempool.space's rates; the fast one is the most a preset choice pays.
+export async function bitcoinFeeRate(fetchImpl = fetch, signal, { fast = false } = {}) {
   const fees = await jsonRead(fetchImpl, 'https://mempool.space/api/v1/fees/recommended', signal);
   requireValue(Number.isFinite(fees?.halfHourFee) && fees.halfHourFee >= 1 && fees.halfHourFee <= 1000, 'invalid Bitcoin fee estimate');
-  return fees.halfHourFee;
+  return fast ? Math.max(fees.halfHourFee, Number.isFinite(fees.fastestFee) && fees.fastestFee <= 1000 ? fees.fastestFee : 0) : fees.halfHourFee;
 }
 
 // TAP Wallet creates a funding transaction, then an inscriber commit/reveal.
 // Budget the cardinal inputs actually needed (largest coins first), P2TR outputs, postage, and generous signed
-// JSON overhead. Round UP to whole sat/vB and retain the wallet's initial 5 sat/vB.
+// JSON overhead, at the fee rate the wallet offers (rounded UP to whole sat/vB).
 export function tapBitcoinEstimate({ message, coins, feeRate, extraOutputs = [], postage = 546 }) {
   requireValue(Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= 1000, 'invalid Bitcoin fee estimate');
   const payloadBytes = new TextEncoder().encode(JSON.stringify(message)).length + 1024;
   const commitVbytes = 12 + 58 + 2 * 43;
   const revealVbytes = 200 + Math.ceil(payloadBytes / 4);
-  const rate = BigInt(Math.ceil(Math.max(5, feeRate)));
+  const rate = BigInt(Math.ceil(feeRate));
   const fixed = integer(postage) + extraOutputs.reduce((sum, out) => sum + integer(out.satoshis), 0n);
   const values = coins.map(coin => BigInt(coin.satoshi)).sort((a, b) => (a < b) - (a > b));
   const need = inputs => BigInt(12 + inputs * 58 + (2 + extraOutputs.length) * 43 + commitVbytes + revealVbytes) * rate + fixed;
@@ -182,7 +183,7 @@ export async function checkTapFunds({ provider, address, network, items = [], ac
   }
   const coins = await cardinalCoins(provider, address, { timeoutMs, fetchImpl });
   const requiredSats = await readFunds('Bitcoin fee estimate', address, async signal => tapBitcoinEstimate({
-    message: message ?? { items, actions }, coins, extraOutputs, feeRate: await bitcoinFeeRate(fetchImpl, signal),
+    message: message ?? { items, actions }, coins, extraOutputs, feeRate: await bitcoinFeeRate(fetchImpl, signal, { fast: true }),
   }), timeoutMs);
   return checkBitcoinFunds({ provider, address, coins, requiredSats, estimated: true });
 }
