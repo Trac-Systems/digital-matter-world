@@ -267,6 +267,8 @@ test('My agent sends units on Trac: labelled rows and a pasted list, one review,
   await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
   await page.goto(dashboard.loginLink);
   await page.waitForURL(dashboard.origin + '/me');
+  // Units on Trac starts collapsed under its header.
+  await page.getByRole('button', { name: 'Show Units on Trac', exact: true }).click();
   const send = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Send units on Trac' }) });
   const receive = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Your Trac address' }) });
   const shot = async (name, locator) => { if (shots) { await locator.evaluate(el => el.scrollIntoView({ block: 'center' })); await locator.screenshot({ path: `${shots}/send-${name}-${width}.png` }); } };
@@ -333,6 +335,7 @@ test('My agent shows TNK apart from units: balance, fee and funding address; one
   await page.goto(dashboard.loginLink);
   await page.waitForURL(dashboard.origin + '/me');
   const section = name => page.locator('section.panel').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await page.getByRole('button', { name: 'Show TNK', exact: true }).click();
   const card = section('TNK (Trac network gas)'), send = section('Send TNK'), recent = section('Recent TNK sends');
   const shot = async (name, locator) => { if (shots) { await locator.evaluate(el => el.scrollIntoView({ block: 'center' })); await locator.screenshot({ path: `${shots}/tnk-${name}-${width}.png` }); } };
   await card.getByText('10 TNK', { exact: true }).waitFor();
@@ -409,6 +412,7 @@ async function craftPage(t, setup = () => {}) {
   await page.waitForURL(dashboard.origin + '/me');
   const section = name => page.locator('section.panel').filter({ has: page.getByRole('heading', { name, exact: true }) });
   const shot = async (name, locator) => { if (shots) { await locator.evaluate(el => el.scrollIntoView({ block: 'center' })); await locator.screenshot({ path: `${shots}/craft-${name}-${width}.png` }); } };
+  await page.getByRole('button', { name: 'Show Compounds & crafting', exact: true }).click();
   return { f, page, errors, section, shot, previews, crafts, events, sha, state, made };
 }
 
@@ -416,7 +420,7 @@ test('My agent: with units of one pattern only, Craft explains that a second pat
   const { page, errors, section, shot } = await craftPage(t, f => f.balances.delete('p2:2'));
   const craft = section('Craft a compound');
   await craft.getByText('You need units of at least two patterns to craft — claim blocks of another pattern first.').waitFor();
-  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true);
+  assert.equal(await craft.getByRole('checkbox', { name: /Florite/ }).isDisabled(), true);
   await craft.getByText('These units become craftable at the compound upgrade activation height.', { exact: false }).waitFor();
   await shot('empty', craft);
   assert.equal(await page.getByRole('button', { name: 'Review craft' }).isDisabled(), true);
@@ -428,7 +432,7 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   const craft = section('Craft a compound');
   await craft.getByRole('checkbox', { name: /dmwnullspar/ }).waitFor();
   await craft.getByText('Charge 1 · Spectrum: nonce · Generation 0 · a pattern · 40 known blocks').waitFor();
-  assert.equal(await craft.getByRole('checkbox', { name: /dmwflorite/ }).isDisabled(), true, 'legacy crafting waits for activation');
+  assert.equal(await craft.getByRole('checkbox', { name: /Florite/ }).isDisabled(), true, 'legacy crafting waits for activation');
   await craft.getByRole('checkbox', { name: /dmwnullspar/ }).check();
   await craft.getByRole('checkbox', { name: /dmwmuffinite/ }).check();
   await shot('picker', craft);
@@ -471,6 +475,7 @@ test('My agent crafts: ingredients by name, Resonance explained, preview before 
   await assertReferences(page, ['dmwnullspar', 'dmwmuffinite', 'Nullspar + Muffinite fusion']);
   assert.equal(await mine.getByRole('link', { name: 'Nullspar + Muffinite fusion' }).getAttribute('href'), '/compound/c2:' + 'ef'.repeat(32));
   // The new compound is offered under Send units with its label.
+  await page.getByRole('button', { name: 'Show Units on Trac', exact: true }).click();
   const unit = section('Send units on Trac').getByRole('combobox', { name: 'Units, row 1' });
   await assertEventually(async () => (await unit.locator('option').allTextContents()).some(o => o.startsWith('Nullspar + Muffinite fusion')));
   assert.equal(crafts.length, 1);
@@ -484,10 +489,151 @@ test('My agent enables florite after activation and says when a craft adds units
   const original = state.preview;
   state.preview = async args => { const result = await original(args); result.result.existing = true; return result; };
   const craft = section('Craft a compound');
-  const florite = craft.getByRole('checkbox', { name: /dmwflorite/ });
+  const florite = craft.getByRole('checkbox', { name: /Florite/ });
   await florite.waitFor(); assert.equal(await florite.isDisabled(), false);
   await florite.check(); await craft.getByRole('checkbox', { name: /dmwnullspar/ }).check();
   await craft.getByText('Adds 1 units to Florite + Nullspar fusion', { exact: true }).waitFor();
   assert.deepEqual(previews.at(-1).inputs, [['p0', '1'], ['p2:1', '1']]);
+  assert.deepEqual(errors, []);
+});
+
+// My agent's layout: claims, open requests and patterns first; compounds, units on Trac and TNK collapsed under one header each.
+test('My agent: order of sections, collapsed groups with summaries, remembered and auto-opened; patterns search and pages; claims page size', async t => {
+  const f = await dashboardFixture(t, { http: true, site: true }), owner = f.agent.owner, settingsHash = f.claims[0].settingsHash;
+  for (let n = 2; n <= 15; n++) {
+    f.patterns.push({ number: String(n), asset: `p2:${n}`, name: `dmwpat${n}`, tier: 2 });
+    f.discoveries.push({ number: String(n), asset: `p2:${n}`, name: `dmwpat${n}`, tier: 2, discoverer: owner, state: 'accepted' });
+  }
+  for (const block of ['1', '2', '3', '4', '5', '6', '7', '8', '9', '13', '14', '15', '16', '17']) f.claims.push({ asset: 'p2:1', block, count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  const { nativeTnk } = await import('../lib/tnk-runtime.mjs'), { fixtureBus } = await import('./fixtures/tnk-adapter.mjs'), { testWallet } = await import('./helpers.mjs');
+  Object.assign(f.agent.trac, nativeTnk(fixtureBus(testWallet()).bus));
+  const dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
+  const width = Number(process.env.DMW_DASHBOARD_WIDTH ?? 1280), shots = process.env.DMW_DASHBOARD_SHOTS;
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const section = name => page.locator('section.panel').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  const toggle = (verb, name) => page.getByRole('button', { name: `${verb} ${name}`, exact: true });
+  const headings = () => page.locator('main section.panel > header h2').evaluateAll(list => list.filter(h => h.offsetParent).map(h => h.textContent));
+  // Nothing on My agent reaches past the page's own gutters; wide tables and tabs scroll inside their own box. The site's top bar is measured apart.
+  const noSideScroll = () => page.evaluate(() => { const pg = document.querySelector('main .page'), box = pg.getBoundingClientRect(), pad = parseFloat(getComputedStyle(pg).paddingRight);
+    return [...pg.querySelectorAll('*')].every(e => !e.offsetParent || e.parentElement.closest('.tablewrap, .tabs') || e.getBoundingClientRect().right <= Math.min(box.right - pad, innerWidth) + 1); });
+  const topbar = () => page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  const patterns = section('Your patterns'), claims = section('Claimed blocks you may mint');
+  await claims.getByRole('tab', { name: 'All · 16' }).waitFor();
+  await patterns.locator('tbody tr').first().waitFor();
+  await section('TNK').getByText('Balance 10 TNK', { exact: true }).waitFor();
+  assert.deepEqual(await headings(), ['Claimed blocks you may mint', 'Open requests', 'Bitmap links', 'Your patterns', 'Compounds & crafting', 'Units on Trac', 'TNK']);
+  for (const name of ['Compounds & crafting', 'Units on Trac', 'TNK']) assert.equal(await toggle('Show', name).getAttribute('aria-expanded'), 'false');
+  for (const name of ['Craft a compound', 'Your compounds', 'Recent crafts', 'Send units on Trac', 'Your Trac address', 'Send TNK', 'Recent TNK sends']) assert.equal(await section(name).isVisible(), false, name);
+  // Summaries while collapsed: compounds, the agent's address (short, linked) and the TNK balance.
+  await section('Compounds & crafting').getByText('No compounds yet', { exact: true }).waitFor();
+  assert.equal(await section('Units on Trac').locator(`a[href="/agents/${f.agent.address}"]`).count(), 1);
+  // Claimed blocks: twelve per page; the rest on the next.
+  assert.equal(await claims.locator('tbody tr').count(), 12);
+  await claims.getByRole('button', { name: 'Next page' }).click();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 4);
+  await claims.getByRole('button', { name: 'First page' }).click();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 12);
+  // Your patterns: ten per page, a search over name, key and ticker.
+  assert.equal(await patterns.locator('tbody tr').count(), 10);
+  await patterns.getByText('1–10 of 15', { exact: true }).waitFor();
+  assert.equal(await patterns.getByRole('button', { name: 'Previous page' }).isDisabled(), true);
+  await patterns.getByRole('button', { name: 'Next page' }).click();
+  await patterns.getByText('11–15 of 15', { exact: true }).waitFor();
+  assert.equal(await patterns.locator('tbody tr').count(), 5);
+  const search = patterns.getByRole('searchbox', { name: 'Search your patterns' });
+  await search.fill('dmwpat1');
+  await assertEventually(async () => (await patterns.locator('tbody tr').count()) === 6);
+  assert.equal(await patterns.locator('.pager-foot').count(), 0, 'one page: no pager');
+  await search.fill('#7');
+  await assertEventually(async () => (await patterns.locator('tbody tr').allTextContents()).join() .includes('dmwpat7') && await patterns.locator('tbody tr').count() === 1);
+  await search.fill('nothing here');
+  await patterns.getByText('No pattern matches “nothing here”.', { exact: true }).waitFor();
+  await search.fill('');
+  await patterns.getByText('1–10 of 15', { exact: true }).waitFor();
+  assert.equal(await noSideScroll(), true);
+  if (shots) { console.log('page width', width, await topbar()); await page.screenshot({ path: `${shots}/me-collapsed-${width}.png`, fullPage: true }); }
+  // Opened sections show their panels and stay open after a reload.
+  await toggle('Show', 'TNK').click();
+  await section('Send TNK').waitFor();
+  assert.equal(await toggle('Hide', 'TNK').getAttribute('aria-expanded'), 'true');
+  assert.equal(await noSideScroll(), true);
+  if (shots) await page.screenshot({ path: `${shots}/me-tnk-open-${width}.png`, fullPage: true });
+  await page.reload();
+  await section('Send TNK').waitFor();
+  assert.equal(await section('Craft a compound').isVisible(), false);
+  // A running craft opens its section by itself, without remembering it as the user's choice.
+  await page.route('**/api/craft', async route => {
+    const response = await route.fetch(), body = await response.json();
+    body.crafts = [{ id: 'craft-1', kind: 'craft', recipe: 'fusion', state: 'received', signed: true, createdAt: Date.now(), label: 'Test + Pat fusion', inputs: [{ asset: 'p2:1', amount: '1', name: 'dmwtest' }] }, ...body.crafts];
+    return route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await section('Recent crafts').getByText('Sent to the gateway. Confirms with the next Bitcoin block.', { exact: true }).waitFor();
+  await section('Compounds & crafting').getByText('No compounds yet · 1 craft in progress', { exact: true }).waitFor();
+  assert.equal(await toggle('Hide', 'Compounds & crafting').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem('dmw.dashboard.agent.open'))), { tnk: true });
+  // Without localStorage the page still works, collapsed.
+  await page.unroute('**/api/craft');
+  await page.addInitScript(() => Object.defineProperty(window, 'localStorage', { get() { throw Error('blocked'); } }));
+  await page.reload();
+  await section('Your patterns').locator('tbody tr').first().waitFor();
+  assert.equal(await section('Send TNK').isVisible(), false);
+  await toggle('Show', 'Units on Trac').click();
+  await section('Your Trac address').getByText(f.agent.address).waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test('My agent: a pattern with several tickers gets Mint into above its blocks; each Mint names and sends the chosen ticker', async t => {
+  const f = await dashboardFixture(t, { http: true, site: true }), dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
+  const owner = f.agent.owner, settingsHash = f.claims[0].settingsHash, extra = 'ab'.repeat(32) + 'i0';
+  f.patterns.push({ number: '3', asset: 'p2:3', name: 'dmwother', tier: 2 });
+  f.claims.push({ asset: 'p2:3', block: '9', count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  f.balances.set('p2:3', { amount: '100', current: true });
+  const tickerRows = { 'p2:1': [{ ticker: 'dmt-test', tick: 'test', ordinal: '1', deploymentId: 'cd'.repeat(32) + 'i0', unitsMinted: '0' },
+    { ticker: 'dmt-second', tick: 'second', ordinal: '2', deploymentId: extra, unitsMinted: '0' }],
+    'p2:3': [{ ticker: 'dmt-dmwother', tick: 'dmwother', ordinal: '1', deploymentId: 'ef'.repeat(32) + 'i0', unitsMinted: '0' }] };
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  const page = await browser.newPage({ viewport: { width: Number(process.env.DMW_DASHBOARD_WIDTH ?? 1280), height: 900 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const minted = [];
+  await page.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== dashboard.origin) return route.abort();
+    const asset = decodeURIComponent(url.pathname.match(/^\/assets\/([^/]+)\/tickers$/)?.[1] ?? '');
+    if (tickerRows[asset]) return route.fulfill({ json: { asset, catalogAsset: asset, rows: tickerRows[asset] } });
+    if (url.pathname === '/api/mint') { minted.push(route.request().postDataJSON()); return route.fulfill({ json: { state: 'request_pending' } }); }
+    return route.continue();
+  });
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const claims = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Claimed blocks you may mint' }) });
+  await claims.getByRole('tab', { name: 'All · 3' }).waitFor();
+  // All patterns, or a pattern with one ticker: no picker, plain Mint.
+  assert.equal(await claims.getByText('Mint into', { exact: true }).isVisible(), false);
+  await claims.getByRole('tab', { name: 'dmwother · 1' }).click();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 1);
+  assert.equal(await claims.getByText('Mint into', { exact: true }).isVisible(), false);
+  // Several tickers: the picker sits above the blocks, and every Mint says where it goes.
+  await claims.getByRole('tab', { name: 'Test · 2' }).click();
+  const picker = claims.getByRole('combobox', { name: 'Ticker' });
+  await picker.waitFor();
+  assert.equal(await claims.getByText('Your mints go into this ticker. The rewards are the same whichever ticker.').isVisible(), true);
+  await picker.selectOption(extra);
+  await claims.getByRole('button', { name: 'Mint into second' }).first().waitFor();
+  assert.equal(await claims.getByRole('button', { name: 'Mint into second' }).count(), 2);
+  await claims.getByRole('button', { name: 'Mint into second' }).first().click();
+  await assertEventually(async () => minted.length === 1);
+  assert.equal(minted[0].deployment, extra); assert.equal(minted[0].asset, 'p2:1');
+  // Back to the official ticker: plain Mint, no deployment sent.
+  await picker.selectOption('');
+  await claims.getByRole('button', { name: 'Mint', exact: true }).first().waitFor();
+  await claims.getByRole('button', { name: 'Mint', exact: true }).first().click();
+  await assertEventually(async () => minted.length === 2);
+  assert.equal(minted[1].deployment, undefined);
   assert.deepEqual(errors, []);
 });

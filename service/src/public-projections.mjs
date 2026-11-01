@@ -112,7 +112,7 @@ const stateOf = store => store.get('meta', 'ruleState');
 const clocks = store => ({ tip: rules.decimalV2(store.get('meta', 'head')?.tip ?? stateOf(store).counted), counted: rules.decimalV2(stateOf(store).counted) });
 export function publicProjectionRevision(store, input) {
   const url = new URL(input, 'http://localhost'), path = decodeURIComponent(url.pathname);
-  const sources = { '/patterns': ['catalogPatterns'], '/table': ['catalogPatterns'], '/compounds': ['catalogTypes'], '/agents': ['catalogAgents'],
+  const sources = { '/patterns': ['catalogPatterns', 'items/patterns/'], '/table': ['catalogPatterns', 'items/patterns/'], '/compounds': ['catalogTypes'], '/agents': ['catalogAgents'],
     '/finds': ['finds'], '/feed': ['publicEvents'], '/events': ['publicEvents'], '/receipts': ['receiptObservations'], '/records/batches': ['batches'], '/window-eligibility': ['windowEligibility'] };
   let scopes = sources[path], clock = false, match;
   if (path.startsWith('/payouts/')) scopes = [{ beneficiaries: 'payoutTotals', owed: 'commissionOwed', paid: 'payoutPaid' }[path.slice(9)] ?? 'payoutTotals'];

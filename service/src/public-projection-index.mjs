@@ -6,6 +6,7 @@ import { bumpProjection, projectionStatement } from './projection-state.mjs';
 import { rankingSchema, rankFind } from './public-rankings.mjs';
 import { publicMintTargetVisible } from './public-mint-privacy.mjs';
 import { patternSymbolSchema, assignPatternSymbol, patternSymbol } from './pattern-symbols.mjs';
+import { patternTotalsSchema, patternTotals, projectPatternMint } from './pattern-totals.mjs';
 export const PUBLIC_SORTS = {
   patterns: 'number name tier rarity supply minted madeReal discoverer', compounds: 'id name tier recipe supply madeReal firstMaker rank',
   agents: 'finds address discoveries crafts mints links', finds: 'block asset pattern count finder findHeight',
@@ -22,6 +23,7 @@ const numeric = new Set('number tier rarity supply minted madeReal finds discove
 export function publicProjectionSchema(db) {
   rankingSchema(db);
   patternSymbolSchema(db);
+  patternTotalsSchema(db);
   db.exec(`CREATE TABLE IF NOT EXISTS publicItemCountsV2(kind TEXT,scope TEXT,n TEXT,PRIMARY KEY(kind,scope)) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS publicItemsV2(kind TEXT,scope TEXT,id TEXT,value TEXT,position TEXT,owner TEXT,asset TEXT,block TEXT,state TEXT,PRIMARY KEY(kind,scope,id)) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS publicItemsV2Page ON publicItemsV2(kind,scope,position,id);
@@ -120,7 +122,16 @@ export function projectPublicRecord(store, op, previous, { rebuild = false } = {
     projectionStatement(db, `UPDATE publicBlocksV2 SET ${field}=${field}+? WHERE heightKey=?`).run(delta, k);
   };
   if (op.space.startsWith('discoveriesByAgent/')) item('discoveries', op.space.slice(19), id, row && { ...row, asset: id, state: 'accepted' });
-  if (op.space === 'catalogPatterns') item('patterns', '', id, row && { ...row, asset: id, rarity: row.knownMatchCount, countMeaning: 'verified_submitted_blocks' }, row ? rules.uintKeyV2(rules.decimalV2(row.number)) : id);
+  const patternItem = (asset, pattern) => item('patterns', '', asset, pattern && { ...pattern, asset,
+    rarity: pattern.knownMatchCount, countMeaning: 'verified_submitted_blocks',
+    ...patternTotals(store, asset, pattern, op.space === 'publicSupply' ? op : undefined) },
+    pattern ? rules.uintKeyV2(rules.decimalV2(pattern.number)) : asset);
+  if (op.space === 'catalogPatterns') patternItem(id, row);
+  if (op.space === 'publicSupply' || op.space === 'minted') {
+    const asset = op.space === 'minted' ? projectPatternMint(store, id, row) : patternCatalogId(id);
+    const pattern = asset && store.get('catalogPatterns', asset);
+    if (pattern) patternItem(asset, pattern);
+  }
   if (op.space === 'catalogTypes') item('compounds', '', id, row);
   if (op.space === 'catalogAgents') item('agents', '', id, row && { ...row, finds: row.findCount, discoveries: row.discoveryCount,
     crafts: row.craftCount ?? '0', mints: row.mintCount ?? '0', links: row.linkCount ?? '0' }, row ? rules.uintKeyV2(rules.decimalV2(row.findCount)) : id);

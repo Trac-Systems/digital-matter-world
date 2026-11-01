@@ -420,3 +420,34 @@ a.btn { text-decoration: none; }
 @media (max-width: 640px) { .public-mints table.t th { white-space: normal; } }
 /* Phones: long names and headers wrap inside their cells so every number column stays on screen. */
 @media (max-width: 640px) { table.t th, table.t td > span:has(> .swatch) { white-space: normal; } }
+/* About page: topic links, numbered steps and the how-it-works diagram (inline SVG, colours from the tokens above). */
+.page.about [id] { scroll-margin-top: 70px; }
+.about-topics { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; }
+.about-topics .pill { height: 28px; padding: 0 11px; font-size: 13px; text-decoration: none; }
+.about-topics .pill:hover { color: var(--ink); border-color: var(--ink-3); }
+.about-steps { list-style: none; margin: 14px 0 18px; padding: 0; display: grid; gap: 12px; }
+.about-steps li { display: flex; gap: 12px; align-items: flex-start; line-height: 1.6; }
+.about-steps .n { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--ink); font: 500 12px var(--mono); }
+.about-flow { margin: 18px 0; }
+.about-flow svg { display: block; width: 100%; height: auto; }
+.about-flow .fl-narrow { display: none; max-width: 440px; }
+.about-flow text { font-family: var(--sans); font-size: 13px; fill: var(--ink-2); }
+.about-flow .fl-box { fill: var(--sheet); stroke: var(--rule); }
+.about-flow .fl-bitcoin .fl-box { stroke: var(--mint); }
+.about-flow .fl-n { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.about-flow .fl-nt { font: 500 12px var(--mono); fill: var(--ink); text-anchor: middle; }
+.about-flow .fl-k { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
+.about-flow .fl-t { font-size: 14px; font-weight: 700; fill: var(--ink); }
+.about-flow .fl-p { font: 500 13px var(--mono); fill: var(--ink); }
+.about-flow .fl-a { fill: none; stroke: var(--ink-3); stroke-width: 1.5; }
+.about-flow .fl-ah { fill: var(--ink-3); }
+.about-flow .fl-bar { fill: none; stroke: var(--ink); }
+.about-flow .fl-s { stroke: var(--sheet); }
+.about-flow .fl-sw { stroke: var(--ink); stroke-opacity: 0.25; }
+.about-flow .fl-finder { fill: var(--good); }
+.about-flow .fl-landowner { fill: var(--info); }
+.about-flow .fl-discoverer { fill: #9A72C8; }
+.about-flow .fl-burn { fill: var(--ink); }
+.about-flow .fl-treasury { fill: var(--ink-2); }
+@media (max-width: 760px) { .about-flow .fl-wide { display: none; } .about-flow .fl-narrow { display: block; } }
+@media (max-width: 640px) { .about-flow, .about-topics { margin-left: 4px; margin-right: 4px; } .about-steps li { gap: 10px; } }

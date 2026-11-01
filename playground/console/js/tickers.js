@@ -11,7 +11,7 @@ import { get, store } from './api.js';
 import { tap } from './money.js';
 import { validateChosenTicker, validateOfficialTicker } from '../../../rules/src/ticker-grammar.js';
 
-export const SAME_REWARDS = 'Units go to the ticker you choose. The rewards are the same whichever ticker.';
+export const SAME_REWARDS = 'Your mints go into this ticker. The rewards are the same whichever ticker.';
 export const OFFICIAL_FIRST = 'The official token is deployed first. Once it exists, anyone can deploy another ticker for it.';
 // Plain words for the gateway's ticker refusals.
 export const TICKER_WORDS = {

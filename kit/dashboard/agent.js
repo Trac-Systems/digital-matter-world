@@ -6,9 +6,11 @@ import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral, INFLIGHT_TEXT, INFLIGHT_PAYMENT_TEXT, inflightLine } from '/web/console/js/words.js';
 import { store, site } from '/web/console/js/api.js';
 import { feePrice } from '/web/console/js/money.js';
-import { tickerList, tickerChoice, deployTickerForm, officialTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
+import { tickers, tickerList, tickerChoice, deployTickerForm, officialTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
+// Claimed blocks per page: short enough that Open requests and Your patterns follow without a long scroll.
+const CLAIMS_PAGE = 12;
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
 
 async function api(path, body) {
@@ -155,13 +157,15 @@ export function mount(el) {
   let page = 1, mintable = null, open = null, more = { claims: false, requests: false }, info = null;
   // claimAsset: the pattern filter above the claims table (the gateway's id for it); undefined shows all.
   let patterns = null, claimAsset;
-  const patternList = h('div'), filter = h('div'), claimsPanel = h('div', { style: { scrollMarginTop: '72px' } });
+  const patternList = h('div'), filter = h('div'), mintInto = h('div'), claimsPanel = h('div', { style: { scrollMarginTop: '72px' } });
   // Tickers of one pattern or compound, opened from its row: its tokens on TAP, the ticker its mints go to
   // and the way to deploy another. tickerPicks: the picked ticker per asset (Official unless picked).
   const tickerPicks = new Map(), patternTickers = h('div'), compoundTickers = h('div');
   let lastClaims = null;
-  const choiceOf = asset => {
-    if (!tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { single: 'Official ticker. ' + SAME_REWARDS, onChange: () => { if (!asset.startsWith('c')) pick(asset); drawCompounds(); } }));
+  // A fresh picker reads the current ticker list, so a ticker deployed since the page opened appears; it keeps the choice.
+  const choiceOf = (asset, { fresh = false } = {}) => {
+    if (fresh || !tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { initial: tickerPicks.get(asset)?.value() ?? null, ...(asset.startsWith('c') ? { single: 'Official ticker. ' + SAME_REWARDS } : {}),
+      onChange: () => { if (asset.startsWith('c')) drawCompounds(); else { cursor = undefined; page = 1; act('Loading…', loadClaims); } } }));
     return tickerPicks.get(asset);
   };
   const tickersButton = (asset, name, box, compound) => whenTickers(asset, h('button.btn.sm.ghost', { type: 'button', onclick: () => {
@@ -169,10 +173,19 @@ export function mount(el) {
     clear(box, h('div', { style: { borderTop: '1px solid var(--rule-2)' } },
       h('div.section-label', {}, assetLink(asset, name), ' · Tokens on TAP'), tickerList(asset, { label: false }),
       h('div.stack', { style: { gap: '12px', padding: '10px 14px 14px' } },
-        h('div', {}, h('div.small.muted', { style: { marginBottom: '4px' } }, compound ? 'Make real into' : 'Mint into'), choice.el),
-        deployTickerForm(asset, { compound, request: ticker => api('/api/deploy-ticker', { asset, ticker }), open: job => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id })) }))));
+        compound ? h('div', {}, h('div.small.muted', { style: { marginBottom: '4px' } }, 'Make real into'), choice.el)
+          : h('div.row', {}, h('button.btn.sm.primary', { type: 'button', onclick: () => showClaims({ id: asset }) }, 'Mint into a ticker'),
+            h('span.small.muted', {}, 'Choose the ticker above the blocks you may mint.')),
+        deployToggle(asset, compound))));
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } }, 'Tickers'));
+  // Deploying another ticker stays behind its own button until asked for.
+  const deployToggle = (asset, compound) => {
+    const box = h('div');
+    clear(box, h('button.btn.sm.ghost', { type: 'button', onclick: () => clear(box, deployTickerForm(asset, { compound,
+      request: ticker => api('/api/deploy-ticker', { asset, ticker }), open: job => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id })) })) }, 'Deploy your own ticker'));
+    return box;
+  };
   const act = async (label, fn) => {
     if (busy) return; busy = true; if (label) say(label, 'busy');
     try { await fn(); if (label && note.textContent === label) clear(note); } catch (error) { say(sendWords(error.message), 'bad'); } finally { busy = false; }
@@ -210,8 +223,7 @@ export function mount(el) {
       { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', blockLink(r.block))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${fmtInt(r.count)} / ${fmtInt(r.balance)}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
       { key: 'state', label: 'Who may mint', render: r => h('div', {}, pill(words(r.eligibility ?? r.state), r.canMint ? 'good' : r.reason ? 'warn' : ''), r.reason ? h('div.small.muted', {}, r.reason === 'insufficient_balance' ? `Needs ${fmtInt(r.count)} units, you hold ${fmtInt(r.balance)}` : words(r.reason)) : null) },
-      { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, 'Mint'),
-          tickerPicks.get(r.asset)?.label() ? h('div.small.muted', {}, 'into ', h('a.mono', { href: assetHref(r.asset) }, tickerPicks.get(r.asset).label())) : null)
+      { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, tickerPicks.get(r.asset)?.label() ? 'Mint into ' + tickerPicks.get(r.asset).label() : 'Mint'))
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
     ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));
@@ -219,7 +231,16 @@ export function mount(el) {
       h('button.btn.sm.ghost', { disabled: !cursor, onclick: () => { cursor = undefined; page = 1; act('Loading…', loadClaims); } }, 'First page'),
       h('button.btn.sm.ghost', { disabled: !next, onclick: () => { cursor = next; page++; act('Loading…', loadClaims); } }, 'Next page'));
   };
-  const pick = asset => { claimAsset = asset; cursor = undefined; page = 1; drawFilter(); act('Loading…', loadClaims); };
+  const pick = asset => { claimAsset = asset; cursor = undefined; page = 1; drawFilter(); drawMintInto(); act('Loading…', loadClaims); };
+  // "Mint into": shown only for one chosen pattern with several tickers; every Mint below goes into that ticker.
+  const drawMintInto = () => {
+    if (!claimAsset) { clear(mintInto); return; }
+    const asset = claimAsset, choice = choiceOf(asset, { fresh: true });
+    const box = h('div', { hidden: true, style: { padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+      h('div.small.muted', { style: { marginBottom: '4px' } }, 'Mint into'), choice.el);
+    clear(mintInto, box);
+    tickers(asset).then(rows => { if (claimAsset === asset && rows?.length > 1) box.hidden = false; });
+  };
   // Pattern tabs above the claims table, each with its unminted claim count.
   const drawFilter = () => {
     const shown = (patterns ?? []).filter(p => p.claims > 0 || p.id === claimAsset);
@@ -230,30 +251,45 @@ export function mount(el) {
   };
   const showClaims = p => { pick(p.id); claimsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   // Your patterns: one row per pattern the agent discovered or holds claims in, with its next deployment step.
-  const drawPatterns = data => {
-    patterns = data.patterns; drawFilter();
-    clear(patternList, patterns.length ? table(patterns, [
+  // The server returns all of them in one read (at most a few dozen): search and pages work on that list, no further reads.
+  let patternsMore = false, patternQuery = '', patternPage = 0;
+  const PATTERN_PAGE = 10;
+  const patternSearch = input({ type: 'search', placeholder: 'Search patterns', 'aria-label': 'Search your patterns', style: { width: '180px', height: '30px' },
+    oninput: e => { patternQuery = e.target.value; patternPage = 0; drawPatternList(); } });
+  const patternMatches = p => { const q = patternQuery.trim().toLowerCase();
+    return !q || [nameOf(p.asset, p.name), p.name, p.asset, unitKey(p.asset), p.ticker].some(v => typeof v === 'string' && v.toLowerCase().includes(q)); };
+  const drawPatterns = data => { patterns = data.patterns; patternsMore = !!data.more; drawFilter(); drawPatternList(); };
+  const drawPatternList = () => {
+    const found = patterns.filter(patternMatches), pages = Math.max(1, Math.ceil(found.length / PATTERN_PAGE));
+    patternPage = Math.min(patternPage, pages - 1);
+    const shown = found.slice(patternPage * PATTERN_PAGE, (patternPage + 1) * PATTERN_PAGE);
+    clear(patternList, shown.length ? table(shown, [
       { key: 'name', label: 'Pattern', render: p => h('div', {}, h('strong', {}, matter(p.asset, p.name)),
-        h('div.small.muted', {}, h('span.mono', {}, unitKey(p.asset)), p.amountMode === 'field-value' ? ' · field value ' : ' ', p.tier ? tierBadge(p.tier) : null), p.discovered ? h('div.small.muted', {}, 'discovered by your agent') : null) },
+        h('div.small.muted', {}, h('span.mono', {}, unitKey(p.asset)), p.amountMode === 'field-value' ? ' · field value ' : ' ', p.tier ? tierBadge(p.tier) : null, p.discovered ? ' · discovered by your agent' : null)) },
       // Each next step sits under its state, so a phone shows it without scrolling sideways.
       // During the discoverer's week only the discoverer deploys; the deploy inscription stays with whoever deploys.
       { key: 'token', label: 'Token', render: p => { const week = p.deployer?.onlyDiscoverer ? p.deployer : null, waits = week && !p.ownWeek && p.token !== 'unknown';
+        // One line for the state and ticker, one for what comes next.
         return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-          p.inflight ? pill(INFLIGHT_TEXT, 'info') : pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''), p.ticker ? h('div.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(p.asset) }, p.ticker)) : null,
-          p.inflight ? h('div.small.muted', {}, inflightLine(p.inflight)) : TOKEN_NOTE[p.token] && !waits ? h('div.small.muted', {}, TOKEN_NOTE[p.token]) : null,
-          week ? h('div.small.muted', {}, p.ownWeek ? 'Only you, its discoverer, can deploy it until block ' : 'Only its discoverer can deploy it until block ', blockLink(week.until), p.ownWeek ? '. After that anyone can.' : '. After that you can.')
-            : p.deployer ? h('div.small.muted', {}, 'Anyone can deploy it now.') : null,
+          h('div.row', { style: { gap: '6px' } }, p.inflight ? pill(INFLIGHT_TEXT, 'info') : pill(TOKEN[p.token]?.[0] ?? words(p.token), TOKEN[p.token]?.[1] ?? ''),
+            p.ticker ? h('span.small.muted', {}, 'Ticker ', h('a.mono', { href: assetHref(p.asset) }, p.ticker)) : null),
+          p.inflight ? h('div.small.muted', {}, inflightLine(p.inflight)) : TOKEN_NOTE[p.token] && !waits || week || p.deployer ? h('div.small.muted', {},
+            TOKEN_NOTE[p.token] && !waits ? TOKEN_NOTE[p.token] + (week || p.deployer ? ' ' : '') : '',
+            week ? [p.ownWeek ? 'Only you, its discoverer, can deploy it until block ' : 'Only its discoverer can deploy it until block ', blockLink(week.until), p.ownWeek ? '. After that anyone can.' : '. After that you can.']
+              : p.deployer ? 'Anyone can deploy it now.' : null) : null,
           p.deploymentLink ? waits ? h('button.btn.sm', { disabled: true, title: `Only its discoverer, until block ${week.until}` }, 'Deploy pattern')
             : h(p.token === 'unknown' || p.inflight ? 'a.btn.sm.ghost' : 'a.btn.sm.primary', { href: localPath(p.deploymentLink) },
               p.inflight || p.token === 'unknown' ? 'Open deployment' : p.token === 'inscribed' ? 'Continue deployment' : 'Deploy pattern') : null,
-          p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null,
           p.token === 'deployed' ? tickersButton(p.asset, nameOf(p.asset, p.name), patternTickers, false) : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-        h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null,
+        h('div.row', { style: { gap: '6px' } }, h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null),
         // Its official blocks are minted; another ticker can still mint them.
         p.otherTickers ? h('div.small.muted', {}, 'In the official ticker. Choose another ticker under Tickers.') : null) },
-    ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
-    if (data.more) patternList.append(h('div.empty.small', {}, 'Showing the first patterns only.'));
+    ], { sortable: false }) : h('div.empty', {}, patterns.length ? `No pattern matches “${patternQuery.trim()}”.` : 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
+    if (found.length > PATTERN_PAGE) patternList.append(h('div.pager-foot', {}, h('span.pager-total', {}, `${patternPage * PATTERN_PAGE + 1}–${patternPage * PATTERN_PAGE + shown.length} of ${found.length}`),
+      h('button.btn.sm.ghost', { disabled: !patternPage, onclick: () => { patternPage--; drawPatternList(); } }, 'Previous page'),
+      h('button.btn.sm.ghost', { disabled: patternPage >= pages - 1, onclick: () => { patternPage++; drawPatternList(); } }, 'Next page')));
+    if (patternsMore) patternList.append(h('div.empty.small', {}, 'Showing the first patterns only.'));
     patternList.append(patternTickers);
   };
   const requestPager = h('div.pager-foot');
@@ -301,7 +337,7 @@ export function mount(el) {
   }
   async function loadClaims() {
     let data;
-    try { data = await api('/api/claims?' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}), ...(claimAsset ? { asset: claimAsset } : {}), ...(tickerPicks.get(claimAsset)?.value() ? { deployment: tickerPicks.get(claimAsset).value() } : {}) })); }
+    try { data = await api('/api/claims?' + new URLSearchParams({ limit: String(CLAIMS_PAGE), ...(cursor ? { cursor } : {}), ...(claimAsset ? { asset: claimAsset } : {}), ...(tickerPicks.get(claimAsset)?.value() ? { deployment: tickerPicks.get(claimAsset).value() } : {}) })); }
     catch (error) { if (cursor && /cursor_stale/.test(error.message)) { cursor = undefined; page = 1; return loadClaims(); } throw error; }
     if (!stopped) drawClaims(data);
   }
@@ -441,16 +477,19 @@ export function mount(el) {
   // The agent's one trac1… address: it receives units and TNK alike.
   const addressBox = () => [h('div.mono', { style: { wordBreak: 'break-all', padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: 'var(--paper)' } }, h('a', { href: site.href('agents', { a: info.address }) }, info.address)),
     h('div.row', { style: { marginTop: '10px' } }, h('button.btn.sm', { onclick: () => copy(info.address) }, 'Copy address'))];
-  const drawReceive = () => info && clear(receiveBody,
-    h('p.muted', { style: { margin: '0 0 10px' } }, 'Other players send units to this address on the Trac network. It is not a Bitcoin address: minted Bitcoin tokens go to your payout TAP wallet.'),
-    ...addressBox());
+  const drawReceive = () => {
+    if (!info) return;
+    clear(receiveBody, h('p.muted', { style: { margin: '0 0 10px' } }, 'Other players send units to this address on the Trac network. It is not a Bitcoin address: minted Bitcoin tokens go to your payout TAP wallet.'),
+      ...addressBox());
+    drawTracSummary();
+  };
   // A refresh redraws the form only when the units changed and nobody types in it.
   async function loadUnits(force = false) {
     const data = await api('/api/units'); if (stopped) return;
     units = data.units; const key = JSON.stringify(units);
     if (force || key !== unitsKey && !sendBody.contains(document.activeElement)) { unitsKey = key; drawSend(); }
   }
-  async function loadSends() { const data = await api('/api/sends'); if (!stopped) { sends = data; drawSends(); } }
+  async function loadSends() { const data = await api('/api/sends'); if (!stopped) { sends = data; drawSends(); drawTracSummary(); } }
   const sendsActive = () => sends?.sends.some(s => s.running || s.groups.some(g => ['sending', 'received', 'waiting'].includes(g.state)));
   // TNK (Trac network gas): balance, fee, funding address, and one send at a
   // time → review in plain words → Send → Pending → Confirmed.
@@ -544,10 +583,10 @@ export function mount(el) {
   let tnkKey = '';
   async function loadTnk(force = false) {
     const data = await api('/api/tnk'); if (stopped) return;
-    tnk = data; drawTnkCard(); const key = JSON.stringify(data);
+    tnk = data; drawTnkCard(); drawTnkSummary(); const key = JSON.stringify(data);
     if (force || key !== tnkKey && !tnkBody.contains(document.activeElement)) { tnkKey = key; drawTnkSend(); }
   }
-  async function loadTnkSends() { const data = await api('/api/tnk-sends'); if (!stopped) { tnkSends = data; drawTnkSends(); } }
+  async function loadTnkSends() { const data = await api('/api/tnk-sends'); if (!stopped) { tnkSends = data; drawTnkSends(); drawTnkSummary(); } }
   const tnkActive = () => tnkSends?.sends.some(s => ['sending', 'sent', 'pending'].includes(s.state));
   // Craft: pick ingredients → recipe → live preview from the gateway's
   // verified proof → review in plain words → the agent signs → progress.
@@ -563,22 +602,22 @@ export function mount(el) {
     if (list.length < 2) return { ok: false, why: 'Choose two ingredients first.' };
     const charges = list.map(i => i.properties?.charge);
     if (charges.some(c => !Number.isSafeInteger(c))) return { ok: true };
-    return new Set(charges).size === 1 ? { ok: true } : { ok: false, why: 'Not possible here: ' + list.map(i => `${i.name} has charge ${i.properties.charge}`).join(', ') + '. Resonance needs the same charge on every ingredient.' };
+    return new Set(charges).size === 1 ? { ok: true } : { ok: false, why: 'Not possible here: ' + list.map(i => `${nameOf(i.asset, i.name)} has charge ${i.properties.charge}`).join(', ') + '. Resonance needs the same charge on every ingredient.' };
   };
   const propLine = i => i.properties ? [`Charge ${i.properties.charge}`, `Spectrum: ${spectrumText(i.properties.spectrum)}`, `Generation ${generationText(i.properties.generation)}`,
     i.properties.matches ? `${i.properties.matches} known blocks` : null].filter(Boolean).join(' · ') : 'Properties are read from the catalog.';
   const ingredientRow = (i, n) => {
     const on = picked.has(i.asset), usable = i.craftable && BigInt(i.available) > 0n;
-    const amount = h('input.input.mono', { value: on ? picked.get(i.asset) : '1', inputmode: 'numeric', disabled: !on, 'aria-label': `Units of ${i.name} to use`, style: { width: '88px' },
+    const amount = h('input.input.mono', { value: on ? picked.get(i.asset) : '1', inputmode: 'numeric', disabled: !on, 'aria-label': `Units of ${nameOf(i.asset, i.name)} to use`, style: { width: '88px' },
       oninput: e => { picked.set(i.asset, e.target.value); schedulePreview(); } });
-    const max = h('button.btn.sm.ghost', { type: 'button', disabled: !on, 'aria-label': `Use all ${fmtInt(i.available)} ${i.name}`, onclick: () => { picked.set(i.asset, i.available); amount.value = i.available; schedulePreview(); } }, 'Max');
+    const max = h('button.btn.sm.ghost', { type: 'button', disabled: !on, 'aria-label': `Use all ${fmtInt(i.available)} ${nameOf(i.asset, i.name)}`, onclick: () => { picked.set(i.asset, i.available); amount.value = i.available; schedulePreview(); } }, 'Max');
     const box = h('input', { type: 'checkbox', id: 'craft-use-' + i.asset, checked: on, disabled: !usable,
       onchange: e => { if (e.target.checked) picked.set(i.asset, amount.value.trim() || '1'); else picked.delete(i.asset); schedulePreview(); } });
     return h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '6px 12px', alignItems: 'center', padding: '10px 0',
       borderTop: n ? '1px solid var(--rule-2)' : '0', opacity: usable ? '1' : '0.55' } },
       h('label.check', { for: 'craft-use-' + i.asset, style: { alignItems: 'flex-start', cursor: usable ? 'pointer' : 'not-allowed', minWidth: 0 } }, box,
         h('span', { style: { minWidth: 0 } },
-          h('span', { style: { fontWeight: 700 } }, h('span.swatch', { style: { background: mineral(i.asset) } }), i.name), ' ', i.tier ? tierBadge(i.tier) : null,
+          h('span', { style: { fontWeight: 700 } }, h('span.swatch', { style: { background: mineral(i.asset) } }), nameOf(i.asset, i.name)), ' ', i.tier ? tierBadge(i.tier) : null,
           h('span.small.muted', {}, ' · ', `${fmtInt(i.available)} available`),
           h('div.small.muted', {}, i.craftable ? propLine(i) : craftWords(i.reason)))),
       usable ? h('div.row', { style: { flexWrap: 'nowrap', gap: '6px', opacity: on ? '1' : '0.45' } }, amount, max) : h('span'));
@@ -793,37 +832,78 @@ export function mount(el) {
     let data;
     try { data = await api('/api/craft'); } catch (error) { if (!stopped && !craft) clear(craftBody, h('div.callout.bad', {}, 'Could not load crafting: ' + craftWords(error.message))); return; }
     if (stopped) return;
-    craft = data; drawCrafts(); drawCompounds();
+    craft = data; drawCrafts(); drawCompounds(); drawCraftSummary();
     for (const asset of [...picked.keys()]) if (!ingredientOf(asset)?.craftable) picked.delete(asset);
     const key = JSON.stringify(craft.ingredients);
     if (force || key !== craftKey && !craftBody.contains(document.activeElement)) { craftKey = key; drawCraft(); }
     if (force && (craft.crafts.some(c => c.state === 'confirmed') || craft.compounds.length)) await loadUnits(true).catch(() => {});
   }
   const craftActive = () => craft?.crafts.some(c => ['crafting', 'received', 'waiting'].includes(c.state));
+  // Compounds, units on Trac and TNK: one panel header each that shows or hides its panels, with a one-line summary.
+  // Everything loads and refreshes while hidden, so the summaries stay current. The browser remembers what is open.
+  const OPEN_KEY = 'dmw.dashboard.agent.open';
+  const opened = (() => { try { const v = JSON.parse(localStorage.getItem(OPEN_KEY)); return v && typeof v === 'object' ? v : {}; } catch { return {}; } })();
+  const group = (id, title, ...content) => {
+    const summary = h('span.small.muted', { style: { minWidth: 0 } }), body = h('div.stack', { id: 'agent-' + id });
+    const button = h('button.btn.sm.ghost', { type: 'button', 'aria-controls': body.id, onclick: () => set(body.classList.contains('hidden')) });
+    // save: false when it opens by itself (a craft is running); only the user's choice is remembered.
+    const set = (on, save = true) => {
+      body.classList.toggle('hidden', !on); button.textContent = on ? 'Hide' : 'Show';
+      button.setAttribute('aria-expanded', String(on)); button.setAttribute('aria-label', `${on ? 'Hide' : 'Show'} ${title}`);
+      if (save) try { opened[id] = on; localStorage.setItem(OPEN_KEY, JSON.stringify(opened)); } catch { /* remembered for this page only */ }
+    };
+    set(opened[id] === true, false);
+    const el = h('div.stack', { 'data-group': id }, h('section.panel', {}, h('header', { style: { borderBottom: '0' } }, h('h2', {}, title), summary, h('div.grow'), button)), body);
+    body.append(...content);
+    return { el, summary, set, open: () => !body.classList.contains('hidden') };
+  };
+  const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+  const craftGroup = group('craft', 'Compounds & crafting',
+    h('div.grid.cols-main', { style: { alignItems: 'start' } },
+      panel('Craft a compound', craftBody, { tip: CRAFT_NOTE }),
+      panel('Your compounds', compoundsBody, { flush: true })),
+    clear(craftsPanel, panel('Recent crafts', craftsBody, { flush: true })));
+  const tracGroup = group('trac', 'Units on Trac',
+    h('div.grid.cols-main', { style: { alignItems: 'start' } },
+      panel('Send units on Trac', sendBody, { tip: TRAC_NOTE }),
+      panel('Your Trac address', receiveBody)),
+    clear(sendsPanel, panel('Recent sends on Trac', sendsBody, { flush: true })));
+  const tnkGroup = group('tnk', 'TNK',
+    h('div.grid.cols-main', { style: { alignItems: 'start' } },
+      panel('Send TNK', tnkBody, { tip: 'TNK is the Trac network’s own coin (gas) with real value. Each send costs a network fee. ' + TNK_NOTE }),
+      panel('TNK (Trac network gas)', tnkCard)),
+    clear(tnkSendsPanel, panel('Recent TNK sends', tnkSendsBody, { flush: true })));
+  // A running craft opens its section by itself, once per run: closing it again is respected until the next craft.
+  let craftRan = false;
+  const drawCraftSummary = () => {
+    const running = (craft?.crafts ?? []).filter(c => c.kind !== 'refine' && ['crafting', 'received', 'waiting'].includes(c.state)).length;
+    clear(craftGroup.summary, craft ? [craft.compounds.length ? plural(craft.compounds.length, 'compound') : 'No compounds yet', running ? ' · ' + plural(running, 'craft') + ' in progress' : ''] : null);
+    const active = !!craftActive();
+    if (active && !craftRan && !craftGroup.open()) craftGroup.set(true, false);
+    craftRan = active;
+  };
+  const drawTracSummary = () => {
+    const running = (sends?.sends ?? []).filter(s => s.running || s.groups.some(g => ['sending', 'received', 'waiting'].includes(g.state))).length;
+    clear(tracGroup.summary, info ? agentLink(info.address) : null, running ? ' · ' + plural(running, 'send') + ' in progress' : null);
+  };
+  const drawTnkSummary = () => {
+    const running = (tnkSends?.sends ?? []).filter(s => ['sending', 'sent', 'pending'].includes(s.state)).length;
+    clear(tnkGroup.summary, !tnk ? null : !tnk.ready ? 'TNK not readable right now' : tnk.accountExists ? 'Balance ' + tnkText(tnk.balanceTnk) : 'No TNK yet',
+      running ? ' · ' + plural(running, 'send') + ' in progress' : null);
+  };
   clear(claimsPanel, panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
-    'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, claims, pager), { flush: true }));
+    'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, mintInto, claims, pager), { flush: true }));
   clear(el, h('div.page', {},
-    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s patterns and claimed blocks, with one click to deploy or mint, compounds to craft, units to send on Trac, and its TNK. Everything else on this dashboard is the live site.'))),
+    h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s claimed blocks and patterns, with one click to mint or deploy, compounds to craft, units to send on Trac, and its TNK. Everything else on this dashboard is the live site.'))),
     h('div.stack', {}, note, profile,
-      panel('Your patterns', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
-        'Patterns your agent discovered or holds claims in. A new pattern is minted only after its token is deployed: inscribe the pattern, then deploy the token, each with your TAP Wallet.'), patternList), { flush: true }),
       claimsPanel,
-      h('div.grid.cols-main', { style: { alignItems: 'start' } },
-        panel('Craft a compound', craftBody, { tip: CRAFT_NOTE }),
-        panel('Your compounds', compoundsBody, { flush: true })),
-      clear(craftsPanel, panel('Recent crafts', craftsBody, { flush: true })),
-      h('div.grid.cols-main', { style: { alignItems: 'start' } },
-        panel('Send units on Trac', sendBody, { tip: TRAC_NOTE }),
-        panel('Your Trac address', receiveBody)),
-      clear(sendsPanel, panel('Recent sends on Trac', sendsBody, { flush: true })),
-      h('div.grid.cols-main', { style: { alignItems: 'start' } },
-        panel('Send TNK', tnkBody, { tip: 'TNK is the Trac network’s own coin (gas) with real value. Each send costs a network fee. ' + TNK_NOTE }),
-        panel('TNK (Trac network gas)', tnkCard)),
-      clear(tnkSendsPanel, panel('Recent TNK sends', tnkSendsBody, { flush: true })),
       h('div.grid.cols-main', {},
         panel('Open requests', h('div', {}, requests, requestPager), { flush: true }),
         panel('Bitmap links', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } }, 'Earn the Bitmap holder share for a block you hold as a .bitmap. ',
-          h('a.btn.sm.primary', { href: '/link#bitmap' }, 'Link a Bitmap')), links, linkPager), { flush: true })))));
+          h('a.btn.sm.primary', { href: '/link#bitmap' }, 'Link a Bitmap')), links, linkPager), { flush: true })),
+      panel('Your patterns', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+        'Patterns your agent discovered or holds claims in. A new pattern is minted only after its token is deployed: inscribe the pattern, then deploy the token, each with your TAP Wallet. Whoever deploys holds the deploy inscription and can add art to it later.'), patternList), { flush: true, actions: patternSearch }),
+      craftGroup.el, tracGroup.el, tnkGroup.el)));
   act('Loading your agent…', load).then(() => { if (!stopped && note.textContent === 'Loading your agent…') clear(note); });
   const timer = setInterval(() => { if (!busy && !document.hidden) load().catch(() => {}); }, 15000);
   // Sends in progress refresh faster: sent → confirmed in a batch.

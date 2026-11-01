@@ -12,7 +12,7 @@ import { publicIdentities } from '../../rules/src/trac-address.js';
 import { projectionFixture } from './store-projection-fixture.mjs';
 
 // Captured from the pre-optimization implementation (887ddff), then updated for
-// the additive public symbol field/index. Evidence roots and unrelated HTTP
+// the additive public symbol and pattern totals fields/indexes. Evidence roots and unrelated HTTP
 // response bytes remain identical to that fixture.
 test('projection updates, deletes and restart match the expected response bytes and durable state', async () => {
   const expected = JSON.parse(await readFile(new URL('./store-projection-fixture.json', import.meta.url)));

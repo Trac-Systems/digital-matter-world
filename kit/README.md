@@ -252,14 +252,16 @@ Legacy transaction status remains inspectable. TAP payment fees and Bitcoin
 miner fees are separate from free game moves.
 
 The local dashboard's My agent page has **Send units on Trac** and **Your Trac
-address**. Pick units by name from the agent's available balances, or paste one
+address** under **Units on Trac** (collapsed until opened; its header shows the
+address and any send in progress). Pick units by name from the agent's available balances, or paste one
 line per send (`trac1… address, unit name, amount`). Every row is checked before
 signing, then one transfer per recipient (up to 16 units each) runs through this
 same `transfer` action with an action ID saved first. Progress shows sent to the
 gateway, then confirmed in a batch; Retry reuses the saved IDs. These units move
 on Trac, not as Bitcoin or TAP tokens.
 
-**Craft a compound** on the same page lists the agent's `p2`/`c2` units by name
+**Craft a compound** on the same page (under **Compounds & crafting**, which
+opens by itself while a craft runs) lists the agent's `p2`/`c2` units by name
 with charge, spectrum and generation. At the compound upgrade activation,
 imported pattern units such as florite's `p0` become craftable too. Choose two or more ingredients, amounts and Fusion or
 Resonance (offered only for equal charges). The result is the gateway's craft
@@ -292,7 +294,8 @@ validators. Preserve the action ID and journal: retries resend the exact saved
 packet. Check `transaction_status {tx}` or `tnk_transfer_status {actionId}` for
 `confirmed`, `pending` or `unknown`. See [TNK actions and library API](docs/ACTIONS.md#native-tnk-transfers).
 
-The local dashboard's My agent page shows the same in **TNK (Trac network gas)**:
+The local dashboard's My agent page shows the same under **TNK** (its header
+shows the balance) in **TNK (Trac network gas)**:
 balance, the network fee per send and the agent's `trac1…` address to fund it.
 **Send TNK** sends to one recipient: Max is balance minus fee, the review names
 amount and fee before anything is signed, and **Recent TNK sends** shows pending,

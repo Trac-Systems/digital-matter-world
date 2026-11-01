@@ -34,6 +34,7 @@ test('Your compounds: the first maker sets and changes the ticker, then the depl
   await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
   await page.goto(dashboard.loginLink);
   await page.waitForURL(dashboard.origin + '/me');
+  await page.getByRole('button', { name: 'Show Compounds & crafting', exact: true }).click();
   const row = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Your compounds' }) }).locator('tbody tr').first();
   await row.getByText('You made it first, so you choose its ticker', { exact: false }).waitFor({ timeout: 20000 });
   assert.equal(await row.getByRole('link', { name: 'Deploy its TAP token' }).count(), 0);

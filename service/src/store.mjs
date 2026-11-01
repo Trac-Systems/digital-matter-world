@@ -16,6 +16,7 @@ import { R3_RESOURCES } from './r3-settings.mjs';
 import { projectionSchema, projectRevision, flushProjectionRevisions } from './projection-state.mjs';
 import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset, consumesPublicRecord, flushPublicItems } from './public-projection-index.mjs';
 import { patternSymbolFillSchema, fillPatternSymbols } from './pattern-symbol-fill.mjs';
+import { fillPatternTotals } from './pattern-totals-fill.mjs';
 const run = promisify(execFile);
 const identity = async pid => (await run('ps', ['-p', String(pid), '-o', 'lstart='])).stdout.trim();
 export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096 });
@@ -122,6 +123,7 @@ export class Store {
     // Startup holds the exclusive writer lock; each fill page commits its own
     // progress and yields, and subsequent opens check only the completion key.
     await fillPatternSymbols(this);
+    await fillPatternTotals(this);
     this.path = join(this.directory, 'pending.log'); this.fd = await open(this.path, 'a+', 0o600);
     const size = (await this.fd.stat()).size; let offset = 0, previous = null;
     const header = Buffer.alloc(36);

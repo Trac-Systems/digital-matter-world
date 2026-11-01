@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { splitFee, feeFor } from '../../../rules/src/fees.js';
-import { feePrice, feePolicyTip } from '../js/money.js';
+import { feePrice, feePolicyTip, tickerDeployPrice, tickerDeployBurnText } from '../js/money.js';
+import { MULTI_TICKER_HEIGHT } from '../../../rules/src/multi-ticker-activation.js';
 import { formatTap } from '../js/amount-format.js';
 import { MINT_DEFAULTS } from '../../../rules/src/mint-rights.js';
 import { PATTERN_LIMITS, TIER_THRESHOLDS, tierFor } from '../../../rules/src/patterns.js';
@@ -57,11 +58,15 @@ test('every rules number in About agrees with the rules library', () => {
   check(/reference target is US \$0\.50/, numbers(flat.targetUsd));
   check(/\| Make a found pattern real \|[^\n]+/, [1, 2, 3, 4, 5, ...tiers]);
   check(/\| Make a compound real \|[^\n]+/, []);
-  check(/\| Link a Bitmap \|[^\n]+/, []);
+  check(/\| Link a Bitmap, once \|[^\n]+/, []);
+  check(/\| Deploy an extra ticker \|[^\n]+/, []);
+  check(/\| Deploying an extra ticker \|[^\n]+/, []);
   check(/\| Bitmap link \| The Bitmap holder \|[^\n]+/, []);
   check(/from \d+ \(common\) to \d+ \(rarest\)/, tiers);
   check(/must match at least \d+ blocks in history/, [PATTERN_LIMITS.minMatchingBlocks]);
   check(/First [\d,]+ blocks \(about a week\) after the find/, [MINT_DEFAULTS.finderWindow]);
+  check(/For [\d,]+ blocks only the finder may mint/, [MINT_DEFAULTS.finderWindow]);
+  check(/for the next [\d,]+ blocks only it may mint/, [MINT_DEFAULTS.finderWindow]);
 
   const share = re => {
     const [values] = read(re);
@@ -73,7 +78,7 @@ test('every rules number in About agrees with the rules library', () => {
   const discoverer = share(/\| \d+ % \| The pattern's discoverer \|/);
   const burn = share(/\| \d+ % \| Burned \|/);
   const [compound] = read(/\| Making a compound real \|[^\n]+/);
-  const [link] = read(/\| Bitmap link \| – \|[^\n]+/);
+  const [link] = read(/\| Bitmap link, when it has a fee \| – \|[^\n]+/);
   assert.equal(compound.length, 3);
   assert.equal(link.length, 2);
 
@@ -106,7 +111,17 @@ test('every rules number in About agrees with the rules library', () => {
   check(/earn \d+ % of every mint from it/, [landowner]);
   check(/earns \d+ % of every mint of that pattern/, [discoverer]);
   check(/together with the \d+ % royalty/, [discoverer]);
-  check(/\| Finder \|[^\n]+/, [finder]);
+  check(/pays them \d+ % of every mint of it/, [discoverer]);
+  check(/you earn \d+ % of every mint on that block/, [landowner]);
+  check(/the Bitmap holder's \d+ % is burned too/, [landowner]);
+  // The diagram's split: one line per share, the treasury as the remainder.
+  check(/\n\d+ % \| Finder \| finder\n/, [finder]);
+  check(/\n\d+ % \| Bitmap holder of the block \| landowner\n/, [landowner]);
+  check(/\n\d+ % \| Pattern discoverer \| discoverer\n/, [discoverer]);
+  check(/\n\d+ % \| Burned \| burn\n/, [burn]);
+  assert.match(markdown, /\nrest \| Treasury \| treasury\n/);
+  assert.deepEqual(splitFee('100', { kind: 'find', linked: true, discovered: true }).treasury, String(100 - finder - landowner - discoverer - burn));
+  check(/\n\| Finder \|[^\n]+/, [finder]);
   check(/\| Discoverer \|[^\n]+/, [discoverer]);
   check(/\| First maker \| \d+ %[^\n]+/, [compound[0]]);
   check(/\| Bitmap holder \|[^\n]+/, [landowner]);
@@ -144,15 +159,20 @@ test('every rules number in About agrees with the rules library', () => {
   check(/Five committee signers[^\n]+?\d+ matching counts accept it/, [3]);
   check(/signed off by \d+ of \d+ committee signers/, [3, 5]);
   assert.deepEqual(read(/### \d+\./, 7).flat(), [1, 2, 3, 4, 5, 6, 7]);
+  // Step lists: with an agent, then without one.
+  assert.deepEqual(read(/\n\d+\. \*\*/, 10).flat(), [1, 2, 3, 4, 5, 6, 1, 2, 3, 4]);
   const unchecked = [...markdown.matchAll(/\b\d[\d,]*\b/g)].filter(m => !covered.some(([start, end]) => m.index >= start && m.index < end));
   assert.deepEqual(unchecked.map(m => ({ number: m[0], line: markdown.slice(0, m.index).split('\n').length })), [],
     'Every numeric literal must have a rules comparison or an explicit non-rule explanation');
 });
 
 test('About describes Bitmap earnings and open agent minting after the finder week', () => {
-  assert.match(markdown, /During the finder's week only the finder mints; afterwards any agent can/);
-  assert.match(markdown, /\| Bitmap holder \| 15 % of every mint from their linked block \|/);
-  assert.match(markdown, /\| After that, on linked land \| Any agent with enough units/);
+  assert.match(markdown, /During the finder's week only the finder mints; afterwards any agent with the units can, and so can anyone with TAP Wallet/);
+  assert.match(markdown, /\| Bitmap holder \| 15 % of every mint from their linked block, into every ticker, forever \|/);
+  assert.match(markdown, /\| After that \| Any agent with enough units of that pattern in their Trac balance, and anyone with TAP Wallet on the site \|/);
+  assert.match(markdown, /\| A block nobody has found \| Anyone with TAP Wallet on the site, a week after the pattern's release/);
+  // Bitmap holders no longer decide who mints after the finder's week (bitmapMintOpenHeight is live).
+  assert.doesNotMatch(markdown, /Bitmap holder only|on unlinked land|on linked land/);
   assert.doesNotMatch(markdown, /Only that Bitmap|right to decide who mints|mint rights after the finder/);
 });
 
@@ -163,4 +183,18 @@ test('zero Bitmap linking displays Free and leaves mint and compound prices unch
   assert.equal(feePrice(policy, 'compound'), '11.1 TAP');
   assert.match(feePolicyTip(policy), /Link: Free/);
   assert.equal(feePrice({ ...policy, feeSettings: { ...policy.feeSettings, link: 1 } }, 'link'), '11.1 TAP');
+});
+
+test('the extra ticker deploy price and burn share follow the live settings with the rules math', () => {
+  const status = { feePolicy: { baseFee: '11100000000000000000', unit: { currency: 'TAP', denomination: 'atomic', decimals: 18 } },
+    settings: { values: { tickerDeployMultiplier: 3, tickerDeployBurnBps: 5000 } } };
+  const atoms = feeFor('ticker', status.feePolicy.baseFee, 1, { tickerDeployMultiplier: 3 }, MULTI_TICKER_HEIGHT);
+  assert.equal(tickerDeployPrice(status), formatTap(atoms, 18));
+  assert.equal(tickerDeployPrice(status), '33.3 TAP');
+  assert.equal(tickerDeployBurnText(status), '50 %');
+  assert.equal(tickerDeployBurnText({ settings: { values: { tickerDeployBurnBps: 1250 } } }), '12.5 %');
+  assert.equal(tickerDeployPrice({ ...status, settings: { values: { tickerDeployMultiplier: 0 } } }), 'Free');
+  for (const broken of [null, {}, { feePolicy: status.feePolicy }, { ...status, feePolicy: { baseFee: '1.5' } }])
+    assert.equal(tickerDeployPrice(broken), 'the current fee');
+  assert.equal(tickerDeployBurnText(null), 'a part');
 });

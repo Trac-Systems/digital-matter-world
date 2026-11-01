@@ -202,13 +202,13 @@ test('About prices and the existing status cell follow the live policy and unava
   await p.goto(server.url + '/about', { waitUntil: 'domcontentloaded' });
   const prices = p.locator('article.about [data-fee-kind]');
   await prices.first().waitFor();
-  const fallback = Array(13).fill('current fee');
+  const fallback = Array(14).fill('current fee');
   assert.deepEqual(await prices.allTextContents(), fallback, 'placeholders render before status loads');
   assert.equal(await p.locator('article.about table').count(), 8);
   const firstArticle = await p.locator('article.about').elementHandle();
   release();
-  await p.waitForFunction(() => document.querySelector('[data-fee-kind]')?.textContent === '2,260 TAP');
-  assert.deepEqual(await prices.allTextContents(), ['2,260 TAP', '678 TAP', '226 TAP', '67.8 TAP', '22.6 TAP',
+  await p.waitForFunction(() => document.querySelectorAll('[data-fee-kind]')[1]?.textContent === '2,260 TAP');
+  assert.deepEqual(await prices.allTextContents(), ['22.6 TAP', '2,260 TAP', '678 TAP', '226 TAP', '67.8 TAP', '22.6 TAP',
     '22.6 TAP', '67.8 TAP', '226 TAP', '678 TAP', '2,260 TAP', '22.6 TAP', '22.6 TAP', '22.6 TAP']);
   const fee = p.locator('.strip .cell').filter({ hasText: 'Base fee' });
   assert.equal(await fee.locator('.v').innerText(), '22.6 TAP');
@@ -219,12 +219,12 @@ test('About prices and the existing status cell follow the live policy and unava
   });
   policy = { ...policy, baseFee: '2500000000000000000', feeSettings: { tierMultipliers: [2, 4, 6, 8, 12], compoundMinimum: 7, link: 5 } };
   await refresh();
-  assert.deepEqual(await prices.allTextContents(), ['30 TAP', '20 TAP', '15 TAP', '10 TAP', '5 TAP',
+  assert.deepEqual(await prices.allTextContents(), ['12.5 TAP', '30 TAP', '20 TAP', '15 TAP', '10 TAP', '5 TAP',
     '5 TAP', '10 TAP', '15 TAP', '20 TAP', '30 TAP', '17.5 TAP', '12.5 TAP', '12.5 TAP']);
   assert.equal(await firstArticle.evaluate(node => node === document.querySelector('article.about')), true, 'status updates preserve the article');
   policy = { ...policy, baseFee: '11142309577929313189', feeSettings: { tierMultipliers: [1, 1, 1, 1, 1], compoundMinimum: 1, link: 1 } };
   await refresh();
-  assert.deepEqual(await prices.allTextContents(), Array(13).fill('11.14230957 TAP'));
+  assert.deepEqual(await prices.allTextContents(), Array(14).fill('11.14230957 TAP'));
   assert.match(await fee.getAttribute('data-tip'), /Every pattern and compound mint: 11\.14230957 TAP; Bitmap link: 11\.14230957 TAP/);
   assert.equal(await firstArticle.evaluate(node => node === document.querySelector('article.about')), true, 'flat fee refresh preserves the layout');
   unavailable = true;

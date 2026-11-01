@@ -120,6 +120,18 @@ export function deployerSharePolicyText(status) {
   return `Each pattern and compound can have several tokens on TAP. Each has the full supply, and every mint pays the same rewards whichever ticker it goes to; ${share} % of each mint fee comes from the burn and goes to the holder of the minted ticker's deploy inscription, through the public payout ledger.`;
 }
 
+// Deploying an extra ticker: base fee × ticker multiplier, the same integer math as rules feeFor('ticker').
+export function tickerDeployPrice(status) {
+  const base = status?.feePolicy?.baseFee, multiplier = status?.settings?.values?.tickerDeployMultiplier;
+  if (typeof base !== 'string' || !/^(0|[1-9]\d*)$/.test(base) || !Number.isSafeInteger(multiplier) || multiplier < 0) return 'the current fee';
+  return multiplier === 0 ? 'Free' : tap((BigInt(base) * BigInt(multiplier)).toString(), status.feePolicy.unit);
+}
+export function tickerDeployBurnText(status) {
+  const bps = status?.settings?.values?.tickerDeployBurnBps;
+  if (!Number.isSafeInteger(bps) || bps < 0 || bps > 10000) return 'a part';
+  return String(Math.floor(bps / 100)) + (bps % 100 ? '.' + String(bps % 100).padStart(2, '0').replace(/0+$/, '') : '') + ' %';
+}
+
 export function legacyDeployPaymentText(status) {
   const amount = status?.split?.legacyDeploy, deployer = status?.split?.deployer;
   return (amount ? ` ${tap(amount, status.unit)} from this mint's burn is held in treasury for older deploy holders and paid through the payout ledger.` : '')

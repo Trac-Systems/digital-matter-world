@@ -9,7 +9,8 @@ export async function migratePublicProjections(store, { pageRows = 128 } = {}) {
   if (!Number.isSafeInteger(pageRows) || pageRows <= 0) throw Error('public_import_settings');
   let cursor = store.db.prepare('SELECT cursor FROM projectionControl WHERE id=1').get()?.cursor;
   if (!cursor) store.db.exec(`BEGIN IMMEDIATE; UPDATE projectionControl SET ready=0,cursor='["",""]' WHERE id=1;
-    DELETE FROM projectionPending; DELETE FROM projectionAttribution; DELETE FROM publicItemsV2; DELETE FROM publicItemCountsV2; DELETE FROM publicOrderV2; DELETE FROM publicBlocksV2; DELETE FROM publicRightsV2; DELETE FROM publicBalancesV2; DELETE FROM publicBitmapV2; DELETE FROM publicRanksV2; COMMIT`);
+    DELETE FROM projectionPending; DELETE FROM projectionAttribution; DELETE FROM publicItemsV2; DELETE FROM publicItemCountsV2; DELETE FROM publicOrderV2; DELETE FROM publicBlocksV2; DELETE FROM publicRightsV2; DELETE FROM publicBalancesV2; DELETE FROM publicBitmapV2; DELETE FROM publicRanksV2;
+    DELETE FROM publicPatternMintBlocks; DELETE FROM publicPatternMintCounts; COMMIT`);
   cursor = JSON.parse(cursor ?? '["",""]');
   // Header caches have no public projection handlers. Their canonical records
   // remain untouched; avoid parsing two lifetime header copies during rebuild.
