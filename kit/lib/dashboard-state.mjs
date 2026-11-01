@@ -256,6 +256,7 @@ export class DashboardState {
     return { asset: row.asset, block: String(row.block), ...(c.deployment ? { deployment: c.deployment } : {}), count: String(c.find.count),
       name: await this.name(row.asset, row.name ?? row.pattern?.name), minted, pending,
       payable: !minted && status?.payable === true, requestId: requestId(id) ? id : null,
+      bulkOrder: inOrder ? this.bulkHeld?.get(canonicalAsset(c.find.asset) + '/' + String(row.block)) ?? null : null,
       state: minted ? 'minted' : status?.state ?? (pending ? 'pending' : 'unminted'),
       canMint: !minted && !reason && (!saved || resume) && !status,
       reason, role: this.role(c), eligibility: { finder: 'own find', bitmap: 'Bitmap holder', public: 'units' }[this.role(c)],
@@ -525,10 +526,10 @@ export class DashboardState {
   }
   // Blocks in this agent's open bulk orders; their single Mint stays hidden until the order ends.
   bulkHeldBlocks() {
-    const held = new Set();
+    const held = new Map();
     for (const { value } of this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? AND live=1').all(this.journal.scope)) {
-      const terms = JSON.parse(value).quote?.terms;
-      for (const member of terms?.members ?? []) held.add(canonicalAsset(terms.asset) + '/' + member.block);
+      const row = JSON.parse(value), terms = row.quote?.terms;
+      for (const member of terms?.members ?? []) held.set(canonicalAsset(terms.asset) + '/' + member.block, row.orderId ?? null);
     }
     return held;
   }

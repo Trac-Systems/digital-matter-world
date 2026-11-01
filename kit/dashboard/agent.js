@@ -252,6 +252,7 @@ export function mount(el) {
       { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, minting.has(r.asset + '/' + r.block)
           ? h('button.btn.sm.primary.busy', { disabled: true }, 'Signing…')
           : h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, tickerPicks.get(r.asset)?.label() ? 'Mint into ' + tickerPicks.get(r.asset).label() : 'Mint'))
+        : r.bulkOrder ? h('a.btn.sm.ghost', { href: '/mint/bulk/' + r.bulkOrder }, 'Open order')
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
     ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));

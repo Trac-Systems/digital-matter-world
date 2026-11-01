@@ -143,16 +143,20 @@ export async function bitcoinFeeRate(fetchImpl = fetch, signal) {
 }
 
 // TAP Wallet creates a funding transaction, then an inscriber commit/reveal.
-// Budget all cardinal inputs, P2TR outputs, postage, and generous signed JSON
-// overhead. Round UP to whole sat/vB and retain the wallet's initial 5 sat/vB.
+// Budget the cardinal inputs actually needed (largest coins first), P2TR outputs, postage, and generous signed
+// JSON overhead. Round UP to whole sat/vB and retain the wallet's initial 5 sat/vB.
 export function tapBitcoinEstimate({ message, coins, feeRate, extraOutputs = [], postage = 546 }) {
   requireValue(Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= 1000, 'invalid Bitcoin fee estimate');
   const payloadBytes = new TextEncoder().encode(JSON.stringify(message)).length + 1024;
-  const fundingVbytes = 12 + Math.max(1, coins.length) * 58 + (2 + extraOutputs.length) * 43;
   const commitVbytes = 12 + 58 + 2 * 43;
   const revealVbytes = 200 + Math.ceil(payloadBytes / 4);
-  return BigInt(fundingVbytes + commitVbytes + revealVbytes) * BigInt(Math.ceil(Math.max(5, feeRate)))
-    + integer(postage) + extraOutputs.reduce((sum, out) => sum + integer(out.satoshis), 0n);
+  const rate = BigInt(Math.ceil(Math.max(5, feeRate)));
+  const fixed = integer(postage) + extraOutputs.reduce((sum, out) => sum + integer(out.satoshis), 0n);
+  const values = coins.map(coin => BigInt(coin.satoshi)).sort((a, b) => (a < b) - (a > b));
+  const need = inputs => BigInt(12 + inputs * 58 + (2 + extraOutputs.length) * 43 + commitVbytes + revealVbytes) * rate + fixed;
+  let sum = 0n;
+  for (let inputs = 1; inputs < values.length; inputs++) { sum += values[inputs - 1]; if (sum >= need(inputs)) return need(inputs); }
+  return need(Math.max(1, values.length));
 }
 
 export async function checkTapFunds({ provider, address, network, items = [], actions = [], message, extraOutputs = [], fetchImpl = fetch, timeoutMs, readerPath }) {
