@@ -43,7 +43,7 @@ const messages = {
   link_deadline: 'This link request has expired. Ask your agent for a new link request.',
   link_terms_conflict: 'This link payment was already prepared with different details. Continue in the browser that prepared it.',
   link_signature: 'The agent signature was not accepted. Ask your agent for a new link request.',
-  request_not_found: 'This request could not be found. Check the link with your agent.',
+  request_not_found: 'The server never received this request, so nothing was paid. Mint the block again from My agent.',
   mint_missing: 'This mint request could not be found. Check the link with your agent.',
   mint_expired: 'This mint request has expired. Ask your agent to check its status before creating a new request.',
   deployment_confirmations: 'Wait until the inscription is included in a Bitcoin block, then register the same receipt again.',

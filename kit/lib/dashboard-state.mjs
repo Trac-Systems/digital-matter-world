@@ -162,6 +162,15 @@ export class DashboardState {
   }
   savedSlot(slot) { return this.savedMints().find(row => sameSlot(row.body.request, slot) && (row.body.request.deployment ?? null) === (slot.deployment ?? null)); }
   idOf(row) { return financialMintId(this.agent.network, row.body.request); }
+  // A saved request that can never be paid: it expired before its reservation was accepted, or the gateway
+  // never received it and its signature window has passed. Nothing was paid; it is retired so Mint signs anew.
+  retireDead(row, status, error, counted) {
+    const dead = status?.state === 'expired' && status.reason === 'reservation_expired' ||
+      error === 'request_not_found' && counted !== undefined && BigInt(row.body.request.until) < BigInt(counted);
+    if (dead) this.journal.mark(row.id, 'rejected', { reason: 'financial_request_expired' });
+    return dead;
+  }
+  async countedHeight() { try { return String((await this.agent.trac.head()).counted); } catch { return undefined; } }
   async payout() {
     const binding = wireIdentities((await this.service.payoutBinding(this.agent.address, 'tap')).binding);
     dashboardCheck(binding, 'finder_address_missing', 409);
@@ -233,6 +242,7 @@ export class DashboardState {
     let status = null, statusError = null;
     if (requestId(id)) try { status = await this.status(id, row); } catch (error) { statusError = dashboardError(error); }
     if (statusError === 'not_your_request') { id = null; statusError = null; }
+    if (saved && this.retireDead(saved, status, statusError, this.claimCounted)) return this.claim(row, c, balance);
     // A saved request the gateway never took: Mint resumes it with the same signature.
     const resume = !!saved && !c.pending && statusError === 'request_not_found';
     if (resume) statusError = null;
@@ -260,7 +270,7 @@ export class DashboardState {
     dashboardCheck(!deployment || asset && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment), 'invalid_deployment');
     let position = claimCursor(cursor);
     const claims = [], balances = new Map();
-    this.bulkHeld = this.bulkHeldBlocks();
+    this.bulkHeld = this.bulkHeldBlocks(); this.claimCounted = await this.countedHeight();
     // The sources are disjoint: own finder-week rows, then other allowed and
     // blocked eligible rows. Each gateway cursor retains its filters/order.
     while (position && claims.length < limit) {
@@ -419,10 +429,11 @@ export class DashboardState {
   }
   async requests({ offset = 0, limit = 25 } = {}) {
     dashboardCheck(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
-    const saved = this.savedMints(), requests = [];
+    const saved = this.savedMints(), requests = [], counted = await this.countedHeight();
     for (const row of saved.slice(offset, offset + limit)) {
       const id = this.idOf(row); let status;
       try { status = await this.status(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
+      if (this.retireDead(row, status, status.error, counted)) continue;
       if (status.state !== 'minted') requests.push({ asset: row.body.request.asset, name: (await this.unitLabel(row.body.request.asset)).name, block: row.body.request.block, requestId: id,
         ...(row.body.request.deployment ? { deployment: row.body.request.deployment } : {}), state: status.state, payable: status.payable === true, error: status.error ?? null, inflight: sentOnBitcoin(status.inflight, ['payment', 'mint']),
         paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) });
@@ -462,6 +473,7 @@ export class DashboardState {
       try {
         const status = await this.status(id, slot);
         dashboardCheck(status.state !== 'minted', 'already_minted', 409);
+        if (old && !retried && this.retireDead(old, status)) return this.mintNow(slot, true);
         // An authorizing request still needs the original account signature.
         if (status.state !== 'authorizing') return { requestId: id, status, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin), replayed: true };
       } catch (error) { if (!(old && error.status === 404)) throw error; }

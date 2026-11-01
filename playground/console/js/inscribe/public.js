@@ -294,7 +294,10 @@ export function mount(root, { id, onPublicMint }) {
       ms && SENDER_STOPPED.includes(ms.state) && state === 'permit_issued' ? h('div.callout.warn', {}, NEEDS_USER, typeof ms.message === 'string' && ms.message.length <= 200 ? h('div.small', {}, ms.message) : null) : null,
       state === 'permit_issued' && !serverSends ? h('p.lead', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your permanent permit is ready. It has no expiry; you can inscribe when ready.') : null,
       state === 'minted' ? h('div.callout.good', {}, 'Minted. ', status.inscription ? ['Inscription ', hashEl(status.inscription)] : null) : null,
-      inflightNote(paymentSent, { detail: 'It is counted once Bitcoin confirms it; nothing else to do.' }));
+      inflightNote(paymentSent, { detail: 'It is counted once Bitcoin confirms it; nothing else to do.' }),
+      failed ? h('div.callout.bad', {}, state === 'expired' && status.reason === 'reservation_expired'
+        ? 'This request expired before Trac reserved it, so nothing was paid. Mint the block again from My agent.'
+        : 'This request has stopped (' + String(state).replace(/_/g, ' ') + ').') : null);
     const fees = status.missing.length ? table(status.missing, [
       { key: 'role', label: 'Fee', render: item => String(item.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
       { key: 'amount', label: 'Amount', num: true, render: item => h('span.mono', {}, tap(item.amount)) },

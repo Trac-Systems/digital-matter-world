@@ -1,5 +1,6 @@
 import { validateResourceDocument } from '../../rules/src/resource-settings.js';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
+import { ASSET_RESOURCES } from './asset-resources.mjs';
 // Legacy callers retain their defaults. Activated runtimes map the complete
 // operator document once; consensus limits never come from this local profile.
 export const R3_RESOURCES = Object.freeze({
@@ -30,7 +31,9 @@ export function runtimeResources(document, consensus) {
     ...(document.version >= 3 ? {
       source: { requestsPerSecond: v.sourceRps, timeoutMs: v.sourceTimeoutMs, retries: v.sourceRetries, maxQueue: v.sourceQueue,
         maxBytes: v.sourceResponseBytes, backoffMs: v.sourceBackoffMs, maxBackoffMs: v.sourceMaxBackoffMs },
-      assets: { activeMints: v.assetActiveMints, activeLinks: v.assetActiveLinks, mintsPerAgent: v.assetMintsPerAgent, linksPerAgent: v.assetLinksPerAgent,
+      // Open single mint requests per agent: the operator document's value, at least the gateway default (32), so
+      // unpaid requests don't stop an agent minting in parallel.
+      assets: { activeMints: v.assetActiveMints, activeLinks: v.assetActiveLinks, mintsPerAgent: Math.max(v.assetMintsPerAgent, ASSET_RESOURCES.mintsPerAgent), linksPerAgent: v.assetLinksPerAgent,
         ...(document.version >= 5 ? { publicMintsPerPayer: v.assetPublicMintsPerPayer, publicMintsPerIP: v.assetPublicMintsPerIP, publicMintStartsPerMinute: v.assetPublicMintStartsPerMinute } : {}),
         mintInputCapacity: v.assetInputCapacity, workPage: v.assetWorkPage, creditPage: v.assetCreditPage, outboxPage: v.outboxCapacity },
       lookups: { headerPageRows: v.headerPageSize, headerCachePages: v.headerCachePages, headerCacheKiB: v.sqliteCacheKiB, seedChunkRows: v.archiveWritePage },
