@@ -58,6 +58,11 @@ export function walletError(error, details = error) {
   const message = typeof error === 'string' ? error : error?.message;
   if (message === 'not_yet_public' && publicOpeningLabel(details)) return publicOpeningLabel(details) + '.';
   if (Object.hasOwn(messages, message)) return messages[message];
+  // Bitcoin node refusals and timeouts passed through by a wallet, in plain words.
+  if (typeof message === 'string' && /missingorspent|missing-inputs|inputs-missing/i.test(message))
+    return 'Nothing was paid. TAP Wallet tried to spend Bitcoin that your previous payment already used; that payment is still waiting for its block. Wait until it confirms (usually within 10 minutes), then press Pay again.';
+  if (typeof message === 'string' && /^(signal timed out|The operation timed out\.?|Request timed out)$/i.test(message.trim()))
+    return 'A service did not answer in time. Nothing new was sent; check your wallet, then try again.';
   if (typeof message === 'string' && message && !/^[a-z][a-z0-9_]{0,80}$/.test(message)) return message;
   return `The wallet or gateway request could not be completed${typeof message === 'string' && message ? ` (${message})` : ''}. Refresh its status before trying again.`;
 }

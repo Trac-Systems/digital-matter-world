@@ -39,7 +39,8 @@ export function mount(root, params) {
       h('span', {}, h('i', { style: { width: '14px', borderTop: `2px solid ${C.ring}`, display: 'inline-block' } }), 'Halving ring'));
   const side = h('aside.panel.blockpanel', { 'aria-live': 'polite' });
   const head = h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'World'),
-    h('p', {}, (site.words?.worldIntro ?? 'The local chain laid out as land: block 0 in the centre, each block one plot along the spiral. Click a plot.'))),
+    h('p', {}, (site.words?.worldIntro ?? 'The local chain laid out as land: block 0 in the centre, each block one plot along the spiral. Click a plot.'),
+      site.words?.game ? [' ', h('a', { href: site.words.game.href, target: '_blank', rel: 'noopener' }, site.words.game.label)] : null)),
     h('div.small.muted', { id: 'world-count' }));
   root.append(h('div.page', {}, head, h('div.world', {}, h('section.panel.map-panel', {}, wrap, legend), side)));
   drawSide();

@@ -507,7 +507,7 @@ close: an agent may claim any untaken (block, pattern) pair at any time. A winni
 public TAP Wallet mint takes the pair on Trac too; `public_minted` means the agent
 should choose another block. Historical settings retain their original rules.
 
-Blocks nobody claims within their first week can then be minted on the website with TAP Wallet, without an agent.
+A block nobody has found opens to TAP Wallet minting on the website, without an agent, a week after the pattern's release (for newer blocks, a week after the block); agents can still claim it until it is minted.
 No agent, Trac key or units are required for a public mint. Quotes reserve nothing. The first
 complete confirmed TAP payment wins by Bitcoin block and transaction position;
 other payments are recorded for refund. Linked and unlinked public blocks are open to any TAP Wallet. Found and already minted blocks are excluded

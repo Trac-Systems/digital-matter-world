@@ -36,6 +36,7 @@ import { createEthereum } from './ethereum.mjs';
 import { configuredTrac } from './trac.mjs';
 import { validateConfig, loadConfig, readSecret, readPrivateJSON } from './config.mjs';
 import { Store } from '../src/store.mjs';
+import { timeStep, addStep } from '../src/read-timing.mjs';
 import { preflightBatch } from '../../committee/signer/preflight.mjs';
 import { verifyMintCertificate } from '../../committee/signer/certificate.mjs';
 import { rules } from '../src/rules.mjs';
@@ -244,8 +245,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     },
     officialName: name => officialName(reads, store, name),
     async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId, selection) {
-      await reads.ensureRegistryAsset?.(asset, payoutSnapshot?.deploymentId ?? selection);
-      const registrations = await registry(), current = registrations.assets[asset];
+      await timeStep('ctx.ensureRegistry', reads.ensureRegistryAsset?.(asset, payoutSnapshot?.deploymentId ?? selection));
+      const registrations = await timeStep('ctx.registry', registry()), current = registrations.assets[asset];
       const chosen = selection || payoutSnapshot?.deploymentId;
       const registered = selectedDeployment(registrations, asset, chosen) ?? (payoutSnapshot?.deploymentId && typeof registrations.asset === 'function' ? registrations.asset(asset, payoutSnapshot.deploymentId) : payoutSnapshot?.deploymentId ? (registrations.generations?.[asset] ?? []).find(e => e.id === payoutSnapshot.deploymentId) : null);
       check(registered, 'asset_unregistered');
@@ -257,16 +258,16 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       }
       const catalogAsset = /^(p2:|c2:)/.test(asset) ? asset : config.v2 && patternCatalogId(asset);
       const named = catalogAsset?.startsWith('p2:') && !asset.startsWith('p2:') && await store.get('patternsByAsset', catalogAsset);
-      const provenance = /^(p2:|c2:)/.test(asset) || named?.legacy?.asset === asset ? await acceptedAssetProvenance({ store, reads, asset: catalogAsset, block }) : null;
+      const provenance = /^(p2:|c2:)/.test(asset) || named?.legacy?.asset === asset ? await timeStep('ctx.provenance', acceptedAssetProvenance({ store, reads, asset: catalogAsset, block })) : null;
       if (provenance?.pattern) check(asset === (provenance.pattern.legacy?.asset ?? catalogAsset), 'mint_asset_use_ledger');
       if (provenance?.pattern) check(registered.kind === 'dmt' && ['pat', 'fld', 'dt'].every(k => registered.pattern?.[k] === provenance.pattern[k]) &&
         (registered.pattern?.amountMode ?? 'count') === (provenance.pattern.amountMode ?? 'count'), 'asset_provenance_deployment');
       if (provenance?.compound) check(registered.kind === 'compound', 'asset_provenance_deployment');
       const indexTick = registered.indexTick ?? registered.tick;
-      const { deployment, authority } = await verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });
-      const auth = await content(registered.privilege), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), publicKey = recovered(authorityHash, auth.sig);
+      const { deployment, authority } = await timeStep('ctx.verifyDeployment', verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined }));
+      const auth = await timeStep('ctx.privilegeContent', content(registered.privilege)), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), publicKey = recovered(authorityHash, auth.sig);
       check(auth.hash === authorityHash && publicKey === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
-      const found = provenance ? provenance.find : registered.kind === 'dmt' ? await find(asset, block, registered.pattern, typeof viewOrKind === 'object' ? viewOrKind : undefined) : null;
+      const found = provenance ? provenance.find : registered.kind === 'dmt' ? await timeStep('ctx.find', find(asset, block, registered.pattern, typeof viewOrKind === 'object' ? viewOrKind : undefined)) : null;
       const live = payoutSnapshot || typeof viewOrKind === 'string' ? [] : (await Promise.all((await store.list('activeMints', { limit: limits.legacyActivePageRows })).map(r => store.get('mints', r.id)))).filter(r => r.request.asset === asset && r.request.block === block);
       const kinds = new Set(live.map(r => r.kind));
       const kind = payoutSnapshot ? JSON.parse(payoutSnapshot.scope)[3] : typeof viewOrKind === 'string' ? viewOrKind : kinds.size === 1 ? [...kinds][0] : registered.defaultPayKind ?? 'tap';
@@ -274,12 +275,12 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const destinations = registered[kind]; check(destinations, 'payment_destinations');
       const pattern = provenance ? provenance.pattern : config.v2 ? registered.pattern ?? await store.get('patternsByAsset', asset) : store instanceof EvidenceStore ? await store.get('patternsByAsset', asset) : (store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset);
       const payouts = { finder: null, firstMaker: null, discoverer: null, landowner: null };
-      const payout = async (agent, role) => { const proof = await bindings.resolve(agent, kind, payoutSnapshot, role); payouts[role] = proof?.id ?? null; return proof?.request.address ?? null; };
+      const payout = async (agent, role) => { const proof = await timeStep('ctx.payout', bindings.resolve(agent, kind, payoutSnapshot, role)); payouts[role] = proof?.id ?? null; return proof?.request.address ?? null; };
       let discoverer = null;
       if (pattern?.discoverer) {
         if (!provenance) {
         const provenance = await store.get('patternProvenance', asset); check(provenance, 'pattern_provenance_missing');
-        const accepted = (await audits(provenance)).flatMap(f => f.discoveries).find(d => d.record.number === pattern.number)?.record;
+        const accepted = (await timeStep('ctx.discoveryAudits', audits(provenance))).flatMap(f => f.discoveries).find(d => d.record.number === pattern.number)?.record;
         check(accepted?.discoverer === pattern.discoverer, 'discoverer_binding');
         }
         discoverer = await payout(pattern.discoverer, 'discoverer');
@@ -294,8 +295,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const address = maker ? await payout(maker, registered.kind === 'dmt' ? 'finder' : 'firstMaker') : null;
       const admission = admittedId ? await admittedMint({ store, reads, audits, network: config.network, id: admittedId }) : null;
       if (admission) check(admission.context.deployment.id === registered.id, 'mint_admission_deployment');
-      const link = admission ? admission.context.link : block === undefined ? null : await reads.link(block);
-      const holder = link ? admission ? admission.bitmap : await reads.bitmap(block) : null;
+      const link = admission ? admission.context.link : block === undefined ? null : await timeStep('ctx.link', reads.link(block));
+      const holder = link ? admission ? admission.bitmap : await timeStep('ctx.bitmap', reads.bitmap(block)) : null;
       if (payoutSnapshot?.mintOwnershipHash) check(mintOwnershipMatches(payoutSnapshot, { bitmap: holder, link, assetRevision: provenance?.revision }), 'quote_recipient_changed');
       const landownerAddress = holder ? kind === 'ethereum' ? await payout(holder.agent, 'landowner') : holder.address : null;
       return { ...feeSettingsField(payoutSnapshot ? payoutSnapshot.feeSettings : currentFee(registrations).feeSettings), deployment: { id: registered.id, ...(registered.officialDeployment ? { officialDeployment: registered.officialDeployment } : {}), generation: registered.generation ?? 1, privilege: registered.privilege, elementId: registered.elementId ?? deployment.elem ?? null, dt: registered.dt ?? deployment.dt ?? null, options: registered.options ?? {}, approval: registered.approval ?? null, kind: registered.kind, tick: registered.tick, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
@@ -368,7 +369,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   for (const name of ['bitmap', 'isMinted', 'mint', 'cancellation', 'assetContext', 'linkPayment']) {
     const original = reads[name];
     const atIndex = { bitmap: 1, isMinted: 3, mint: 1, cancellation: 1, assetContext: 2, linkPayment: 1 }[name];
-    reads[name] = (...args) => indexer.at(typeof args[atIndex] === 'object' ? args[atIndex] : undefined, () => original(...args));
+    reads[name] = (...args) => { const queued = Date.now();
+      return indexer.at(typeof args[atIndex] === 'object' ? args[atIndex] : undefined, () => { addStep('indexerWait.' + name, Date.now() - queued); return original(...args); }); };
   }
   const originalPayment = reads.payment; reads.payment = (...args) => indexer.at(undefined, () => originalPayment(...args));
   reads.tapPayment = (id, binding, at) => indexer.at(at, () => payment(id, binding, at));

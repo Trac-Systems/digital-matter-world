@@ -14,6 +14,7 @@ import { surplusCreditId } from '../../contract/payment-pages.js';
 import { deploymentAssetId, mintAssetDefinition } from './mint-assets.mjs';
 import { PublicMints } from './public-mints.mjs';
 import { KeyedWork, parallelPage } from './keyed-work.mjs';
+import { timedReads, timeReads, timingLog } from './read-timing.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const ownerSpace = owner => 'financialMintOwner/' + owner;
@@ -23,7 +24,7 @@ const ownerSpace = owner => 'financialMintOwner/' + owner;
 // first request. Every retry retains the original request and fee quote.
 const QUOTE_REUSE_MS = 30000, QUOTE_REUSE_LIMIT = 256, QUOTE_SLOW_MS = 1500;
 export class FinancialMints extends Mints {
-  constructor(options) { super(options); this.financial = options.financial; this.document = options.document; this.pendingBlocks = this.document.values.pendingBlocks;
+  constructor(options) { super(options); this.reads = timedReads(this.reads); this.financial = options.financial; this.document = options.document; this.pendingBlocks = this.document.values.pendingBlocks;
     this.publicMints = new PublicMints(this); this.mintWork = new KeyedWork(); this.deploymentWork = new KeyedWork(); }
   async deploymentTick() {
     if (this.deploymentRunning || !this.reads.financialDeployment) return;
@@ -63,7 +64,7 @@ export class FinancialMints extends Mints {
     if (known) return known.promise;
     const entry = { settled: 0 }, started = now;
     // Only a quote that outlived the response budget left its caller waiting for a retry; others are never reused.
-    entry.promise = this.quoteOnce(input).finally(() => {
+    entry.promise = timeReads('mint_quote_timing', { asset: input.asset }, () => this.quoteOnce(input)).finally(() => {
       entry.settled = Date.now();
       if (entry.settled - started < QUOTE_SLOW_MS && this.quotes.get(key) === entry) this.quotes.delete(key);
     });
@@ -116,8 +117,17 @@ export class FinancialMints extends Mints {
     return this.mintSender?.decorate(row, status) ?? status;
   }
   // Background ticks advance the same request; the player's (identical) request waits for them.
-  request(body) { return this.mintWork.run(financialMintId(this.network, body.request), async () => {
-    const r = body.request, counted = await this.reads.counted();
+  request(body) {
+    const queued = Date.now();
+    return this.mintWork.run(financialMintId(this.network, body.request), async () => {
+      // Each step's time goes to the log once per call, so a slow mint shows where it waited.
+      const steps = [], started = Date.now(), step = async (name, value) => { const at = Date.now(); try { return await value; } finally { steps.push([name, Date.now() - at]); } };
+      try { return await timeReads('mint_request_reads', { reserve: !!body.reserve }, () => this.requestTimed(body, step)); }
+      finally { timingLog({ event: 'mint_request_timing', reserve: !!body.reserve, queuedMs: started - queued, ms: Date.now() - started, steps: Object.fromEntries(steps) }); }
+    }, { after: true });
+  }
+  async requestTimed(body, step) {
+    const r = body.request, counted = await step('counted', this.reads.counted());
     check(verifyFinancialMintRequest(this.network, r, body.signature, r?.until) && verifyPayer(this.network, body) &&
       typeof body.receiver === 'string' && hash(body.receiver) === r.receive, 'financial_request_signature');
     const id = financialMintId(this.network, r); let row = this.store.get('mints', id);
@@ -128,7 +138,7 @@ export class FinancialMints extends Mints {
       check(!this.financial.admissionReady || await this.financial.admissionReady(), 'financial_admission_fenced', 503);
       check(rules.compareOrdinal(counted, r.until) <= 0 && body.feeQuote, 'financial_request_expired');
       check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
-      const quote = await this.quote({ ...(r.deployment ? { deployment: r.deployment } : {}), asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote });
+      const quote = await step('quote', this.quote({ ...(r.deployment ? { deployment: r.deployment } : {}), asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote }));
       if (quote.deploymentNeeded || quote.state === 'deployment_pending') return quote;
       check(quote.asset === r.asset, 'mint_asset_use_ledger');
       if (this.reads.financialFeePlan && quote.feeQuote.settingsHash) {
@@ -145,11 +155,12 @@ export class FinancialMints extends Mints {
         quote.fullFees = this.reads.identifyFinancialFees(quote.fullFees, body.kind);
       }
       quote.payableAmount = quote.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString();
-      const feeAuthorization = await this.reads.feeQuotes.accept(quote.feeQuote, mintFeeScope(r.asset, r.block, body.kind), id, r.expires, counted);
+      const feeAuthorization = await step('accept quote', this.reads.feeQuotes.accept(quote.feeQuote, mintFeeScope(r.asset, r.block, body.kind), id, r.expires, counted));
       row = { id, request: r, signature: body.signature, receiver: body.receiver, payer: body.payer, kind: body.kind, authorization: body.authorization,
         requestedFeeQuote: body.feeQuote, quote, feeAuthorization, state: 'authorizing', created: counted, expiry: r.expires, paymentIds: [] };
       row = this.mintSender?.bind(row) ?? row;
-      const at = await this.reads.batchStamp(), evidence = await this.reads.financialReservation(row, at), account = await this.reads.financialRecord('ar/' + r.owner, at);
+      const at = await step('stamp', this.reads.batchStamp()), evidence = await step('reservation evidence', this.reads.financialReservation(row, at)),
+        account = await step('account', this.reads.financialRecord('ar/' + r.owner, at));
       row.context = { deployment: evidence.deployment };
       row.reservationEvidence = evidence;
       row.reservationAction = { type: 'reserve', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: rules.hashObject(evidence),
@@ -163,10 +174,10 @@ export class FinancialMints extends Mints {
     const { sig, ...unsigned } = body.reserve;
     check(same(unsigned, row.reservationAction), 'financial_reservation_changed');
     const transition = { type: 'reserve', id, action: body.reserve, fees: financialFees(row.quote.fees) };
-    const admitted = await this.financial.admit(transition, await this.reads.batchStamp());
+    const admitted = await step('admit', this.financial.admit(transition, await this.reads.batchStamp()));
     await this.store.put('mints', id, { ...row, state: 'reserving', work: admitted.id });
     return this.public(id);
-  }, { after: true }); }
+  }
   async queue(row, transition) {
     const admitted = await this.financial.submit(transition);
     await this.store.put('mints', row.id, { ...row, work: admitted.id });

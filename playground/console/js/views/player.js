@@ -300,7 +300,7 @@ export function mount(root, params) {
     return h('div.form', {},
       h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. Making real into the official ticker uses your units up; another ticker holds them until completion or refund. After payment is final, your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
       kv([['Who may mint a block', 'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.'],
-        ['Fee', `Tiers 1–5 (equal under flat fees): ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
+        ['Fee', feePrice(store.status?.feePolicy, 'find-all')], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
       savedMintIntents().length ? h('div', {}, h('h3', {}, 'Resume a quote'), ...savedMintIntents().map(intent => h('button.btn.sm', { onclick: () => mintFlow({ resumeIntent: intent }) }, `${assetName(intent.asset)} · ${intent.actionId}`))) : null,
       savedMintRequests().length ? h('div', {}, h('h3', {}, 'Resume a saved mint'), ...savedMintRequests().map(id => h('button.btn.sm', { onclick: () => mintFlow({ id }) }, short(id, 12, 6)))) : null,

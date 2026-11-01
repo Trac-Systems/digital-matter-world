@@ -141,7 +141,9 @@ export class TapWalletMint {
           throw Error(`TAP Wallet refused the payment before signing: ${reason}. Nothing was sent. Fix that, then press ${extra ? 'Pay and mint' : 'Pay missing items'} again.`);
         }
         if (userCancelled(error)) throw Error(`TAP Wallet reports the payment was cancelled. If you did not confirm it in the wallet, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry.`);
-        const said = typeof error?.message === 'string' && error.message ? ` TAP Wallet said: “${error.message.slice(0, 300)}”.` : '';
+        const said = typeof error?.message === 'string' && /missingorspent|missing-inputs|inputs-missing/i.test(error.message)
+          ? ' TAP Wallet tried to spend Bitcoin that your previous payment already used; that payment is still waiting for its block. Wait until it confirms (usually within 10 minutes).'
+          : typeof error?.message === 'string' && error.message ? ` TAP Wallet said: “${error.message.slice(0, 300)}”.` : '';
         throw Error(`TAP Wallet did not return a payment receipt.${said} If your wallet shows no sent payment for this request, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry; another payment is never sent automatically.`);
       }
       await this.journal.put(key, { ...saved, payment: { state: 'submitted', items, ...(extra ? { extraOutputs: [extra] } : {}), result } });
@@ -206,7 +208,8 @@ export class TapWalletMint {
     const own = extraOutputs?.[0]?.address;
     let base = site + (own ?? this.address);
     const read = async path => {
-      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) })
+        .catch(() => ensure(false, 'Cannot check Bitcoin for the earlier payment attempt: mempool.space did not answer in time. Nothing was sent; try again shortly.'));
       ensure(response.ok, 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
       const txs = await response.json(); ensure(Array.isArray(txs), 'Cannot check Bitcoin for the earlier payment attempt. Try again shortly.');
       return txs;
@@ -232,8 +235,8 @@ export class TapWalletMint {
     if (!/^[0-9a-f]{64}$/.test(txid ?? '')) return null;
     const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/tx/';
     const read = async path => {
-      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) });
-      return response.ok ? response.json() : null;
+      const response = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) }).catch(() => null);
+      return response?.ok ? response.json() : null;
     };
     // A script-path spend is itself the reveal; otherwise follow output 0.
     if ((await read(txid))?.vin?.[0]?.witness?.length >= 3) return txid + 'i0';
@@ -276,7 +279,7 @@ export class TapWalletMint {
       const key = this.key(id);
       let saved = await this.journal.get(key) ?? {}, plan = saved[field];
       if (!plan) {
-        const coins = await cardinalCoins(this.provider, this.address);
+        const coins = await cardinalCoins(this.provider, this.address, { fetchImpl: this.fetchImpl });
         const utxos = coins.map(c => ({ txid: c.txid, vout: c.vout, value: String(c.satoshi), script: c.scriptPk, confirmed: true, cardinal: true }));
         feeRate ??= await this.fees();
         try { plan = buildInscription({ text, receiver: this.address, publicKey: this.publicKey, network: this.network, utxos, feeRate, maxFeeSats }); }

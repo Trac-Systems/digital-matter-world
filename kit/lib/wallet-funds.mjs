@@ -90,7 +90,29 @@ async function tapBalances({ address, ticks, network, fetchImpl, readerPath }, s
   return balances;
 }
 
-export async function cardinalCoins(provider, address, { timeoutMs } = {}) {
+// TAP Wallet keeps listing a confirmed coin that a payment still waiting for its block has spent; a payment built
+// on it fails with "inputs missing or spent". mempool.space's unspent list for the address leaves those out.
+// Only a definite answer refuses; if the check itself is unavailable the wallet decides as before.
+const UNCONFIRMED_SPEND = 'Your last Bitcoin payment from this wallet is still waiting for its block, and TAP Wallet still offers the coins it spent. ' +
+  'Wait until that payment confirms (usually within 10 minutes), then try again. Nothing was sent.';
+async function spentWhileWaiting(address, coins, fetchImpl) {
+  const site = /^bc1/i.test(address) ? 'https://mempool.space' : /^tb1/i.test(address) ? 'https://mempool.space/testnet' : null;
+  if (!site || !coins.length || typeof fetchImpl !== 'function') return false;
+  try {
+    const response = await fetchImpl(`${site}/api/address/${encodeURIComponent(address)}/utxo`, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return false;
+    const unspent = await response.json();
+    if (!Array.isArray(unspent)) return false;
+    const open = new Set(unspent.map(u => `${u.txid}:${u.vout}`));
+    return coins.some(c => !open.has(`${c.txid}:${c.vout}`));
+  } catch { return false; }
+}
+export async function cardinalCoins(provider, address, { timeoutMs, fetchImpl } = {}) {
+  const coins = await cardinalCoinsListed(provider, address, { timeoutMs });
+  if (await spentWhileWaiting(address, coins, fetchImpl)) refuse(`${UNCONFIRMED_SPEND} Wallet: ${address}.`);
+  return coins;
+}
+async function cardinalCoinsListed(provider, address, { timeoutMs } = {}) {
   return readFunds('Bitcoin balance', address, async () => {
     requireValue(typeof provider?.getBitcoinUtxos === 'function', 'wallet cannot read cardinal Bitcoin coins');
     const coins = await provider.getBitcoinUtxos();
@@ -105,8 +127,8 @@ export async function cardinalCoins(provider, address, { timeoutMs } = {}) {
   }, timeoutMs);
 }
 
-export async function checkBitcoinFunds({ provider, address, requiredSats, estimated = false, inputs, timeoutMs, coins }) {
-  coins ??= await cardinalCoins(provider, address, { timeoutMs });
+export async function checkBitcoinFunds({ provider, address, requiredSats, estimated = false, inputs, timeoutMs, coins, fetchImpl }) {
+  coins ??= await cardinalCoins(provider, address, { timeoutMs, fetchImpl });
   const available = coins.reduce((sum, coin) => sum + BigInt(coin.satoshi), 0n), needed = integer(requiredSats);
   if (available < needed) refuse(`Not enough Bitcoin for fees: this step needs ${estimated ? 'about ' : ''}${displayAmount(needed)} sats, your wallet has ${displayAmount(available)} sats spendable. Wallet: ${address}. Nothing was sent.${estimated ? ' This includes estimated miner fees, postage and any Bitcoin set-aside.' : ''}`);
   if (inputs && !inputs.every(input => coins.some(c => c.txid === input.txid && c.vout === input.vout)))
@@ -154,7 +176,7 @@ export async function checkTapFunds({ provider, address, network, items = [], ac
       if (available < needed) refuse(`Not enough ${label}: this payment needs ${displayAmount(needed, decimals)} ${label}, your wallet can spend ${displayAmount(available, decimals)} ${label}${held ? ` (${displayAmount(held, decimals)} ${label} is held in transfer inscriptions)` : ''}${locked ? ` (${displayAmount(locked, decimals)} ${label} is locked)` : ''}. Wallet: ${address}. Nothing was sent.`);
     }
   }
-  const coins = await cardinalCoins(provider, address, { timeoutMs });
+  const coins = await cardinalCoins(provider, address, { timeoutMs, fetchImpl });
   const requiredSats = await readFunds('Bitcoin fee estimate', address, async signal => tapBitcoinEstimate({
     message: message ?? { items, actions }, coins, extraOutputs, feeRate: await bitcoinFeeRate(fetchImpl, signal),
   }), timeoutMs);

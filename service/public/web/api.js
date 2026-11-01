@@ -39,6 +39,7 @@ export const site = {
   words: {
     worldMap: 'Spiral map of Bitcoin blocks',
     worldIntro: 'Bitcoin blocks laid out as land: block 0 in the centre, each block one plot along the spiral. Click a plot.',
+    game: { label: 'Play the game on Playbay', href: 'https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0' },
     halvingRing: 'Blocks between two halvings form a ring.',
     rarityBlocks: 'Blocks in recorded history where this pattern occurs. Fewer blocks = rarer = higher tier.',
     rarityHistory: 'In the recorded history. Sets the tier.',

@@ -24,7 +24,8 @@ export class TapReader {
   async at(view, read) {
     const before = await this.stamp();
     if (view) check(rules.compareOrdinal(view.tip, before.height) === 0 && view.tipHash === before.hash, 'tap_historical_snapshot_unavailable');
-    const value = await read(); check(rules.stableJSON(before) === rules.stableJSON(await this.stamp()), 'tap_snapshot_changed'); return value;
+    // The reader receives the snapshot's block, so a per-block cache can key on it.
+    const value = await read(before); check(rules.stableJSON(before) === rules.stableJSON(await this.stamp()), 'tap_snapshot_changed'); return value;
   }
   async content(id) { check(/^[0-9a-f]{64}i[0-9]+$/.test(id), 'inscription_id'); return ordContent(await this.agree('/content/' + id, { format: 'rawText', maxBytes: this.settings.contentBytes })); }
   inscription(id) { check(/^[0-9a-f]{64}i[0-9]+$/.test(id), 'inscription_id'); return this.agree('/inscription/' + id); }

@@ -38,41 +38,77 @@ export function generationDigest(entry) {
 }
 // All callers (operator, gateway and each signer) verify indexed semantics as
 // well as the exact inscription. Sharing an authority is not an approval.
+// Everything this check reads (TAP's deploy, element and privilege records, inscription contents and confirmations)
+// can only change with a new Bitcoin block. Inside a snapshot whose block is known, a successful check is reused for
+// the same deployment until the block changes; refusals are never kept. Signers verify independently.
+const verified = new WeakMap(), VERIFIED_LIMIT = 512;
+function verifiedCache(reads) { let cache = verified.get(reads); if (!cache) verified.set(reads, cache = { block: null, rows: new Map() }); return cache; }
 export async function verifyDeployment(reads, entry, options = {}) {
-  return reads.withTapSnapshot ? reads.withTapSnapshot(options.view, () => verifyDeploymentRecords(reads, entry, options)) : verifyDeploymentRecords(reads, entry, options);
+  if (!reads.withTapSnapshot) return verifyDeploymentRecords(reads, entry, options);
+  return reads.withTapSnapshot(options.view, async stamp => {
+    if (!stamp?.hash) return verifyDeploymentRecords(reads, entry, options);
+    const cache = verifiedCache(reads), block = stamp.height + '/' + stamp.hash;
+    if (cache.block !== block) { cache.block = block; cache.rows.clear(); }
+    const key = rules.stableJSON([entry, options.confirmations ?? 1, options.verifyReceiver ?? null,
+      options.view ? options.view.executionHeight ?? options.view.counted ?? null : null]);
+    let pending = cache.rows.get(key);
+    if (!pending) {
+      if (cache.rows.size >= VERIFIED_LIMIT) cache.rows.clear();
+      pending = verifyDeploymentRecords(reads, entry, options);
+      cache.rows.set(key, pending);
+      pending.catch(() => { if (cache.rows.get(key) === pending) cache.rows.delete(key); });
+    }
+    const result = await pending;
+    return { ...result };
+  });
 }
+// The reads are independent, so they all start at once inside the same TAP snapshot; the checks then run in their
+// original order, and a read error surfaces only where that read was used before, so refusals keep their reasons.
+const settled = promise => Promise.resolve().then(() => promise).then(value => ({ value }), error => ({ error }));
+const take = result => { if (result.error) throw result.error; return result.value; };
 async function verifyDeploymentRecords(reads, entry, { confirmations = 1, view, verifyReceiver } = {}) {
   check(entry && entry.suspended !== true, 'asset_provisioning');
-  const d = await reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick));
+  const known = entry.elementId, dmt = entry.kind === 'dmt';
+  const early = {
+    d: settled(reads.tap('getDeployment/' + encodeURIComponent(entry.indexTick ?? entry.tick))),
+    payload: settled(reads.content(entry.id)),
+    authority: typeof reads.privilegeAuthority === 'function' ? settled(reads.privilegeAuthority(entry.privilege)) : null,
+    cancelled: settled(reads.tap('getPrivilegeAuthCancelled/' + entry.privilege)),
+    auth: settled(reads.content(entry.privilege)),
+    inclusion: settled(reads.included(entry.id, view)),
+    ...(dmt && known && typeof reads.element === 'function' ? { element: settled(reads.element(known)), elementText: settled(reads.content(known)),
+      elementInclusion: settled(reads.included(known, view)) } : {}),
+  };
+  const d = take(await early.d);
   check(d?.ins === entry.id && d.prv === entry.privilege, 'deployment_binding');
-  const payload = await reads.content(entry.id);
+  const payload = take(await early.payload);
   const elementId = entry.elementId ?? payload.elem, dt = entry.dt ?? entry.pattern?.dt;
   const normalized = { ...entry, elementId, dt, options: entry.options ?? deploymentOptions(entry.kind) };
   check(same(payload, deploymentPayload(normalized)), 'deployment_options');
   check(d.tick === (entry.indexTick ?? entry.tick) && Number(d.dec) === 0, 'deployment_semantics');
-  if (entry.kind === 'dmt') {
+  if (dmt) {
     check(d.elem === elementId && d.dt === dt, 'deployment_definition');
     check(typeof reads.element === 'function', 'tap_element_lookup_required');
-    const element = await reads.element(elementId);
+    const element = take(await (early.element ?? settled(reads.element(elementId))));
     const pat = rules.tapElementPattern(entry.pattern);
     check(element?.ins === elementId && (element.pat ?? null) === pat && Number(element.fld) === entry.pattern.fld, 'element_binding');
     check(typeof element.tick === 'string' && (!entry.elementName || element.tick === entry.elementName), 'element_name');
-    const text = await reads.content(elementId), parts = typeof text === 'string' ? text.trim().split('.') : [];
+    const text = take(await (early.elementText ?? settled(reads.content(elementId)))), parts = typeof text === 'string' ? text.trim().split('.') : [];
     check((pat === null ? parts.length === 3 : parts.length >= 4) && parts[0].toLowerCase() === element.tick && parts.at(-1) === 'element' &&
       parts.at(-2) === String(element.fld) && (pat === null || parts.slice(1, -2).join('.') === element.pat), 'element_content');
-    check((await reads.included(elementId, view))?.confirmations >= confirmations, 'element_confirmations');
+    check(take(await (early.elementInclusion ?? settled(reads.included(elementId, view))))?.confirmations >= confirmations, 'element_confirmations');
   } else check(d.max === normalized.options.max && (d.lim ?? '0') === (normalized.options.lim ?? '0'), 'deployment_supply');
-  check(typeof reads.privilegeAuthority === 'function', 'tap_authority_lookup_required');
-  const authority = await reads.privilegeAuthority(entry.privilege);
+  check(early.authority, 'tap_authority_lookup_required');
+  const authority = take(await early.authority);
   check(!authority || authority.ins === entry.privilege, 'privilege_binding');
   check(authority, 'privilege_inactive');
-  check(await reads.tap('getPrivilegeAuthCancelled/' + entry.privilege) === false, 'privilege_cancelled');
-  const auth = await reads.content(entry.privilege), digest = hash(JSON.stringify(auth.auth) + auth.salt);
+  check(take(await early.cancelled) === false, 'privilege_cancelled');
+  const auth = take(await early.auth), digest = hash(JSON.stringify(auth.auth) + auth.salt);
   check(auth.hash === digest, 'privilege_digest');
   const compact = ['r', 's'].map(k => BigInt(auth.sig[k]).toString(16).padStart(64, '0')).join('');
   const key = secp256k1.Signature.fromCompact(compact).addRecoveryBit(Number(auth.sig.v)).recoverPublicKey(digest).toHex(true);
   check(key === (entry.authorityKey ?? (await reads.authority()).committee), 'privilege_binding');
-  const inclusion = await reads.included(entry.id, view);
+  const inclusion = take(await early.inclusion);
   check(inclusion?.confirmations >= confirmations, 'deployment_confirmations');
   if (entry.receiver && (verifyReceiver ?? (!entry.inclusion || !rules.multiTickerActive(view?.executionHeight ?? view?.counted ?? await reads.counted())))) check((await reads.inscription(entry.id, view))?.address === entry.receiver, 'deployment_receiver');
   if (entry.approval) check(entry.approval === generationDigest(entry), 'deployment_approval');

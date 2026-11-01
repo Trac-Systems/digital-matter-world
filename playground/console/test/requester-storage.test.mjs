@@ -38,3 +38,9 @@ test('public request limits explain the distinct wallet, connection and minute l
   assert.equal(walletError(Error('public_mint_ip_capacity')), 'Too many open mint requests from this connection. Finish or let one expire first.');
   assert.equal(walletError(Error('public_mint_start_rate')), 'Too many new mint requests. Wait a minute and try again.');
 });
+
+test('a Bitcoin node refusal for spent inputs and a bare timeout read as plain words', () => {
+  assert.match(walletError(Error('[ELECTRS API] sendrawtransaction RPC error -25: bad-txns-inputs-missingorspent')), /^Nothing was paid\. .*still waiting for its block/);
+  assert.match(walletError(Error('signal timed out')), /did not answer in time\. Nothing new was sent/);
+  assert.equal(walletError(Error('Some other wallet sentence.')), 'Some other wallet sentence.');
+});

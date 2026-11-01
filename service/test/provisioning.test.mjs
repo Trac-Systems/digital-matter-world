@@ -314,3 +314,22 @@ test('a deploy the page reported as sent is registered once it is in a block, wi
   f.mine(); await f.operator.tick();
   assert.equal(f.store.get('provisioning', 'p2').attempts.find(a => a.id === item.id).inscription, inscriptionId);
 });
+
+test('a verified deployment is reused within its Bitcoin block, checked again in the next, and a refusal is never kept', async t => {
+  const f = await provisioningFixture(t), job = await f.complete();
+  let block = 1, reads = 0;
+  const tap = f.reads.tap; f.reads.tap = async path => { reads++; return tap(path); };
+  f.reads.withTapSnapshot = (view, fn) => fn({ height: String(block), hash: 'h' + block });
+  await verifyDeployment(f.reads, job.entry);
+  const first = reads;
+  assert.ok(first > 0);
+  await verifyDeployment(f.reads, job.entry); await verifyDeployment(f.reads, job.entry);
+  assert.equal(reads, first, 'same block: no new reads');
+  block = 2; await verifyDeployment(f.reads, job.entry);
+  assert.equal(reads, first * 2, 'new block: checked again');
+  const forged = { ...job.entry, privilege: 'f'.repeat(64) + 'i0' };
+  await assert.rejects(verifyDeployment(f.reads, forged), /deployment_binding|privilege/);
+  const after = reads;
+  await assert.rejects(verifyDeployment(f.reads, forged), /deployment_binding|privilege/);
+  assert.ok(reads > after, 'a refusal is checked again');
+});

@@ -21,6 +21,11 @@ export function tap(v, unit) {
 // Display the current operator policy, with the same integer math as rules feeFor.
 // Missing settings must never fall back to legacy or launch prices.
 export function feePrice(policy, kind, tier = 1) {
+  // Every tier's pattern fee: one amount when they are equal, otherwise the range.
+  if (kind === 'find-all') {
+    const tiers = Array.from({ length: 5 }, (_, i) => feePrice(policy, 'find', i + 1));
+    return tiers.every(t => t === tiers[0]) ? tiers[0] : `${tiers[0]} (tier 1) to ${tiers[4]} (tier 5)`;
+  }
   // v2 sends integers as decimal strings ("4").
   if (typeof tier === 'string' && /^[1-5]$/.test(tier)) tier = Number(tier);
   const settings = policy?.feeSettings;

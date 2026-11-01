@@ -1,8 +1,18 @@
 import { localURL } from './config.mjs';
 import { check } from './util.mjs';
 import { lifecycleSignal } from './lifecycle.mjs';
+import { timingLog } from './read-timing.mjs';
 
 const guarded = Symbol.for('dmw.localFetch');
+// Upstream reads slower than this are logged with their path only (never the query or credentials),
+// so a slow request shows which source it waited on.
+const SLOW_UPSTREAM_MS = 300;
+const slow = (url, started) => {
+  const ms = Date.now() - started;
+  if (ms < SLOW_UPSTREAM_MS) return;
+  let path = ''; try { path = new URL(String(url)).pathname.slice(0, 96); } catch {}
+  timingLog({ event: 'slow_upstream', path, ms });
+};
 function deadline(signal, timeout) {
   const controller = new AbortController(), abort = () => controller.abort(signal.reason);
   const timer = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeout); timer.unref();
@@ -14,9 +24,10 @@ export function installLocalFetch() {
   const upstream = globalThis.fetch;
   const fetch = async (input, options = {}) => {
     localURL(typeof input === 'string' || input instanceof URL ? String(input) : input.url);
-    const limit = deadline(options.signal, 45000);
+    const limit = deadline(options.signal, 45000), started = Date.now();
     try {
       const response = await upstream(input, { ...options, signal: limit.signal, redirect: 'error' });
+      slow(typeof input === 'string' || input instanceof URL ? input : input.url, started);
       if (!response.body) { limit.dispose(); return response; }
       const reader = response.body.getReader(); let bytes = 0;
       const body = new ReadableStream({
@@ -40,7 +51,7 @@ export async function jsonRequest(url, { maxBytes = 4_000_000, timeout = 30000, 
     const parsed = new URL(url); localURL(parsed.origin);
     check(!parsed.username && !parsed.password && !parsed.hash, 'endpoint_must_be_loopback');
   } else localURL(url);
-  const limit = deadline(signal, timeout);
+  const limit = deadline(signal, timeout), started = Date.now();
   let reader;
   try {
     // This reader already enforces both limits. Avoid allocating another
@@ -52,6 +63,7 @@ export async function jsonRequest(url, { maxBytes = 4_000_000, timeout = 30000, 
       const { done, value } = await reader.read(); if (done) break;
       bytes += value.byteLength; check(bytes <= maxBytes, limitCode, 503); chunks.push(value);
     }
+    slow(url, started);
     return { ok: response.ok, status: response.status, value: JSON.parse(Buffer.concat(chunks).toString()) };
   } finally {
     limit.dispose();

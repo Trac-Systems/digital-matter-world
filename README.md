@@ -10,9 +10,12 @@
 
 Website: **[dmtworld.tap-protocol.com](https://dmtworld.tap-protocol.com)**
 
+Play the game: **[Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0)**. Walk the spiral of Bitcoin's blocks, watch the agents work the land and see every relic made real, with its owner and the other players around you.
+
 ## Quick start: copy this to your agent
 
-Before starting the agent, set `DMW_SIGNER_PASSWORD` in the environment you launch it from (or run `node bin/dmw.mjs setup --network mainnet` yourself once in `kit/`), because agents cannot type into the hidden password prompt.
+Paste this into any agent that can run commands on your computer. It sets everything up, including the password, and
+opens your dashboard for you.
 
 ```text
 I want to play Digital Matter World with you as my agent.
@@ -20,19 +23,25 @@ Repo: https://github.com/Trac-Systems/digital-matter-world
 Website: https://dmtworld.tap-protocol.com
 
 1. Set it up on mainnet on this computer by following the README ("Join with an agent").
-   Use Node 24 LTS (24.22.1 or newer 24.x). The keyring password is in the environment variable
-   DMW_SIGNER_PASSWORD; never print it or write it anywhere.
-2. Read rules, address, status, world and hunting, and explain to me in short words
+   Install Node 24 LTS (24.22.1 or newer 24.x) if it is missing.
+2. Create the keyring password yourself, exactly as "Your password" in the README says: a long random
+   password kept in this computer's credential store. Never print it, log it or write it into notes,
+   commands or config files. Tell me where it is kept and how I can back it up.
+3. Start my local dashboard as described under "Your dashboard" in the README, keep it running in the
+   background, and give me the login link to open in my browser on this computer. Whenever I ask for the
+   dashboard, or the link has been used or has stopped working, start it again and give me the new link.
+4. Read rules, address, status, world and hunting, and explain to me in short words
    how the game works.
-3. Find patterns: test ideas, commit the good ones, and reveal them when their window opens.
+5. Find patterns: test ideas, commit the good ones, and reveal them when their window opens.
    Use live mode only for the free moves. Never spend BTC, TAP, ETH or TNK without asking me first.
-4. Link my payout wallets and give me the links to sign:
+6. Link my payout wallets and give me the links to sign:
    TAP wallet: bc1p…
    MetaMask: 0x…
-5. Keep mining all the time: set up a small background job on this computer that runs
-   `node bin/dmw.mjs once --live --config <my config>` every 5 minutes, keeps running after
-   you stop, survives a reboot and writes a log. Show me how to check it and how to stop it.
-6. Tell me my player address and profile link, and keep notes in a file so you can
+7. Keep mining all the time: set up a small background job on this computer that runs
+   `node bin/dmw.mjs once --live --config <my config>` every 5 minutes, reads the password from the
+   credential store, keeps running after you stop, survives a reboot and writes a log.
+   Show me how to check it and how to stop it.
+8. Tell me my player address and profile link, and keep notes in a file so you can
    continue finding patterns next time.
 ```
 
@@ -60,7 +69,8 @@ The checked-in mainnet profile pins the deployment and public gateway at
 Disk: measured player packages use about **956 MiB**, headers about **78 MB**; allow **2 GiB free for setup** including temporary files and npm cache, plus growing Trac data. No Bitcoin node is needed.
 
 Use **Node 24 LTS (24.22.1 or newer 24.x)** and npm. Clone the repository and
-install the pinned packages, then create or reuse your encrypted local signer:
+install the pinned packages, then create or reuse your encrypted local signer.
+Agents create the password first and pass it to setup, as [Your password](#your-password) describes:
 
 ```sh
 git clone --depth 1 https://github.com/Trac-Systems/digital-matter-world.git
@@ -78,11 +88,48 @@ Development tools and the operator packages are not needed for play.
 
 Setup prints your player address, absolute config path and next commands. Keep
 that signer and config between sessions; the default config is
-`$HOME/.dmw-signer/mainnet.json`. Follow the [agent connection instructions](kit/README.md#connect-your-agent)
-to pass `DMW_SIGNER_PASSWORD` securely to the agent. Never put the password in a
-command, config file, log or notes. A background job also needs access to that
-password through your operating system's secure credential mechanism after a
-reboot; an interactive shell's environment alone does not survive a reboot.
+`$HOME/.dmw-signer/mainnet.json`.
+
+### Your password
+
+The kit reads the keyring password from `DMW_SIGNER_PASSWORD` or a hidden terminal
+prompt. An agent cannot type into a hidden prompt, so the agent creates the password
+and keeps it in the operating system's credential store:
+
+- Generate a long random password straight into the store, so it is never shown:
+  - macOS (Keychain): `security add-generic-password -a "$USER" -s dmw-signer -w "$(openssl rand -base64 32)"`;
+    read it with `security find-generic-password -a "$USER" -s dmw-signer -w`.
+  - Linux with a desktop (Secret Service): `openssl rand -base64 32 | tr -d '\n' | secret-tool store --label "DMW signer" service dmw-signer`;
+    read it with `secret-tool lookup service dmw-signer`.
+  - Windows: a Credential Manager generic credential named `dmw-signer`
+    (for example with the `CredentialManager` PowerShell module).
+  - No credential store (a server without a desktop): a file outside the repository that only this
+    user can read: `(umask 077; mkdir -p "$HOME/.dmw-signer"; openssl rand -base64 32 > "$HOME/.dmw-signer/password")`;
+    read it with `cat "$HOME/.dmw-signer/password"`.
+- Pass it only into the kit's own environment, for each command:
+  `DMW_SIGNER_PASSWORD="$(security find-generic-password -a "$USER" -s dmw-signer -w)" node bin/dmw.mjs setup --network mainnet`.
+  The background job and the dashboard read it the same way when they start.
+- Never print it, log it, put it in shell history, notes, config files or MCP settings.
+  Tell the player where it is kept: they should back it up together with the signer
+  directory, because the signer cannot be unlocked without it.
+
+### Your dashboard
+
+The dashboard ships with the kit and is the player's main tool: the website plus
+**My agent**, where they mint, send units and craft. It runs only on this computer.
+From `kit/`, start it in the background with a log, reading the password as above:
+
+```sh
+DMW_SIGNER_PASSWORD="$(security find-generic-password -a "$USER" -s dmw-signer -w)" \
+  nohup node bin/dmw.mjs dashboard --config "$HOME/.dmw-signer/mainnet.json" > "$HOME/.dmw-signer/dashboard.log" 2>&1 &
+```
+
+It prints one private login link (`http://127.0.0.1:<port>/…`) to the log, so keep the log private. Give that
+link to the player and tell them to open it in their browser on this computer. The
+link works once; to get a new one, stop the dashboard and start it again. Only one
+dashboard runs per signer. Details: [Local dashboard](kit/README.md#local-dashboard).
+
+### First reads
 
 From `kit/`, use the config path printed by setup:
 
@@ -165,7 +212,7 @@ and the integration-test limits.
 | [local](local/README.md) | Local Bitcoin, TAP and Ethereum development tools |
 | [playground](playground/README.md) | Local game environment and console |
 
-The Playbay visual game is maintained in a separate repository.
+The playable game, [Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0), is maintained in a separate repository.
 
 ## Install and test
 

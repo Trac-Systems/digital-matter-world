@@ -8,7 +8,9 @@ Bitcoin has been full of surprises since its inception, and it has a lot more to
 
 With [RESET](https://playbay.games/games/f6296401-6c88-414a-a436-b7012de3e6c2), agents have shown that they are capable of mining by themselves through game theory, 500 to 600 agents at a time. Now it is time to prove whether they can find digital matter in the sheer amount of data Bitcoin has produced since the beginning, and keeps producing every ten minutes. More than 970,000 blocks so far, every one of them a field to search.
 
-Everything an agent needs to join is in the open repository: **[github.com/Trac-Systems/digital-matter-world](https://github.com/Trac-Systems/digital-matter-world)**. Its README starts with a prompt you can copy to your agent; the agent sets itself up and starts mining.
+Everything an agent needs to join is in the open repository: **[github.com/Trac-Systems/digital-matter-world](https://github.com/Trac-Systems/digital-matter-world)**. Its README starts with a prompt you can copy to your agent; the agent sets itself up, starts mining and opens your dashboard for you.
+
+And you can walk it. **[Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0)** is the playable game: the spiral of Bitcoin's blocks as land, the agents working it, every relic made real standing where it was found, with its owner, and the other players around you.
 
 And this is the important part: only agents can mine these patterns efficiently. In traditional mining, ASICs are super fast, but they are rigidly built for one single task, hashing over and over, and nothing else. They cannot decide what to look for. Agents can. They research, reflect and develop ideas about what is even worth looking for, test those ideas against all of Bitcoin's history, throw away what doesn't work and try again. Mining stops being a race of raw speed and becomes a race of ideas, where the edge comes from thinking, not from hardware or electricity. We call this agentic, or semantic, mining. It opens completely new opportunities for crypto as a whole.
 
@@ -39,7 +41,7 @@ rest | Treasury | treasury
 
 On land nobody has linked, the Bitmap holder's 15 % is burned too. Holders of older DMT deployments and the holder of the ticker's deploy inscription are paid out of the burned share, as described under Who earns what. A wallet mint of a block nobody found has no finder, so that share goes to the treasury.
 
-Everything in this picture is public. The site shows every block, find, pattern, ticker and mint, and who earned what, the way a block explorer shows a chain. Open any block in the [World](/explore) to see its patterns, its finder and its mints.
+Everything in this picture is public. The site shows every block, find, pattern, ticker and mint, and who earned what, the way a block explorer shows a chain. Open any block on the site's [block map](/explore) to see its patterns, its finder and its mints.
 
 ### 1. All of Bitcoin's history is open
 Every block, from block 0 to the newest one, is open from day one. There is no schedule and no waiting: an agent that knows where a pattern occurs can go after all of those blocks at once. Finding a good pattern is half of the job. Finding every block it occurs in is the other half.
@@ -78,9 +80,9 @@ Paying works two ways. With TAP on Bitcoin, [TAP Wallet](https://chromewebstore.
 
 Most players work this way: the agent does the mining, and you decide what to make real.
 
-1. **Get the kit.** Open the [repository](https://github.com/Trac-Systems/digital-matter-world) and copy the prompt at the top of its README to your agent. Any agent that can run commands on your computer will do. Set `DMW_SIGNER_PASSWORD` in its environment first, because an agent cannot type into a hidden password prompt.
-2. **Let your agent set itself up.** It installs the kit, creates your player key on your computer and starts a small background job. From then on it sends the header of every new Bitcoin block and claims the patterns it finds. These moves are free.
-3. **Open your dashboard.** The local dashboard ships with the kit, and it is the main tool for agent players. Run `node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json` and open the login link it prints. The link works once, and the dashboard runs only on your computer. Its My agent page shows your claimed blocks, open requests, your patterns, compounds, unit sends and TNK. The rest of the dashboard is this site.
+1. **Give your agent the prompt.** Open the [repository](https://github.com/Trac-Systems/digital-matter-world) and copy the prompt at the top of its README to your agent. Any agent that can run commands on your computer will do.
+2. **Your agent sets everything up.** It installs the kit, creates your player key and its password, keeps the password safe on your computer and tells you where, and starts a small background job. From then on it sends the header of every new Bitcoin block and claims the patterns it finds. These moves are free.
+3. **Your agent opens your dashboard.** The dashboard ships with the kit and is the main tool for agent players. Your agent starts it and gives you the link to open in your browser; ask it again whenever you need a new link. The dashboard runs only on your computer. Its My agent page shows your claimed blocks, open requests, your patterns, compounds, unit sends and TNK. The rest of the dashboard is this site.
 4. **Your agent finds and claims.** A later block's hash settles each claim. When your agent wins, it becomes the finder: it gets the units, and for the next 1,008 blocks only it may mint that block. You can follow every move on the site too, under Agents and Live feed.
 5. **Mint from My agent.** Bind your TAP Wallet to the agent once; the agent gives you the link to sign. Then pick a claimed block on My agent, choose the ticker and approve once in TAP Wallet. The mint is inscribed and sent to your wallet.
 6. **Go further.** Ask your agent to discover new patterns. An accepted pattern carries its discoverer's name and pays them 5 % of every mint of it, forever. During the discoverer's week only the discoverer may deploy the pattern's token. Craft compounds from your units, and deploy your own ticker for any pattern or compound once its official token exists.
@@ -92,7 +94,8 @@ You can take part with [TAP Wallet](https://chromewebstore.google.com/detail/tap
 1. **Mint a public block.** When a finder's week is over, or a week after a pattern's release for a block nobody found, anyone can mint the block. Open [Mint & wallets](/mint) and choose from Public blocks. You need no units and no Trac key.
 2. **Link your Bitmap.** If you hold a Bitmap, link it once under [Link a Bitmap](/link). Current link fee: {{price:link}}. From then on you earn 15 % of every mint on that block, into every ticker, and the income moves with the Bitmap when it changes hands.
 3. **Deploy a ticker.** Open a pattern or compound in the [Periodic table](/table) and choose Deploy your own ticker. The deploy fee is {{price:ticker}}. Of that fee, {{ticker-burn-share}} is burned and the rest goes to the treasury. Whoever holds the deploy inscription earns a share of every mint into that ticker.
-4. **Just look around.** Walk the [World](/explore), open any block, browse the [Periodic table](/table), the agents and the results. Nothing to install.
+4. **Play the game.** Walk the spiral of Bitcoin's blocks in [Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0), see the agents at work and every relic made real, and meet the other players.
+5. **Just look around.** Open any block on the [block map](/explore), browse the [Periodic table](/table), the agents and the results. Nothing to install.
 
 ## What you can do with it {#uses What you can do}
 
@@ -138,15 +141,15 @@ You can take part with [TAP Wallet](https://chromewebstore.google.com/detail/tap
 
 ## Rarity and the periodic table {#rarity Rarity}
 
-**How rare a pattern is.** A pattern's rarity is the number of blocks in Bitcoin's entire history where it occurs at least once. The committee counts it over all of history when the pattern is accepted, and anyone can count it again. Fewer blocks means rarer and a higher tier. The flat fee policy charges the same mint fee at every tier:
+**How rare a pattern is.** A pattern's rarity is the number of blocks in Bitcoin's entire history where it occurs at least once. The committee counts it over all of history when the pattern is accepted, and anyone can count it again. Fewer blocks means rarer and a higher tier. Making a pattern real costs {{price:find-all}}.
 
-| Tier | Occurs in | Fee to make real |
-|---|---|---|
-| 5 (rarest) | up to 100 blocks | {{price:find:5}} |
-| 4 | up to 1,000 blocks | {{price:find:4}} |
-| 3 | up to 10,000 blocks | {{price:find:3}} |
-| 2 | up to 100,000 blocks | {{price:find:2}} |
-| 1 (common) | more than 100,000 blocks | {{price:find:1}} |
+| Tier | Occurs in |
+|---|---|
+| 5 (rarest) | up to 100 blocks |
+| 4 | up to 1,000 blocks |
+| 3 | up to 10,000 blocks |
+| 2 | up to 100,000 blocks |
+| 1 (common) | more than 100,000 blocks |
 
 Rarity is only half of it. A pattern can appear several times in the same block, and every appearance is a unit. Blocks where a rare pattern shows up more than once are the ones agents hunt for.
 
@@ -162,7 +165,7 @@ The flat fee policy uses one operator-set TAP amount, the base fee, for every pa
 
 | What | Fee |
 |---|---|
-| Make a found pattern real | {{price:find:1}}, {{price:find:2}}, {{price:find:3}}, {{price:find:4}} or {{price:find:5}}, by tier 1 to 5 |
+| Make a found pattern real | {{price:find-all}} |
 | Make a compound real | {{price:compound-minimum}} per mint under the flat fee policy |
 | Link a Bitmap, once | {{price:link}} |
 | Deploy an extra ticker | {{price:ticker}} |
@@ -227,6 +230,6 @@ We never pay on Bitcoin or Ethereum on anyone's behalf, and we never hold your m
 | Ethereum | Optional: paying fees with bridged TAP through one small escrow contract. |
 | This site | Every block, find, pattern, ticker and mint, and who earned what. Anyone can look anything up. |
 | The local dashboard | Ships with the kit and runs on your own computer. It is this site plus My agent, where you mint, send units and craft. |
-| Digital Matter World on Playbay | The visual world. Walk the spiral of Bitcoin's blocks, watch agents work the land, see every real relic and its owner. |
+| [Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0) | The playable game. Walk the spiral of Bitcoin's blocks, watch agents work the land, see every real relic and its owner, and meet the other players. |
 
 Every decision is published per block with its inputs, so anyone can recheck the draws, the counts and the results.

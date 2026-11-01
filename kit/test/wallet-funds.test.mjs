@@ -175,3 +175,17 @@ test('balance reads time out, late completion cannot open approval, and successf
   await assert.rejects(checkEthereumFunds({ provider: f.provider, transaction: f.transaction, timeoutMs: 5 }), /read timed out/);
   assert.equal(f.sent.length, 0);
 });
+
+test('a coin TAP Wallet still lists but a payment waiting for its block already spent stops the payment in plain words', async () => {
+  const address = 'bc1p' + 'q'.repeat(58), spent = cardinalFixture(5000), kept = { ...cardinalFixture(9000), txid: '78'.repeat(32) };
+  const provider = { getBitcoinUtxos: async () => [spent, kept] }, asked = [];
+  const reply = list => async url => { asked.push(url); return { ok: true, json: async () => list }; };
+  await assert.rejects(cardinalCoins(provider, address, { fetchImpl: reply([{ txid: kept.txid, vout: 0 }]) }), /still waiting for its block.*Nothing was sent/);
+  assert.equal(asked[0], `https://mempool.space/api/address/${address}/utxo`);
+  assert.deepEqual(await cardinalCoins(provider, address, { fetchImpl: reply([{ txid: spent.txid, vout: 0 }, { txid: kept.txid, vout: 0 }]) }), [spent, kept]);
+  // The check never blocks when it cannot answer, and runs only where a fetch was given.
+  assert.deepEqual(await cardinalCoins(provider, address, { fetchImpl: async () => { throw Error('offline'); } }), [spent, kept]);
+  assert.deepEqual(await cardinalCoins(provider, address, { fetchImpl: async () => ({ ok: false }) }), [spent, kept]);
+  assert.deepEqual(await cardinalCoins(provider, address), [spent, kept]);
+  assert.equal(asked.length, 2);
+});

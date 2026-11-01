@@ -8,6 +8,8 @@ export function walletFundsReply(url, { overall = '1000000000000000000000000', h
   if (path.includes('/getObligationLockedBalance/')) return { result: obligation };
   if (path.includes('/getBalance/')) return { result: overall };
   if (path.includes('/getTransferable/')) return { result: held };
+  // The unspent-coin cross-check is covered by its own test; elsewhere it answers "cannot tell" and never blocks.
+  if (/\/api\/address\/[^/]+\/utxo$/.test(path)) return { unknown: true };
   return null;
 }
 export async function walletFundsFetch(url, options) {
