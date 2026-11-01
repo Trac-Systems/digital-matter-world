@@ -62,7 +62,8 @@ export class ServiceClient {
       const retryAfterMs = Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 2147483 ? seconds * 1000 : undefined;
       // The gateway answers within seconds and says "busy, retry the identical request" while background work it
       // started (or a cold source) is still running. The same signed body is safe to send again.
-      if (response.status === 503 && GATEWAY_BUSY.has(code) && busyRetries < this.busyRetries) {
+      // A Trac batch landing during a read is refused as 400 or 503; the same request is retried.
+      if ((response.status === 503 && GATEWAY_BUSY.has(code) || code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
         await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterMs ?? 2000, 10000)));
         return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1 });
       }

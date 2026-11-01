@@ -218,14 +218,17 @@ export class DashboardState {
     let status = null, statusError = null;
     if (requestId(id)) try { status = await this.status(id, row); } catch (error) { statusError = dashboardError(error); }
     if (statusError === 'not_your_request') { id = null; statusError = null; }
+    // A saved request the gateway never took: Mint resumes it with the same signature.
+    const resume = !!saved && !c.pending && statusError === 'request_not_found';
+    if (resume) statusError = null;
     const minted = !!(row.minted || c.minted || status?.state === 'minted');
-    const pending = !minted && status?.state !== 'expired' && !!(c.pending || saved || status);
+    const pending = !minted && status?.state !== 'expired' && !!(c.pending || (saved && !resume) || status);
     const reason = statusError ?? this.mintReason(c, balance);
     return { asset: row.asset, block: String(row.block), ...(c.deployment ? { deployment: c.deployment } : {}), count: String(c.find.count),
       name: await this.name(row.asset, row.name ?? row.pattern?.name), minted, pending,
       payable: !minted && status?.payable === true, requestId: requestId(id) ? id : null,
       state: minted ? 'minted' : status?.state ?? (pending ? 'pending' : 'unminted'),
-      canMint: !minted && !reason && !saved && !status,
+      canMint: !minted && !reason && (!saved || resume) && !status,
       reason, role: this.role(c), eligibility: { finder: 'own find', bitmap: 'Bitmap holder', public: 'units' }[this.role(c)],
       balance: balance.amount, balanceCurrent: balance.current && c.balance !== null,
       finderUntil: c.finderUntil ?? c.find.finderUntil ?? null,

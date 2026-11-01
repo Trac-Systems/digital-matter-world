@@ -20,3 +20,11 @@ test('busy retries are bounded and other refusals are not retried', async () => 
   const refused = new ServiceClient({ fetchImpl: async () => { calls++; return reply(503, { error: 'ruleset_not_ready' }, { 'retry-after': '0' }); } });
   await assert.rejects(refused.request('/status'), /ruleset_not_ready/); assert.equal(calls, 1);
 });
+
+test('a Trac batch landing during a quote is retried, also when refused as 400', async () => {
+  const bodies = [];
+  const answers = [reply(400, { error: 'trac_snapshot_changed' }, { 'retry-after': '0' }), reply(503, { error: 'trac_snapshot_changed' }, { 'retry-after': '0' }), reply(200, { ok: true })];
+  const client = new ServiceClient({ fetchImpl: async (url, init) => { bodies.push(init.body); return answers.shift(); } });
+  assert.deepEqual(await client.request('/mint/quote', { value: { asset: 'p2:1', block: '1' } }), { ok: true });
+  assert.equal(bodies.length, 3); assert.equal(new Set(bodies).size, 1);
+});
