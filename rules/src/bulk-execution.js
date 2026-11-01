@@ -75,7 +75,7 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
   assert(funding.kind === 'bulk-v1' && e.owner === terms.owner && e.terms === funding.terms && funding.terms === hashObject(terms), 'bulk_evidence_binding');
   const bound = { type: t.type, terms: funding.terms };
   if (t.type === 'bulk-fund' || t.type === 'bulk-credit') {
-    assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'reference', 'confirmations', 'block', 'paid', 'receiptRoot', 'transfers']) &&
+    assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'reference', 'confirmations', 'block', 'paid', 'receiptRoot', 'transfers', ...(e.feeManifest ? ['feeManifest'] : [])]) &&
       e.state === 'settled' && e.reference === t.reference && integer(e.confirmations) && e.confirmations >= 1 &&
       exactKeys(e.block, ['height', 'hash']) && bulkUint(e.block.height) && hex(e.block.hash, 32) &&
       BigInt(e.block.height) <= BigInt(height) && Array.isArray(e.paid) && e.paid.length === terms.groups.length &&
@@ -90,7 +90,8 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
         e.paid[i] === (row.fail ? '0' : row.amt), 'bulk_transfer_binding'); used.add(i);
     }
     assert(e.receiptRoot === hashObject(['dmw-bulk-receipt-v1', terms.network, t.reference, e.block.hash, e.transfers]), 'bulk_receipt_root');
-    return [fp({ ...bound, reference: t.reference, block: e.block, paid: e.paid, receiptRoot: e.receiptRoot })];
+    if (e.feeManifest) { assert(t.type === 'bulk-credit', 'bulk_credit_manifest'); validateBulkFees(terms, e.feeManifest); }
+    return [fp({ ...bound, reference: t.reference, block: e.block, paid: e.paid, receiptRoot: e.receiptRoot, ...(e.feeManifest ? { feeManifest: e.feeManifest } : {}) })];
   }
   if (t.type === 'bulk-consume') {
     assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'receiptRoot', 'permitRoot']) &&
@@ -108,8 +109,9 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
         m.memberId === plans.plans[m.index].memberId && m.amount === terms.members[m.index].amount &&
         m.block === terms.members[m.index].block && m.deployment === terms.generation && m.permitHash === plans.plans[m.index].digest &&
         integer(m.confirmations) && m.confirmations >= 1 && (!m.commissions || m.commissions.every(c => c.id === m.memberId))), 'bulk_finish_evidence');
-  } else assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'expiry', 'members']) && e.state === 'expired' && e.expiry === terms.expires && BigInt(height) > BigInt(terms.expires) && same(e.members, t.members), 'bulk_expiry_evidence');
+  } else assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'expiry', 'members', ...(e.feeManifest ? ['feeManifest'] : [])]) && e.state === 'expired' && e.expiry === terms.expires && BigInt(height) > BigInt(terms.expires) && same(e.members, t.members), 'bulk_expiry_evidence');
+  if (e.feeManifest) { assert(!finish, 'bulk_credit_manifest'); validateBulkFees(terms, e.feeManifest); }
   const releaseUnits = !finish || mintRetainsUnits({ supplyScope: terms.supplyScope, plot: terms.members[0].block });
-  return [fp({ ...bound, members: t.members, ...(!finish ? { reason: t.reason } : {}) }), ...(releaseUnits ?
+  return [fp({ ...bound, members: t.members, ...(!finish ? { reason: t.reason, ...(e.feeManifest ? { feeManifest: e.feeManifest } : {}) } : {}) }), ...(releaseUnits ?
     [ar([{ type: 'release-many', id: t.id, terms: funding.terms, members: indices, reason: finish ? 'minted' : 'expired', evidence }])] : [])];
 }

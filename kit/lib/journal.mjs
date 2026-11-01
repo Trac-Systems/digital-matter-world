@@ -20,7 +20,7 @@ export class Journal {
     db.exec('CREATE TABLE IF NOT EXISTS action_outcomes (scope TEXT NOT NULL, id TEXT NOT NULL, outcome TEXT, settlement TEXT, PRIMARY KEY(scope,id));');
     db.exec('CREATE TABLE IF NOT EXISTS move_history (sequence INTEGER PRIMARY KEY, scope TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL, result TEXT);');
     db.exec('CREATE INDEX IF NOT EXISTS move_history_action ON move_history(scope,id,sequence);');
-    return new Journal(db, scope, { now, intervalMs, perTip });
+    return new Journal(db, scope, { now, intervalMs, perTip, directory: dir });
   }
   constructor(db, scope, options) { this.db = db; this.scope = scope; Object.assign(this, options); }
   get(id) {

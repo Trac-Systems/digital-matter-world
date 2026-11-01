@@ -21,7 +21,7 @@ function setup({ active = true } = {}) {
   const journal = { get: async k => structuredClone(records.get(k)), put: async (k, v) => records.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
   const options = { provider: f.provider, journal, network: 'mainnet', readStatus: async () => structuredClone(status),
     readTerms: async () => ({ v: 1, orderId: id, terms: structuredClone(terms), feeManifest: structuredClone(feeManifest) }),
-    reportPayment: async value => reports.push(value), fetchImpl: walletFundsFetch };
+    reportPayment: async value => reports.push(value), readTip: async () => '900000', fetchImpl: walletFundsFetch };
   const wallet = new TapWalletBulkMint(options);
   return { ...f, records, reports, terms, feeManifest, id, status, options, wallet };
 }
@@ -136,5 +136,15 @@ test('bulk refuses before opening the wallet when TAP or Bitcoin is short', asyn
     const transfer = f.provider.singleTxTransfer; f.provider.singleTxTransfer = async (...args) => { opened = true; return transfer(...args); };
     f.wallet.fetchImpl = async url => ({ ok: true, json: async () => walletFundsReply(url, funds) });
     await assert.rejects(f.wallet.pay(f.id), message); assert.equal(opened, false);
+  }
+});
+
+test('bulk refuses fewer than two blocks including tip changes during funds checks', async () => {
+  for (const late of [false, true]) {
+    const f = setup(); let reads = 0;
+    f.wallet.readTip = async () => String(BigInt(f.terms.expires) - (late && reads++ === 0 ? 2n : 1n));
+    await f.wallet.connect();
+    await assert.rejects(f.wallet.pay(f.id), e => e.code === 'payment_window_short' && /fresh mint request/.test(e.message));
+    assert.equal(f.records.size, 0); assert.equal(f.state.calls.length, 0);
   }
 });

@@ -97,6 +97,11 @@ test('bulk committee rejects quarantined records, reorg fences and wrong deploym
   const g=setup();g.reads.assetContext=async()=>({deployment:{id:g.t.deployment,kind:'dmt',tick:g.t.ticker,privilegePublicKey:'bad'}});
   await assert.rejects(g.verify(),/bulk_permit_committee/);
 });
+test('bulk committee still refuses a revision-only change with an unchanged accepted batch',async()=>{
+  const f=setup(),before=await f.reads.batchStamp(),context=f.reads.assetContext;
+  f.reads.assetContext=async(...args)=>{const result=await context(...args);f.setStamp({...before,revision:'2'});return result;};
+  await assert.rejects(f.policy.approve({network:f.t.network,kind:'mint',version:'bulk-v1',orderId:f.id,index:0}),/financial_snapshot_changed/);
+});
 
 test('bulk committee replays merged nonce-reservation account proofs, exact operations and independent commitments',async()=>{
   const t=structuredClone(fixture.max64.terms),secret=new Uint8Array(32).fill(23);t.owner=Buffer.from(ed25519.getPublicKey(secret)).toString('hex');

@@ -1,6 +1,8 @@
 import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
 import { financialFeeKey } from './financial-fee-identity.mjs';
+import { surplusCreditId } from '../../contract/payment-pages.js';
+import { bulkReceiptKey } from '../../rules/src/bulk-mint.js';
 import { tapBurnAddress } from '../../rules/src/tap-burn.js';
 
 const sum = rows => rows.reduce((n, row) => n + BigInt(row.amount), 0n).toString();
@@ -17,6 +19,7 @@ export function publicFinancialTerms(id, evidence, action) {
 // This receives only the accepted draft and its exact write set. No source
 // calls or scans are allowed here. All results commit with the accepted roots.
 export function publicFinancialOperations(store, draft, acceptedWrites) {
+  const creditOrigins = new Map();
   const changes = new Map(), overlay = new Map(), linked = new Map(), key = (space, id) => space + '\0' + id;
   for (const w of acceptedWrites) overlay.set(key(w.space, w.id), w.value);
   const get = (space, id) => overlay.has(key(space, id)) ? overlay.get(key(space, id)) : store.get(space, id);
@@ -28,6 +31,13 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
     const file = item.output.file, financial = [];
     for (const [index, input] of (file.financialOperations ?? []).entries()) {
       const t = input.transition, a = t.action, e = input.evidence, id = t.id;
+      if (t.type === 'refund' && t.reason === 'credit') creditOrigins.set(id, { requestId: id, orderId: null });
+      for (const op of input.operations ?? []) if (op.op === 'fp' && op.type === 'surplus')
+        creditOrigins.set(surplusCreditId(id, op.sequence), { requestId: id, orderId: null });
+      if (t.type === 'bulk-credit' || t.type === 'bulk-release') {
+        const funding = get('accountRecords', 'fp/' + id), reference = t.reference ?? funding?.reference;
+        if (reference && funding?.manifest) creditOrigins.set(bulkReceiptKey(funding.manifest.bitcoinNetwork, reference), { requestId: null, orderId: id });
+      }
       const action = a?.type ?? t.type, provenance = { batch, observation: rules.decimalV2(file.observation), index,
         evidence: rules.hashObject(e) };
       if (t.type === 'reserve-many' || t.type.startsWith('bulk-')) {
@@ -114,8 +124,22 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
       put('links', heightKey(link.block), { ...link, ...linked.get(String(link.block)) });
       put('feedBlockChanges', 'link/' + link.block, { block: link.block });
     }
-    if ((match = /^fc\/([0-9a-f]{64})$/.exec(id))) put('publicResults/credits', match[1], row && {
-      id: match[1], owner: row.owner, revision: row.revision, fees: row.fees, amount: sum(row.fees), batch });
+    if ((match = /^fc\/([0-9a-f]{64})$/.exec(id))) {
+      const creditId = match[1], old = store.get('publicResults/credits', creditId), origin = creditOrigins.get(creditId) ?? old?.origin ??
+        (get('publicFinancialTerms', creditId) ? { requestId: creditId, orderId: null } : null);
+      const amount = row && sum(row.fees), creditedAmount = old ? old.creditedAmount ?? null : amount;
+      put('publicResults/credits', creditId, row && { id: creditId, owner: row.owner, revision: row.revision,
+        fees: row.fees, amount, creditedAmount, origin, state: amount === '0' ? 'spent' : 'available', batch });
+      const requestId = origin?.requestId ?? origin?.orderId;
+      if (requestId && row && typeof creditedAmount === 'string' && creditedAmount !== '0') {
+        const indexed = get('financialRequestCredits/' + requestId, creditId);
+        if (!indexed) {
+          const total = get('financialCreditTotals', requestId) ?? { amount: '0', count: 0, firstCreditId: creditId };
+          put('financialCreditTotals', requestId, { ...total, amount: String(BigInt(total.amount) + BigInt(creditedAmount)), count: total.count + 1 });
+        }
+        put('financialRequestCredits/' + requestId, creditId, { id: creditId, amount: creditedAmount });
+      }
+    }
     if ((match = /^bc\/([0-9a-f]{64})$/.exec(id))) {
       const requestId = match[1], old = store.get('publicResults/custody', requestId);
       put('publicResults/custody', requestId, row && { id: requestId, ...row, batch });

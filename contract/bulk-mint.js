@@ -1,6 +1,6 @@
 import { assert, exactKeys, hex, hashObject, stableJSON } from '../rules/src/core.js';
 import { BULK_LIMITS, validateBulkTerms, bulkBytes, bulkOrderId, bulkMemberId, bulkPermitPlans, bulkIndices,
-  bulkAllMask, bulkReceiptKey, bulkCustodyFeeKey, bulkUint, bulkInscription } from '../rules/src/bulk-mint.js';
+  bulkAllMask, bulkRecoveryFees, bulkReceiptKey, bulkCustodyFeeKey, bulkUint, bulkInscription } from '../rules/src/bulk-mint.js';
 import { tickerSupplyScope, capacityPlotKey, mintRetainsUnits } from '../rules/src/per-ticker-supply-activation.js';
 import { capacityKey, plotKey } from './financial-capacity.js';
 import { financialUnfrozen, custodyId } from './financial-lifecycle.js';
@@ -60,11 +60,17 @@ export async function applyBulkPayment(store, op, { network, height, executionHe
     const credit = async (reference, receiptRoot, paid) => {
       const receiptKey = bulkReceiptKey(t.bitcoinNetwork, reference), key = 'fp/bulk-credit/' + receiptKey;
       assert(!await get(key) && same(await get('fp/bulk-receipt/' + receiptKey), { orderId: op.id, receiptRoot }), 'bulk_credit_receipt');
-      put(key, { orderId: op.id, owner: t.owner, payer: t.payer, reference, receiptRoot, state: 'owed',
+      const fees = op.feeManifest ? bulkRecoveryFees(t, op.feeManifest, paid) : null;
+      if (fees?.length) {
+        assert(!await get('fc/' + receiptKey), 'bulk_credit_exists');
+        put('fc/' + receiptKey, { owner: t.owner, fees, revision: '0' });
+      }
+      put(key, { orderId: op.id, owner: t.owner, payer: t.payer, reference, receiptRoot, state: fees ? 'credited' : 'owed',
+        ...(fees?.length ? { creditId: receiptKey } : {}),
         groups: t.groups.flatMap((g, index) => paid[index] === '0' ? [] : [{ index, to: g.to, ticker: g.ticker, amount: paid[index] }]), feeRoot: t.feeRoot });
     };
     if (op.type === 'bulk-fund' || op.type === 'bulk-credit') {
-      exact(['terms', 'reference', 'block', 'paid', 'receiptRoot']); inscription(op.reference);
+      exact(['terms', 'reference', 'block', 'paid', 'receiptRoot', ...(op.type === 'bulk-credit' && op.feeManifest ? ['feeManifest'] : [])]); inscription(op.reference);
       assert(exactKeys(op.block, ['height', 'hash']) && bulkUint(op.block.height) && hex(op.block.hash, 32) &&
         BigInt(op.block.height) <= BigInt(executionHeight) && hex(op.receiptRoot, 32) &&
         Array.isArray(op.paid) && op.paid.length === t.groups.length &&
@@ -103,7 +109,7 @@ export async function applyBulkPayment(store, op, { network, height, executionHe
       }
       put('fp/' + op.id, { ...old, state: 'bulk-consumed', permitRoot: op.permitRoot, issuedMask: all.toString() });
     } else if (op.type === 'bulk-finish' || op.type === 'bulk-release') {
-      const finish = op.type === 'bulk-finish'; exact(['terms', 'members', ...(finish ? [] : ['reason'])]);
+      const finish = op.type === 'bulk-finish'; exact(['terms', 'members', ...(finish ? [] : ['reason', ...(op.feeManifest ? ['feeManifest'] : [])])]);
       const indices = bulkIndices(op.members, t.members.length, finish);
       if (finish) assert(['bulk-consumed', 'bulk-complete'].includes(old.state) && obligation.state === 'bulk-issued' && issued === all &&
         new Set(op.members.map(m => m.inscription)).size === op.members.length, 'bulk_finish_state');

@@ -132,6 +132,7 @@ export async function runBulkRehearsal({ stack, directory, transport, entry, rec
   pass('64-member kit bulk reservation and three same-owner reserve-n mints accepted while bulk pending');
   mark('reserved');
   const wallet = new TapWalletBulkMint({ provider: transport.provider, network: 'regtest', journal: transport.walletJournal,
+    readTip: () => bitcoin(stack, 'getblockcount'),
     readStatus: id => service.bulkMintStatus(id), readTerms: id => service.bulkMintTerms(id),
     reportPayment: async report => { await sync(); return service.request('/mint/bulk/payment', { value: report }); } });
   const paidBalances = await Promise.all(quote.terms.groups.map(g => tap('getBalance/' + g.to + '/tap')));

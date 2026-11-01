@@ -18,4 +18,10 @@ export class Limiter {
     if (this.tokens[slot] < 1) return false;
     this.tokens[slot]--; return true;
   }
+  retryAfterMs(key, now = performance.now()) {
+    const slot = this.keys.get(key);
+    if (slot === undefined) return Math.max(1, this.ttl - (now - this.seen[this.cursor]));
+    const tokens = Math.min(this.burst, this.tokens[slot] + Math.max(0, now - this.seen[slot]) * this.perSecond / 1000);
+    return this.perSecond > 0 ? Math.max(1, (1 - tokens) * 1000 / this.perSecond) : this.ttl;
+  }
 }

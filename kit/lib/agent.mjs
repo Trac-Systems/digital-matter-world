@@ -27,6 +27,7 @@ import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RES
 import { requireKitVersion, resumeLegacyFinancial } from './upgrade.mjs';
 import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './api-values.mjs';
 import { tnkBalance, prepareTnkTransfer, sendTnkTransfer, tnkTransferStatus } from './tnk.mjs';
+import { TakenCache, miningReadSettings } from './taken-cache.mjs';
 
 export class Agent {
   tnkBalance() { return tnkBalance(this); }
@@ -36,12 +37,13 @@ export class Agent {
   useCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
   transferCredit(args) { return this.exclusive(() => submitFinancialCredit(this, args)); }
   claimCustody(args) { return this.exclusive(() => claimFinancialCustody(this, args)); }
-  constructor({ wallet, network, service, trac, journal, bitcoinWallet, dryRun = true, puzzleBits = 12, powLimitBits = 0x1d00ffff, work = {}, resources = RESOURCE_PROFILE, paymentOrigin, owner = {}, bitcoinNetwork = powLimitBits === 0x207fffff ? 'regtest' : 'mainnet' } = {}) {
+  constructor({ wallet, network, service, trac, journal, bitcoinWallet, dryRun = true, puzzleBits = 12, powLimitBits = 0x1d00ffff, work = {}, resources = RESOURCE_PROFILE, paymentOrigin, owner = {}, miningReads = {}, bitcoinNetwork = powLimitBits === 0x207fffff ? 'regtest' : 'mainnet' } = {}) {
     check(wallet && service && trac && journal && typeof network === 'string', 'Signer, local clients and journal required');
     check(service.network === network && trac.network === network, 'Client network mismatch');
     if (paymentOrigin) gatewayOrigin(paymentOrigin, service?.mode ?? 'regtest');
     Object.assign(this, { wallet, network, service, trac, journal, dryRun, puzzleBits, powLimitBits, work, paymentOrigin });
     this.resources = Object.freeze(structuredClone(validateResources(resources)));
+    this.miningReads = Object.freeze(miningReadSettings(miningReads));
     check(['regtest', 'mainnet'].includes(bitcoinNetwork), 'Invalid Bitcoin network');
     this.bitcoinNetwork = bitcoinNetwork;
     this.bitcoinWallet = bitcoinWallet;
@@ -595,12 +597,19 @@ export class Agent {
   }
   async takenSlots(patterns) {
     const taken = {};
-    for (const pattern of patterns) {
+    const v2 = patterns.filter(pattern => patternId(pattern).startsWith('p2:'));
+    if (v2.length) {
+      this.takenCache ??= new TakenCache({ service: this.service, directory: this.journal?.directory, settings: this.miningReads,
+        scope: JSON.stringify([this.network, this.service.origin, this.service.gateway, this.journal?.scope]) });
+      const cached = await this.takenCache.sync(v2);
+      if (cached === null) return null;
+      Object.assign(taken, cached);
+    }
+    for (const pattern of patterns.filter(pattern => !patternId(pattern).startsWith('p2:'))) {
       const blocks = new Set(), cursors = new Set(); let cursor;
       do {
-        // v2 serves the found index at /claimed-blocks (pages of up to 50) with decimal-string heights.
-        const asset = patternId(pattern), v2 = asset.startsWith('p2:');
-        const page = await this.service.readPage(`/patterns/${asset}/${v2 ? 'claimed-blocks' : 'blocks'}`, { found: true, limit: v2 ? 50 : 200, cursor });
+        const asset = patternId(pattern);
+        const page = await this.service.readPage(`/patterns/${asset}/blocks`, { found: true, limit: 200, cursor });
         const next = nextCursor(page);
         check(Array.isArray(page.rows), 'Invalid found index page');
         for (const row of page.rows) { const block = readInteger(row.block);
@@ -629,8 +638,11 @@ export class Agent {
       const event = { window: summary.tip, claimableHeight: summary.height ?? head.counted, hash: summary.tipHash };
       const bytes = history.raw(summary.tip), raw = typeof bytes === 'string' ? bytes : Buffer.from(bytes).toString('hex');
       const saved = this.journal.get(`claim/${event.window}`), selection = saved && claimSelection(saved.body.p), settings = await this.trac.settings();
+      const taken = selection ? null : await this.takenSlots(patterns);
+      if (!selection && taken === null) return { ...await sendHeader(), claimState: 'taken_syncing',
+        message: 'The found-slot cache is catching up. Mining will resume after a complete revision is available.' };
       const plots = selection?.plots ?? await strategy({ history, patterns: publicIdentities(patterns), owner: this.address,
-        taken: await this.takenSlots(patterns), claimsPerWindow: settings.values?.claimsPerWindow ?? settings.claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow, claimableHeight: event.claimableHeight, window: event.window });
+        taken, claimsPerWindow: settings.values?.claimsPerWindow ?? settings.claimsPerWindow ?? CLAIM_DEFAULTS.claimsPerWindow, claimableHeight: event.claimableHeight, window: event.window });
       if (plots.length) return { ...await this.claim({ event, plots, history, patterns, header: selection?.header ?? { height: summary.tip, raw } }), window: event.window, plots, patterns: [...new Set(plots.flatMap(p => p.patterns))].sort((a, b) => a - b) };
       return this.headers({ height: summary.tip, raw, history });
     }

@@ -23,6 +23,37 @@ export const publicMintMessages = {
   public_payment_incomplete: 'The payment did not cover every quoted fee. Check this request and its refund record before sending another payment.',
   quote_expired: 'The fee changed. Press Mint again for a new quote.',
 };
+// The wallet refuses to start a payment with fewer than 2 Bitcoin blocks left: a payment confirming
+// after the request expires only becomes a fee credit. The page offers a fresh request instead.
+export const WINDOW_SHORT = 'Nothing was paid. Fewer than 2 Bitcoin blocks (about 20 minutes) are left to pay this request, so your wallet did not start the payment: a payment that confirms after it expires only becomes a fee credit.';
+export const windowShort = error => error?.code === 'payment_window_short' || error?.message === 'payment_window_short';
+// The time left to pay, in human terms: "Pay within about 1 hour (by block 900,006)." A block takes about 10 minutes.
+export function payWithin(untilBlock, tip) {
+  if (!/^(0|[1-9][0-9]*)$/.test(String(untilBlock ?? ''))) return null;
+  const by = Number(untilBlock).toLocaleString('en-US'), left = /^(0|[1-9][0-9]*)$/.test(String(tip ?? '')) ? Number(untilBlock) - Number(tip) : null;
+  if (left === null) return `Pay by block ${by} (about 10 minutes per block).`;
+  // The wallet does not start a payment with fewer than 2 blocks left.
+  if (left < 2) return `Too little time is left to pay: this request ends with block ${by}.`;
+  const minutes = left * 10;
+  return `Pay within about ${minutes < 55 ? minutes + ' minutes' : minutes < 90 ? '1 hour' : Math.round(minutes / 60) + ' hours'} (by block ${by}).`;
+}
+// The Bitcoin tip the wallet checks before paying, read at most once a minute; null when unreadable.
+const tips = new Map();
+export async function bitcoinTip(network, fetchImpl = globalThis.fetch) {
+  const saved = tips.get(network);
+  if (saved && Date.now() - saved.at < 60000) return saved.tip;
+  let tip = null;
+  try {
+    const url = network === 'mainnet' ? 'https://mempool.space/api/blocks/tip/height' : network === 'regtest' ? '/web-api/tap-reader/getCurrentBlock' : null;
+    const response = url ? await fetchImpl(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) }) : null;
+    const value = response?.ok ? network === 'mainnet' ? (await response.text()).trim() : (await response.json()).result : null;
+    tip = /^(0|[1-9][0-9]*)$/.test(String(value ?? '')) ? String(value) : null;
+  } catch { tip = null; }
+  tips.set(network, { tip, at: Date.now() });
+  return tip;
+}
+// A request or order whose payment confirmed after it expired: the credited amount in TAP atoms, or null.
+export const creditedAmount = status => status?.reason === 'credited' && /^[1-9][0-9]*$/.test(status.creditedAmount ?? '') ? status.creditedAmount : null;
 const messages = {
   ...publicMintMessages,
   fee_settings_pin: 'The fees are being updated. New quotes open again once the new fee settings are active on Trac, within a few Bitcoin blocks. Nothing was sent; try again then.',
@@ -50,11 +81,13 @@ const messages = {
   deployment_receiver: 'Use the wallet that received the pattern element for its token deployment.',
   discoverer_receiver: 'Only the discoverer can deploy this token during its first week. After that anyone can, and the deployer keeps its art rights.',
   web_target_unavailable: 'Wallet payments are temporarily unavailable. Try again shortly.',
+  payment_window_short: WINDOW_SHORT,
 };
 // Keep existing plain wallet guidance, but never put a bare protocol code on a
 // payment page. Unknown codes get a retry message without implying a new send.
 export function walletError(error, details = error) {
   if (Number(error?.code) === 4001) return 'Wallet request cancelled. You can retry.';
+  if (windowShort(error)) return WINDOW_SHORT;
   const message = typeof error === 'string' ? error : error?.message;
   if (message === 'not_yet_public' && publicOpeningLabel(details)) return publicOpeningLabel(details) + '.';
   if (Object.hasOwn(messages, message)) return messages[message];

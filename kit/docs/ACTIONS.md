@@ -561,3 +561,67 @@ mean a payment is owed, not refunded, and are not automatically spent.
 Bulk is an additive protocol and requires coordinated service support. An
 ingress switch can stop new orders while accepted funded/issued work drains.
 No activation-height wait is part of a bulk action.
+
+## Short mint windows and fee credits
+
+Single requests and bulk orders use the accepted `pendingBlocks` setting. A
+six-block successor keeps the existing operation types and signed request
+formats. Check the request's `payBy.untilBlock`, rather than assuming a fixed
+window. `until` is the shorter reservation-signature deadline; already issued
+permits remain deliverable and finishable after the payment deadline.
+
+`TapWalletMint` and `TapWalletBulkMint` take a `minPaymentBlocks` option (default
+`2`, positive integer) and optional `readTip()` callback returning the current
+Bitcoin tip as a decimal string or safe integer. Without that callback they read
+the Bitcoin tip from mempool.space on mainnet, or the configured local TAP
+reader on regtest. Both check before approval and again after funds checks.
+Fewer remaining blocks returns `payment_window_short` and asks for a fresh
+request. Unknown tip/deadline fails closed. Saved payment receipts can still be
+reported after expiry; this guard only prevents starting another payment.
+
+Reported late payments remain under background recovery after units and slots
+are released. Confirmed TAP payments and settled Ethereum releases become fee
+credits using their original fee denominations. An open Ethereum escrow is not
+a settled fee payment: it remains refundable under the escrow contract, and
+an external refund never also creates fee credit.
+
+The local dashboard API exposes these authenticated routes, without changing
+page layout:
+
+- `GET /api/credits?limit=25&cursor=...` lists this agent's accepted fee credits.
+- `GET /api/credits?request=REQUEST_ID` also returns exact matching fee items and
+  the usable amount for that open single mint request.
+- `POST /api/credits/use` takes `{actionId,credit,request}`. It signs the existing
+  `use_credit` action for matching missing fees. Keep the same action ID on retry.
+- `POST /api/credits/transfer` takes `{actionId,credit,to}` and uses the existing
+  `transfer_credit` action; `to` is a Trac address.
+
+Rows have `id`, `amount` (remaining atoms), `creditedAmount` (original atoms, or
+null for old projections), `origin:{requestId,orderId}` (or null), `state`
+(`available` or `spent`), `revision` and `fees`. Request-filtered rows additionally
+have `requestId`, `matchingAmount`, `items:[{fee,amount}]` and `usable`. The envelope
+has `credits`, `next`, `unit` and optional `requestId`. Follow non-null `next`
+even when the visible page is empty. Amounts are strings; TAP has 18 decimals.
+The list verifies ownership and remaining amounts through the independent Trac
+adapter; public metadata only supplies provenance and discovery IDs.
+
+Mint status from the dashboard includes `feeCredits.href`, pointing to the
+matching-credit GET route. Credit application is offered explicitly and does not
+sign while reading a page. Library callers can use `listFeeCredits`,
+`matchingCreditItems` and `applyMatchingCredit` from `lib/financial-credit.mjs`
+or `lib/index.mjs`.
+
+The public single-mint status for a recovered late payment has `state:"expired"`,
+`reason:"credited"`, `creditedAmount` (original total atoms), `creditId` (first
+credit), `creditsCount` (total number) and `credits:[{id,amount}]`. The list is
+bounded by `paymentPage` for singles and 64 for bulk; the amount and count cover
+every recovery credit, including those outside the list. These original credited amounts
+stay visible after a credit is spent or transferred; query `/api/credits` for
+this agent's remaining spendable balance. Bulk status retains `state:"credited"`
+and exposes the same credit fields and reason when terminal.
+
+Bulk recovery now verifies the original fee manifest against the signed fee
+root and delivers ordinary fee credits, including distinct custody beneficiaries.
+Its receipt-backed recovery record has `state:"credited"` and `creditId`, rather
+than `state:"owed"`, when that delivery occurs. Existing historical operations
+without the optional manifest retain their old recovery-record behavior.

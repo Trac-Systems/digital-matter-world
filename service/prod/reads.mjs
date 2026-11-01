@@ -46,6 +46,7 @@ import { AcceptedAssetSupply } from './asset-supply.mjs';
 import { walletBitmaps } from '../src/bitmaps.mjs';
 import { publicTreasury, publicEscrow, bitmapOwner, deploymentHolders } from './public-reads.mjs';
 import { installPublicSummarySources } from './public-summary-sources.mjs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms, mintOwnershipMatches } from '../src/fees.mjs';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
@@ -57,6 +58,18 @@ export async function batchReadStamp(trac, indexer) {
   // strings. Compare their values without rounding either representation.
   check(rules.compareOrdinal(tap.height, before.tip) === 0 && tap.hash === before.tipHash
     && same(before, await trac('stamp')), 'read_snapshot_changed');
+  return { ...before, tap };
+}
+// Admission is a gateway preview, not independent signer evidence. Active v2
+// financial records change in batches; the transport revision also changes on
+// unrelated appends. Keep the batch/TAP fence and off-batch authority/policy state.
+// The native adapter acquires this stamp from one checkout and omits revision:
+// it cannot be used as a historical checkout handle.
+export async function gatewayFinancialReadStamp(trac, indexer) {
+  const snapshot = () => trac('financialPreviewStamp');
+  const before = await snapshot(), tap = await indexer.stamp();
+  check(rules.compareOrdinal(tap.height, before.tip) === 0 && tap.hash === before.tipHash &&
+    same(before, await snapshot()), 'read_snapshot_changed');
   return { ...before, tap };
 }
 export function checkBatchReceiptRoster(config, settings) {
@@ -72,7 +85,21 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   config = configuredResources(config);
   await validateConfig(config, { committee });
   const limits = readerSettings(config.prod.readerSettings);
-  const registry = async () => { const value = await readRegistry(config.prod.registry, config.prod.registrySettings); check(value instanceof KeyedRegistry, 'registry_migration_required'); return value; };
+  const candidateScope = new AsyncLocalStorage();
+  // Only bulk quote/request enter this per-reader scope. Committee readers and
+  // concurrent gateway batch builders retain their complete raw revision fence.
+  const gatewayPreview = config.v2 && suppliedStore && !committee ? new AsyncLocalStorage() : null;
+  const previewing = () => gatewayPreview?.getStore()?.active === true;
+  // Share expensive common work only for this candidate scan. This map never
+  // survives a financial snapshot change, unlike TAP's independently fenced cache.
+  const candidateRead = (key, fn) => {
+    const scope = candidateScope.getStore();
+    if (!scope?.active) return fn();
+    const cache = scope.cache;
+    if (!cache.has(key)) cache.set(key, Promise.resolve().then(fn));
+    return cache.get(key);
+  };
+  const registry = () => candidateRead('registry', async () => { const value = await readRegistry(config.prod.registry, config.prod.registrySettings); check(value instanceof KeyedRegistry, 'registry_migration_required'); return value; });
   await registry();
 
   const state = suppliedStore ?? await Store.open(config.prod.readerData, config.storeSettings);
@@ -179,6 +206,10 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const sharedHead = shared(() => trac('head')), sharedAuthority = shared(() => trac('authority')), sharedRules = shared(() => trac('rulesContext'));
   const reads = {
     bindings,
+    withGatewayFinancialPreview: gatewayPreview ? async task => {
+      const scope = { active: true };
+      try { return await gatewayPreview.run(scope, task); } finally { scope.active = false; }
+    } : undefined,
     refreshEvidence: store instanceof EvidenceStore ? () => store.refresh() : undefined,
     feeQuotes: new FeeQuotes({ network: config.network, gateway, registry, settingsHistory: { get: hash => trac('settingsByHash', [hash]) } }),
     validateFeeTerms: quotedTerms,
@@ -215,19 +246,25 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       return { rows, total, next };
     },
     publicTreasury: () => publicTreasury({ registry, tap, ethRPC, ethereum: config.prod.ethereum }),
-    rulesContext: sharedRules,
+    rulesContext: Object.assign(() => previewing() || candidateScope.getStore()?.active ? trac('rulesContext') : sharedRules(), { fresh: sharedRules.fresh }),
+    withBulkCandidateReads: (at, fn) => indexer.bulkAt(at, async () => {
+      const scope = { cache: new Map(), active: true };
+      try { return await candidateScope.run(scope, fn); } finally { scope.active = false; }
+    }),
     replayNodes: store instanceof EvidenceStore ? (...args) => store.replayNodes(...args) : undefined,
     claimNode: (id, ancestors) => store instanceof EvidenceStore ? store.claimNode(id, ancestors) : store.get('claimNodes', id),
     namedNode: (id, ancestors) => store instanceof EvidenceStore ? store.namedNode(id, ancestors) : store.get('namedNodes', id),
     settingsByHash: hash => trac('settingsByHash', [hash]),
     renewalSlice: n => trac('renewalSlice', [n]),
-    authority: sharedAuthority, counted: async () => (await sharedHead()).counted, batchLast: () => trac('batchLast'), batchRoot: n => trac('root', [n]), committeeEpoch: async () => (await trac('authority')).epoch,
+    authority: Object.assign(() => previewing() ? trac('authority') : sharedAuthority(), { fresh: sharedAuthority.fresh }),
+    counted: async () => (await sharedHead()).counted, batchLast: () => trac('batchLast'), batchRoot: n => trac('root', [n]), committeeEpoch: async () => (await trac('authority')).epoch,
     balance: (owner, asset, at) => trac('balance', [owner, asset, at]), nonceUsed: (owner, nonce, at) => trac('nonceUsed', [owner, nonce, at]), pending: (id, at) => trac('pending', [id, at]),
     pendingAcceptance: id => trac('acceptance', [id]), mintExit: id => trac('exit', [id]), agentAddress: id => trac('agentAddress', [id]), blockHold: (asset, block, at) => trac('hold', [asset, block, at]),
     async retireContexts(accepted) {
       for await (const entry of await opendir(config.prod.contexts)) if (entry.isFile() && /^[0-9]+\.json$/.test(entry.name) && BigInt(entry.name.slice(0, -5)) + BigInt(limits.contextRetentionBatches) <= BigInt(accepted)) await removeFile(join(config.prod.contexts, entry.name));
     },
-    settings: () => trac('settings'), batchHeaders: async () => [], batchStamp: () => batchReadStamp(trac, indexer),
+    settings: () => trac('settings'), batchHeaders: async () => [],
+    batchStamp: () => previewing() ? gatewayFinancialReadStamp(trac, indexer) : batchReadStamp(trac, indexer),
     async batchContext(sequence) {
       const sequenceText = rules.decimalV2(sequence); check(sequenceText !== '0', 'batch_sequence');
       let context;
@@ -247,7 +284,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     },
     officialName: name => officialName(reads, store, name),
     async assetContext(asset, block, viewOrKind, payoutSnapshot, admittedId, selection) {
-      await timeStep('ctx.ensureRegistry', reads.ensureRegistryAsset?.(asset, payoutSnapshot?.deploymentId ?? selection));
+      await timeStep('ctx.ensureRegistry', candidateRead('registry/' + asset + '/' + (payoutSnapshot?.deploymentId ?? selection ?? ''),
+        () => reads.ensureRegistryAsset?.(asset, payoutSnapshot?.deploymentId ?? selection)));
       const registrations = await timeStep('ctx.registry', registry()), current = registrations.assets[asset];
       const chosen = selection || payoutSnapshot?.deploymentId;
       const registered = selectedDeployment(registrations, asset, chosen) ?? (payoutSnapshot?.deploymentId && typeof registrations.asset === 'function' ? registrations.asset(asset, payoutSnapshot.deploymentId) : payoutSnapshot?.deploymentId ? (registrations.generations?.[asset] ?? []).find(e => e.id === payoutSnapshot.deploymentId) : null);
@@ -266,9 +304,17 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
         (registered.pattern?.amountMode ?? 'count') === (provenance.pattern.amountMode ?? 'count'), 'asset_provenance_deployment');
       if (provenance?.compound) check(registered.kind === 'compound', 'asset_provenance_deployment');
       const indexTick = registered.indexTick ?? registered.tick;
-      const { deployment, authority } = await timeStep('ctx.verifyDeployment', verifyDeployment(reads, registered, { view: typeof viewOrKind === 'object' ? viewOrKind : undefined }));
-      const auth = await timeStep('ctx.privilegeContent', content(registered.privilege)), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), publicKey = recovered(authorityHash, auth.sig);
-      check(auth.hash === authorityHash && publicKey === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
+      // The outer TAP fence has not closed yet. Keep semantic verification in
+      // this scan's cache so a failed fence cannot populate the long-lived
+      // deployment cache; only independently fenced source responses survive.
+      const { deployment, authority } = await timeStep('ctx.verifyDeployment', candidateRead(rules.stableJSON(['deployment', registered, viewOrKind ?? null]),
+        () => verifyDeployment(candidateScope.getStore()?.active ? Object.create(reads) : reads, registered,
+          { view: typeof viewOrKind === 'object' ? viewOrKind : undefined })));
+      const publicKey = await candidateRead('privilege/' + registered.privilege + '/' + (registered.authorityKey ?? ''), async () => {
+        const auth = await timeStep('ctx.privilegeContent', content(registered.privilege)), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), key = recovered(authorityHash, auth.sig);
+        check(auth.hash === authorityHash && key === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
+        return key;
+      });
       const found = provenance ? provenance.find : registered.kind === 'dmt' ? await timeStep('ctx.find', find(asset, block, registered.pattern, typeof viewOrKind === 'object' ? viewOrKind : undefined)) : null;
       const live = viewOrKind?.bulkMint || payoutSnapshot || typeof viewOrKind === 'string' ? [] : (await Promise.all((await store.list('activeMints', { limit: limits.legacyActivePageRows })).map(r => store.get('mints', r.id)))).filter(r => r.request.asset === asset && r.request.block === block);
       const kinds = new Set(live.map(r => r.kind));
@@ -277,7 +323,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const destinations = registered[kind]; check(destinations, 'payment_destinations');
       const pattern = provenance ? provenance.pattern : config.v2 ? registered.pattern ?? await store.get('patternsByAsset', asset) : store instanceof EvidenceStore ? await store.get('patternsByAsset', asset) : (store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset);
       const payouts = { finder: null, firstMaker: null, discoverer: null, landowner: null };
-      const payout = async (agent, role) => { const proof = await timeStep('ctx.payout', bindings.resolve(agent, kind, payoutSnapshot, role)); payouts[role] = proof?.id ?? null; return proof?.request.address ?? null; };
+      const payout = async (agent, role) => { const proof = await timeStep('ctx.payout', candidateRead(rules.stableJSON(['payout', agent, kind, payoutSnapshot ?? null, role]),
+        () => bindings.resolve(agent, kind, payoutSnapshot, role))); payouts[role] = proof?.id ?? null; return proof?.request.address ?? null; };
       let discoverer = null;
       if (pattern?.discoverer) {
         if (!provenance) {
@@ -308,7 +355,9 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
         beneficiaries: { finder: found?.finder ?? null, firstMaker: registered.kind === 'compound' ? maker : null, discoverer: pattern?.discoverer ?? null, landowner: holder?.agent ?? null },
         finderAddress: found?.finder ? address : null, firstMakerAddress: registered.kind === 'compound' ? address : null };
     },
-    bitmap: block => bitmapOwner({ tap, indexer, bindings }, block),
+    bitmap: block => bitmapOwner({ tap, indexer, bindings: {
+      owners: address => candidateRead('owners/' + address, () => bindings.owners(address))
+    } }, block),
     deploymentHolders: (ids, at) => deploymentHolders(indexer, ids, at),
     async link(block) {
       const suffix = BigInt(block).toString(36);

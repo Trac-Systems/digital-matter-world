@@ -45,11 +45,30 @@ export async function createTrac({ runtime, config, deployment, store, network }
   // still require a numeric seek; refuse beyond that adapter's capability.
   const sourceSeek = value => typeof peer.base.view.version === 'string' ? rules.decimalV2(value) : rules.safeNumberV2(rules.decimalV2(value));
   const stamp = async () => { await peer.base.update(); const revision = sourceVersion(), head = await api.dmwHead(), last = await api.dmwBatchLast(); check(revision === sourceVersion(), 'trac_snapshot_changed'); return { counted: head.counted, tip: head.tip.height, tipHash: head.tip.hash, revision, last }; };
+  // Read the gateway's complete financial clock from one immutable checkout.
+  // Retain its raw seek internally for readMany; it is not a liveness fence.
+  const financialSnapshot = async () => {
+    await peer.base.update(); const revision = sourceVersion();
+    return peer.protocol.instance.withView(async state => {
+      const head = await state.head(), last = await state.batchLast();
+      return { counted: head.counted, tip: head.tip.height, tipHash: head.tip.hash, last, revision,
+        batchRoot: await state.get('bt/' + last.n) ?? null,
+        authority: { network: state.options.network, admin: await state.admin(), committee: await state.committee(),
+          epoch: await state.committeeEpoch(), paused: await state.paused(), pauseUntil: (await state.get('ad/pause'))?.until ?? null },
+        admissionPolicy: { ready: !!await state.get('v2/ready'), settingsHash: rules.hashObject(await state.get('v2/settings')),
+          scheduledSettingsHash: rules.hashObject(await state.get('v2/settings-next') ?? null) } };
+    });
+  };
   // Pin reads to the batch clock (counted, tip, last). The raw subnet version also moves on
   // unrelated appends, which made every long prepare fail on a live network.
   const batchClock = s => ({ counted: s.counted, tip: s.tip, tipHash: s.tipHash, last: s.last });
-  const pinned = async (at, read) => { const before = await stamp(); if (at) check(clock.compare(before.counted, rules.decimalV2(at.counted)) >= 0 && same(before.last, at.last), 'trac_snapshot_changed');
-    const result = await read(before); check(same(batchClock(before), batchClock(await stamp())), 'trac_snapshot_changed'); return result; };
+  const pinned = async (at, read) => {
+    // Only the explicit gateway preview stamp lacks revision and has policy.
+    // Ordinary and signer reads continue to acquire their original strict stamp.
+    const snapshot = at?.revision === undefined && at?.admissionPolicy ? financialSnapshot : stamp;
+    const before = await snapshot(); if (at) check(clock.compare(before.counted, rules.decimalV2(at.counted)) >= 0 && same(before.last, at.last), 'trac_snapshot_changed');
+    const result = await read(before); check(same(batchClock(before), batchClock(await snapshot())), 'trac_snapshot_changed'); return result;
+  };
   const sync = () => gate(async () => {
     await abortable(peer.base.update(), signal); signal?.throwIfAborted();
     const end = sourceVersion(), cursor = clock.value(rules.decimalV2(store.get(progressSpace, 'cursor') ?? 0));
@@ -117,6 +136,11 @@ export async function createTrac({ runtime, config, deployment, store, network }
     acceptance: async id => { await sync(); return store.get('prodAcceptances', id); }, exit: async id => { await sync(); return store.get('prodExits', id); },
     hold: (asset, block, at) => pinned(at, async () => { await sync(); const saved = store.get('prodHolds', hash(JSON.stringify([asset, block]))); if (!saved) return null; const pending = await api.dmwMint(saved.id), h = await api.dmwHead(); return pending && (pending.h || pending.s === 0 && h.counted <= pending.e) && pending.asset === asset && pending.block === block ? { id: saved.id, expiry: pending.h ? Number.MAX_SAFE_INTEGER : pending.e } : null; }),
     stamp,
+    // Gateway quote/admission only. A checkout makes stamp acquisition atomic
+    // even if the live view advances during these reads. Signers still use stamp.
+    financialPreviewStamp: async () => {
+      const { revision, ...at } = await financialSnapshot(); return at;
+    },
     migrationSnapshot: async () => {
       const at = await stamp(), view = peer.base.view.checkout(sourceSeek(at.revision)), records = [];
       try {

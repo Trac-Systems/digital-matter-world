@@ -17,7 +17,7 @@ test('Mint uses the public provider transfer API and preserves its funding recei
     { role: 'treasury', to: address, ticker: 'tap', amount: '33900000000000000000', tt: 'a' },
     { role: 'burn', to: tapBurnAddress('mainnet'), ticker: 'tap', amount: '33900000000000000000', tt: 'a' },
   ];
-  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
+  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap', untilBlock: '999999' } };
   const provider = { ...tapWallet1049({ address, publicKey }).provider, requestAccounts: async () => [address], getAccounts: async () => [address], getNetwork: async () => 'mainnet',
     getPublicKey: async () => publicKey, getBitcoinUtxos: async () => [cardinalFixture()],
     signPsbt: async () => assert.fail('no inscription signing for a transfer'), pushPsbt: async () => assert.fail('no pushPsbt'), pushTx: async () => assert.fail('no pushTx'),
@@ -42,7 +42,7 @@ function fixture(active = false) {
   const publicKey = hex(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true)), address = fundingAddress(publicKey, 'mainnet');
   const f = tapWallet1049({ address, publicKey, active }), records = new Map(), id = '12'.repeat(32);
   const fees = [{ role: 'treasury', to: address, ticker: 'tap', amount: '1000000000000000000', tt: 'a' }];
-  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
+  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap', untilBlock: '999999' } };
   const journal = { get: async k => structuredClone(records.get(k)), put: async (k, v) => records.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
   const notices = [], options = { provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, fetchImpl: walletFundsFetch, notify: text => notices.push(text) };
   return { ...f, records, id, status, journal, notices, options, wallet: new TapWalletMint(options) };
@@ -280,4 +280,17 @@ test('a 1.0.49 wallet without extraOutputs support pays the two-step way', async
   f.provider.getCapabilities = async () => ({ version: '1.0.49' });
   await f.wallet.connect(); await f.wallet.pay(f.id);
   assert.deepEqual(f.seen.filter(c => c[0] === 'singleTxTransfer'), [['singleTxTransfer', 1]]);
+});
+
+test('single mint refuses fewer than two blocks and rechecks after funds without signing', async () => {
+  for (const tips of [['999998'], ['999997', '999998']]) {
+    const f = fixture(true); f.provider.getBitcoinUtxos = async () => [cardinalFixture()];
+    f.wallet.readTip = async () => tips.length > 1 ? tips.shift() : tips[0];
+    await f.wallet.connect();
+    await assert.rejects(f.wallet.pay(f.id), e => e.code === 'payment_window_short' && /fresh mint request/.test(e.message));
+    assert.equal(f.records.size, 0); assert.equal(f.state.calls.length, 0);
+  }
+  const f = fixture(true); f.provider.getBitcoinUtxos = async () => [cardinalFixture()];
+  f.wallet.readTip = async () => '999997'; await f.wallet.connect();
+  assert.equal((await f.wallet.pay(f.id)).localState, 'payment_submitted');
 });

@@ -58,6 +58,7 @@ in returned `p2%3A0`/`c2%3A…` account links are supported, not encoded travers
 | `/blocks/H/mintRights` | Owner required; the kit supplies this player's address by default. |
 | `patterns`, `/patterns` | `patterns`, usually `total:null`, canonical ordinals, named keys and revisions. |
 | `pattern_matches`, `claimed_blocks`, `/patterns/p2:N/claimed-blocks` | `rows`, `knownMatchCount`, catalog/projection revisions, cursor aliases. Limit 1–50; found/minted booleans, sort block, order asc/desc. |
+| `ServiceClient.takenSlotsPage`, `/patterns/taken` | Mining's compact snapshot or hash-chained membership changes across all patterns. `cursor` continues a snapshot; `since` is an opaque revision token. Used automatically by `mine_once`; incomplete caches never select claims. |
 | `window_eligibility`, `/window-eligibility` | Recorded windows and deferred header-award evidence. |
 | `/window-eligibility/W` | `{v:3,draw:{window,windowHash,determinedAt,seed,senderCount,senderRoot,catalog,policy,…}}`. |
 | `/windows/W/claims`, `/winners`, `/headers` | Record pages; rows can wrap evidence in `{id,row,batch,audit,root}`. |

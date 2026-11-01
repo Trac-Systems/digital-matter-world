@@ -102,7 +102,7 @@ export async function dashboardFixture(t, { http = false, site = false } = {}) {
         rail: body.kind, expiry: r.expires, settingsHash: r.settingsHash, request: r, quote: body.feeQuote, signature: body.signature, authorization: body.authorization };
       const action = { type: 'reserve-n', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: hashObject(evidence), nonce: r.nonce, until: r.until };
       if (!body.reserve) {
-        records.set(id, { requestId: id, owner, asset: r.asset, block: r.block, receiver: body.receiver, payer: body.payer, amount: r.amount, state: 'authorizing', payable: false, fees: [], missing: [], payBy: { rail: 'tap' } });
+        records.set(id, { requestId: id, owner, asset: r.asset, block: r.block, receiver: body.receiver, payer: body.payer, amount: r.amount, state: 'authorizing', payable: false, fees: [], missing: [], payBy: { rail: 'tap', untilBlock: '900432' } });
         return response({ id, state: 'authorizing', reservationEvidence: evidence, reservationAction: action });
       }
       const { sig, ...reserve } = body.reserve;

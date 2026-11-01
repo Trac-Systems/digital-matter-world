@@ -5,8 +5,8 @@ import { TapWalletBulkMint, bulkPaymentPlan } from './bulk-wallet.js';
 import { bulkApi, api } from './console/js/api.js';
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from './console/js/dom.js';
 import { tap } from './console/js/money.js';
-import { walletError } from './console/js/wallet-errors.js';
-import { assetLink, addressLink, blockLink, setEthereumChain } from './console/js/words.js';
+import { walletError, windowShort, payWithin, bitcoinTip, creditedAmount } from './console/js/wallet-errors.js';
+import { assetLink, addressLink, agentLink, blockLink, setEthereumChain } from './console/js/words.js';
 
 const PAGE = 25;
 const sats = n => `${fmtInt(n)} sats`;
@@ -16,7 +16,7 @@ const plural = (n, one) => `${fmtInt(n)} ${one}${n === 1 ? '' : 's'}`;
 export const BULK_STATE = { reserving: ['reserving blocks', 'info'], awaiting_payment: ['waiting for wallet payment', 'warn'], partly_paid: ['partly paid', 'bad'],
   paid: ['payment confirmed', 'info'], permit_pending: ['permits being prepared', 'info'], permit_issued: ['permits ready', 'info'], minting: ['being minted', 'info'],
   partly_minted: ['being minted', 'info'], minted: ['minted', 'good'], needs_attention: ['needs attention', 'bad'], releasing: ['releasing blocks', 'warn'],
-  expired: ['expired', 'bad'], credited: ['expired, payment owed back', 'bad'] };
+  expired: ['expired', 'bad'], credited: ['expired, paid late', 'warn'] };
 const STOPPED = ['partly_paid', 'needs_attention', 'releasing', 'expired', 'credited'];
 const paidStates = ['paid', 'permit_pending', 'permit_issued', 'minting', 'partly_minted', 'minted'];
 
@@ -24,10 +24,12 @@ const paidStates = ['paid', 'permit_pending', 'permit_issued', 'minting', 'partl
 export function bulkProgress(status, localState) {
   const n = status.count, ready = status.permit?.readyCount ?? 0, minted = status.progress?.minted ?? 0, sender = status.mintSender;
   if (status.state === 'minted') return [`Minted ${minted} of ${n}. The tokens are in your TAP Wallet.`, 'good'];
-  if (status.creditReferences?.length) return ['Your payment is owed back to you. It has not been returned yet.', 'warn'];
+  // A credited order has its own callout with the credit and what to do with it.
+  if (creditedAmount(status)) return null;
+  if (status.creditReferences?.length) return ['Your payment arrived after this order expired. It becomes a fee credit once Bitcoin confirms it; nothing else to do. Do not pay again.', 'info'];
   if (status.state === 'partly_paid') return ['Only part of the payment arrived. This order cannot be paid again or mint only some of its blocks; it is held for recovery.', 'bad'];
   if (status.state === 'needs_attention') return ['This order needs the operator’s attention. Blocks with a permit stay held for you.', 'bad'];
-  if (['releasing', 'expired'].includes(status.state)) return ['This order expired before it was paid in full. Its blocks are released; a payment that arrived is owed back to you.', 'warn'];
+  if (['releasing', 'expired'].includes(status.state)) return ['This order expired before it was paid, so nothing was paid. Its blocks are released for a new order.', 'warn'];
   if (sender?.state === 'fee_wait') return ['Waiting for Bitcoin network fees to fall to the rate you approved. Nothing more to pay.', 'info'];
   if (sender?.sentBatches > 0) return [`Mint sent. Waiting for Bitcoin to confirm it: minted ${minted} of ${n}. Nothing else to do.`, 'info'];
   if (['permit_issued', 'minting', 'partly_minted'].includes(status.state)) return [`Permits ready ${ready} of ${n}. Our server is sending the mint.`, 'info'];
@@ -68,14 +70,22 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
   const heading = h('h1', {}, 'Mint blocks'), intro = h('p.lead-text', {}, 'Loading the order…');
   clear(root, h('div.page', {}, h('div.page-head', {}, heading), intro, h('div.flow', {}, progress, h('div.grid.cols-main', {},
     h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions, extra)), body), side))));
-  let stopped = false, timer, busy = false, localState, reported = false, offset = 0, paymentDraft = '', plan, status;
+  let stopped = false, timer, busy = false, localState, reported = false, offset = 0, paymentDraft = '', plan, status, tip = null;
+  // The agent dashboard shows this page too; shortWindow: the wallet refused a payment with fewer than 2 blocks left.
+  const agentHere = globalThis.DMW_LOCAL_AGENT === true;
+  let shortWindow = false;
   const attempt = async (fn, clicked) => {
     if (busy || stopped) return; busy = true;
     for (const button of root.querySelectorAll('.next-step button, .paged button')) button.disabled = true;
     clicked?.classList.add('busy');
     say('Working…', 'busy');
     try { await fn(); if (!stopped && note.textContent === 'Working…') say(''); }
-    catch (error) { if (!stopped) say(walletError(error), 'bad'); }
+    catch (error) {
+      if (stopped) return;
+      // Too little time left: the page itself explains it and offers a fresh order.
+      if (windowShort(error) && status) { shortWindow = true; say(''); await refresh().catch(() => {}); }
+      else say(walletError(error), 'bad');
+    }
     finally { busy = false; clicked?.classList.remove('busy'); if (note.classList.contains('busy')) note.className = 'callout info'; for (const button of root.querySelectorAll('.next-step button, .paged button')) button.disabled = false; }
   };
   const button = (label, fn, kind = '') => h(`button.btn${kind === 'primary' ? '.primary.cta' : kind === 'quiet' ? '.ghost' : ''}`, { onclick: event => attempt(fn, event.currentTarget) }, label);
@@ -100,6 +110,8 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
     const nextPlan = bulkPaymentPlan(orderId, nextStatus, response, network);
     if (memberPage.orderId !== orderId) throw Error('Bulk member page mismatch');
     status = nextStatus; plan = nextPlan;
+    tip = status.state === 'awaiting_payment' && status.payable ? await bitcoinTip(network) : null;
+    if (stopped) return;
     // Redisplay saved receipt on reload, including a report whose HTTP reply was
     // lost. Connecting is unnecessary for this read-only recovery.
     if (wallet.journal) {
@@ -124,8 +136,19 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
       : ['paid', 'permit_pending'].includes(state) || failed && status.payment?.state === 'paid' ? 2 : state === 'reserving' ? 0 : 1;
     clear(progress, stepper(['Reserve', 'Pay', 'Permits', 'Mint sent', 'Minted'], at, { failed }));
     const awaiting = state === 'awaiting_payment' && localState !== 'payment_submitted';
-    const told = bulkProgress(status, localState);
-    clear(lead, awaiting && status.payable ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(t.payableFeeAtoms))) : null,
+    const told = bulkProgress(status, localState), credit = creditedAmount(status);
+    const until = status.payBy?.untilBlock, left = tip !== null && /^(0|[1-9][0-9]*)$/.test(String(until ?? '')) ? Number(until) - Number(tip) : null;
+    // Fewer than 2 blocks left: the wallet does not start a payment; the page offers a fresh order instead.
+    const tooLate = awaiting && status.payable && localState !== 'payment_pending' && (shortWindow || left !== null && left < 2);
+    const owner = typeof t.owner === 'string' && t.owner.startsWith('trac1') ? t.owner : null;
+    clear(lead, awaiting && status.payable ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(t.payableFeeAtoms)),
+        tooLate ? null : h('div.small.muted', { style: { marginTop: '4px' } }, payWithin(until, tip))) : null,
+      tooLate ? h('div.callout.warn', {}, h('strong', {}, 'Too little time is left to pay. '),
+        'Fewer than 2 Bitcoin blocks (about 20 minutes) remain, and a payment that confirms after this order expires only becomes a fee credit. Your wallet does not start it; nothing was paid. ',
+        agentHere ? 'Once it expires, its blocks are released: press Mint several in My agent again for a fresh order.' : 'Once it expires, its blocks are released and the agent that made it can start a fresh order.') : null,
+      credit ? h('div.callout.warn', {}, h('strong', {}, 'Your payment arrived after this order expired. '), 'It became a fee credit of ', h('strong.nowrap', {}, tap(credit)), '. Its blocks are released. ',
+        agentHere ? 'Your agent can use the credit for the fees of a new mint.'
+          : ['It belongs to the agent that made this order', owner ? [', ', agentLink(owner)] : null, '. That agent uses it for a new mint from its own dashboard, under My agent.']) : null,
       told ? h(`div.callout.${told[1]}`, {}, told[0]) : null);
     const fees = awaiting && status.payable ? table(t.groups.map((g, i) => ({ ...g, i })), [
       { key: 'role', label: 'Fee', render: g => groupRoles(g.i) },
@@ -140,14 +163,20 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
       failed ? null : panel('Your mint', mintSteps(status, localState), { flush: true }),
       panel(`Blocks in this order`, members(memberPage), { flush: true }));
     const [stateText, kind] = BULK_STATE[state] ?? [String(state).replace(/_/g, ' '), ''];
-    clear(side, panel('Order', kv([['Order', hashEl(orderId)], ['State', pill(stateText, kind)], ['Pattern', assetLink(status.asset)],
+    clear(side, panel('Order', kv([['Order', hashEl(orderId)], ['State', pill(stateText, kind)],
+      credit ? ['Fee credit', h('span', {}, h('span.mono', {}, tap(credit)), status.creditsCount > 1 ? h('div.small.muted', {}, `In ${fmtInt(status.creditsCount)} credits`) : null)] : null,
+      ['Pattern', assetLink(status.asset)],
       ['Ticker', h('span.mono', {}, status.ticker)], ['Receiver', addressLink(status.receiver)], status.payer !== status.receiver ? ['Paid from', addressLink(status.payer)] : null,
       ['Blocks', fmtInt(n)], ['Units', fmtInt(status.totalAmount)],
-      awaiting ? ['Pay before block', fmtInt(status.payBy?.untilBlock)] : null,
+      awaiting && until != null ? ['Pay by', h('span', {}, 'block ', blockLink(until))] : null,
       status.payment?.reference ? ['Payment', hashEl(status.payment.reference)] : null,
       ['Bitcoin for the mint inscriptions', h('span', {}, sats(t.mintFunding.satoshis), h('div.small.muted', {}, 'Returned to you after the mint, minus the Bitcoin network fees and the 546 sats per block that stay with the inscriptions.'))]]), { flush: true }));
     const next = [], rest = [];
-    if (status.payable && state === 'awaiting_payment' && localState !== 'payment_submitted')
+    // A credited or unpaid expiry, or too little time left: the next step is a fresh order from My agent.
+    const again = h('a.btn.primary.cta', { href: '/me?' + new URLSearchParams({ pattern: status.asset }) }, credit ? 'Use it for a new mint' : 'Mint again from My agent');
+    if (agentHere && (credit || ['expired', 'credited'].includes(state) && !status.creditReferences?.length || tooLate)) next.push(again);
+    if (agentHere && credit) next.push(h('a.btn.ghost', { href: '/me#fee-credits' }, 'Your fee credits'));
+    if (status.payable && state === 'awaiting_payment' && localState !== 'payment_submitted' && !tooLate)
       next.push(localState === 'payment_pending' ? button('Check and retry this payment', () => pay(true), 'primary') : button(`Pay and mint ${plural(n, 'block')}`, () => pay(false), 'primary'));
     next.push(button('Refresh', refresh, 'quiet'));
     // A payment made outside this page is reported by its redeem inscription; the gateway verifies it on Bitcoin.

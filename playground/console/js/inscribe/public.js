@@ -1,8 +1,8 @@
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from '../dom.js';
 import { tap, legacyDeployPaymentText } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities, discovererOnly } from './wallet.js';
-import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from '../wallet-errors.js';
-import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid, addressLink, assetLink, blockLink, setEthereumChain } from '../words.js';
+import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY, windowShort, payWithin, bitcoinTip, creditedAmount } from '../wallet-errors.js';
+import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid, addressLink, agentLink, assetLink, blockLink, setEthereumChain } from '../words.js';
 import { validateTracAddress } from '../../../../rules/src/trac-address.js';
 import { rememberRequester, requesterHeaders } from '../requester-storage.js';
 import { compoundTickerMessage } from '../../../../rules/src/ticker-grammar.js';
@@ -36,6 +36,15 @@ export function refundStatus(record) {
   return 'Refund pending';
 }
 const sats = n => `${fmtInt(n)} sats`;
+// Where a fee credit came from: the request or bulk order whose payment arrived after it expired.
+export function creditOrigin(credit) {
+  const request = credit?.origin?.requestId, order = credit?.origin?.orderId;
+  if (/^[0-9a-f]{64}$/.test(order ?? '')) return h('a', { href: '/mint/bulk/' + order }, 'Bulk order ', h('span.mono', {}, order.slice(0, 8)));
+  if (/^[0-9a-f]{64}$/.test(request ?? '')) return h('a', { href: '/mint/' + request }, 'Mint request ', h('span.mono', {}, request.slice(0, 8)));
+  return h('span.muted', {}, 'An earlier payment');
+}
+// The agent dashboard's My agent page, opened on the claimed blocks of this pattern.
+const myAgentHref = asset => '/me' + (asset ? '?' + new URLSearchParams({ pattern: asset }) : '');
 const setAside = status => Number.isSafeInteger(status?.mintFunding?.satoshis) ? status.mintFunding : null;
 const sender = status => SENDER_STATES.includes(status?.mintSender?.state) ? status.mintSender : null;
 // The server-sent mint in plain words: payment confirmed → permit → mint sent → minted.
@@ -74,6 +83,25 @@ export function mount(root, { id, onPublicMint }) {
     intro, h('div.flow', {}, progress, h('div.grid.cols-main', {},
       h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions, extra)), body), side))));
   let stopped = false, busy = false, timer, status, target, wallet, ethereum, publicRequest, paymentDraft = '';
+  // The agent dashboard shows this page too: its agent can use a matching fee credit for this request.
+  const agentHere = globalThis.DMW_LOCAL_AGENT === true;
+  // shortWindow: the wallet refused to start a payment with fewer than 2 blocks left.
+  let shortWindow = false, offerCache = { at: 0, value: null }, requestOwner;
+  // A used credit counts with the next Trac batch; until the fees due change, Pay stays hidden so nothing is paid twice.
+  const usedKey = 'dmw-credit-use/' + id;
+  const usedCredit = () => { try { return JSON.parse(sessionStorage.getItem(usedKey) ?? 'null'); } catch { return null; } };
+  const creditOffer = async () => {
+    if (Date.now() - offerCache.at < 30000) return offerCache.value;
+    let value = null;
+    try {
+      const href = (await api('/api/requests/' + id)).feeCredits?.href;
+      if (typeof href === 'string' && href.startsWith('/api/credits?')) value = (await api(href)).credits
+        .filter(c => c.usable === true && c.state === 'available' && /^[1-9][0-9]*$/.test(c.matchingAmount ?? ''))
+        .sort((a, b) => BigInt(b.matchingAmount) > BigInt(a.matchingAmount) ? 1 : BigInt(b.matchingAmount) < BigInt(a.matchingAmount) ? -1 : 0)[0] ?? null;
+    } catch { value = null; }
+    offerCache = { at: Date.now(), value };
+    return value;
+  };
   // A wallet payment is reported by its redeem inscription, found on Bitcoin.
   let reported = null, lastLookup = 0;
   const reportPayment = async current => {
@@ -113,7 +141,12 @@ export function mount(root, { id, onPublicMint }) {
     clicked?.classList.add('busy');
     say('Working…', 'busy');
     try { await fn(); if (!stopped && note.textContent === 'Working…') say(''); }
-    catch (error) { if (!stopped) say(walletError(error), 'bad'); }
+    catch (error) {
+      if (stopped) return;
+      // Too little time left: the page itself explains it and offers a fresh request.
+      if (windowShort(error) && status && !assetPage) { shortWindow = true; say(''); await refresh().catch(() => {}); }
+      else say(walletError(error), 'bad');
+    }
     finally { busy = false; clicked?.classList.remove('busy'); if (note.classList.contains('busy')) note.className = 'callout info'; for (const button of root.querySelectorAll('.next-step button')) button.disabled = false; }
   };
   // The step's main action is the large primary button; Refresh and side actions stay quiet.
@@ -281,24 +314,53 @@ export function mount(root, { id, onPublicMint }) {
       if (deployment.state !== 'registered') return renderDeployment(deployment);
     }
     // Steps: reserve (a public mint only requests) → pay → permit → inscribe → minted; a stopped request marks its step red.
-    const state = status.state, failed = STOPPED.test(state);
-    const at = state === 'minted' ? 5 : state === 'permit_issued' ? (serverSends && (txid(ms?.commitTxid) || txid(ms?.revealTxid)) ? 4 : 3) : ['paid', 'payment_confirmed'].includes(state) ? 2 : 1;
+    const state = status.state, failed = STOPPED.test(state), credit = state === 'expired' ? creditedAmount(status) : null;
+    const payingNow = ['awaiting_payment', 'partly_paid'].includes(state) && status.payable;
+    const tip = payingNow ? await bitcoinTip(target.bitcoinNetwork) : null;
+    if (stopped) return;
+    const left = tip !== null && /^(0|[1-9][0-9]*)$/.test(String(status.payBy?.untilBlock ?? '')) ? Number(status.payBy.untilBlock) - Number(tip) : null;
+    // Fewer than 2 blocks left: the wallet does not start a payment; the page offers a fresh request instead.
+    const tooLate = payingNow && (shortWindow || left !== null && left < 2);
+    const used = usedCredit(), dueNow = status.missing.reduce((sum, item) => sum + BigInt(item.amount), 0n).toString();
+    if (used && (used.due !== dueNow || !payingNow)) { try { sessionStorage.removeItem(usedKey); } catch { /* private mode */ } }
+    const creditCounting = used?.due === dueNow && payingNow;
+    const offer = payingNow && agentHere && !tooLate && !creditCounting ? await creditOffer() : null;
+    if (stopped) return;
+    // On the site, a credit is named with the agent that made the request (and can use it).
+    if (credit && !agentHere && !status.publicMint && requestOwner === undefined) requestOwner = await api('/web-api/mint/' + id).then(plan => plan.owner ?? null, () => null);
+    if (stopped) return;
+    // A payment still on its way after expiry becomes a fee credit once Bitcoin confirms it.
+    const lateSent = state === 'expired' && !credit && (status.inflight?.phase === 'payment' && inflightTxid(status.inflight) || reported);
+    // A late payment did arrive: the request stopped before its permit.
+    const at = credit ? 2 : state === 'minted' ? 5 : state === 'permit_issued' ? (serverSends && (txid(ms?.commitTxid) || txid(ms?.revealTxid)) ? 4 : 3) : ['paid', 'payment_confirmed'].includes(state) ? 2 : 1;
     clear(progress, stepper([status.publicMint ? 'Request' : 'Reserve', 'Pay', 'Permit', serverSends ? 'Mint sent' : 'Inscribe', 'Minted'], at, { failed }));
-    const kind = state === 'minted' ? 'good' : failed ? 'bad' : ['awaiting_payment', 'partly_paid'].includes(state) ? 'warn' : 'info';
+    const kind = state === 'minted' ? 'good' : credit ? 'warn' : failed ? 'bad' : ['awaiting_payment', 'partly_paid'].includes(state) ? 'warn' : 'info';
     const due = status.missing.reduce((sum, item) => sum + BigInt(item.amount), 0n);
     // A TAP payment the gateway has seen on Bitcoin for exactly these fees: every viewer waits for it, nobody pays again.
     const paymentSent = ['awaiting_payment', 'partly_paid'].includes(state) && status.inflight?.phase === 'payment' && inflightTxid(status.inflight) ? status.inflight : null;
-    clear(lead, status.missing.length && !failed ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(due.toString()))) : null,
+    const freshHint = agentHere ? 'Once it expires, press Mint on the block in My agent for a fresh request.' : status.publicMint ? 'Once it expires, request the block again from Mint.' : 'Once it expires, the agent that made it can mint the block again for a fresh request.';
+    clear(lead, status.missing.length && !failed ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(due.toString())),
+        payingNow && !paymentSent && !tooLate ? h('div.small.muted', { style: { marginTop: '4px' } }, payWithin(status.payBy?.untilBlock, tip)) : null) : null,
+      tooLate && !paymentSent ? h('div.callout.warn', {}, h('strong', {}, 'Too little time is left to pay. '),
+        'Fewer than 2 Bitcoin blocks (about 20 minutes) remain, and a payment that confirms after this request expires only becomes a fee credit. Your wallet does not start it; nothing was paid. ', freshHint) : null,
+      creditCounting ? h('div.callout.info', {}, 'Your fee credit was used for this request. It counts with the next Trac batch and this page updates by itself. Do not pay these fees again.') : null,
       BEFORE_PAY.includes(status.state) && !status.payable && !failed && !status.sentInscription ? h('div.callout.busy', {}, PAY_SOON) : null,
       ms && ms.state !== 'waiting_funding' && !failed && state !== 'minted' && !SENDER_STOPPED.includes(ms.state) && !txid(ms.revealTxid) ? h('div.callout.info', {}, PAID_ONCE) : null,
       ms && SENDER_STOPPED.includes(ms.state) && state === 'permit_issued' ? h('div.callout.warn', {}, NEEDS_USER, typeof ms.message === 'string' && ms.message.length <= 200 ? h('div.small', {}, ms.message) : null) : null,
       state === 'permit_issued' && !serverSends ? h('p.lead', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your permanent permit is ready. It has no expiry; you can inscribe when ready.') : null,
       state === 'minted' ? h('div.callout.good', {}, 'Minted. ', status.inscription ? ['Inscription ', hashEl(status.inscription)] : null) : null,
       inflightNote(paymentSent, { detail: 'It is counted once Bitcoin confirms it; nothing else to do.' }),
-      failed ? h('div.callout.bad', {}, state === 'expired' && status.reason === 'reservation_expired'
+      credit ? h('div.callout.warn', {}, h('strong', {}, 'Your payment arrived after this request expired. '), 'It became a fee credit of ', h('strong.nowrap', {}, tap(credit)), '. ',
+        agentHere ? 'Your agent can use it for the fees of a new mint, such as this block minted again.'
+          : status.publicMint ? 'No mint was made from it.'
+          : ['It belongs to the agent that made this request', requestOwner ? [', ', agentLink(requestOwner)] : null, '. That agent uses it for a new mint from its own dashboard, under My agent.']) : null,
+      failed && !credit ? h('div.callout.bad', {}, state === 'expired' && status.reason === 'reservation_expired'
         ? 'This request expired before Trac reserved it, so nothing was paid. Mint the block again from My agent.'
+        : state === 'expired' && lateSent ? 'This request expired. A payment sent for it is still waiting for Bitcoin; once it confirms, it becomes a fee credit. Do not pay again.'
+        : state === 'expired' ? 'This request expired before it was paid, so nothing was paid. ' + (status.publicMint ? 'Request the block again from Mint.' : 'Mint the block again from My agent.')
         : 'This request has stopped (' + String(state).replace(/_/g, ' ') + ').') : null);
-    const fees = status.missing.length ? table(status.missing, [
+    // A stopped request has nothing left to pay: its fee table is not shown.
+    const fees = status.missing.length && !failed ? table(status.missing, [
       { key: 'role', label: 'Fee', render: item => String(item.role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) },
       { key: 'amount', label: 'Amount', num: true, render: item => h('span.mono', {}, tap(item.amount)) },
       { key: 'to', label: 'Paid to', render: item => addressLink(item.to) },
@@ -306,14 +368,33 @@ export function mount(root, { id, onPublicMint }) {
     if (fees && status.missing.length > 1) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(due.toString()))), h('td')));
     clear(body, fees ? panel('Remaining fees', fees, { flush: true }) : null, ms && !SENDER_STOPPED.includes(ms.state) && !failed ? panel('Your mint', senderSteps(status, ms), { flush: true }) : null);
     const aside = funding ?? (Number.isSafeInteger(ms?.satoshis) ? ms : null);
-    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], status.asset ? ['Pattern', assetLink(status.asset)] : null, status.block != null ? ['Block', blockLink(status.block)] : null,
+    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(credit ? 'expired, paid late' : state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)],
+      credit ? ['Fee credit', h('span', {}, h('span.mono', {}, tap(credit)), status.creditsCount > 1 ? h('div.small.muted', {}, `In ${fmtInt(status.creditsCount)} credits`) : null)] : null,
+      payingNow && status.payBy?.untilBlock != null ? ['Pay by', h('span', {}, 'block ', blockLink(status.payBy.untilBlock))] : null, status.asset ? ['Pattern', assetLink(status.asset)] : null, status.block != null ? ['Block', blockLink(status.block)] : null,
       status.actualTicker ? ['Ticker', h('span.mono', {}, status.actualTicker)] : null, ['Receiver', addressLink(status.receiver)], ['Units', fmtInt(status.amount)],
       paymentSent ? ['Payment sent', inflightLine(paymentSent)] : null,
       aside ? ['Bitcoin for the mint inscription', h('span', {}, sats(aside.satoshis), h('div.small.muted', {}, 'Returned to you after the mint, minus the Bitcoin network fee and the 546 sats that stay with the inscription.'))] : null,
       ms?.state === 'returning' ? ['Set-aside', 'Being returned to you'] : ms?.state === 'returned' ? ['Set-aside', txid(ms.returnTxid) ? h('span', {}, 'Returned to you: ', txLink(ms.returnTxid, ms.returnTxid.slice(0, 12) + '…')) : 'Returned to you'] : null,
       status.publicMint && status.refunds?.length ? ['Refund', h('span', {}, status.refunds.flatMap((r, i) => [i ? ' · ' : '', refundStatus(r)]))] : null, status.publicMint && (status.reason || status.refunds?.[0]?.reason) ? ['Reason', walletError(status.reason ?? status.refunds[0].reason, status)] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')], rest = [];
-    if (['awaiting_payment', 'partly_paid'].includes(status.state) && status.payable && !paymentSent) next.push(button(funding ? 'Pay and mint' : 'Pay missing items', async () => {
+    // A credited or unpaid expiry, or too little time left: the next step is a fresh request of the block.
+    const again = agentHere && !status.publicMint ? h('a.btn.primary.cta', { href: myAgentHref(status.asset) }, credit ? 'Use it for a new mint' : 'Mint again from My agent')
+      : status.publicMint && status.asset && status.block != null ? h('a.btn.primary.cta', { href: '/mint?' + new URLSearchParams({ asset: status.asset, block: String(status.block) }) }, 'Request the block again') : null;
+    if (again && (credit || state === 'expired' && !lateSent || tooLate && !paymentSent)) next.push(again);
+    if (credit && agentHere) next.push(h('a.btn.ghost', { href: '/me#fee-credits' }, 'Your fee credits'));
+    if (offer) {
+      const covers = BigInt(offer.matchingAmount) >= due;
+      next.push(button(`Use credit (${tap(offer.matchingAmount)})`, async () => {
+        if (!await confirmModal({ title: 'Use your fee credit?', lead: (covers ? 'Your fee credit pays the remaining fees of this request. ' : `Your fee credit pays ${tap(offer.matchingAmount)} of the fees; pay the rest with your wallet once it counts. `)
+          + 'Nothing is paid from your wallet for this. It counts with the next Trac batch.', rows: [['Fee credit', tap(offer.matchingAmount)], ['From', creditOrigin(offer)]], confirm: 'Use credit' })) return;
+        // The same action id for the same credit and request: a retry never spends twice.
+        await api('/api/credits/use', { actionId: 'use-' + offer.id.slice(0, 24) + '-' + id.slice(0, 24), credit: offer.id, request: id });
+        try { sessionStorage.setItem(usedKey, JSON.stringify({ due: dueNow })); } catch { /* private mode */ }
+        offerCache = { at: 0, value: null };
+        await refresh();
+      }, covers ? 'primary' : ''));
+    }
+    if (payingNow && !paymentSent && !tooLate && !creditCounting) next.push(button(funding ? 'Pay and mint' : 'Pay missing items', async () => {
       // Every TAP Wallet action needs 1.0.49 or newer: checked before the confirmation and any other wallet call.
       if (status.payBy.rail === 'tap') await tapWalletCapabilities(globalThis.tapprotocol);
       const once = funding ? 'TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when the permit arrives. ' : '';
@@ -328,7 +409,7 @@ export function mount(root, { id, onPublicMint }) {
       }
       else { const plan = await api('/web-api/mint/' + id); await ethereum.connect(plan.payer); await ethereum.pay(id); }
       await refresh();
-    }, 'primary'));
+    }, offer && BigInt(offer.matchingAmount) >= due ? '' : 'primary'));
     if (status.ethereumRelease && !['permit_issued', 'minted'].includes(status.state)) next.push(button('Release Ethereum payment', async () => {
       const plan = await api('/web-api/mint/' + id); await ethereum.connect(plan.payer);
       if (!await confirmModal({ title: 'Release Ethereum payment?', lead: 'Your wallet submits the committee-authorized release and pays gas.', rows: [['Request', hashEl(id)]], confirm: 'Release' })) return;
@@ -354,7 +435,8 @@ export function mount(root, { id, onPublicMint }) {
       }
       await refresh();
     }, 'primary'));
-    if (status.payBy.rail === 'tap' && !['permit_issued', 'minted'].includes(status.state)) {
+    // A payment sent before expiry can still be reported; it then becomes a fee credit. A credited request needs nothing more.
+    if (status.payBy.rail === 'tap' && !['permit_issued', 'minted'].includes(status.state) && !credit) {
       const paymentId = input({ value: paymentDraft, placeholder: 'Transaction ID followed by i0', 'aria-label': 'Payment inscription ID', oninput: event => { paymentDraft = event.target.value; } });
       rest.push(h('div.row', { style: { alignItems: 'flex-end' } }, h('div', { style: { flex: '1 1 260px' } }, field('Already paid? Report the redeem inscription ID shown by your wallet', paymentId)), button('Report payment', async () => {
         const value = paymentId.value.trim();

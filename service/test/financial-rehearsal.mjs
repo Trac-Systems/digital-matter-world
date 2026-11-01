@@ -40,6 +40,7 @@ import { ServiceClient } from '../../kit/lib/service-client.mjs';
 import { createPublicAPI } from '../src/public-api.mjs';
 import { Feeds } from '../src/feeds.mjs';
 import { bulkRehearsalTransport, runBulkRehearsal } from './bulk-rehearsal.mjs';
+import { runLatePaymentRehearsal } from './late-payment-rehearsal.mjs';
 import { BULK_CAPACITY_VALUES } from '../../rules/src/bulk-mint.js';
 
 export async function probeLegacyLink({ service, store, network, request, secret, payer }) {
@@ -52,8 +53,9 @@ export async function probeLegacyLink({ service, store, network, request, secret
 }
 
 export async function financialRehearsal({ stack, directory, tssPort, checkpoint = async () => {}, recordPID = () => {}, checkLegacyLink = fn => fn(),
-  createContract = deployment => harness(deployment), paidBatches = false, bulk = false }) {
+  createContract = deployment => harness(deployment), paidBatches = false, bulk = false, latePayments = false }) {
 assert.equal(stack.bitcoin.network, 'regtest');
+assert.ok(!latePayments || bulk, 'Late payment rehearsal requires bulk mode');
 assert.equal(await chainRPC(stack.ethereum.rpc, 'eth_chainId'), '0x7a69');
 const network = 'dmw-regtest', epoch = 1, secret = Buffer.alloc(32, 93), gateway = edPublic(secret);
 await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -118,7 +120,7 @@ try {
   assert.equal(await legacy.run('bt', initial), null);
   const imported = prepareTerminalImport({ records: legacy.db, height });
   const registry = { feePolicy: createFeePolicy('1000000000000000000', 0, bulk ? r.FEE_DEFAULTS : undefined), assets: { c1: entry, ...(bulk ? { p0: bulkEntry } : {}) }, link: { treasury } };
-  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, ...(bulk ? BULK_CAPACITY_VALUES : {}), puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
+  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, ...(bulk ? BULK_CAPACITY_VALUES : {}), ...(latePayments ? { pendingBlocks: 6 } : {}), puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
   const manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: initial.root,
     bitcoinAnchor: { height: String(height), hash: history.hashAt(height) }, settingsHash: r.hashObject(document), catalogRoot: r.namedStateRoot(r.emptyNamedDiscovery()),
     accountsRoot: imported.financialRoot, receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
@@ -173,12 +175,12 @@ try {
     };
     reads.assetContext = async (_asset, _block, at) => {
       if (bulk && _asset === bulkEntry.asset) {
-        const { deployment } = await verifyDeployment(reads, bulkEntry, { view: at });
+        const { deployment } = await verifyDeployment(reads, bulkEntry, { view: typeof at === 'object' ? at : undefined });
         const block = String(_block), claim = JSON.parse(contract.db.get('n/rehearsal/claims/' + Math.floor((Number(block) - 100) / 4)));
         assert.ok(claim.blocks.includes(Number(block)));
         return { deployment: { ...bulkEntry, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
           remaining: await reads.tap('getMintTokensLeft/' + bulkEntry.indexTick), limit: '0' }, tier: 1, treasury,
-          finderAddress: maker, beneficiaries: { finder: alice.address }, link: null, find: {
+          finderAddress: maker, payouts: { finder: null }, beneficiaries: { finder: alice.address }, link: null, find: {
             asset: bulkEntry.asset, block, count: claim.count, finder: claim.finder, findHeight: String(height),
             finderUntil: String(height + 1000), settingsHash: r.hashObject(document) } };
       }
@@ -225,14 +227,15 @@ try {
       sendMessage: async m => { assert.equal(await contract.run(m.op, m.value), null); },
       status: async job => ({ state: contract.db.get('bt/' + job.value.n) === job.value.root ? 'accepted' : 'pending' }) } }) });
   pipeline = makePipeline();
-  const serveGateway = () => serve({ intake: runtime.intake, files, mints: runtime.mints, bulkMints: runtime.bulkMints, links: runtime.links, web: { handle: async () => false } });
+  const serveGateway = () => serve({ intake: runtime.intake, files, mints: runtime.mints, bulkMints: runtime.bulkMints, links: runtime.links,
+    financialActions: runtime.financialActions, publicAPI: createPublicAPI({ views: { store, mints: runtime.mints }, files }), web: { handle: async () => false } });
   if (bulk) runtime.bulkMints.senderView = bulkTransport.view;
   const observe = async () => { const s = await stamp(); await runtime.intake.observe({ tip: s.tip, hash: s.tipHash, counted: s.counted, confirmed: s.counted, revision: s.revision }); };
   await observe(); http = await serveGateway();
   journal = await Journal.open(join(directory, 'kit'), network, { intervalMs: 0 });
   const service = new ServiceClient({ origin: http.url, network, gateway, receiptSigners: group.map(descriptor) });
   const agent = new Agent({ wallet: { publicKey: alice.address, sign: bytes => ed25519.sign(bytes, alice.secret) }, network, service, journal, dryRun: false, bitcoinNetwork: 'regtest',
-    trac: { network, settings: async () => ({ ruleset: 'dmw-v2' }), rulesContext, settingsByHash: reads.settingsByHash, head: () => contract.state().head() } });
+    trac: { network, settings: async () => ({ ruleset: 'dmw-v2' }), rulesContext, settingsByHash: reads.settingsByHash, head: () => contract.state().head(), financialRecord: async key => contract.db.get(key) ?? null } });
   recorded.legacyLinkAdmission = await checkLegacyLink(() => probeLegacyLink({ service, store, network,
     request: { owner: alice.address, height: 1, nonce: r.hash('lt1-link'), until: height + 100 }, secret: alice.secret, payer }));
   pass('legacy link packet refused by the enabled v2 route with financial_link_signature and no writes');
@@ -302,6 +305,19 @@ try {
   assert.equal(contract.db.get('dc/' + id).state, 'minted');
   assert.equal(contract.db.get('fd/' + contract.db.get('fd/asset/c1')).minted, '3');
   pass('real ord-TAP mint accepted; completion verified by named inscription only');
+  if (latePayments) {
+    const sync = async () => {
+      const previous = Number((await contract.state().head()).tip.height), tip = await updateHeaders();
+      for (let h = previous + 1; h <= tip; h++) { assert.equal(await contract.run('hd', { headers: [raw[h]] }), null); await observe(); }
+      await runtime.refresh();
+    };
+    recorded.latePayments = await runLatePaymentRehearsal({ stack, runtime, store, contract, agent, service, document, progress, sync,
+      payer, receiver, payerKey, authId, bulkEntry, bulkTransport, inscription,
+      candidateFor: (asset, block) => reads.assetContext(asset, block), pass });
+    recorded.request = id; recorded.payment = paymentId; recorded.mint = mintedId;
+    recorded.acceptedV2Batches = String(BigInt((await contract.state().batchLast()).n) - 1n);
+    return recorded;
+  }
   const requestLink = service.requestLink.bind(service); let loseLinkResponse = true;
   service.requestLink = async body => { const result = await requestLink(body); if (body.reserve && loseLinkResponse) { loseLinkResponse = false; throw Error('simulated_link_response_loss'); } return result; };
   const linkIntent = { actionId: 'paid-link-regtest', height: bitmapBlock, payer };

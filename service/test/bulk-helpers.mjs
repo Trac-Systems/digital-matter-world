@@ -151,7 +151,7 @@ export async function fixture(t, options = {}) {
   };
   return { get store() { return store; }, get bulk() { return bulk; }, document, network, bitcoinNetwork, reads, independent, financial,
     senderView, owner, secret, deployment, generation, contexts, skipped, accepted, transactions, input, sign, execute, payment, reveal, stamp,
-    count: () => count, maxActive: () => maxActive, height: v => { height = v; }, stampHook: v => { stampHook = v; },
+    count: () => count, maxActive: () => maxActive, height: v => { height = v; }, advanceBatch: () => { revision++; }, stampHook: v => { stampHook = v; },
     holderAddress: value => { holderAddress = value; },
     rebuild: () => new BulkMints({ store, reads, financial, committee, document, network, bitcoinNetwork, senderView, resources: { bulkMintEnabled: false } }),
     build: transitions => buildFinancialExecution({ store, reads, document, height, at: stamp(), transitions }),

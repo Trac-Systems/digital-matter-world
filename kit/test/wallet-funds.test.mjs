@@ -14,14 +14,14 @@ const address = fundingAddress(publicKey, 'mainnet');
 function tapFixture() {
   const f = tapWallet1049({ address, publicKey }), rows = new Map(), reader = {}, reads = [];
   const fees = [{ role: 'treasury', to: address, ticker: 'tap', amount: atomicAmount('440.7', 18).toString(), tt: 'a' }];
-  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap' } };
+  const status = { requestId: id, receiver: address, payer: address, fees, missing: fees, state: 'awaiting_payment', payable: true, payBy: { rail: 'tap', untilBlock: '999999' } };
   const journal = { get: async k => structuredClone(rows.get(k)), put: async (k, v) => rows.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
   const fetchImpl = async (url, options) => {
     reads.push(url); assert.equal(options?.method, undefined, 'preflight never writes');
     if (reader.error) throw Error(reader.error);
     return { ok: !reader.httpError, status: 503, json: async () => reader.malformed ? {} : walletFundsReply(url, reader) };
   };
-  const wallet = new TapWalletMint({ provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, fetchImpl });
+  const wallet = new TapWalletMint({ provider: f.provider, readStatus: async () => status, network: 'mainnet', journal, fetchImpl, readTip: async () => '900000' });
   return { ...f, rows, status, journal, reader, reads, fetchImpl, wallet };
 }
 for (const [label, reader, words] of [

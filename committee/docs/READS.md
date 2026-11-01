@@ -222,6 +222,19 @@ a same-height reorg. The signer separately rechecks counted height and committee
 authority. RPC trust and atomic snapshot construction remain adapter duties.
 Include relevant source revision tokens in the stamp when payment/indexer state
 can change independently of Bitcoin; extra stamp fields are also compared.
+In production, `revision` is the raw Trac view version, not an accepted-batch
+number or an account revision. It can advance on unrelated appends. Signer
+evidence and gateway batch construction still require that full stamp. Only
+gateway bulk quote and strict admission enter `withGatewayFinancialPreview`:
+their stamp omits the raw revision and retains the batch clock/root, TAP snapshot,
+fresh authority (including epoch and pause), and active/scheduled settings state.
+Scheduled settings can fence admission before a new batch. This per-reader async
+scope is not installed on committee readers and cannot be selected by a wire field. Preview
+stamps are not historical checkout handles; inventory and migration use their
+ordinary revision-bearing stamps. The gateway's native `financialPreviewStamp`
+and its point-read clock checks acquire fields through `MatterProtocol.withView`
+so a raw append during stamp acquisition cannot invalidate an immutable view.
+The complete scan still fences batch/root, policy, authority and TAP changes.
 Bitcoin and Ethereum evidence require exactly one inclusion confirmation; canonical
 snapshot and reorg checks still apply.
 

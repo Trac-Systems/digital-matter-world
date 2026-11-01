@@ -27,17 +27,18 @@ test('v2 cursors do not rely on null totals, nonempty pages, or the next alias',
   assert.throws(() => nextCursor({}));
 });
 
-test('v2 taken slots use p2 claimed-blocks, the 50 row cap, decimal heights and nextCursor', async () => {
-  const calls = [], pages = [
-    { rows: [], nextCursor: 'continue' },
-    { rows: [{ block: '973603', found: true, minted: false }], nextCursor: null }
-  ];
-  const service = { readPage: async (route, options) => { calls.push({ route, options }); return pages.shift(); } };
-  const taken = await Agent.prototype.takenSlots.call({ service }, [{ number: 0, key: 'aa'.repeat(32) }]);
-  assert.deepEqual([...taken[0]], [973603]);
+test('v2 taken slots drain the recorded compact snapshot and apply its validated delta', async () => {
+  const recorded = JSON.parse(await readFile(new URL('./fixtures/taken-reads.json', import.meta.url)));
+  const calls = [], pages = recorded.records.map(r => structuredClone(r.body));
+  const service = { takenSlotsPage: async options => { calls.push(options); return pages.shift(); } };
+  const agent = { service }, patterns = [{ number: 0, key: 'aa'.repeat(32) }];
+  const taken = await Agent.prototype.takenSlots.call(agent, patterns);
+  assert.deepEqual([...taken[0]], [10, 973603]);
   assert.equal(calls.length, 2);
-  for (const call of calls) { assert.equal(call.route, '/patterns/p2:0/claimed-blocks'); assert.equal(call.options.limit, 50); }
-  assert.equal(calls[1].options.cursor, 'continue');
+  assert.deepEqual(calls[0], {});
+  assert.equal(calls[1].cursor, recorded.records[0].body.nextCursor);
+  assert.deepEqual([...(await Agent.prototype.takenSlots.call(agent, patterns))[0]], [10, 973603, 5]);
+  assert.equal(calls[2].since, recorded.records[1].body.revision);
 });
 
 test('resuming v2 claims normalizes selections without rewriting the saved packet', () => {

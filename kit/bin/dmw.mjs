@@ -158,7 +158,7 @@ async function main() {
     bitcoinWallet = localBitcoinWallet({ wallet, network: bitcoinNetwork, authority: config.bitcoin?.authority,
       source: adapter.bitcoinSource ?? (bitcoinNetwork === 'mainnet' || config.bitcoin?.origin ? mempoolBitcoinSource({ network: bitcoinNetwork, ...config.bitcoin }) : undefined) });
     const agentOptions = { wallet, network: config.network, service, trac: adapter.trac, journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
-      powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork };
+      powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork, miningReads: config.miningReads };
     const agent = new Agent({ ...agentOptions, journal: command === 'dashboard' ? dashboardJournal(journal) : journal });
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
     const historyTool = ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
@@ -194,6 +194,7 @@ async function main() {
       });
       server = await serveDashboard(context, { port: Number(opts.port ?? 0), control });
       await controlLease.publish(Number(new URL(server.origin).port));
+      const stopped = new Promise(resolve => { process.once('SIGTERM', resolve); process.once('SIGINT', resolve); });
       process.stdout.write(server.loginLink + '\n');
       let stop = false;
       // Local CLI and MCP calls share this process's stores through control.
@@ -205,7 +206,7 @@ async function main() {
           let tip = null;
           try { tip = readInteger((await agent.service.latest()).tip); } catch {}
           if (tip !== null && tip !== done) {
-            try { const r = await runTool(context, 'mine_once', {}); done = tip;
+            try { const r = await runTool(context, 'mine_once', {}); if (r.claimState !== 'taken_syncing') done = tip;
               process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${huntSummary(r)}\n`); }
             catch (error) { process.stdout.write(`${new Date().toISOString()} hunt tip ${tip} failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
             // The agent's own saved pattern proposals are revealed as soon as their window opens.
@@ -217,12 +218,15 @@ async function main() {
           for (let i = 0; i < 20 && !stop; i++) await new Promise(resolve => setTimeout(resolve, 1000));
         }
       })();
-      await new Promise(resolve => { process.once('SIGTERM', resolve); process.once('SIGINT', resolve); });
-      stop = true; await hunt;
+      await stopped;
+      // A mining pass in flight must not hold up shutdown; closing the stores ends it.
+      stop = true; await Promise.race([hunt, new Promise(resolve => setTimeout(resolve, 3000).unref())]);
     } else if (command === 'mcp') {
       server = await serveMcp(context);
       await mcpSession(server);
     } else throw new Error('Unknown command; run dmw --help');
   } finally { await shutdown(); }
 }
-main().catch(error => { const out = args[0] === 'mcp' ? process.stderr : process.stdout; out.write(JSON.stringify({ error: explainError(error) }) + '\n'); process.exitCode = 1; });
+main().catch(error => { const out = args[0] === 'mcp' ? process.stderr : process.stdout; out.write(JSON.stringify({ error: explainError(error) }) + '\n'); process.exitCode = 1; })
+  // The dashboard's mining pass may still wait on a gateway retry; its stores are closed, so end now.
+  .finally(() => { if (args[0] === 'dashboard') process.exit(); });

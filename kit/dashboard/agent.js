@@ -1,7 +1,7 @@
 // "My agent": the local dashboard's one extra page inside the site. It uses the
 // console's own components; payment and inscription continue on the site's
 // /mint/<request> page with the header's TAP Wallet / MetaMask connection.
-import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper, fmtInt } from '/web/console/js/dom.js';
+import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tierBadge, field, input, select, seg, copy, stepper, fmtInt, confirmModal } from '/web/console/js/dom.js';
 import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral, INFLIGHT_TEXT, INFLIGHT_PAYMENT_TEXT, inflightLine } from '/web/console/js/words.js';
 import { store, site } from '/web/console/js/api.js';
@@ -14,6 +14,8 @@ const CLAIMS_PAGE = 12;
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
 // Bulk orders per page, as the gateway pages them.
 const ORDERS_PAGE = 25;
+// Fee credits per page, like Open requests.
+const CREDITS_PAGE = 10;
 // A bulk order in plain words: the server's order state, or the local step before it has one.
 const orderState = r => {
   if (r.error && !r.prepared) return ['needs attention', 'bad'];
@@ -24,6 +26,7 @@ const orderState = r => {
   if (s.state === 'awaiting_payment') return !s.payable ? ['preparing', 'info'] : s.payment?.state && s.payment.state !== 'unseen' ? ['paying', 'info'] : ['ready to pay', 'warn'];
   if (['paid', 'permit_pending', 'permit_issued', 'minting', 'partly_minted'].includes(s.state)) return ['minting', 'info'];
   if (s.state === 'expired') return ['expired', ''];
+  if (s.state === 'credited') return ['paid late · fee credit', 'warn'];
   return ['needs attention', 'bad'];
 };
 
@@ -392,6 +395,82 @@ export function mount(el) {
     patternList.append(patternTickers);
   };
   const requestPager = h('div.pager-foot');
+  // Fee credits: a payment that confirmed after its request or order expired, kept for this agent's next mints.
+  // Cursor pages with Newest / Older buttons; Use credit sits on the open request it pays.
+  let credits = null, creditPage = 0, lastRequests = null, transferring = null, transferTo = '';
+  const creditCursors = [undefined], creditMatch = new Map();
+  const params = new URLSearchParams(location.search);
+  let wantedPattern = /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(params.get('pattern') ?? '') ? params.get('pattern') : null;
+  const creditsPanel = h('div', { style: { scrollMarginTop: '72px' } }), creditPager = h('div.pager-foot');
+  let scrollTarget = location.hash === '#fee-credits' ? creditsPanel : null;
+  const availableCredits = () => (credits?.credits ?? []).filter(c => c.state === 'available');
+  // Where a credit came from: the open request it names (pattern · block) or a short request / order link.
+  const creditFrom = c => {
+    const order = c.origin?.orderId, request = c.origin?.requestId;
+    if (/^[0-9a-f]{64}$/.test(order ?? '')) return h('a', { href: '/mint/bulk/' + order }, 'Bulk order ', h('span.mono', {}, order.slice(0, 8)));
+    if (!/^[0-9a-f]{64}$/.test(request ?? '')) return h('span.muted', {}, 'An earlier payment');
+    const known = lastRequests?.requests.find(r => r.requestId === request);
+    return h('div', {}, h('a', { href: '/mint/' + request }, 'Mint request ', h('span.mono', {}, request.slice(0, 8))),
+      known ? h('div.small.muted', {}, nameOf(known.asset, known.name), ' · block ', blockLink(known.block)) : null);
+  };
+  const useCredit = async (r, credit, button) => {
+    const label = `${nameOf(r.asset, r.name)} · block ${r.block}`;
+    if (!await confirmModal({ title: 'Use your fee credit?', lead: 'Your fee credit pays the matching fees of this request; you pay any rest with your wallet on its payment page once it counts. Nothing is paid from your wallet for this. It counts with the next Trac batch.',
+      rows: [['Request', label], ['Fee credit', tap(credit.matchingAmount)], ['From', creditFrom(credit)]], confirm: 'Use credit' })) return;
+    if (button) { button.disabled = true; button.classList.add('busy'); }
+    const status = toast({ what: 'Fee credit for ' + label, detail: 'Your agent is signing the credit use…', state: 'queued' });
+    // The same action id for the same credit and request: a retry never spends twice.
+    try { await api('/api/credits/use', { actionId: 'use-' + credit.id.slice(0, 24) + '-' + r.requestId.slice(0, 24), credit: credit.id, request: r.requestId }); }
+    catch (error) { status.set({ state: 'failed', detail: sendWords(error.message) }); say(sendWords(error.message), 'bad'); if (button) { button.disabled = false; button.classList.remove('busy'); } return; }
+    status.set({ state: 'complete', detail: 'It counts with the next Trac batch.' });
+    creditMatch.set(r.requestId, { at: Date.now(), credit: null, used: true });
+    say(`${label}: fee credit used. It counts with the next Trac batch; do not pay these fees again.`, 'info');
+    await loadCredits().catch(() => {}); if (lastRequests) drawRequests(lastRequests);
+  };
+  // An open request's buttons, with Use credit first when a matching credit is available.
+  const withCredit = (r, action) => {
+    const match = creditMatch.get(r.requestId);
+    if (match?.used) return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill('credit counting', 'info'), action);
+    if (!match?.credit || !r.payable) return action;
+    return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+      h('button.btn.sm.primary', { type: 'button', onclick: event => useCredit(r, match.credit, event.currentTarget) }, `Use credit (${tap(match.credit.matchingAmount)})`), action);
+  };
+  const transfer = async credit => {
+    const to = transferTo.trim();
+    if (!isTracAddress(to)) { say(sendWords('send_address'), 'bad'); return; }
+    if (info && to === info.address) { say(sendWords('send_self'), 'bad'); return; }
+    if (!await confirmModal({ title: 'Transfer this fee credit?', lead: 'The whole remaining credit moves to the other agent on Trac. It cannot be undone.',
+      rows: [['Fee credit', tap(credit.amount)], ['To', agentLink(to)]], confirm: 'Transfer', danger: true })) return;
+    const status = toast({ what: 'Fee credit transfer', detail: 'Your agent is signing the transfer…', state: 'queued' });
+    try { await api('/api/credits/transfer', { actionId: 'transfer-' + credit.id.slice(0, 24) + '-' + to.slice(-24), credit: credit.id, to }); }
+    catch (error) { status.set({ state: 'failed', detail: sendWords(error.message) }); say(sendWords(error.message), 'bad'); return; }
+    status.set({ state: 'complete', detail: 'It moves with the next Trac batch.' });
+    transferring = null; transferTo = ''; await loadCredits().catch(() => {});
+  };
+  // Shown only once the agent has a credit; Transfer stays a small secondary action under its state.
+  const drawCredits = () => {
+    const rows = credits?.credits ?? [];
+    if (!rows.length && !creditPage) { clear(creditsPanel); return; }
+    const transferForm = c => h('div.stack', { style: { gap: '6px', alignItems: 'stretch', minWidth: '0' } },
+      h('input.input.mono', { value: transferTo, placeholder: 'trac1…', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Agent to receive the credit',
+        oninput: e => { transferTo = e.target.value; } }),
+      h('div.row', { style: { gap: '6px' } }, h('button.btn.sm', { type: 'button', onclick: () => act(null, () => transfer(c)) }, 'Transfer'),
+        h('button.btn.sm.ghost', { type: 'button', onclick: () => { transferring = null; drawCredits(); } }, 'Cancel')));
+    clear(creditsPanel, panel('Fee credits', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+      'A payment that confirmed after its request expired became a fee credit for your agent. It pays the matching fees of a new mint: press Use credit on the open request.'),
+      rows.length ? table(rows, [
+        { key: 'amount', label: 'Credit', render: c => h('div', {}, h('span.mono.nowrap', {}, tap(c.amount)),
+          c.creditedAmount && c.creditedAmount !== c.amount ? h('div.small.muted', {}, 'of ', h('span.nowrap', {}, tap(c.creditedAmount))) : null) },
+        { key: 'origin', label: 'From', render: creditFrom },
+        { key: 'state', label: 'State', render: c => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
+          pill(c.state === 'available' ? 'available' : 'used up', c.state === 'available' ? 'good' : ''),
+          c.state !== 'available' ? null : transferring === c.id ? transferForm(c)
+            : h('button.btn.sm.ghost', { type: 'button', onclick: () => { transferring = c.id; drawCredits(); } }, 'Transfer')) },
+      ], { sortable: false }) : h('div.empty', {}, 'No more fee credits.'), creditPager), { flush: true, id: 'fee-credits' }));
+    clear(creditPager, h('span.pager-total', {}, rows.length ? `${creditPage * CREDITS_PAGE + 1}–${creditPage * CREDITS_PAGE + rows.length}` : ''),
+      h('button.btn.sm.ghost', { disabled: !creditPage, onclick: () => { creditPage = 0; act('Loading…', loadCredits); } }, 'Newest'),
+      h('button.btn.sm.ghost', { disabled: !credits?.next, onclick: () => { creditCursors[creditPage + 1] = credits.next; creditPage++; act('Loading…', loadCredits); } }, 'Older credits'));
+  };
   // A payment or mint seen on Bitcoin, not yet confirmed: the shared words and the transaction, no second Pay.
   const sentCell = inflight => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
     pill(inflight.phase === 'payment' ? INFLIGHT_PAYMENT_TEXT : INFLIGHT_TEXT, 'info'), h('div.small.muted', {}, inflightLine(inflight)));
@@ -401,11 +480,11 @@ export function mount(el) {
     clear(requests, data.requests.length ? table(data.requests, [
       { key: 'asset', label: 'Pattern', render: r => matter(r.asset, r.name) }, { key: 'block', label: 'Block', num: true, render: r => r.block === undefined || r.block === null ? '—' : blockLink(r.block) },
       { key: 'state', label: 'State', render: r => r.inflight ? sentCell(r.inflight) : pill(words(r.state), STATE_KIND[r.state] ?? '') },
-      { key: 'action', label: '', render: r => r.inflight ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open') : ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
+      { key: 'action', label: '', render: r => withCredit(r, r.inflight ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open') : ['unknown', 'authorizing'].includes(r.state) && r.block !== undefined
         ? h('button.btn.sm', { onclick: event => mint(r, event.currentTarget) }, 'Resume')
         // Same conditions as the request page: Pay and mint with a set-aside; Inscribe only while the server is not sending.
         : h(!r.payable && BEFORE_PAY.includes(r.state) ? 'a.btn.sm.busy' : 'a.btn.sm', { href: '/mint/' + r.requestId, title: !r.payable && BEFORE_PAY.includes(r.state) ? PAY_SOON : null }, r.state === 'permit_issued' ? (!r.mintSender || ['needs_user', 'returning', 'returned'].includes(r.mintSender.state) ? 'Inscribe' : 'Open')
-          : r.payable ? (r.mintFunding ? 'Pay and mint' : 'Pay') : BEFORE_PAY.includes(r.state) ? 'Preparing…' : 'Open') },
+          : r.payable ? (r.mintFunding ? 'Pay and mint' : 'Pay') : BEFORE_PAY.includes(r.state) ? 'Preparing…' : 'Open')) },
     ], { sortable: false }) : h('div.empty', {}, offset ? 'No more open requests.' : 'No open mint requests. Press Mint on a claimed block to start one.'));
     clear(requestPager, h('span.pager-total', {}, data.requests.length ? `${offset + 1}–${offset + data.requests.length}` : ''),
       h('button.btn.sm.ghost', { disabled: !offset, onclick: () => { offset = 0; act('Loading…', loadRequests); } }, 'Newest'),
@@ -427,7 +506,33 @@ export function mount(el) {
     const data = await api('/api/links?' + new URLSearchParams({ offset: String(linkOffset), limit: '10' })); if (!stopped) drawLinks(data);
   }
   async function loadRequests() {
-    const data = await api('/api/requests?' + new URLSearchParams({ offset: String(offset), limit: '10' })); if (!stopped) drawRequests(data);
+    const data = await api('/api/requests?' + new URLSearchParams({ offset: String(offset), limit: '10' })); if (stopped) return;
+    lastRequests = data; drawRequests(data);
+    // With an available credit, each payable request on this page is checked for matching fees (once a minute).
+    if (!availableCredits().length) { creditMatch.clear(); return; }
+    let changed = false;
+    for (const r of data.requests.filter(r => r.payable && ['awaiting_payment', 'partly_paid'].includes(r.state) && !r.inflight)) {
+      const known = creditMatch.get(r.requestId);
+      if (known && Date.now() - known.at < (known.used ? 120000 : 60000)) continue;
+      let best = null;
+      try {
+        best = (await api('/api/credits?' + new URLSearchParams({ request: r.requestId, limit: '25' }))).credits
+          .filter(c => c.usable === true && c.state === 'available' && /^[1-9][0-9]*$/.test(c.matchingAmount ?? ''))
+          .sort((a, b) => BigInt(b.matchingAmount) > BigInt(a.matchingAmount) ? 1 : BigInt(b.matchingAmount) < BigInt(a.matchingAmount) ? -1 : 0)[0] ?? null;
+      } catch { best = null; }
+      if (stopped) return;
+      creditMatch.set(r.requestId, { at: Date.now(), credit: best }); changed = true;
+    }
+    if (changed) drawRequests(data);
+  }
+  async function loadCredits() {
+    let data = await api('/api/credits?' + new URLSearchParams({ limit: String(CREDITS_PAGE), ...(creditCursors[creditPage] ? { cursor: creditCursors[creditPage] } : {}) }));
+    // An empty page can still be followed by credits: follow its next cursor a few times.
+    for (let hops = 0; !data.credits.length && data.next && hops < 4 && !stopped; hops++) {
+      creditCursors[creditPage] = data.next;
+      data = await api('/api/credits?' + new URLSearchParams({ limit: String(CREDITS_PAGE), cursor: data.next }));
+    }
+    if (!stopped) { credits = data; drawCredits(); }
   }
   async function loadOrders() {
     const data = await api('/api/bulk?' + new URLSearchParams({ offset: String(orderOffset), limit: String(ORDERS_PAGE) })); if (!stopped) drawOrders(data);
@@ -445,8 +550,15 @@ export function mount(el) {
   }
   async function load() {
     info = await api('/api/info'); if (stopped) return; merged = info.merged ?? {}; drawProfile(); drawReceive();
-    await loadPatterns(); await loadClaims(); await loadOrders().catch(() => {}); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
-    await loadSends(); await loadCraft(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadRequests(); await loadLinks();
+    await loadPatterns();
+    // Opened from a payment page (Mint again, Use it for a new mint): the claimed blocks of that pattern.
+    if (wantedPattern) {
+      const p = (patterns ?? []).find(p => p.id === wantedPattern || p.asset === wantedPattern); wantedPattern = null;
+      if (p) { claimAsset = p.id; drawFilter(); drawSeveral(); scrollTarget = claimsPanel; }
+    }
+    await loadClaims(); await loadOrders().catch(() => {}); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
+    await loadSends(); await loadCraft(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadCredits().catch(() => {}); await loadRequests(); await loadLinks();
+    if (scrollTarget && !stopped) { scrollTarget.scrollIntoView({ block: 'start' }); scrollTarget = null; }
   }
   // Send units on Trac: rows or a pasted list → review of every row → one
   // confirm → one transfer per recipient, sent in turn by the agent.
@@ -1000,7 +1112,7 @@ export function mount(el) {
     h('div.stack', {}, note, profile,
       claimsPanel,
       h('div.grid.cols-main', {},
-        panel('Open requests', h('div', {}, requests, requestPager), { flush: true }),
+        h('div.stack', {}, panel('Open requests', h('div', {}, requests, requestPager), { flush: true }), creditsPanel),
         panel('Bitmap links', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } }, 'Earn the Bitmap holder share for a block you hold as a .bitmap. ',
           h('a.btn.sm.primary', { href: '/link#bitmap' }, 'Link a Bitmap')), links, linkPager), { flush: true })),
       panel('Your patterns', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },

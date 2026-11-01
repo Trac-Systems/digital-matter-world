@@ -178,6 +178,23 @@ add entries by themselves; wait for accepted reveal before claiming a pattern.
 
 ## Mainnet reads and mining
 
+Mining keeps a disposable `taken-slots-<scope-hash>.json` cache beside the signer
+journal. After its first compact snapshot, each pass normally makes one GET to
+`/patterns/taken` for changes across all patterns. Revisions and delta hashes are
+checked before using them. Restarting keeps the cache; journal and signed action
+formats are unchanged. The gateway must support this read before using this kit
+for v2 mining. An older gateway produces an update message.
+
+A pass uses at most 32 found-slot requests, including catch-up and rebuilds.
+If more work remains, it sends the header and reports `claimState:taken_syncing`;
+the dashboard continues catching up on its normal polling interval. It selects
+claims only after the whole cache is current. A lost revision chain or corrupt
+cache starts a bounded rebuild; ordinary network errors preserve progress.
+Optional local config `"miningReads":{"maxRequests":32,"cacheBytes":67108864}`
+controls this request allowance and the cache file size limit. These are local
+resource limits, not game settings. Other reads such as the pattern catalog and
+header verification retain their existing behavior.
+
 After setup and connecting your agent, these standalone CLI commands offer the
 same reads and play pass. They use the default config; setup also prints commands
 for custom paths:
@@ -207,8 +224,9 @@ for retry. MCP initializes immediately; the first contract read connects Trac.
 `once` and every MCP action default to **dry-run**. To authorize real moves,
 launch `once` or `mcp` with `--live`. MCP cannot enable live mode itself. The
 `pay_mint`, `inscribe_mint` and `inscribe_deployment` tools use the local Bitcoin signer only in live mode. `once` hunts patterns throughout counted history using the local archive and
-excludes materialized found/minted slots through `/patterns/p2:N/claimed-blocks`
-with limits at most 50. Missing submitted evidence cannot exclude implicit header
+excludes materialized found slots through the incremental `/patterns/taken` cache.
+`claimed_blocks` remains available for detailed pages of at most 50 rows.
+Missing submitted evidence cannot exclude implicit header
 awards; use `window_eligibility` and accepted closure evidence. It selects up to the
 configured window budget (100 by default), then adds the tip header. While the
 archive loads, it sends that header and reports `claimState:history_downloading`.

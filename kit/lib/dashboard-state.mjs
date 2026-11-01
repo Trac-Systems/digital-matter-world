@@ -1,3 +1,4 @@
+import { listFeeCredits, applyMatchingCredit } from './financial-credit.mjs';
 import { hashObject } from '../../rules/src/core.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runTool } from './tools.mjs';
@@ -162,10 +163,12 @@ export class DashboardState {
   }
   savedSlot(slot) { return this.savedMints().find(row => sameSlot(row.body.request, slot) && (row.body.request.deployment ?? null) === (slot.deployment ?? null)); }
   idOf(row) { return financialMintId(this.agent.network, row.body.request); }
-  // A saved request that can never be paid: it expired before its reservation was accepted, or the gateway
-  // never received it and its signature window has passed. Nothing was paid; it is retired so Mint signs anew.
+  // Retire only requests that cannot issue a permit: a rejected reservation,
+  // or an accepted terminal refund/credit that released its units. Keep the
+  // original signed packet in the journal so recovery and retries stay exact.
   retireDead(row, status, error, counted) {
-    const dead = status?.state === 'expired' && status.reason === 'reservation_expired' ||
+    const dead = status?.state === 'expired' && (status.reason === 'reservation_expired' ||
+      ['credited', 'refunded'].includes(status.funding?.state) && ['refunded', 'released', 'expired'].includes(status.reservation)) ||
       error === 'request_not_found' && counted !== undefined && BigInt(row.body.request.until) < BigInt(counted);
     if (dead) this.journal.mark(row.id, 'rejected', { reason: 'financial_request_expired' });
     return dead;
@@ -393,7 +396,19 @@ export class DashboardState {
       dashboardCheck(wireIdentities(plan).owner === this.agent.owner && (!slot || sameSlot(plan, slot)), 'not_your_request', 403);
     }
     const walletProgress = result.receiver ? !!this.walletGet(this.agent.bitcoinNetwork + '/' + result.receiver + '/' + id) : false;
-    return { ...result, localWalletProgress: walletProgress, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) };
+    return { ...result, feeCredits: { href: '/api/credits?request=' + id }, localWalletProgress: walletProgress, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) };
+  }
+  async credits(options = {}) { return listFeeCredits(this.agent, options); }
+  async useCredit(value) {
+    dashboardCheck(value && Object.keys(value).every(k => ['actionId', 'credit', 'request'].includes(k)) &&
+      typeof value.actionId === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(value.actionId) && requestId(value.credit) && requestId(value.request), 'invalid_credit_action');
+    await this.status(value.request);
+    return applyMatchingCredit(this.agent, value);
+  }
+  async transferCredit(value) {
+    dashboardCheck(value && Object.keys(value).every(k => ['actionId', 'credit', 'to'].includes(k)) &&
+      typeof value.actionId === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(value.actionId) && requestId(value.credit) && typeof value.to === 'string', 'invalid_credit_action');
+    return runTool(this.context, 'transfer_credit', value);
   }
   async plan(id) {
     await this.status(id);

@@ -23,7 +23,7 @@ export class ServiceClient {
     }
     Object.defineProperty(this, 'receiptSigners', { value: receiptSigners && Object.freeze(receiptSigners.map(m => Object.freeze({ id: m.id, identity: m.identity }))) });
   }
-  async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0 } = {}) {
+  async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0, retry = true } = {}) {
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
@@ -39,7 +39,7 @@ export class ServiceClient {
       const code = error.cause?.code ?? error.code ?? error.name;
       // An idle keep-alive socket can close just as the next read begins.
       // Only retry a GET that failed before receiving an HTTP response.
-      if (method === 'GET' && attempt === 0 && ['ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) continue;
+      if (retry && method === 'GET' && attempt === 0 && ['ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) continue;
       throw failure(safeCode(code), 'service unavailable or request blocked before an HTTP response', undefined, mutation);
     }
     if (response.headers.get('content-length') && Number(response.headers.get('content-length')) > limit) {
@@ -63,9 +63,9 @@ export class ServiceClient {
       // The gateway answers within seconds and says "busy, retry the identical request" while background work it
       // started (or a cold source) is still running. The same signed body is safe to send again.
       // A Trac batch landing during a read is refused as 400 or 503; the same request is retried.
-      if ((response.status === 503 && GATEWAY_BUSY.has(code) || code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
+      if (retry && (response.status === 503 && GATEWAY_BUSY.has(code) || code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
         await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterMs ?? 2000, 10000)));
-        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1 });
+        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1, retry });
       }
       throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
         { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });
@@ -94,6 +94,12 @@ export class ServiceClient {
   }
   requestPayoutBinding(value) { return this.request('/payout-bindings/request', { value }); }
   latest() { return this.request('/latest.json'); }
+  takenSlotsPage(query = {}) {
+    check(Object.entries(query).every(([k, v]) => ['since', 'cursor'].includes(k) && typeof v === 'string' && v.length <= 8192) &&
+      !(query.since && query.cursor), 'Invalid taken query');
+    // The mining pass owns a strict request budget, including retries.
+    return this.request('/patterns/taken', { query, retry: false });
+  }
   async renewalProof(id, observation, { batchRoot, settingsByHash, renewalSlice, limit = 1500000 } = {}) {
     check(hex32(id) && /^(0|[1-9][0-9]*)$/.test(String(observation)) &&
       typeof batchRoot === 'function' && typeof settingsByHash === 'function', 'Independent renewal reads required');

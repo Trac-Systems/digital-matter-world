@@ -29,3 +29,28 @@ for (const transfer of [false, true]) test(`credit packet survives response loss
   assert.deepEqual(packets[0], packets[1]);
   await assert.rejects(submitFinancialCredit(a, { ...args, credit: 'e'.repeat(64) }), /Conflicting credit action ID/);
 });
+
+test('credit discovery verifies accepted ownership and balances and matches exact fee denominations', async () => {
+  const { listFeeCredits, matchingCreditItems } = await import('../lib/financial-credit.mjs');
+  const owner = 'a'.repeat(64), id = 'b'.repeat(64), request = 'c'.repeat(64), fee = 'd'.repeat(64), foreign = 'e'.repeat(64), calls = [];
+  const credit = { owner, revision: '2', fees: [{ key: fee, amount: '8' }] }, target = { owner, state: 'open', fees: [{ key: fee, amount: '10' }], paid: ['4'] };
+  const agent = { owner, address: encodeTracAddress(owner), service: { results: async options => {
+    calls.push(options); return { credits: [{ id, amount: '999', origin: { requestId: 'f'.repeat(64), orderId: null } }, { id: foreign }], nextCursor: 'next-page' };
+  } }, trac: { financialRecord: async key => key === 'fc/' + id ? credit : key === 'fp/' + request ? target : { ...credit, owner: foreign } } };
+  const page = await listFeeCredits(agent, { request, limit: 2 });
+  assert.equal(calls[0].owner, agent.address); assert.equal(page.next, 'next-page'); assert.equal(page.credits.length, 1);
+  assert.equal(page.credits[0].amount, '8'); assert.equal(page.credits[0].matchingAmount, '6'); assert.equal(page.credits[0].usable, true);
+  assert.deepEqual(matchingCreditItems(credit, { ...target, owner: foreign }), []);
+  assert.deepEqual(matchingCreditItems(credit, { ...target, fees: [{ key: foreign, amount: '10' }] }), []);
+  agent.service.results = async () => ({ credits: [], next: 'empty-page-next' });
+  assert.equal((await listFeeCredits(agent)).next, 'empty-page-next');
+});
+
+test('matching credit retry uses its exact saved items after confirmation or response loss', async () => {
+  const { applyMatchingCredit } = await import('../lib/financial-credit.mjs');
+  const credit = 'a'.repeat(64), request = 'b'.repeat(64), items = [{ fee: 'c'.repeat(64), amount: '7' }];
+  const agent = { journal: { get: () => ({ body: { action: { operation: { type: 'use', credit, id: request, items } } } }) },
+    trac: { financialRecord: () => assert.fail('never refresh an existing signed intent') }, useCredit: async value => value };
+  assert.deepEqual(await applyMatchingCredit(agent, { actionId: 'same', credit, request }), { actionId: 'same', credit, request, items });
+  await assert.rejects(applyMatchingCredit(agent, { actionId: 'same', credit, request: 'd'.repeat(64) }), /Conflicting/);
+});

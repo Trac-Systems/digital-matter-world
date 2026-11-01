@@ -264,7 +264,8 @@ export function installFinancialSources(reads, options) {
       ethereumAnchor: { chainId: escrow.chainId, height: BigInt(event.blockNumber).toString(), hash: event.blockHash.toLowerCase() } };
   };
   // Normalize the execution anchor once and fence every independent read with
-  // the same accepted notary revision and Bitcoin/TAP source snapshot.
+  // the same notary and Bitcoin/TAP source snapshot. Independent evidence keeps
+  // the raw view revision; the explicit gateway preview scope uses a batch stamp.
   installPublicMintSources(reads, { network, bitcoinNetwork, lookupSettings });
   installBulkMintSources(reads, { network, bitcoinNetwork, document, request, reservation, record });
   for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPayment', 'publicMintPermit']) {

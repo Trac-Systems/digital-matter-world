@@ -1,0 +1,66 @@
+{
+  "source": "Recorded from a disposable loopback service fixture; no live service or wallet used",
+  "records": [
+    {
+      "method": "GET",
+      "path": "/patterns/taken",
+      "status": 200,
+      "body": {
+        "v": 1,
+        "mode": "snapshot",
+        "revision": "WyIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwiMiIsIjQxYWU0ZjlmN2E3OTA0MjA0NDA3ZDcwZGI5YjNhMTgyNGRmNzdkMTU5MWIxMGRjNmVhMjlhY2NiNTAxZDE3MGUiXQ",
+        "slots": [
+          [
+            "p2:0",
+            [
+              "10"
+            ]
+          ]
+        ],
+        "nextCursor": "eyJyZXZpc2lvbiI6Ild5SXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhJaXdpTWlJc0lqUXhZV1UwWmpsbU4yRTNPVEEwTWpBME5EQTNaRGN3WkdJNVlqTmhNVGd5TkdSbU56ZGtNVFU1TVdJeE1HUmpObVZoTWpsaFkyTmlOVEF4WkRFM01HVWlYUSIsImFmdGVyIjpbInAyOjAiLCJ6ITIhMTAiXX0",
+        "next": "eyJyZXZpc2lvbiI6Ild5SXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhJaXdpTWlJc0lqUXhZV1UwWmpsbU4yRTNPVEEwTWpBME5EQTNaRGN3WkdJNVlqTmhNVGd5TkdSbU56ZGtNVFU1TVdJeE1HUmpObVZoTWpsaFkyTmlOVEF4WkRFM01HVWlYUSIsImFmdGVyIjpbInAyOjAiLCJ6ITIhMTAiXX0",
+        "route": "/patterns/taken"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/patterns/taken?cursor=eyJyZXZpc2lvbiI6Ild5SXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhNVEV4TVRFeE1URXhJaXdpTWlJc0lqUXhZV1UwWmpsbU4yRTNPVEEwTWpBME5EQTNaRGN3WkdJNVlqTmhNVGd5TkdSbU56ZGtNVFU1TVdJeE1HUmpObVZoTWpsaFkyTmlOVEF4WkRFM01HVWlYUSIsImFmdGVyIjpbInAyOjAiLCJ6ITIhMTAiXX0",
+      "status": 200,
+      "body": {
+        "v": 1,
+        "mode": "snapshot",
+        "revision": "WyIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwiMiIsIjQxYWU0ZjlmN2E3OTA0MjA0NDA3ZDcwZGI5YjNhMTgyNGRmNzdkMTU5MWIxMGRjNmVhMjlhY2NiNTAxZDE3MGUiXQ",
+        "slots": [
+          [
+            "p2:0",
+            [
+              "973603"
+            ]
+          ]
+        ],
+        "nextCursor": null,
+        "next": null,
+        "route": "/patterns/taken"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/patterns/taken?since=WyIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwiMiIsIjQxYWU0ZjlmN2E3OTA0MjA0NDA3ZDcwZGI5YjNhMTgyNGRmNzdkMTU5MWIxMGRjNmVhMjlhY2NiNTAxZDE3MGUiXQ",
+      "status": 200,
+      "body": {
+        "v": 1,
+        "mode": "delta",
+        "from": "WyIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwiMiIsIjQxYWU0ZjlmN2E3OTA0MjA0NDA3ZDcwZGI5YjNhMTgyNGRmNzdkMTU5MWIxMGRjNmVhMjlhY2NiNTAxZDE3MGUiXQ",
+        "revision": "WyIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwiMyIsIjZmZmNmNTRjNTBmZGRmNWIxN2EzY2IyZTkwNTg1YTA3OTFiZGQxOTExYTkwNzVmOGEwNDIwNmU3NjJhMmIxMjQiXQ",
+        "changes": [
+          [
+            "p2:0",
+            "5",
+            true
+          ]
+        ],
+        "more": false
+      }
+    }
+  ]
+}

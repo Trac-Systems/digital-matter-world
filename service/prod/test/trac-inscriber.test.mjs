@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createTrac } from '../trac.mjs';
+import { gatewayFinancialReadStamp } from '../reads.mjs';
+import MatterProtocol from '../../../contract/protocol.js';
 import { GENESIS, MAINNET_PARAMS } from '../../../contract/beacon/bitcoin.js';
 import { MemoryStore, temporary } from './helpers.mjs';
 const require = createRequire(new URL('../../../local/package.json', import.meta.url)), btc = require('@scure/btc-signer'), { secp256k1 } = require('@noble/curves/secp256k1');
@@ -16,6 +18,41 @@ function runtimeFixture() {
   const peer = { config: { dmw: deployment }, msbClient: bus, base: { key: Buffer.from(config.bootstrap, 'hex'), update: async () => {}, view: { get version() { return state.revision; }, get: async key => data.has(key) ? { value: data.get(key) } : null, async *createHistoryStream({ gte }) { yield* events.filter(e => e.seq >= gte); } } }, protocol: { instance: { api, broadcastTransaction: async (_dispatch, _flag, prepared) => { await bus.network.validatorMessageOrchestrator.send(prepared); return { txo: { tx: prepared.tx } }; } } } };
   return { config, deployment, runtime: { peer, bus, close: async () => {} }, state, data, events, chosen };
 }
+test('native gateway stamps and point reads tolerate raw churn inside immutable checkout acquisition', async () => {
+  const f = runtimeFixture(), peer = f.runtime.peer, protocol = peer.protocol.instance;
+  Object.assign(f.deployment, { admin: '99'.repeat(32), committee: Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(9))).toString('hex') });
+  Object.assign(protocol, { base: peer.base, config: peer.config, withView: MatterProtocol.prototype.withView });
+  const settings = { network: f.deployment.network, revision: '1' }, root = 'ab'.repeat(32);
+  for (const [key, value] of [['v2/ready', 'ready'], ['v2/settings', settings], ['bt/last', { n: 1, to: 0 }], ['bt/1', root], ['fd/test', '3']]) f.data.set(key, value);
+  let opened = 0, closed = 0, replace = false;
+  const snapshots = new Map();
+  peer.base.view.checkout = revision => {
+    if (!snapshots.has(revision)) {
+      assert.equal(revision, f.state.revision); snapshots.set(revision, structuredClone(f.data));
+    }
+    opened++; const rows = snapshots.get(revision);
+    return { get: async key => {
+      await new Promise(resolve => setImmediate(resolve)); f.state.revision++;
+      if (replace) { replace = false; f.data.set('bt/1', 'cd'.repeat(32)); }
+      return rows.has(key) ? { value: rows.get(key) } : null;
+    }, close: async () => { closed++; } };
+  };
+  const client = await createTrac({ ...f, store: new MemoryStore(), network: 'fixture-main' });
+  const indexer = { stamp: async () => ({ height: GENESIS.height, hash: GENESIS.hash }) };
+  const at = await gatewayFinancialReadStamp(client, indexer);
+  assert.equal(Object.hasOwn(at, 'revision'), false); assert.equal(at.batchRoot, root);
+  assert.equal(at.authority.committee, f.deployment.committee); assert.equal(at.admissionPolicy.ready, true);
+  assert.equal(opened, 2); assert.equal(closed, 2); assert.ok(f.state.revision > 20);
+  assert.deepEqual(await client('readMany', [['fd/test'], at]), ['3']);
+  assert.equal(await client('read', ['fd/test', at]), '3'); assert.equal(opened, closed);
+  const head = protocol.api.dmwHead;
+  protocol.api.dmwHead = async () => { f.state.revision++; return head(); };
+  await assert.rejects(client('stamp'), /trac_snapshot_changed/, 'ordinary source stamp still refuses revision-only movement');
+  await assert.rejects(client('read', ['fd/test', { counted: 100, last: { n: 1, to: 99 }, revision: f.state.revision }]), /trac_snapshot_changed/);
+  replace = true;
+  await assert.rejects(gatewayFinancialReadStamp(client, indexer), /read_snapshot_changed/, 'same-sequence root replacement is fenced');
+  assert.equal(opened, closed);
+});
 test('native point batches use one immutable checkout, bounded concurrency and the predecessor fence', async () => {
   const f = runtimeFixture(), keys = Array.from({ length: 64 }, (_, i) => `dc/plot/p2:7/${i}`);
   keys.forEach((key, i) => f.data.set(key, String(i)));

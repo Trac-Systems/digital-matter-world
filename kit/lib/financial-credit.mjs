@@ -1,4 +1,4 @@
-import { stableJSON, hashObject, decimalV2, addUint } from '../../rules/src/index.js';
+import { stableJSON, hashObject, decimalV2, addUint, TAP_UNIT } from '../../rules/src/index.js';
 import { paymentCreditDigest } from '../../contract/payment-pages.js';
 import { decodeTracAddress, wireIdentities } from '../../rules/src/trac-address.js';
 import { signBytes } from './signing.mjs';
@@ -42,4 +42,52 @@ export async function submitFinancialCredit(agent, { actionId, credit, request, 
     journal.mark(key, result.state === 'accepted' ? 'accepted' : 'submitted', result); return result;
   } catch (error) { journal.mark(key, 'unknown'); throw error; }
   finally { journal.finishTurn(); }
+}
+
+// Public pages discover IDs and provenance. Accepted notary records alone
+// decide ownership, available atoms, revision and matching fee denominations.
+export function matchingCreditItems(credit, target) {
+  if (!credit || target?.state !== 'open' || target.owner !== credit.owner || !Array.isArray(target.fees)) return [];
+  return target.fees.flatMap((fee, index) => {
+    const source = credit.fees.find(f => f.key === fee.key), remaining = BigInt(fee.amount) - BigInt(target.paid[index]);
+    const amount = source && BigInt(source.amount) < remaining ? BigInt(source.amount) : source ? remaining : 0n;
+    return amount > 0n ? [{ fee: fee.key, amount: String(amount) }] : [];
+  });
+}
+
+export async function listFeeCredits(agent, { cursor, limit = 25, request } = {}) {
+  check(Number.isSafeInteger(limit) && limit >= 1 && limit <= 50 && (cursor === undefined || typeof cursor === 'string' && cursor.length <= 8192) &&
+    (request === undefined || hex32(request)), 'Invalid credit page');
+  const page = await agent.service.results({ collection: 'credits', owner: agent.address, limit, ...(cursor ? { cursor } : {}) });
+  check(Array.isArray(page.credits), 'Invalid credit page');
+  const target = request ? wireIdentities(await agent.trac.financialRecord('fp/' + request)) : null;
+  check(!request || target?.owner === agent.owner, 'Credit target owner mismatch');
+  const credits = [];
+  for (const entry of page.credits) {
+    check(hex32(entry.id), 'Invalid credit identity');
+    const accepted = wireIdentities(await agent.trac.financialRecord('fc/' + entry.id));
+    if (!accepted || accepted.owner !== agent.owner) continue;
+    const amount = accepted.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), items = matchingCreditItems(accepted, target);
+    credits.push({ id: entry.id, amount, creditedAmount: entry.creditedAmount ?? null,
+      origin: entry.origin ?? null, state: amount === '0' ? 'spent' : 'available', revision: accepted.revision,
+      fees: accepted.fees, ...(request ? { requestId: request, matchingAmount: items.reduce((n, i) => n + BigInt(i.amount), 0n).toString(), items,
+        usable: items.length > 0 } : {}) });
+  }
+  return { credits, next: page.next ?? page.nextCursor ?? null, unit: page.unit ?? TAP_UNIT, ...(request ? { requestId: request } : {}) };
+}
+
+export async function applyMatchingCredit(agent, { actionId, credit, request }) {
+  check(typeof actionId === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(actionId) && hex32(credit) && hex32(request), 'Invalid credit action');
+  const saved = agent.journal.get('financial-credit/' + actionId), op = saved?.body?.action?.operation;
+  let items;
+  if (saved) {
+    check(op?.type === 'use' && op.credit === credit && op.id === request, 'Conflicting credit action ID');
+    items = op.items;
+  } else {
+    const source = wireIdentities(await agent.trac.financialRecord('fc/' + credit)), target = wireIdentities(await agent.trac.financialRecord('fp/' + request));
+    check(source?.owner === agent.owner && target?.owner === agent.owner, 'Credit owner mismatch');
+    items = matchingCreditItems(source, target);
+    check(items.length > 0, 'No matching fee credit is available for this request');
+  }
+  return agent.useCredit({ actionId, credit, request, items });
 }

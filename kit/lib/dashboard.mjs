@@ -104,6 +104,14 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       if (req.method === 'GET' && path === '/api/requests') {
         keys(['offset', 'limit']); json(await state.requests({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
       }
+      if (req.method === 'GET' && path === '/api/credits') {
+        keys(['cursor', 'limit', 'request']); json(await state.credits({ cursor: url.searchParams.get('cursor') ?? undefined,
+          limit: Number(url.searchParams.get('limit') ?? 25), request: url.searchParams.get('request') ?? undefined })); return;
+      }
+      if (req.method === 'POST' && ['/api/credits/use', '/api/credits/transfer'].includes(path)) {
+        keys([]); const value = await body(req);
+        json(await (path === '/api/credits/use' ? state.useCredit(value) : state.transferCredit(value))); return;
+      }
       if (req.method === 'GET' && path === '/api/links') {
         keys(['offset', 'limit']); json(await state.links({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 10) })); return;
       }

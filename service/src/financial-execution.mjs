@@ -162,6 +162,9 @@ export class FinancialExecution {
     const result = await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document, height: at.counted, at });
     const owner = transition.action.owner; let capacity = result.inputs[0].evidence.capacity;
     const imported = capacity ? BigInt(await this.reads.financialRecord('fi/deployment/' + capacity.deployment, at) ?? '0') : 0n;
+    // Close source verification before entering the local commit gate. Bulk
+    // gateway stamps include authority/policy as well as the accepted batch and TAP.
+    if (bulk) check(rules.stableJSON(at) === rules.stableJSON(await this.reads.batchStamp()), 'financial_snapshot_changed', 503);
     return this.gate(async () => {
     const existing = this.existing(id); if (existing) return existing;
     // The pipeline commits accepted roots under this same short gate. Source
@@ -226,9 +229,12 @@ export class FinancialExecution {
   async expire(id, at) {
     const transition = this.store.get('financialQueue', id);
     if (!transition) return !this.store.get('financialAccepted', id);
-    if (transition.type === 'refund' || transition.type.startsWith('bulk-')) return false;
+    if (transition.type === 'refund' || transition.type.startsWith('bulk-') && !['bulk-fund', 'bulk-consume'].includes(transition.type)) return false;
     const revision = this.revision;
-    if (transition.type === 'public-payment') {
+    if (['bulk-fund', 'bulk-consume'].includes(transition.type)) {
+      const funding = await this.reads.financialRecord('fp/' + transition.id, at);
+      if (!funding?.manifest || BigInt(at.counted) <= BigInt(funding.manifest.expires) || BigInt(funding.issuedMask) !== 0n) return false;
+    } else if (transition.type === 'public-payment') {
       // Reveals account for actual payments and must remain recoverable.
       if (transition.action !== 'register' || rules.compareOrdinal(at.counted, transition.registration.validUntil) <= 0) return false;
     } else if (transition.type === 'reserve' || transition.type === 'reserve-many' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }

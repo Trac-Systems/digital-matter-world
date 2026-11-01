@@ -690,3 +690,80 @@ test('My agent mints several blocks of one pattern as one order, next to the sin
   assert.equal(f.packets.filter(p => p.terms).length, 1);
   assert.deepEqual(errors, []);
 });
+
+// Fee credits: a payment that confirmed after its request expired. My agent lists them near Open requests, offers
+// Use credit on the open request it matches, and keeps Transfer a small secondary action.
+test('My agent lists fee credits in pages, uses a matching credit on an open request once, and transfers one', async t => {
+  const f = await dashboardFixture(t, { http: true, site: true }), dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
+  const { encodeTracAddress } = await import('../../rules/src/trac-address.js');
+  const open = await dashboard.state.mint({ asset: 'p2:1', block: '12' }), request = open.requestId;
+  const expired = 'a7'.repeat(32), order = 'b8'.repeat(32), other = encodeTracAddress('7'.repeat(64)), TAP = '1000000000000000000';
+  const credit = (n, extra) => ({ id: String(n).repeat(64), amount: TAP, creditedAmount: TAP, origin: { requestId: expired, orderId: null }, state: 'available', revision: '0',
+    fees: [{ key: 'aa'.repeat(32), amount: TAP }], ...extra });
+  const pages = { first: [credit(1), credit(2, { amount: '0', creditedAmount: '2000000000000000000', origin: { requestId: null, orderId: order }, state: 'spent' })], older: [credit(3, { origin: null, creditedAmount: null })] };
+  const reads = [], uses = [], transfers = [];
+  dashboard.state.credits = async ({ cursor, limit, request: target }) => {
+    reads.push({ cursor, limit, request: target });
+    if (target) return { credits: [{ ...credit(1), requestId: target, matchingAmount: TAP, items: [{ fee: 'aa'.repeat(32), amount: TAP }], usable: target === request }], next: null, requestId: target };
+    return cursor === 'older' ? { credits: pages.older, next: null } : { credits: pages.first, next: 'older' };
+  };
+  dashboard.state.useCredit = async value => { uses.push(value); return { id: 'f'.repeat(64), state: 'queued' }; };
+  dashboard.state.transferCredit = async value => { transfers.push(value); return { id: 'e'.repeat(64), state: 'queued' }; };
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const credits = page.locator('section#fee-credits');
+  await credits.getByRole('heading', { name: 'Fee credits', exact: true }).waitFor();
+  const rows = credits.locator('tbody tr');
+  await assertEventually(async () => await rows.count() === 2);
+  assert.match(await rows.nth(0).innerText(), /1 TAP\s+Mint request a7a7a7a7\s+available\s+Transfer/);
+  assert.equal(await rows.nth(0).getByRole('link', { name: /Mint request/ }).getAttribute('href'), '/mint/' + expired);
+  assert.match(await rows.nth(1).innerText(), /0 TAP\s+of 2 TAP\s+Bulk order b8b8b8b8\s+used up/);
+  assert.equal(await rows.nth(1).getByRole('button', { name: 'Transfer' }).count(), 0);
+  assert.doesNotMatch(await credits.innerText(), /[0-9a-f]{64}/);
+
+  // Use credit sits on the open request it matches, before its Pay button.
+  const requests = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Open requests', exact: true }) });
+  const use = requests.getByRole('button', { name: 'Use credit (1 TAP)', exact: true });
+  await use.waitFor();
+  assert.ok(reads.some(r => r.request === request));
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    if (width === 390) assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (process.env.DMW_SHOTS) { await credits.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${process.env.DMW_SHOTS}/me-fee-credits-${width}.png`, fullPage: true }); }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await use.click();
+  const modal = page.getByRole('dialog');
+  await modal.getByRole('heading', { name: 'Use your fee credit?', exact: true }).waitFor();
+  assert.match(await modal.innerText(), /Request\s+Test · block 12[\s\S]*Fee credit\s+1 TAP[\s\S]*From\s+Mint request a7a7a7a7/);
+  await modal.getByRole('button', { name: 'Use credit', exact: true }).click();
+  await requests.getByText('credit counting', { exact: true }).waitFor();
+  assert.deepEqual(uses, [{ actionId: 'use-' + '1'.repeat(24) + '-' + request.slice(0, 24), credit: '1'.repeat(64), request }]);
+  assert.equal(await requests.getByRole('button', { name: /^Use credit/ }).count(), 0);
+
+  // Older credits, then back to the newest; a historical credit without origin says so.
+  await credits.getByRole('button', { name: 'Older credits', exact: true }).click();
+  await assertEventually(async () => await rows.count() === 1 && /An earlier payment/.test(await rows.nth(0).innerText()));
+  assert.equal(reads.filter(r => !r.request).at(-1).cursor, 'older');
+  await credits.getByRole('button', { name: 'Newest', exact: true }).click();
+  await assertEventually(async () => await rows.count() === 2);
+
+  // Transfer: a small action under the credit's state, checked and confirmed once.
+  await rows.nth(0).getByRole('button', { name: 'Transfer', exact: true }).click();
+  await rows.nth(0).getByRole('textbox', { name: 'Agent to receive the credit' }).fill(other);
+  await rows.nth(0).getByRole('button', { name: 'Transfer', exact: true }).click();
+  await modal.getByRole('heading', { name: 'Transfer this fee credit?', exact: true }).waitFor();
+  await modal.getByRole('button', { name: 'Transfer', exact: true }).click();
+  await assertEventually(() => transfers.length === 1);
+  assert.deepEqual(transfers, [{ actionId: 'transfer-' + '1'.repeat(24) + '-' + other.slice(-24), credit: '1'.repeat(64), to: other }]);
+
+  // A payment page's "Use it for a new mint" opens My agent on that pattern's claimed blocks.
+  await page.goto(dashboard.origin + '/me?pattern=p2%3A1');
+  const claims = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Claimed blocks you may mint' }) });
+  await claims.getByRole('tab', { name: /^Test · /, selected: true }).waitFor();
+  assert.deepEqual(errors, []);
+});

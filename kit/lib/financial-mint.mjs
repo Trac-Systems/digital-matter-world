@@ -54,7 +54,7 @@ async function makeFinancialMintTimed(agent, intent, actionId, candidate, contex
   check(compound || !intent.deployment || !perTickerSupplyActive(head.counted) || candidate?.deployment === quote.feeQuote?.deploymentId, 'Mint candidate deployment mismatch');
   check(quote.feeQuote?.settingsHash === policyHash, 'Financial quote settings mismatch');
   const request = old?.body.request ?? { v: 2, owner, asset, amount, ...(intent.deployment === undefined ? {} : { deployment: quote.feeQuote.deploymentId }), receive: sha256(receiver), ...(block === undefined ? {} : { block }), nonce: nonce(),
-    until: addUint(decimalV2(head.counted), String(v.moveFreshnessTips)), expires: addUint(decimalV2(head.counted), String(v.pendingBlocks)), settingsHash: policyHash };
+    until: addUint(decimalV2(head.counted), String(Math.min(v.moveFreshnessTips, v.pendingBlocks - 1))), expires: addUint(decimalV2(head.counted), String(v.pendingBlocks)), settingsHash: policyHash };
   if (!old) check(BigInt(request.expires) - BigInt(head.counted) >= BigInt(v.requestMinBlocks) && BigInt(request.expires) - BigInt(head.counted) <= BigInt(v.requestMaxBlocks), 'Mint request expired');
   if (agent.dryRun) return { state: 'dry-run', request, receiver, payer, quote, signatureExposed: false };
   const body = old?.body ?? { version: 2, request, receiver, payer, kind, feeQuote: quote.feeQuote,

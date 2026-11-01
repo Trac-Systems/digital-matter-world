@@ -1,3 +1,4 @@
+import { checkPaymentWindow, PAYMENT_MIN_BLOCKS } from './payment-window.mjs';
 import { hashObject, stableJSON } from '../../rules/src/core.js';
 import { validateBulkTerms, validateBulkFees, bulkOrderId, bulkWalletItems } from '../../rules/src/bulk-mint.js';
 import { ensure, fundingAddress } from './inscription-core.mjs';
@@ -23,8 +24,8 @@ export function bulkPaymentPlan(orderId, status, response, network) {
 // 32-item limit can accidentally split a bulk redeem into several payments.
 export class TapWalletBulkMint {
   constructor({ provider = globalThis.tapprotocol, readStatus, readTerms, reportPayment, network,
-    journal = new BrowserMintJournal('dmw-bulk-payments-v1'), fetchImpl = globalThis.fetch, readerPath }) {
-    Object.assign(this, { provider, readStatus, readTerms, reportPayment, network, journal, fetchImpl, readerPath });
+    journal = new BrowserMintJournal('dmw-bulk-payments-v1'), fetchImpl = globalThis.fetch, readerPath, readTip, minPaymentBlocks = PAYMENT_MIN_BLOCKS }) {
+    Object.assign(this, { provider, readStatus, readTerms, reportPayment, network, journal, fetchImpl, readerPath, readTip, minPaymentBlocks });
   }
   async connect() {
     const capabilities = await tapWalletCapabilities(this.provider);
@@ -77,6 +78,7 @@ export class TapWalletBulkMint {
         await this.checkNothingSent(saved.payment);
       }
       ensure(payable(first.status), 'This bulk order is not accepting a new payment');
+      await checkPaymentWindow({ ...this, status: first.status });
       await ensureTapAuthority(this.provider, this.address, null, { checkAccount: () => this.checkAccount() });
       const latest = await this.plan(orderId);
       ensure(payable(latest.status) && latest.status.termsHash === first.status.termsHash &&
@@ -87,6 +89,7 @@ export class TapWalletBulkMint {
       await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
         items: first.items, extraOutputs: first.extraOutputs, fetchImpl: this.fetchImpl });
       await this.checkAccount();
+      await checkPaymentWindow({ ...this, status: latest.status });
       const payment = { state: 'sending', termsHash: first.status.termsHash, items: first.items, extraOutputs: first.extraOutputs, at: Date.now() };
       await this.journal.put(key, { ...saved, payment });
       await this.checkAccount();

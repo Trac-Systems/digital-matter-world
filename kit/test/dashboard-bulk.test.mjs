@@ -272,7 +272,7 @@ test('bulk dashboard browser pays one order once, resumes after reload, and dist
 async function bulkSite(t, f, id) {
   const { createWeb } = await import('../../service/src/web.mjs');
   const web = createWeb({ target: { network: f.agent.network, bitcoinNetwork: 'regtest' }, records: async () => ({}) });
-  const row = f.records.get(id), reports = [], site = { reports, failReports: 0, members: null }; let origin;
+  const row = f.records.get(id), reports = [], site = { reports, failReports: 0, members: null, tipFail: 0, tip: null }; let origin;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, origin); res.setHeader('cache-control', 'no-store');
     const send = (value, status = 200) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value)); };
@@ -289,6 +289,9 @@ async function bulkSite(t, f, id) {
       if (reports.length <= site.failReports) return send({ error: 'bulk_report_temporarily_unavailable' }, 503);
       return send(row.status);
     }
+    // The Bitcoin tip the page and the wallet read; tipFail answers that many reads with an error.
+    if (url.pathname === '/web-api/tap-reader/getCurrentBlock' && site.tipFail > 0) { site.tipFail--; return send({ error: 'unavailable' }, 503); }
+    if (url.pathname === '/web-api/tap-reader/getCurrentBlock' && site.tip) return send({ result: site.tip });
     if (url.pathname.startsWith('/web-api/tap-reader/')) return send(walletFundsReply(url.href));
     if (await web.handle(req, res, async () => '')) return;
     send({ error: 'not_found' }, 404);
@@ -360,6 +363,75 @@ test('public bulk payment page uses the site design, pays once through the confi
   await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await noSideScroll(page), true);
   if (shots) await page.screenshot({ path: shots + '/bulk-minted-390.png', fullPage: true });
   assert.deepEqual(dialogs, []); assert.deepEqual(errors, []);
+});
+
+test('a bulk order paid late shows its fee credit; a refused short window and an unpaid expiry lead to a fresh order', async t => {
+  memberFee = 3607500000000000000n; t.after(() => { memberFee = 100n; });
+  const f = await setup(t, 2); f.state.mintAll(); await f.state.batchTask;
+  const id = [...f.records.keys()][0], { origin, row, site } = await bulkSite(t, f, id);
+  const { page, errors, wallet } = await browser(t, origin, f.binding.request.address);
+  const lead = page.locator('.next-step .body'), order = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Order', exact: true }) });
+  const fits = async name => { for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    // The agent dashboard's header is wider than 1280 px on every page; there only 390 px is checked.
+    if (width === 390 || !await page.evaluate(() => window.DMW_LOCAL_AGENT === true)) assert.equal(await noSideScroll(page), true, name + ' fits ' + width + ' px');
+    if (shots) await page.screenshot({ path: `${shots}/${name}-${width}.png`, fullPage: true });
+  } await page.setViewportSize({ width: 1280, height: 900 }); };
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // One block left and the page could not read the tip: the wallet itself refuses before any approval.
+  const until = Number(row.status.payBy.untilBlock), by = until.toLocaleString('en-US');
+  site.tip = String(until - 1); site.tipFail = 1;
+  await page.goto(origin + '/mint/bulk/' + id);
+  await page.getByText(`Pay by block ${by} (about 10 minutes per block).`, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Pay and mint 2 blocks', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Pay and mint', exact: true }).click();
+  const warn = lead.locator('.callout.warn');
+  await warn.getByText('Too little time is left to pay.', { exact: false }).waitFor();
+  assert.match(await warn.innerText(), /nothing was paid\. Once it expires, its blocks are released and the agent that made it can start a fresh order\./);
+  assert.equal(await page.getByRole('button', { name: 'Pay and mint 2 blocks', exact: true }).count(), 0);
+  assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 0);
+  assert.equal(site.reports.length, 0);
+  await fits('bulk-window-short-site');
+
+  // Paid late: the order expired, released its blocks, and the payment became a fee credit.
+  const credit = 'e3'.repeat(32);
+  Object.assign(row.status, { state: 'credited', payable: false, reason: 'credited', creditedAmount: '7215000000000000000', creditId: credit,
+    credits: [{ id: credit, amount: '3607500000000000000' }, { id: 'e4'.repeat(32), amount: '3607500000000000000' }], creditsCount: 2,
+    creditReferences: [{ reference: 'cd'.repeat(32) + 'i0' }], payment: { ...row.status.payment, state: 'paid', reference: 'cd'.repeat(32) + 'i0' } });
+  site.members = 'released';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  const late = lead.locator('.callout.warn');
+  await late.getByText('Your payment arrived after this order expired.', { exact: false }).waitFor();
+  assert.match(await late.innerText(), /It became a fee credit of 7\.215 TAP\. Its blocks are released\. It belongs to the agent that made this order/);
+  assert.match(await order.innerText(), /State\s+expired, paid late[\s\S]*Fee credit\s+7\.215 TAP\s+In 2 credits/);
+  assert.equal(await page.locator('ol.stepper li.bad .l').innerText(), 'Permits');
+  assert.doesNotMatch(await page.locator('main').innerText(), /owed back|credited|[0-9a-f]{64}/);
+  await fits('bulk-credited-site');
+
+  // On the agent dashboard the credit leads to a new mint and the credit list.
+  await page.addInitScript(() => { window.DMW_LOCAL_AGENT = true; });
+  await page.reload();
+  await lead.getByText('Your agent can use the credit for the fees of a new mint.', { exact: false }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Use it for a new mint', exact: true }).getAttribute('href'), '/me?' + new URLSearchParams({ pattern: row.status.asset }));
+  assert.equal(await page.getByRole('link', { name: 'Your fee credits', exact: true }).getAttribute('href'), '/me#fee-credits');
+  await fits('bulk-credited-dashboard');
+
+  // Expired unpaid: nothing was paid; mint again.
+  for (const key of ['reason', 'creditedAmount', 'creditId', 'credits', 'creditsCount']) delete row.status[key];
+  Object.assign(row.status, { state: 'expired', creditReferences: [], payment: { ...row.status.payment, state: 'unseen', reference: null } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead.getByText('This order expired before it was paid, so nothing was paid. Its blocks are released for a new order.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Mint again from My agent', exact: true }).count(), 1);
+  await fits('bulk-expired-unpaid');
+
+  // A fresh order with six blocks to pay shows the time left in plain words.
+  Object.assign(row.status, { state: 'awaiting_payment', payable: true }); site.members = null; site.tip = String(until - 6);
+  await page.reload();
+  await page.getByText(`Pay within about 1 hour (by block ${by}).`, { exact: true }).waitFor();
+  assert.match(await order.innerText(), new RegExp('Pay by\\s+block ' + by));
+  await fits('bulk-awaiting-pay-by');
+  assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 0);
+  assert.deepEqual(errors, []);
 });
 
 test('a bulk order with more than 25 blocks lists them 25 per page', async t => {

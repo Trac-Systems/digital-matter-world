@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, b, r, address, digest, sharedFixture } from './bulk-helpers.mjs';
-const { verifyBulkRequest } = await import('../src/bulk-mint-sources.mjs');
+const { verifyBulkRequest, checkBulkRecoveryBytes } = await import('../src/bulk-mint-sources.mjs');
 
 test('bulk shared fixture validates and exact reserve signature pins all quoted fields', async t => {
   b.validateBulkFees(sharedFixture.terms, sharedFixture.feeManifest);
@@ -63,6 +63,7 @@ test('bulk quote clones shared contexts and rejects an accepted-state change', a
   f.contexts.set('900000', context); const before = structuredClone(context);
   await Promise.all([f.bulk.quote(input), f.bulk.quote({ ...input, nonce: digest('other') })]);
   assert.deepEqual(context, before);
+  f.bulk.resources.bulkQuoteAttempts = 1;
   let calls = 0;
   f.stampHook(() => { if (++calls === 4) f.height('974138'); });
   await assert.rejects(f.bulk.quote({ ...input, nonce: digest('stale') }), /financial_snapshot_changed/);
@@ -143,6 +144,31 @@ test('bulk quote defers a byte-heavy eligible tail before anything is signed', a
   assert.ok(Buffer.byteLength(r.stableJSON(f.sign(q))) <= b.BULK_LIMITS.requestBytes);
 });
 
+test('bulk admission reserves enough of the existing operation byte limit for its full recovery credit', () => {
+  const wire = structuredClone(sharedFixture.max64), terms = wire.terms, manifest = wire.feeManifest;
+  const scale = value => String(BigInt(value) * 10n ** 17n);
+  terms.grossFeeAtoms = scale(terms.grossFeeAtoms); terms.payableFeeAtoms = scale(terms.payableFeeAtoms);
+  terms.groups = terms.groups.slice(0, 2).map(group => ({ ...group, amount: '0' }));
+  terms.custody = [];
+  for (const member of manifest) {
+    member.grossFeeAtoms = scale(member.grossFeeAtoms);
+    for (const share of member.shares) {
+      share.gross = scale(share.gross); share.payable = scale(share.payable);
+      share.group = share.role === 'burn' ? 0 : 1;
+      terms.groups[share.group].amount = String(BigInt(terms.groups[share.group].amount) + BigInt(share.payable));
+      if (['finder', 'landowner', 'discoverer'].includes(share.role)) {
+        share.beneficiary = terms.owner;
+        terms.custody.push({ member: member.member, role: share.role, group: share.group, owner: terms.owner, amount: share.payable });
+      }
+    }
+  }
+  terms.feeRoot = b.bulkFeeRoot(manifest);
+  b.validateBulkFees(terms, manifest);
+  assert.ok(Buffer.byteLength(r.stableJSON({ terms, feeManifest: manifest })) < b.BULK_LIMITS.requestBytes);
+  assert.throws(() => checkBulkRecoveryBytes(b, terms, manifest), /bulk_byte_limit/);
+  assert.doesNotThrow(() => checkBulkRecoveryBytes(b, sharedFixture.max64.terms, sharedFixture.max64.feeManifest));
+});
+
 test('bulk quote batches member lock reads and reads shared generation capacity once', async t => {
   const f = await fixture(t), record = f.reads.financialRecord, records = f.reads.financialRecords;
   let generations = 0; const pages = [];
@@ -150,5 +176,38 @@ test('bulk quote batches member lock reads and reads shared generation capacity 
   f.reads.financialRecords = async (keys, at) => { pages.push(keys); return records(keys, at); };
   const q = await f.bulk.quote(f.input(64));
   assert.equal(q.terms.members.length, 64); assert.equal(generations, 1);
-  assert.equal(pages.length, 64); assert.ok(pages.every(keys => keys.length === 3));
+  assert.equal(pages.length, 3); assert.ok(pages.every(keys => keys.length === 64));
+});
+
+test('six-block bulk expiry releases slots while reported payment is still unconfirmed', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6 } });
+  const quote = await f.bulk.quote(f.input(2)); await f.bulk.request(f.sign(quote)); await f.execute();
+  const id = quote.orderId, row = f.store.get('bulkOrders', id), reference = 'ee'.repeat(32) + 'i0';
+  await f.store.put('bulkOrders', id, { ...row, references: [reference] });
+  f.height(String(BigInt(quote.terms.expires) + 1n));
+  await f.bulk.tick(); await f.execute();
+  assert.equal((await f.bulk.status(id)).state, 'expired');
+  assert.equal(f.store.count('activeBulkOrders'), 0);
+  assert.deepEqual(f.store.get('bulkOrders', id).references, [reference]);
+  assert.equal(f.store.get('bulkPaymentRecovery', id), true);
+});
+
+for (const stage of ['bulk-fund', 'bulk-consume']) test(`six-block expiry retires an unsigned queued ${stage} and releases the order`, async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  await f.bulk.request(f.sign(q)); await f.execute();
+  await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null });
+  if (stage === 'bulk-consume') { await f.execute(); await f.bulk.tick(); }
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, stage);
+  f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, 'bulk-release');
+  await f.execute();
+  assert.ok(['expired', 'credited'].includes((await f.bulk.status(id)).state)); assert.equal(f.store.count('activeBulkOrders'), 0);
+  await f.bulk.tick();
+  if (f.store.count('financialQueue')) await f.execute();
+  assert.ok(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')));
+});
+
+test('six-block bulk reservation keeps until strictly before expiry with a long freshness setting', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6, moveFreshnessTips: 12 } }), q = await f.bulk.quote(f.input());
+  assert.equal(BigInt(q.terms.expires) - BigInt(q.terms.until), 1n); b.validateBulkTerms(q.terms);
 });

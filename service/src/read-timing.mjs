@@ -41,11 +41,11 @@ export async function timeStep(name, value) {
   const at = Date.now();
   try { return await value; } finally { steps.set(name, (steps.get(name) ?? 0) + Date.now() - at); }
 }
-export async function timeReads(event, fields, fn) {
+export async function timeReads(event, fields, fn, { always = false } = {}) {
   const steps = new Map(), started = Date.now();
   try { return await current.run(steps, fn); }
   finally {
     const ms = Date.now() - started;
-    if (ms >= 1000) timingLog({ event, ...fields, ms, reads: Object.fromEntries([...steps].sort((a, b) => b[1] - a[1]).slice(0, 12)) });
+    if (always || ms >= 1000) timingLog({ event, ...fields, ms, reads: Object.fromEntries([...steps].sort((a, b) => b[1] - a[1]).slice(0, always ? undefined : 12)) });
   }
 }

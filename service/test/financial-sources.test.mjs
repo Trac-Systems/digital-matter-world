@@ -101,7 +101,7 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
   const prepare = async (nonce = 'first', kind = 'tap', who = owner, selection) => {
     if (kind === 'ethereum') { context.finderAddress = '0x' + 'f'.repeat(40); context.treasury = '0x' + 'c'.repeat(40); context.firstMakerAddress = '0x' + 'd'.repeat(40); }
     const quote = await mints.quote({ asset, ...(options.legacyElement ? { block: '42' } : {}), amount: '3', kind, ...(selection ? { deployment: selection } : {}) });
-    const request = { v: 2, owner: who.address, asset, ...(selection ? { deployment: quote.feeQuote.deploymentId } : {}), ...(options.legacyElement ? { block: '42' } : {}), amount: '3', receive: r.hash('regtest-receiver'), nonce: r.hash(nonce), until: r.ordinalCodec(typeof counted === 'string').add(counted, 20), expires: r.ordinalCodec(typeof counted === 'string').add(counted, 432), settingsHash: quote.feeQuote.settingsHash };
+    const request = { v: 2, owner: who.address, asset, ...(selection ? { deployment: quote.feeQuote.deploymentId } : {}), ...(options.legacyElement ? { block: '42' } : {}), amount: '3', receive: r.hash('regtest-receiver'), nonce: r.hash(nonce), until: r.ordinalCodec(typeof counted === 'string').add(counted, Math.min(20, document.values.pendingBlocks - 1)), expires: r.ordinalCodec(typeof counted === 'string').add(counted, document.values.pendingBlocks), settingsHash: quote.feeQuote.settingsHash };
     const body = { request, signature: Buffer.from(ed25519.sign(financialMintDigest(network, request), who.secret)).toString('hex'), receiver: 'regtest-receiver', payer: kind === 'tap' ? 'regtest-payer' : '0x' + 'e'.repeat(40), kind, feeQuote: quote.feeQuote };
     body.authorization = Buffer.from(ed25519.sign(payerDigest(network, body), who.secret)).toString('hex');
     const pending = await mints.request(body); let action = pending.reservationAction;
@@ -711,6 +711,33 @@ test('legacy credit hints become canonical backed transferable credit exactly on
   await f.financial.submit({ type: 'lifecycle', id: credit, action: { type: 'credit-transfer', id: credit, operation: op } }); await f.execute();
   assert.equal(f.store.get('accountRecords', 'fc/' + credit).owner, op.to);
   await f.mints.tick(); assert.equal(f.financial.pending(), false);
+});
+
+for (const rail of ['tap', 'ethereum']) test(`native six-block ${rail} broadcast survives restart and becomes credit automatically after expiry`, async t => {
+  const f = await setup(t, { pendingBlocks: 6 }, '100'), p = await f.prepare('native-late-' + rail, rail);
+  await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
+  const row = f.store.get('mints', p.id), reference = rail === 'tap' ? r.hash('native-late-tap') + 'i0' : '0x' + r.hash('native-late-eth');
+  f.transfers.set(reference, row.quote.fees.map(fee => ({ ins: reference, fail: false, int: true, addr: row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  f.confirmations(0);
+  await assert.rejects(f.mints.payment({ id: p.id, paymentId: reference }));
+  await f.reopen(); f.counted('107');
+  await f.mints.tick(); await f.execute(); await f.mints.tick();
+  assert.equal(f.mints.public(p.id).state, 'expired');
+  assert.equal(f.store.get('accountRecords', 'ao/' + p.id).state, 'refunded');
+  assert.equal(f.store.count('financialActiveMints'), 0);
+  assert.equal(f.store.get('accountRecords', capacityKey(row.context.deployment.id)), '0');
+  f.counted('108'); f.confirmations(1); f.paymentHeight('108');
+  if (rail === 'ethereum') {
+    f.ethereum.snapshot = { ...f.escrow, payer: row.payer, requestId: p.id, confirmations: 1,
+      deposit: { status: 2, payer: row.payer, split: escrowSplitForItems(row.quote.fees), amount: row.quote.fees.reduce((n, x) => n + BigInt(x.amount), 0n).toString() } };
+    f.ethereum.event = { kind: 'claim', confirmations: 1, payer: row.payer, requestId: p.id, transactionHash: reference,
+      blockHash: '0x' + r.hash('native-eth-block'), blockNumber: 108 };
+  }
+  // No second report: persisted references drive independent receipt verification.
+  await f.mints.tick(); await f.execute(); await f.mints.tick(); await f.mints.tick();
+  const [{ id: credit }] = f.store.list('legacyCreditResults/' + p.id, { limit: 10 });
+  assert.deepEqual(f.store.get('accountRecords', 'fc/' + credit).fees, f.store.get('accountRecords', 'fp/' + p.id).fees);
+  assert.equal(f.financial.pending(), false);
 });
 
 test('expired legacy paid hold accounts known payments before crediting and returning its units', async t => {

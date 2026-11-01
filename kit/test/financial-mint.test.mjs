@@ -186,3 +186,15 @@ test('mint_on_chain overlaps three requests, preserves action idempotency and ig
   const retry = await runTool(f.context, 'mint_on_chain', args[0]);
   assert.equal(retry.request.requestId, results[0].request.requestId); assert.equal(f.packets.length, 6);
 });
+
+test('six-block request preserves the strict until/expires relationship even with longer move freshness', async t => {
+  const network = 'dmw-kit-test', wallet = testWallet(), directory = await temp(t);
+  const journal = await Journal.open(directory, network, { intervalMs: 0 }); cleanup(t, () => journal.close());
+  const settings = settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '20', values: { ...SETTINGS_PROFILE, pendingBlocks: 6, moveFreshnessTips: 12 } });
+  const context = { settings, settingsHash: hashObject(settings) };
+  const agent = new Agent({ wallet, network, journal, dryRun: true, service: { network, mintQuote: async () => ({ feeQuote: { settingsHash: context.settingsHash } }) },
+    trac: { network, head: async () => ({ counted: '20', tip: { height: '20' } }) } });
+  const result = await makeFinancialMint(agent, { asset: 'c1', amount: '3', receiver: 'receiver', payer: 'payer', kind: 'tap', compound: true }, 'six', null, context);
+  assert.equal(result.request.expires, '26'); assert.equal(result.request.until, '25');
+  assert.match(financialMintId(network, result.request), /^[0-9a-f]{64}$/); assert.equal(journal.recent().length, 0);
+});

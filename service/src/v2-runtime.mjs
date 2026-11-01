@@ -143,10 +143,13 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
       if (financial) financial.document = document;
       if (mints) { mints.document = document; mints.pendingBlocks = document.values.pendingBlocks; }
     }
-    if (financial) financial.document = document;
-    if (bulkMints) bulkMints.document = document;
-    if (links) links.document = document;
-    if (mints) { mints.document = document; mints.pendingBlocks = document.values.pendingBlocks; }
+    // Each refresh reads a fresh object with the same content. Keep the installed object
+    // unless the content changed: admission and quotes fence on document identity.
+    const documentHash = rules.hashObject(document), install = owner => {
+      if (owner && (!owner.document || rules.hashObject(owner.document) !== documentHash)) owner.document = document;
+    };
+    install(financial); install(bulkMints); install(links);
+    if (mints) { install(mints); mints.pendingBlocks = mints.document.values.pendingBlocks; }
     const capability = rules.runtimeCapabilities(document, pin.resources);
     const timing = closureTimeouts(document, pin.resources);
     if (timing) Object.assign(committee, { prepareMs: timing.prepareMs, timeoutMs: timing.sessionMs });

@@ -105,8 +105,13 @@ export class FinancialMints extends Mints {
     const blocked = financialBlock(this.store, ['fp/' + id, 'ao/' + id, 'dc/' + id, 'fp/usage',
       ...(capacity ? ['fd/' + capacity.deployment] : []), ...(external ? [capacityKey(external.deployment),
         'fi/deployment/' + external.deployment, ...(external.block === null ? [] : [plotKey(external.asset, external.block, external.supplyScope)])] : [])]);
+    const credits = this.store.list('financialRequestCredits/' + id, { limit: this.document.values.paymentPage }).map(r => r.value);
+    const creditTotal = this.store.get('financialCreditTotals', id);
+    const creditedAmount = creditTotal?.amount ?? credits.reduce((n, c) => n + BigInt(c.amount), 0n).toString();
     const status = { ...publicMint(row), financialVersion: 2, state: row.state,
-      payable: !blocked && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
+      ...(row.state === 'expired' && creditedAmount !== '0' ? { reason: 'credited', creditedAmount,
+        creditId: creditTotal?.firstCreditId ?? credits[0].id, credits, creditsCount: creditTotal?.count ?? credits.length } : {}),
+      payable: !blocked && row.state !== 'expired' && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
       // The reported, not yet confirmed mint inscription: every page hides a second inscribe.
       ...(row.mintInscription && row.state !== 'minted' ? { sentInscription: row.mintInscription } : {}),
       ...(rules.mintRetainsUnits(capacity) ? { unitsConsumed: false,
@@ -205,7 +210,7 @@ export class FinancialMints extends Mints {
         const transition = { type: 'fund', id: row.id, items: [...items], references };
         try {
           await buildFinancialExecution({ store: this.store, reads: this.reads, document: this.document, transitions: [transition], height: at.counted, at });
-          return this.queue({ ...row, [row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences']: references }, transition);
+          return this.queue({ ...row, [row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences']: [...new Set([...(row[row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences'] ?? []), ...references])] }, transition);
         } catch (error) {
           if (items.length === 1 || !['account_operation_bytes', 'account_proof_budget', 'financial_batch_bytes', 'funding_operation'].includes(error.message)) throw error;
           items.length = Math.max(1, Math.floor(items.length / 2));
@@ -215,29 +220,32 @@ export class FinancialMints extends Mints {
     check(allowEmpty || receipts.length > 0, 'payment_unconfirmed'); return null;
   }
   payment({ id, requestId, paymentId, paymentIds = [], inscription }, requesterSecret) { return this.mintWork.run(id ?? requestId, async () => {
-    id ??= requestId; const row = this.store.get('mints', id); check(row, 'request_not_found', 404);
+    id ??= requestId; let row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     if (row.publicMint) return this.publicMints.payment({ id, paymentId, paymentIds, inscription }, requesterSecret);
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(inscription), 'mint_inscription');
       await this.store.put('mints', id, { ...row, mintInscription: inscription }); return this.public(id);
     }
-    check(!row.work || this.store.get('financialAccepted', row.work), 'financial_transition_pending', 409);
     const references = [...new Set([...(paymentId ? [paymentId] : []), ...paymentIds])];
     const at = await this.reads.batchStamp();
     const settingsHash = row.request.settingsHash ?? (await this.reads.financialRecord('fi/source/' + id, at))?.settingsHash;
     const original = this.reads.financialSettings ? await this.reads.financialSettings(settingsHash) : this.document;
     check(rules.hashObject(original) === settingsHash, 'financial_settings_history');
     check(references.length > 0 && references.length <= original.values.paymentPage, 'financial_receipt_references');
+    const field = row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences';
+    check(references.every(r => typeof r === 'string' && (row.kind === 'ethereum' ? /^0x[0-9a-f]{64}$/.test(r) : /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(r))), 'financial_receipt_references');
+    // Persist broadcast hints before a source read can fail or return unconfirmed.
+    row = { ...row, [field]: [...new Set([...(row[field] ?? []), ...references])] };
+    await this.store.put('mints', id, row);
+    if (row.work && !this.store.get('financialAccepted', row.work)) return this.public(id);
     const funding = await this.reads.financialRecord('fp/' + id, at);
-    if (['credited', 'refunded'].includes(funding?.state) && await this.reads.financialRecord('fi/source/' + id, at)) {
-      const old = this.store.get('financialLegacyCredits', id);
-      check(!old?.work || this.store.get('financialAccepted', old.work), 'financial_transition_pending', 409);
-      await this.store.put('financialLegacyCredits', id, { references: [...new Set([...(old?.references ?? []), ...references])], offset: 0 });
+    if (['credited', 'refunded'].includes(funding?.state)) {
+      await this.recoverPayments(row);
       await this.advanceLegacyCredit(id); return this.public(id);
     }
     if (row.kind === 'ethereum') {
       const snapshot = await this.reads.financialEscrow(id, references, at);
-      await this.store.put('mints', id, { ...row, ethereumReferences: references, state: snapshot.deposit.status === 1 ? 'paid' : row.state });
+      await this.store.put('mints', id, { ...row, state: snapshot.deposit.status === 1 ? 'paid' : row.state });
       if (snapshot.deposit.status === 1) return this.public(id);
     }
     await this.paymentPage(row, references, at); return this.public(id);
@@ -296,17 +304,31 @@ export class FinancialMints extends Mints {
       });
     } finally { this.running = false; }
   }
+  async recoverPayments(row) {
+    const sent = this.store.get('inflight', `mint/${row.id}/payment`)?.inscriptionId;
+    const references = [...new Set([...(row.paymentReferences ?? []), ...(row.ethereumReferences ?? []),
+      ...(row.kind === 'tap' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(sent ?? '') ? [sent] : [])])];
+    if (!references.length) return;
+    const old = this.store.get('financialLegacyCredits', row.id);
+    await this.store.put('financialLegacyCredits', row.id, { ...old, references: [...new Set([...(old?.references ?? []), ...references])], offset: old?.offset ?? 0 });
+  }
   async advanceLegacyCredit(id) {
     let pending = this.store.get('financialLegacyCredits', id);
+    if (!pending) return;
     if (pending.work && !this.store.get('financialAccepted', pending.work)) return;
     if (pending.work) {
       await this.store.put('legacyCreditResults/' + id, pending.credit, { state: 'accepted', transition: pending.work });
       const { work, credit, ...rest } = pending; pending = rest;
+      await this.store.put('financialLegacyCredits', id, pending);
     }
     const at = await this.reads.batchStamp(), funding = await this.reads.financialRecord('fp/' + id, at);
     check(['credited', 'refunded', 'consumed'].includes(funding?.state), 'pending_credit_live');
-    const references = pending.references.slice(pending.offset, pending.offset + this.document.values.paymentPage);
+    // Inspect one hint per pass so a confirmed sibling cannot make an unseen
+    // payment disappear. Rotate unseen hints; receipt usage makes retries safe.
+    const offset = pending.offset % (pending.references.length || 1);
+    const references = pending.references.slice(offset, offset + 1);
     if (!references.length) { await this.store.transact([{ space: 'financialLegacyCredits', id }, { space: 'financialLegacyCreditFailures', id }]); return; }
+    await this.store.put('financialLegacyCredits', id, { ...pending, offset: (offset + 1) % pending.references.length });
     const receipts = await this.reads.financialReceipts(id, references, at), usage = this.store.get('accountRecords', 'fp/usage') ?? { root: EMPTY_ACCOUNT_ROOT };
     const availability = new AccountAvailability(this.store), items = [];
     for (const receipt of receipts) {
@@ -317,7 +339,7 @@ export class FinancialMints extends Mints {
     }
     if (!items.length) {
       check(receipts.length > 0, 'pending_credit_unconfirmed');
-      await this.store.put('financialLegacyCredits', id, { ...pending, offset: pending.offset + references.length }); return;
+      await this.store.put('financialLegacyCredits', id, { ...pending, references: pending.references.filter(r => r !== references[0]), offset: 0 }); return;
     }
     const transition = { type: 'surplus', id, items, references };
     await buildFinancialExecution({ store: this.store, reads: this.reads, document: this.document, transitions: [transition], height: at.counted, at });
@@ -334,6 +356,7 @@ export class FinancialMints extends Mints {
       return;
     }
     if (['credited', 'refunded'].includes(funding.state)) {
+      await this.recoverPayments(row);
       await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, state: 'expired', reason: funding.state } },
         { space: 'financialActiveMints', id: row.id }, { space: ownerSpace(row.request.owner), id: row.id }]); return;
     }
@@ -362,12 +385,22 @@ export class FinancialMints extends Mints {
     }
     if (rules.compareOrdinal(at.counted, row.expiry) > 0) {
       if (row.work && !this.store.get('financialAccepted', row.work) && !await this.financial.expire(row.work, at)) return;
-      if (this.store.get('accountRecords', 'fi/source/' + row.id)?.legacy) {
-        if (row.kind === 'tap' && row.paymentReferences && await this.paymentPage(row, row.paymentReferences, at, { allowEmpty: true })) return;
-        if (row.kind === 'ethereum' && row.ethereumReferences) {
-          const snapshot = await this.reads.financialEscrow(row.id, row.ethereumReferences, at);
-          if (snapshot.deposit.status === 3) { await this.queue(row, { type: 'refund', id: row.id, reason: 'ethereum_refund', references: row.ethereumReferences }); return; }
-          if (snapshot.deposit.status === 2 && await this.paymentPage(row, row.ethereumReferences, at, { allowEmpty: true })) return;
+      // Release the slot even when the reported transaction is still unseen.
+      // Once the refund is accepted the existing surplus worker owns every hint.
+      await this.recoverPayments(row);
+      const references = row.kind === 'ethereum' ? row.ethereumReferences : row.paymentReferences;
+      if (references?.length) {
+        try {
+          if (row.kind === 'tap' && await this.paymentPage(row, references.slice(0, this.document.values.paymentPage), at, { allowEmpty: true })) return;
+          if (row.kind === 'ethereum') {
+            const snapshot = await this.reads.financialEscrow(row.id, references, at);
+            if (snapshot.deposit.status === 3) { await this.queue(row, { type: 'refund', id: row.id, reason: 'ethereum_refund', references }); return; }
+            if (snapshot.deposit.status === 2 && await this.paymentPage(row, references, at, { allowEmpty: true })) return;
+          }
+        } catch (error) {
+          // Source availability cannot extend an unpaid reservation. Evidence is
+          // verified again by the surplus worker, never assumed to be a payment.
+          await this.store.put('financialLegacyCreditFailures', row.id, { reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' });
         }
       }
       await this.queue(row, { type: 'refund', id: row.id, reason: 'credit' }); return;

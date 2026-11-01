@@ -131,6 +131,23 @@ export function validateBulkTerms(t) {
     prv: { address: t.receiver, salt: placeholder, hash: placeholder, sig } }, BULK_LIMITS.mintPayloadBytes, 'bulk_mint_payload_bytes');
   return t;
 }
+// Reuse the normal fee denomination, including suspense beneficiary identity.
+// The original manifest is committed by terms.feeRoot; failed groups earn zero.
+export function bulkRecoveryFees(terms, manifest, paid) {
+  validateBulkFees(terms, manifest);
+  assert(Array.isArray(paid) && paid.length === terms.groups.length && paid.every((n, i) => n === '0' || n === terms.groups[i].amount), 'bulk_payment');
+  const fees = new Map();
+  for (const member of manifest) for (const share of member.shares) {
+    if (share.payable === '0' || paid[share.group] === '0') continue;
+    const group = terms.groups[share.group];
+    const key = hashObject(['dmw-financial-fee-v3', { version: 3, network: terms.network,
+      domain: ['tap', terms.bitcoinNetwork, 'tap'], role: share.role, to: group.to, ticker: group.ticker,
+      tt: group.tt, beneficiary: share.beneficiary }]);
+    fees.set(key, (fees.get(key) ?? 0n) + BigInt(share.payable));
+  }
+  return [...fees].sort(([a], [b]) => a < b ? -1 : 1).map(([key, amount]) => ({ key, amount: String(amount) }));
+}
+
 function compareBytes(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
   return a.length - b.length;

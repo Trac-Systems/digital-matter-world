@@ -1,6 +1,7 @@
 import { headerHTTPSettings } from './headers.mjs';
 import { validateManifestTrust } from './header-manifest.mjs';
 import { chunkDownloadLimits } from './header-chunks.mjs';
+import { miningReadSettings } from './taken-cache.mjs';
 import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,13 +96,14 @@ export async function networkProfile({ network = 'mainnet', networkFile } = {}) 
   return validateLocalConfig(await readNetworkJSON(networkFile));
 }
 export async function validatePlayerConfig(config, { pins } = {}) {
+  if (config.miningReads !== undefined) miningReadSettings(config.miningReads);
   if (config.mode !== 'mainnet') {
     check(config.localOnly === true && isAbsolute(config.adapter ?? ''), 'Use a trusted local adapter or pinned mainnet setup');
     localOrigin(config.gateway); return config;
   }
   pins ??= await readNetworkJSON(MAINNET_FILE);
   validateMainnet(pins);
-  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin', 'headerManifestTrust', 'headerChunkLimits', 'headerHTTPSettings']), 'Unpinned production config field');
+  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin', 'headerManifestTrust', 'headerChunkLimits', 'headerHTTPSettings', 'miningReads']), 'Unpinned production config field');
   if (config.bitcoin !== undefined) {
     check(own(config.bitcoin, ['authority', 'funding']), 'Only a public token authority ID and cardinal funding outpoints belong in Bitcoin config');
     check(config.bitcoin.authority === undefined || /^[0-9a-f]{64}i[0-9]+$/.test(config.bitcoin.authority), 'Invalid token authority inscription ID');

@@ -17,9 +17,10 @@ import { projectionSchema, projectRevision, flushProjectionRevisions } from './p
 import { publicProjectionSchema, projectPublicRecord, patternLedgerAsset, consumesPublicRecord, flushPublicItems } from './public-projection-index.mjs';
 import { patternSymbolFillSchema, fillPatternSymbols } from './pattern-symbol-fill.mjs';
 import { fillPatternTotals } from './pattern-totals-fill.mjs';
+import { takenSchema, fillTaken, projectTaken, TAKEN_READ_RESOURCES } from './taken-index.mjs';
 const run = promisify(execFile);
 const identity = async pid => (await run('ps', ['-p', String(pid), '-o', 'lstart='])).stdout.trim();
-export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096 });
+export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, groupDelay: 3, pageLimit: 4096, defaultPageRows: 100, maxFrameBytes: 4000000, checkpointBytes: 2000000, cacheKiB: 4096, takenChangeRows: TAKEN_READ_RESOURCES.changeRows });
 // The fsynced journal is the acknowledgement boundary. SQLite is a bounded-cache
 // index of both live records and cold history, never a growing in-memory pool.
 export class Store {
@@ -61,6 +62,7 @@ export class Store {
     projectionSchema(this.db);
     publicProjectionSchema(this.db);
     patternSymbolFillSchema(this.db);
+    takenSchema(this.db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS staged_transactions (tx TEXT NOT NULL,part INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(tx,part)) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS record_counts (space TEXT PRIMARY KEY,n INTEGER NOT NULL) WITHOUT ROWID;
       CREATE TRIGGER IF NOT EXISTS record_insert_count AFTER INSERT ON records BEGIN INSERT INTO record_counts VALUES(NEW.space,1) ON CONFLICT(space) DO UPDATE SET n=n+1; END;
@@ -124,6 +126,7 @@ export class Store {
     // progress and yields, and subsequent opens check only the completion key.
     await fillPatternSymbols(this);
     await fillPatternTotals(this);
+    await fillTaken(this);
     this.path = join(this.directory, 'pending.log'); this.fd = await open(this.path, 'a+', 0o600);
     const size = (await this.fd.stat()).size; let offset = 0, previous = null;
     const header = Buffer.alloc(36);
@@ -204,6 +207,7 @@ export class Store {
     if (this.evidenceReady) this.indexEvidence(op);
     if (op.value === undefined) this.delStmt.run(op.space, String(op.id));
     else this.putStmt.run(op.space, String(op.id), JSON.stringify(op.value));
+    projectTaken(this, op);
   }
   apply(rows) {
     const previousProjection = this.publicProjectionActive;

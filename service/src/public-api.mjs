@@ -5,6 +5,7 @@ import { R3_RESOURCES } from './r3-settings.mjs';
 import { rules } from './rules.mjs';
 import { claimedPage } from './claimed-feeds.mjs';
 import { claimedPublicRead } from './claimed-public.mjs';
+import { takenPage } from './taken-index.mjs';
 import { extendedPublicRead, publicProjectionRevision } from './public-projections.mjs';
 import { agentSpecs, blockSpecs, collectionSpecs, eventSpec, patternBlocksSpec, resultSpecs } from './read-specs.mjs';
 import { genericSpec, limitOf, listRoute, numberFilter, pageRows, pointerValue, projectLists } from './paging.mjs';
@@ -72,6 +73,7 @@ export function createPublicAPI({ views, files, settings = {} }) {
     const claimed = /^\/patterns\/(p[0-9a-z]+|p2:(?:0|[1-9][0-9]*))\/claimed-blocks$/.exec(decodeURIComponent(path));
     if (claimed) return claimedPage(views.store, claimed[1], params, pageSettings);
     if (views.store?.get('meta', 'ruleState')?.batchVersion === 2) {
+      if (path === '/patterns/taken') return takenPage(views.store, params, pageSettings);
       const extended = extendedPublicRead(views.store, url, { ...pageSettings, document: views.mints?.document }); if (extended !== undefined) return extended;
       const projected = claimedPublicRead(views.store, url, { ...pageSettings, document: views.mints?.document }); if (projected !== undefined) return projected;
       if (!(path === '/status' || path === '/list' || /^\/mint\/[0-9a-f]{64}$/.test(path) || staticPath(path))) return notFound();

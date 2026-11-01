@@ -5,7 +5,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { accountTree, accountKey } from '../account-tree.js';
 import { applyRootAccounts, reserveNonceDigest, accountActionDigest } from '../root-accounts.js';
-import { applyPaymentPage } from '../payment-pages.js';
+import { applyPaymentPage, paymentCreditDigest } from '../payment-pages.js';
 import { applyBulkPayment } from '../bulk-mint.js';
 import { capacityKey, plotKey } from '../financial-capacity.js';
 import { custodyId, lifecycleDigest } from '../financial-lifecycle.js';
@@ -276,4 +276,38 @@ test('bulk strict operation fields, altered commitments and oversized operations
     await unchanged(f,()=>f.pay(op));
   }
   await unchanged(f,()=>applyBulkPayment(f.store,{...f.fp('bulk-release',{members:[0],reason:'expired'}),padding:'x'.repeat(65536)},{network:f.t.network,height:'974570'}),/bulk_byte_limit/);
+});
+
+for (const maximum of [false, true]) test(`bulk late receipt creates reusable exact-denomination credit: maximum=${maximum}`, async () => {
+  const f = maximum ? setup(64, false, false, fixture.max64) : setup(2, false, true);
+  await f.open(); await f.terminal(f.t.members.map((_, i) => i), false);
+  const reference = 'ed'.repeat(32) + 'i0', credit = bulkReceiptKey(f.t.bitcoinNetwork, reference);
+  const op = f.fp('bulk-credit', { reference, block: { height: '974571', hash: H }, paid: f.t.groups.map(g => g.amount), receiptRoot: H, feeManifest: f.manifest });
+  const forged = structuredClone(op); forged.feeManifest[0].shares[0].gross = '1';
+  await unchanged(f, () => f.pay(forged, '974571'), /bulk_fee_manifest/);
+  f.db.set('fq/fc/' + credit, { reason: 'recovery' });
+  await unchanged(f, () => f.pay(op, '974571'), /financial_quarantined/); f.db.delete('fq/fc/' + credit);
+  await f.pay(op, '974571');
+  const row = f.db.get('fc/' + credit);
+  assert.equal(row.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), f.t.payableFeeAtoms);
+  assert.equal(f.db.get('fp/bulk-credit/' + credit).state, 'credited');
+  assert.equal(f.db.get('fp/bulk-credit/' + credit).creditId, credit);
+  const target = 'ae'.repeat(32), fee = row.fees[0];
+  await f.pay({ op: 'fp', v: 2, type: 'open', id: target, owner, terms: H, fees: [fee] }, '974571');
+  const use = { op: 'fp', v: 2, type: 'use', id: target, credit, revision: '0', until: '974577', items: [{ fee: fee.key, amount: fee.amount }] };
+  use.sig = Buffer.from(ed25519.sign(paymentCreditDigest(f.t.network, use), secret)).toString('hex');
+  await f.pay(use, '974571');
+  assert.equal(f.db.get('fp/' + target).paid[0], fee.amount); assert.equal(f.db.get('fc/' + credit).fees[0].amount, '0');
+  await unchanged(f, () => f.pay(op, '974571'), /bulk_receipt_reused/);
+  await unchanged(f, () => f.pay(use, '974571'), /credit_signature/);
+});
+
+test('bulk partial-payment release credits only paid groups and only on its first release page', async () => {
+  const f = setup(64, false, false, fixture.max64); await f.open();
+  const paid = f.t.groups.map((g, i) => i % 2 ? g.amount : '0'); await f.fund(paid);
+  await f.pay(f.fp('bulk-release', { members: [0], reason: 'expired', feeManifest: f.manifest }), '974570');
+  const credit = bulkReceiptKey(f.t.bitcoinNetwork, 'ee'.repeat(32) + 'i0'), row = structuredClone(f.db.get('fc/' + credit));
+  assert.equal(row.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), paid.reduce((n, a) => n + BigInt(a), 0n).toString());
+  await f.pay(f.fp('bulk-release', { members: [1], reason: 'expired' }), '974570');
+  assert.deepEqual(f.db.get('fc/' + credit), row);
 });

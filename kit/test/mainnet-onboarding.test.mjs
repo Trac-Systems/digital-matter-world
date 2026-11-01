@@ -44,6 +44,8 @@ test('mainnet refuses launch placeholders, arbitrary pins, hosts, HTTP, discover
   const p = await pins(), directory = await temp(t), config = { ...p, directory, owner: {} };
   assert.throws(() => validateMainnet({ ...p, gatewayKey: 'TO-BE-FILLED-AT-LAUNCH' }), /TO-BE-FILLED-AT-LAUNCH/);
   await validatePlayerConfig(config, { pins: p });
+  await validatePlayerConfig({ ...config, miningReads: { maxRequests: 8, cacheBytes: 1048576 } }, { pins: p });
+  await assert.rejects(validatePlayerConfig({ ...config, miningReads: { maxRequests: 0 } }, { pins: p }), /mining read settings/);
   const mutations = [
     c => { c.gatewayKey = '55'.repeat(32); }, c => { c.receiptSigners[0].identity = '66'.repeat(32); },
     c => { c.gateway = 'https://dmtworld.much.fun.otherParty.example'; }, c => { c.gateway = 'http://dmtworld.much.fun'; },

@@ -44,6 +44,7 @@ import { WorkerStatus } from './src/worker-status.mjs';
 import { AssetScheduler } from './src/asset-scheduler.mjs';
 import { createV2Runtime } from './src/v2-runtime.mjs';
 import { runtimeResources, configuredResources } from './src/r3-settings.mjs';
+import { takenReadResources } from './src/taken-index.mjs';
 import { startupListener } from './src/startup-listener.mjs';
 import { phase, withLifecycle, bindLifecycle } from './src/lifecycle.mjs';
 
@@ -81,6 +82,7 @@ export async function start(config, { background = false } = {}) {
 async function startGateway(config, controller) {
   check(supportedNode(), 'node_version');
   const resources = config.v2 ? runtimeResources(config.v2.resources, config.v2.document) : null;
+  const takenReads = takenReadResources(config.takenReads);
   config = configuredResources(config);
   const http = await phase('gateway.listen', () => startupListener(config.listen));
   let store, pipeline, adapters, scheduler, evidence, committee, operator, mintSender, closed = false, closing;
@@ -106,7 +108,7 @@ async function startGateway(config, controller) {
   service.close = bindLifecycle(close);
   const initialize = async () => {
     await diskCheck(); controller.signal.throwIfAborted();
-    store = await phase('gateway.store_open', () => Store.open(config.data, resources?.store ?? config.storeSettings));
+    store = await phase('gateway.store_open', () => Store.open(config.data, { ...(resources?.store ?? config.storeSettings), takenChangeRows: takenReads.changeRows }));
     service.store = store;
     controller.signal.throwIfAborted();
     const history = new History(store, resources?.history), files = new Files(join(config.data, 'static'));
@@ -134,7 +136,7 @@ async function startGateway(config, controller) {
     const links = v2 ? v2.links : adapters.links;
     const publicIndex = new PublicIndex({ store, files, history, reads: adapters.reads });
     const publicViews = new PublicViews({ store, history, reads: adapters.reads, mints, network: config.network, claimsPerWindow: config.claimsPerWindow });
-    const publicAPI = createPublicAPI({ views: publicViews, files, settings: resources?.feeds });
+    const publicAPI = createPublicAPI({ views: publicViews, files, settings: { ...resources?.feeds, takenPageRows: takenReads.pageRows } });
     const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', rosterHistory: config.rosterHistory, members: config.committee.map(s => s.peer), committee });
     operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
     if (mints) mints.provisioner = operator.provisioner;

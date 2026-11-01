@@ -613,7 +613,7 @@ test('compound mint status persists held units through permit delivery and repor
   const f = await compoundFixture(t), id = nonce(590);
   await f.execute([f.mint(id)]); await f.execute([f.fund(id)]); await f.execute([f.consume(id)]);
   const receiver = 'fixture-receiver', row = { id, state: 'awaiting_payment', receiver, kind: 'tap', request: { owner: alice.address, asset: f.asset, amount: '7' }, quote: { fees: [] } };
-  const mints = Object.assign(Object.create(FinancialMints.prototype), { store: f.store, network,
+  const mints = Object.assign(Object.create(FinancialMints.prototype), { store: f.store, network, document: f.document,
     reads: { batchStamp: async () => ({ counted: r.PER_TICKER_SUPPLY_HEIGHT }), financialRecord: f.reads.financialRecord,
       financialPermit: async () => ({ permit: { digest: nonce(900) } }) },
     committee: { signature: async () => ({ payload: { prv: { hash: nonce(900), address: receiver } }, session: 'fixture' }) } });

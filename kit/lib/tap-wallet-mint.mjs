@@ -1,3 +1,4 @@
+import { checkPaymentWindow, PAYMENT_MIN_BLOCKS } from './payment-window.mjs';
 import * as btc from '@scure/btc-signer';
 import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent, checkDeployer, networkFor } from './inscription-core.mjs';
 import { ensureTapAuthority, noAuthority, GLOBAL_AUTHORITY_NOTICE, tapWalletCapabilities } from './tap-wallet-actions.mjs';
@@ -58,8 +59,8 @@ const refusedBeforeSigning = error => typeof error?.message === 'string' && (err
   || ['Invalid items', 'Error processing items', 'Error checking token balances'].includes(error.message));
 
 export class TapWalletMint {
-  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, readerPath, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
-    Object.assign(this, { provider, readStatus, readPaymentPlan, network, readerPath, journal, notify });
+  constructor({ provider = globalThis.tapprotocol, readStatus, readPaymentPlan, network, readerPath, readTip, minPaymentBlocks = PAYMENT_MIN_BLOCKS, journal = new BrowserMintJournal(), fetchImpl = fetch, notify = () => {} }) {
+    Object.assign(this, { provider, readStatus, readPaymentPlan, network, readerPath, readTip, minPaymentBlocks, journal, notify });
     this.fetchImpl = (...args) => fetchImpl(...args);
   }
   async connect() {
@@ -110,6 +111,7 @@ export class TapWalletMint {
       if (saved.payment && !(retry && saved.payment.state === 'sending')) return { ...status, localState: 'payment_pending', payment: saved.payment, retryable: saved.payment.state === 'sending',
         message: saved.payment.state === 'sending' ? 'TAP Wallet returned no receipt for the last payment attempt. If your wallet shows no sent payment for this request, retry the payment.' : 'A payment was already requested. Wait for its indexed items; inspect the wallet if the result is uncertain.' };
       // 1-TX Transfers must already be on in TAP Wallet; DMW never sets them up.
+      await checkPaymentWindow({ ...this, status });
       await ensureTapAuthority(this.provider, this.address, null, { checkAccount: () => this.checkAccount() });
       await this.checkAccount();
       // Re-read after authority setup: the reservation/fees may have changed.
@@ -122,6 +124,7 @@ export class TapWalletMint {
       await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
         items, extraOutputs: extra ? [extra] : [], fetchImpl: this.fetchImpl });
       await this.checkAccount();
+      await checkPaymentWindow({ ...this, status: latest });
       await this.journal.put(key, { ...saved, payment: { state: 'sending', items, ...(extra ? { extraOutputs: [extra] } : {}), at: Date.now() } });
       let result;
       // Without a set-aside the call stays exactly the 1.0.48 one (no options argument).

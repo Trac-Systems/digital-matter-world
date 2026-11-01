@@ -10,6 +10,7 @@ import { verifyDeployment } from './deployments.mjs';
 import { createRequire } from 'node:module';
 import { POINT_BATCH_SIZE } from '../../rules/src/point-read-batch.js';
 import { parallelPage } from './keyed-work.mjs';
+import { timeStep } from './read-timing.mjs';
 const require = createRequire(new URL('../../rules/package.json', import.meta.url));
 const { ed25519 } = require('@noble/curves/ed25519');
 const { secp256k1 } = require('@noble/curves/secp256k1');
@@ -37,11 +38,22 @@ export async function verifyBulkRequest(body, network, bitcoinNetwork) {
   b.bulkBytes(body, b.BULK_LIMITS.requestBytes);
   check(rules.exactKeys(body, ['version', 'terms', 'feeManifest', 'reserve']) && body.version === 1, 'bulk_request');
   b.validateBulkTerms(body.terms); b.validateBulkFees(body.terms, body.feeManifest);
+  checkBulkRecoveryBytes(b, body.terms, body.feeManifest);
   const { sig, ...unsigned } = body.reserve ?? {};
   check(body.terms.network === network && body.terms.bitcoinNetwork === bitcoinNetwork &&
     same(unsigned, b.bulkReserveAction(body.terms)) && rules.hex(sig, 64) &&
     ed25519.verify(sig, reserveNonceDigest(network, body.reserve), body.terms.owner, { zip215: false }), 'bulk_signature');
   return unsigned.id;
+}
+
+// Every accepted quote must fit its terminal credit operation too. A larger
+// fee manifest can fit the request envelope while exceeding the existing
+// operation limit; defer that tail before the owner signs or pays.
+export function checkBulkRecoveryBytes(b, terms, feeManifest) {
+  const hash = '0'.repeat(64);
+  b.bulkBytes({ op: 'fp', v: 2, type: 'bulk-credit', id: hash, terms: hash, evidence: hash,
+    reference: hash + 'i4294967295', block: { height: terms.expires + '0', hash },
+    paid: terms.groups.map(g => g.amount), receiptRoot: hash, feeManifest }, b.BULK_LIMITS.operationBytes);
 }
 
 // Fees are split and rounded before grouping; suspense identity never becomes
@@ -103,14 +115,23 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     return result;
   };
   const acceptedCache = new Map();
+  const sameBatch = (x, y) => ['counted', 'tip', 'tipHash', 'last', 'tap', 'batchRoot', 'authority', 'admissionPolicy'].every(k => same(x?.[k] ?? null, y?.[k] ?? null));
   const fenced = async (at, task, transactions = false) => {
     const before = await reads.batchStamp();
+    // The raw Trac view revision also moves on unrelated appends (every agent's claims and
+    // headers); fence on the batch clock, TAP and any gateway authority/policy stamp.
     check(!at || rules.compareOrdinal(at.counted, before.counted) === 0 && same(at.last, before.last) &&
-      (at.revision === undefined || at.revision === before.revision) && (at.tipHash === undefined || at.tipHash === before.tipHash), 'financial_snapshot_changed', 503);
+      (at.tipHash === undefined || at.tipHash === before.tipHash), 'financial_snapshot_changed', 503);
     const anchor = { ...before, ...(at?.executionHeight === undefined ? {} : { executionHeight: at.executionHeight }) };
     if (transactions) check(reads.withBulkSnapshot && reads.bulkTransactions, 'bulk_source_unavailable', 503);
-    const result = transactions ? await reads.withBulkSnapshot(anchor, view => task(anchor, view)) : await task(anchor);
-    check(same(before, await reads.batchStamp()), 'financial_snapshot_changed', 503);
+    let result, failure;
+    try { result = transactions ? await reads.withBulkSnapshot(anchor, view => task(anchor, view)) : await task(anchor); }
+    catch (error) { failure = error; }
+    // A new accepted batch can expose a new checkpoint between provenance
+    // reads. Classify that as a changed snapshot, while preserving validation
+    // errors when the source stayed still. Never accept mixed evidence.
+    check(sameBatch(before, await reads.batchStamp()), 'financial_snapshot_changed', 503);
+    if (failure) throw failure;
     return result;
   };
   const unfrozen = async (id, t, at) => {
@@ -157,13 +178,13 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     return { source, funding: { ...funding, consumedRoot: funding.receiptRoot },
       fee: { ticker: 'tap', amount: c.amount, to: row.custodian, financialIdentity: { beneficiary: c.owner, domain: ['tap', bitcoinNetwork, 'tap'] } } };
   };
-  reads.bulkCandidates = (input, at, { strict = false, policy = document } = {}) => fenced(at, async anchor => {
+  const candidates = async (input, anchor, { strict = false, policy = document } = {}) => {
     const b = await bulkSchema(); b.validateBulkQuoteInput(input);
     b.bulkAddress(input.receiver, bitcoinNetwork); b.bulkAddress(input.payer, bitcoinNetwork);
     const contexts = [], skipped = [], counted = rules.decimalV2(anchor.counted), authority = await reads.authority();
     const blocks = [...input.blocks].sort((a, z) => BigInt(a) < BigInt(z) ? -1 : 1);
     const outcomes = new Array(blocks.length);
-    await parallelPage(blocks.map((block, index) => ({ block, index })), async ({ block, index }) => {
+    await timeStep('memberReads', parallelPage(blocks.map((block, index) => ({ block, index })), async ({ block, index }) => {
       let reason, context;
       try {
         // bulkMint selects TAP without the legacy active-mint range lookup.
@@ -178,27 +199,35 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
           if (!rules.mintRight({ find: context.find, owner: input.owner, counted, link: context.link, currentHolder: context.holder?.agent,
             finderWindow: policy.values.finderWindow, settings: policy }).allowed) reason = 'mint_right_unavailable';
           else if (await reads.isMinted(d.id, d.tick, block, anchor)) reason = 'already_minted';
-          else {
-            const scope = rules.tickerSupplyScope(d, anchor.executionHeight ?? counted);
-            const locks = await records([plotKey(input.asset, block, scope), 'fi/plot/' + rules.mintPlotKey(input.asset, block, scope),
-              'dc/plot/' + rules.mintPlotKey(input.asset, block, scope)], anchor);
-            if (locks.some(Boolean)) reason = 'block_pending';
-            else if (BigInt(d.remaining) < BigInt(context.find.count) || BigInt(d.limit ?? '0') > 0n && BigInt(context.find.count) > BigInt(d.limit)) reason = 'insufficient_units';
-          }
         }
       } catch (error) {
         if (['asset_unregistered', 'financial_deployment_missing'].includes(error.message)) reason = 'deployment_unavailable';
         else throw error;
       }
       outcomes[index] = { block, reason, context };
-    }, 4);
+    }, 4));
+    // Read all member locks in bounded point-read pages, instead of opening a
+    // separate notary snapshot for every block. Preserve the reason ordering.
+    const eligible = outcomes.filter(row => !row.reason);
+    const locks = await timeStep('memberLocks', records(eligible.flatMap(({ block, context }) => {
+      const scope = rules.tickerSupplyScope(context.deployment, anchor.executionHeight ?? counted);
+      return [plotKey(input.asset, block, scope), 'fi/plot/' + rules.mintPlotKey(input.asset, block, scope),
+        'dc/plot/' + rules.mintPlotKey(input.asset, block, scope)];
+    }), anchor));
+    for (const [index, row] of eligible.entries()) {
+      const d = row.context.deployment, amount = BigInt(row.context.find.count);
+      if (locks.slice(index * 3, index * 3 + 3).some(Boolean)) row.reason = 'block_pending';
+      else if (BigInt(d.remaining) < amount || BigInt(d.limit ?? '0') > 0n && amount > BigInt(d.limit)) row.reason = 'insufficient_units';
+    }
     const conflicts = outcomes.flatMap((row, index) => row.reason ? [index] : []);
     if (strict && conflicts.length) throw Object.assign(Error('bulk_member_conflict'), { status: 409, details: { indices: conflicts } });
     for (const { block, reason, context } of outcomes) {
       if (reason) skipped.push({ block, reason }); else contexts.push(context);
     }
     return { contexts, skipped, anchor };
-  });
+  };
+  reads.bulkCandidates = (input, at, options) => fenced(at, anchor => reads.withBulkCandidateReads
+    ? reads.withBulkCandidateReads(anchor, () => candidates(input, anchor, options)) : candidates(input, anchor, options));
   const reserve = async (transition, at) => {
     const row = await request(transition.id), b = await bulkSchema();
     // mints is already an authenticated exported evidence space. Its bulk
@@ -397,6 +426,11 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
         BigInt(funding.issuedMask) === 0n && ['bulk-open', 'bulk-funded', 'bulk-releasing'].includes(funding.state), 'bulk_release_forbidden', 409);
       b.bulkIndices(t.members, terms.members.length);
       evidence = { ...base, state: 'expired', expiry: terms.expires, members: t.members };
+    }
+    if (t.type === 'bulk-credit' || t.type === 'bulk-release' && funding.reference && funding.releasedMask === '0') {
+      const source = await reservation(t.id, anchor);
+      b.validateBulkFees(terms, source.feeManifest);
+      evidence.feeManifest = source.feeManifest;
     }
     return b.bulkBytes(evidence, b.BULK_LIMITS.evidenceBytes, 'bulk_evidence_bytes');
   }, ['bulk-fund', 'bulk-credit', 'bulk-consume', 'bulk-finish'].includes(transition.type));

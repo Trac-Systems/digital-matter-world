@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { current, BUILD } from '../../local/common.mjs';
 import { financialRehearsal } from './financial-rehearsal.mjs';
 
-assert.ok(/\/(?:bke|mg3b?|mg4|mg5|mg6|mg7|mg8|mg9|mg10|mg11|rh1|ms1|ms2|g4e|ku1|hf1|dr3|dr4|dr5)-l$/.test(process.env.DMW_BUILD_ROOT ?? ''), 'Use an isolated financial disposable build root');
+assert.ok(/\/(?:bke|mg3b?|mg4|mg5|mg6|mg7|mg8|mg9|mg10|mg11|rh1|ms1|ms2|g4e|ku1|hf1|dr3|dr4|dr5|lt1)-l$/.test(process.env.DMW_BUILD_ROOT ?? ''), 'Use an isolated financial disposable build root');
 const tssPort = Number(process.env.DMW_FINANCIAL_TEST_PORT ?? 63150);
 assert.ok(Number.isSafeInteger(tssPort) && tssPort > 1024 && tssPort + 4 < 65536, 'Invalid disposable threshold port range');
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort(Error('rehearsal_interrupted')));
 process.once('SIGTERM', () => controller.abort(Error('rehearsal_interrupted')));
-await financialRehearsal({ checkpoint: () => controller.signal.throwIfAborted(), stack: await current(), directory: join(BUILD, 'mg3b-financial-' + Date.now()), tssPort, bulk: process.env.DMW_FINANCIAL_BULK === '1' });
+await financialRehearsal({ checkpoint: () => controller.signal.throwIfAborted(), stack: await current(), directory: join(BUILD, 'mg3b-financial-' + Date.now()), tssPort, bulk: process.env.DMW_FINANCIAL_BULK === '1', latePayments: process.env.DMW_LATE_PAYMENTS === '1' });
