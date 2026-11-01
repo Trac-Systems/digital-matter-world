@@ -79,9 +79,9 @@ export function prepareFinancialMigration({ rows, records, snapshot, network, do
     if (outstanding) {
       const key = capacityKey(capacity.deployment);
       capacities.set(key, (capacities.get(key) ?? 0n) + BigInt(request.amount));
-      if (capacity.block !== null) put(plotKey(capacity.asset, capacity.block), { id, state: 'reserved' });
+      if (capacity.block !== null) put(plotKey(capacity.asset, capacity.block, capacity.supplyScope), { id, state: 'reserved' });
     }
-    if (identity.terminal && capacity.block !== null) put(plotKey(capacity.asset, capacity.block), { id, state: 'minted' });
+    if (identity.terminal && capacity.block !== null) put(plotKey(capacity.asset, capacity.block, capacity.supplyScope), { id, state: 'minted' });
     // References are hints only. Every post-activation funding page checks
     // canonical source receipts and the imported global usage root again.
     const references = [...new Set(identity.payment.ids)];

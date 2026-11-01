@@ -74,7 +74,7 @@ export function playerMintFlow({ asset, block, amount, id, compound = false, res
     status.reservation === 'pending' ? h('p.small', {}, 'Waiting for the unit reservation to be confirmed before payment.') : null,
     status.fullFees?.length > status.fees.length ? h('p.small', {}, 'Shares payable to your own wallet stay with you and are omitted from payment.') : null,
     burn ? h('div.note.bad', {}, 'The current TAP Wallet cannot execute the required native burn in this payment. Payment is stopped. The burn share will not be sent to an address.') : null,
-    status.state === 'permit_issued' ? h('p.small', {}, 'Your Trac units have been consumed. Your receiver-bound permit has no expiry; you can inscribe when you are ready.') : null,
+    status.state === 'permit_issued' ? h('p.small', {}, 'Your permanent permit is ready. It is bound to your receiver and has no expiry; you can inscribe when you are ready.') : null,
     h('p.small.muted', {}, 'Payments go to the quoted recipients before the permit. We do not refund them. Ethereum payers also need a Bitcoin wallet and BTC to inscribe.' + legacyDeployPaymentText(status)),
     note, inspectBtn('Mint request', status));
     const actions = [h('button.btn.ghost', { onclick: s.close }, 'Close'), h('button.btn', { onclick: () => attempt(refresh) }, 'Refresh')];

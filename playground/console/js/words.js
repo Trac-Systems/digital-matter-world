@@ -235,7 +235,7 @@ export const isMe = key => key && key === ME();
 export function mintRule(r, counted) {
   // `whoMayMint` names the rule (finder, bitmap, public, holder); `reason` adds minted, pending, insufficient_balance.
   const who = String(r.whoMayMint ?? '').toLowerCase(), reason = String(r.reason ?? r.role ?? '').replace(/^mint_/, '');
-  if (r.minted || reason === 'minted') return { label: 'Minted', kind: 'minted', text: 'Already minted on Bitcoin. TAP allows one mint per block per pattern.' };
+  if (r.minted || reason === 'minted') return { label: 'Minted', kind: 'minted', text: 'Already minted on Bitcoin into this ticker. Each ticker mints a block once.' };
   if (r.pending || reason === 'pending') return { label: 'Mint in progress', kind: 'warn', text: 'A mint request holds this block until it completes or expires.' };
   if (reason === 'insufficient_balance' || reason === 'balance' || reason === 'insufficient') return { label: 'Not enough units', kind: 'bad', text: 'Minting uses exactly this block\'s match count of units from your balance.' };
   if (reason === 'holder_unavailable') return { label: 'Holder unknown', kind: 'warn', text: 'The linked Bitmap\'s current holder could not be read right now.' };

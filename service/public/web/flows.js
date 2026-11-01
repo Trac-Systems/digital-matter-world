@@ -4,7 +4,8 @@
 // wallet extensions ask to reconnect.
 export const go = path => { history.pushState(null, '', path); dispatchEvent(new PopStateEvent('popstate')); };
 const open = (path, q) => { go(path + (q ? '?' + new URLSearchParams(q) : '')); return false; };
-export const mintFlow = ({ asset, block }) => open('/mint', { asset, ...(block === undefined || block === null ? {} : { block }) });
+export const mintFlow = ({ asset, block, deployment }) => open('/mint', { asset, ...(block === undefined || block === null ? {} : { block }),
+  ...(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment ?? '') ? { deployment } : {}) });
 // A compound's page on /mint explains how it is made real on TAP.
 export const compoundMintFlow = asset => { go('/mint/' + asset); return false; };
 export const linkFlow = height => open('/link', { block: height });

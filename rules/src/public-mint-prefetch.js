@@ -1,3 +1,4 @@
+import { mintPlotKey } from './per-ticker-supply-activation.js';
 import { hex } from './core.js';
 import { patternCatalogId } from './public-claims.js';
 import { POINT_BATCH_SIZE } from './point-read-batch.js';
@@ -49,10 +50,10 @@ export class PublicMintPrefetch {
     for (const { move } of input.entries ?? []) for (const plot of move.p?.plots ?? []) this.plot(plot);
     for (const round of input.state?.rounds ?? []) this.plot(round.closing?.current?.claim);
   }
-  get(asset, block) {
-    const key = asset + '/' + block;
+  get(asset, block, deployment = null) {
+    const key = mintPlotKey(asset, block, deployment);
     if (!this.answers.has(key)) {
-      const pairs = [[asset, block]];
+      const pairs = [[asset, block, ...(deployment ? [deployment] : [])]];
       const family = pair => pair[0].startsWith('p2:') === asset.startsWith('p2:');
       for (const [hint, pair] of this.hints) {
         if (pairs.length === POINT_BATCH_SIZE) break;

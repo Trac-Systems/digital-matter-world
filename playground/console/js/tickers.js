@@ -1,6 +1,7 @@
 // Several TAP tokens ("tickers") per pattern or compound. The first deployment is the official one; once it
-// exists anyone can deploy another ticker under a name they choose. All tickers share the pattern's units, and
-// every mint pays the same rewards whichever ticker it goes to.
+// exists anyone can deploy another ticker under a name they choose. It can mint the full supply of the pattern or compound
+// independently of every other ticker. Whoever holds its deploy inscription
+// earns a share of every mint into it.
 // The ticker list read is the switch: before the feature opens the gateway refuses (or lacks) it, and every
 // control here stays hidden.
 import { h, clear, hashEl, pill, fmtInt, field, input, select, kv, short } from './dom.js';
@@ -102,7 +103,7 @@ export function tickerList(asset, { title = 'Tokens on TAP', label = true } = {}
       ] });
     list.el.classList.add('public-mints');
     clear(box, label ? h('div.section-label', {}, title) : null, list.el,
-      h('p.small.muted', { style: { margin: 0, padding: '8px 14px 12px' } }, 'All tickers share this pattern’s units: a unit minted into one ticker cannot be minted into another. Every mint pays the same rewards, plus a share to the holder of that ticker’s deploy inscription.'));
+      h('p.small.muted', { style: { margin: 0, padding: '8px 14px 12px' } }, 'Every ticker can mint every block of this pattern once: each one has the full supply. Every mint pays the same rewards, plus a share to the holder of that ticker’s deploy inscription.'));
     box.hidden = false;
   });
   return box;
@@ -111,7 +112,8 @@ export function tickerList(asset, { title = 'Tokens on TAP', label = true } = {}
 // The ticker a mint goes to, Official by default. Shown only when there is more than one ticker.
 // value() is the chosen deployment inscription, or null for the official one; label() its ticker.
 // single: text shown instead when there is only the official ticker.
-export function tickerChoice(asset, { onChange, single } = {}) {
+// initial: a deploy inscription to preselect once the tickers load (a link that names its ticker).
+export function tickerChoice(asset, { onChange, single, initial = null } = {}) {
   const el = h('div', { hidden: true });
   let chosen = null, names = new Map();
   tickers(asset).then(rows => {
@@ -123,6 +125,7 @@ export function tickerChoice(asset, { onChange, single } = {}) {
       { value: '', 'aria-label': 'Ticker', onchange: e => { chosen = e.target.value || null; onChange?.(chosen); } });
     clear(el, h('label.pager-ctl', {}, h('span', {}, 'Ticker'), pick), h('div.small.muted', { style: { marginTop: '4px' } }, SAME_REWARDS));
     el.hidden = false;
+    if (initial && names.has(initial) && initial !== '') { pick.value = initial; chosen = initial; onChange?.(chosen); }
   });
   return { el, value: () => chosen, label: () => chosen ? names.get(chosen) ?? null : null };
 }
@@ -214,7 +217,7 @@ export function deployTickerForm(asset, { request, open, compound = false, compa
       } finally { go.classList.remove('busy'); go.disabled = !ok; }
     } }, 'Continue');
     clear(el, h('div.stack', { style: { gap: '10px' } },
-      compact ? null : h('p', { style: { margin: 0 } }, 'Deploy another TAP token for this ' + (compound ? 'compound' : 'pattern') + ' under a name you choose. It shares the units of the official token; whoever holds its deploy inscription earns a share of every mint into it.'),
+      compact ? null : h('p', { style: { margin: 0 } }, 'Deploy another TAP token for this ' + (compound ? 'compound' : 'pattern') + ' under a name you choose. It has the full supply of the ' + (compound ? 'compound' : 'pattern') + ', independently of every other ticker. Whoever holds its deploy inscription earns a share of every mint into it.'),
       ticker.el,
       kv([['Deploy fee', fee, 'Set by the operator. The exact fee is quoted before you pay.']]),
       h('div.row', {}, go), note));

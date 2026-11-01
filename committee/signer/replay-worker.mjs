@@ -51,7 +51,7 @@ if (!isMainThread) {
       const local = histories.views(sources), views = sources.map((_, i) => local[i] ?? view(i));
       const { state: _state, patterns: _patterns, ...result } = rebuildBatch(network, proposal, { ...context, ...views[0], views,
         claimNode: (id, ancestors) => node('claimNode', id, ancestors), namedNode: (id, ancestors) => node('namedNode', id, ancestors),
-        publicMintGet: (asset, block) => publicMints.get(asset, block) });
+        publicMintGet: (asset, block, deployment) => publicMints.get(asset, block, deployment) });
       parentPort.postMessage({ result });
     } catch (e) { parentPort.postMessage({ error: e.message }); }
     finally { port.close(); }

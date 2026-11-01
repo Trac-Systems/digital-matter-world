@@ -96,7 +96,7 @@ for (const opaque of [false, true]) test(`a TAP-only browser deploys and mints a
       globalThis.tapprotocol.on = () => {};
     }, Object.keys(extension.provider));
     await page.goto(f.http.url + '/mint');
-    await page.getByText('Public minting opens soon. Blocks show up here once their 1-week finder window has passed without a claim.', { exact: true }).waitFor();
+    await page.getByText('Public minting opens soon. For each ticker, eligible blocks appear here once their 1-week finder window has passed.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
     assert.equal(payments + signs, 0);
     await s.advance(1017); await s.runtime.intake.seal(); await drain(); await project();

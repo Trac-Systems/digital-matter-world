@@ -161,7 +161,7 @@ async function request(app, type, id, target, progress) {
         ['Request', hashEl(plan.id)],
         plan.asset ? ['Matter', h('span', {}, h('span.swatch', { style: { background: mineral(plan.asset) } }), assetLink(plan.asset))] : null,
         plan.block !== null && plan.block !== undefined ? [type === 'mint' ? 'From block' : 'Block', blockLink(plan.block)] : null,
-        plan.amount ? ['Units used up', h('span.mono', {}, fmtInt(plan.amount))] : null,
+        plan.amount ? ['Units required', h('span.mono', {}, fmtInt(plan.amount))] : null,
         plan.kind ? ['Paid with', free ? 'No payment required' : plan.kind === 'ethereum' ? 'Bridged TAP' : 'TAP'] : null,
         plan.price ? ['Fee', h('strong.mono', {}, free ? 'Free' : formatTap(plan.price, unit?.decimals))] : null,
         inflight ? ['Payment sent', inflightLine(inflight)] : null,
@@ -178,7 +178,7 @@ async function request(app, type, id, target, progress) {
       ]),
       plan.split ? [h('div.section-label', {}, 'Fee split'), h('div', { style: { padding: '0 14px 4px' } }, splitTable(plan.split, plan.destinations ?? {}, plan.kind, unit, { address: addressLink }))] : null,
       h('div.body.small.muted', {}, type === 'link' ? free ? 'Free. No payment is required. The link follows the Bitmap when it changes owners.' : 'Bitmap links are paid before publication. The link follows the Bitmap when it changes owners.'
-        : type === 'mint' ? 'Pay the remaining fees first. After payment is final, your units are consumed and your permanent permit is ready. You then inscribe it from your Bitcoin wallet, including when paying with Ethereum.' : 'The wallet can refund after the displayed deadline if payment remains unspent.'));
+        : type === 'mint' ? 'Pay the remaining fees first. Making real into the official ticker uses your units up. Making real into another ticker only needs them in your balance; they stay held until the mint completes or is refunded. After payment is final, your permanent permit is ready. You then inscribe it from your Bitcoin wallet, including when paying with Ethereum.' : 'The wallet can refund after the displayed deadline if payment remains unspent.'));
     if (type === 'mint' || plan.financialVersion === 2) {
       if (!free && !mayPay() && BEFORE_PAY.includes(plan.state)) review.append(h('div.callout.busy', {}, PAY_SOON));
       else if (plan.blocked?.length) review.append(h('div.note.bad', {}, 'This payment is not currently available.'));
@@ -385,7 +385,7 @@ const publicState = row => {
   const [label, kind] = PUBLIC_STATES[row.state] ?? [String(row.state ?? '–').replace(/_/g, ' '), 'warn'];
   return [row.state === 'not_yet_public' ? publicOpeningLabel(row) ?? label : label, kind];
 };
-const PUBLIC_MINT_COPY = 'Blocks show up here once their 1-week finder window has passed without a claim.';
+const PUBLIC_MINT_COPY = 'For each ticker, eligible blocks appear here once their 1-week finder window has passed.';
 const SET_ASIDE = { waiting_funding: 'not sent', funded: 'held', sending: 'held', sent: 'spent on the mint', minted: 'spent on the mint', needs_user: 'to be returned', returning: 'being returned', returned: 'returned' };
 function setAsideCell(r) {
   const sats = [r.setAside?.satoshis, r.mintFunding?.satoshis, r.mintSender?.satoshis].find(Number.isSafeInteger), state = SET_ASIDE[r.setAside?.state ?? r.mintSender?.state];
@@ -394,7 +394,7 @@ function setAsideCell(r) {
   return h('span', {}, sats !== undefined ? h('span.mono', {}, `${fmtInt(sats)} sats`) : null, state ? ` ${state}` : null,
     txid ? [' ', h('a.mono', { href: 'https://mempool.space/tx/' + txid, target: '_blank', rel: 'noreferrer noopener' }, txid.slice(0, 12) + '…')] : null);
 }
-const REFUND_REASONS = { claimed_first: publicMintMessages.claimed_first, someone_paid_first: 'Another payment confirmed first', public_payment_incomplete: 'Payment did not cover every fee', already_minted: 'Block was already minted' };
+const REFUND_REASONS = { claimed_first: publicMintMessages.claimed_first, someone_paid_first: 'Another payment confirmed first', public_payment_incomplete: 'Payment did not cover every fee', already_minted: 'Block was already minted into this ticker' };
 const publicError = walletError;
 // A missing route or a switched-off feature is not an error for visitors: public minting just has not opened.
 const notOpen = e => e?.status === 404 || ['not_found', 'public_mint_inactive', 'public_index_warming'].includes(e?.message);
@@ -570,6 +570,7 @@ const primaryTap = rows => { for (const b of rows.flatMap(r => [...r.querySelect
 function walletsHome(root, type) {
   const params = new URLSearchParams(location.search), asset = PATTERN.test(params.get('asset') ?? '') ? params.get('asset') : null;
   const block = /^(0|[1-9][0-9]*)$/.test(params.get('block') ?? '') ? params.get('block') : null;
+  let initialTicker = /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(params.get('deployment') ?? '') ? params.get('deployment') : null;
   const chosen = type === 'mint' && asset && block !== null ? { asset, block } : null;
   const bitmap = type === 'link' ? block : null;
   const app = h('div.stack'), side = h('div.stack');
@@ -579,7 +580,7 @@ function walletsHome(root, type) {
     h('div.grid.cols-main', {}, app, side)));
   const policy = store.status?.feePolicy;
   side.append(...[panel('How public minting works', h('ol.numbered', {},
-    h('li', {}, PUBLIC_MINT_COPY + ' A claimed or minted block cannot be minted here.'),
+    h('li', {}, PUBLIC_MINT_COPY + ' A block already minted into the chosen ticker cannot be minted into it again.'),
     h('li', {}, 'Press Mint on a block and connect TAP Wallet. You see the fee before anything is paid.'),
     h('li', {}, 'On the payment page, pay the fee in TAP from TAP Wallet, then inscribe the mint. The tokens arrive in your wallet.'),
     h('li', {}, h('strong', {}, 'Token not deployed yet? '), 'The payment page first asks you to inscribe the pattern and deploy its token, once, each in its own Bitcoin block.'))),
@@ -613,10 +614,10 @@ function walletsHome(root, type) {
   // With several tickers, the one its mints go to (Official unless chosen).
   // The choice stays hidden (no gap in the stack) until there are several tickers.
   const tokenLine = h('div');
-  let choice, choiceLine = h('div', { hidden: true });
-  const drawToken = () => { clear(tokenLine, tokenStatus(selectedAsset)); choice = tickerChoice(selectedAsset); choiceLine.replaceWith(choice.el); choiceLine = choice.el; };
+  let choice, loadChosen, choiceLine = h('div', { hidden: true });
+  const drawToken = () => { clear(tokenLine, tokenStatus(selectedAsset)); choice = tickerChoice(selectedAsset, { initial: selectedAsset === asset ? initialTicker : null, onChange: () => { list?.reset(); loadChosen?.(); } }); initialTicker = null; choiceLine.replaceWith(choice.el); choiceLine = choice.el; };
   drawToken();
-  list = pagedTable({ path: () => '/public-mints?asset=' + encodeURIComponent(selectedAsset), key: 'rows', limit: 25, skipEmpty: true,
+  list = pagedTable({ path: () => '/public-mints?' + new URLSearchParams({ asset: selectedAsset, ...(choice?.value() ? { deployment: choice.value() } : {}) }), key: 'rows', limit: 25, skipEmpty: true,
     empty: () => ['No public blocks of ', assetLink(selectedAsset), ` right now. ${PUBLIC_MINT_COPY}`],
     onError: e => notOpen(e) && opensSoon(e),
     onPage: (_rows, body) => { if (body.state === 'inactive') return opensSoon(); soon.hidden = true; list.el.hidden = false; },
@@ -636,11 +637,12 @@ function walletsHome(root, type) {
   let chosenBox = null;
   if (chosen) {
     chosenBox = h('div.stack.chosen', { style: { gap: '12px' } }, h('div.faint', {}, 'Loading…'));
-    get(`/public-mints/${chosen.asset}/${chosen.block}`).then(r => {
+    loadChosen = () => get(`/public-mints/${chosen.asset}/${chosen.block}` + (selectedAsset === chosen.asset && choice?.value() ? '?' + new URLSearchParams({ deployment: choice.value() }) : '')).then(r => {
       const [label, kind] = publicState(r);
       clear(chosenBox, h('div.row', { style: { gap: '10px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info') : null, h('span.price', {}, `${fmtInt(r.amount)} units`)),
         r.state === 'public' ? h('div.row', {}, bigger(mintButton({ ...chosen, ...r, asset: chosen.asset, block: chosen.block }))) : h('p', { style: { margin: 0 } }, Object.hasOwn(publicMintMessages, r.state) ? walletError(r.state, r) : 'This block is not public, so it cannot be minted here.'));
     }, e => clear(chosenBox, h('p', { style: { margin: 0 } }, notOpen(e) ? 'Public minting opens soon.' : `This block is not listed as public (${publicError(e)}).`)));
+    loadChosen();
   }
   // Refunds owed to the connected TAP Wallet; shown only when there are any.
   let refunds = null, refundsFor = null;

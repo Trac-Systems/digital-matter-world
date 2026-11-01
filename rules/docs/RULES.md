@@ -156,8 +156,10 @@ items become credit for the same owner, payer and rail. The next matching quote
 uses that credit first. Receipt use is recorded atomically on Trac to prevent
 spending a credit twice.
 
-After all items are final, `mc` consumes the units exactly once and commits the
-receiver-bound permit hash and payment allocations. Only then may the committee
+After all items are final, the legacy `mc` path consumes the units exactly once
+and commits the receiver-bound permit hash and payment allocations. In v2,
+official mints still consume units; after `PER_TICKER_SUPPLY_HEIGHT`, additional
+pattern and compound tickers hold them until verified mint completion or refund. Only then may the committee
 sign. The saved permit has no expiry and `GET /mint/REQUEST_ID` serves the same
 content indefinitely. The player inscribes it from their own Bitcoin wallet.
 A successful indexed mint changes the display to `minted`; it does not debit

@@ -13,7 +13,7 @@ export function matchesRequesterSecret(expected, supplied) {
 }
 export function publicMintTargetVisible(store, row, secret) {
   if (!row.publicMint || row.permit || matchesRequesterSecret(row.requesterSecretHash, secret)) return true;
-  return !!store?.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block)))?.winner;
+  return !!store?.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block, row.intent?.supplyScope ?? row.request.supplyScope)))?.winner;
 }
 const pick = (value, keys) => Object.fromEntries(keys.filter(key => value?.[key] !== undefined).map(key => [key, value[key]]));
 const feeAmounts = rows => (rows ?? []).map(row => pick(row, ['role', 'to', 'ticker', 'amount', 'tt']));

@@ -131,7 +131,8 @@ export function installFinancialSources(reads, options) {
     // competition between requests even when they share the same snapshot.
     return { version: 2, requestId: id, owner: r.owner, asset: r.asset, amount: r.amount, receiver: row.receiver, payer: row.payer, rail: row.kind,
       request: r, signature: row.signature, authorization: row.authorization, quote: row.quote.feeQuote, feeAuthorization: row.feeAuthorization,
-      deployment: immutableDeployment(d), capacity: { deployment: d.id, asset: r.asset, amount: r.amount, block: r.block ?? null, remaining: d.remaining, limit: d.limit ?? '0' }, generationCapacity: { deployment: generation, plot: r.block === undefined ? null : rules.decimalV2(r.block) }, fees: financialFees(items), feeItems: items,
+      deployment: immutableDeployment(d), capacity: { deployment: d.id, asset: r.asset, amount: r.amount, block: r.block ?? null, remaining: d.remaining, limit: d.limit ?? '0',
+        ...(rules.tickerSupplyScope(d, at?.executionHeight ?? counted) ? { supplyScope: d.id } : {}) }, generationCapacity: { deployment: generation, plot: r.block === undefined ? null : rules.decimalV2(r.block) }, fees: financialFees(items), feeItems: items,
       ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}), custody: plan.custody, find: context.find ?? null, link: context.link ?? null, holder, expiry: r.expires, settingsHash: rules.hashObject(original) };
   };
   const accepted = async (id, at) => {

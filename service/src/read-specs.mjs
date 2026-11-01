@@ -20,7 +20,7 @@ function spec(keys, { order = 'asc', filters = {}, get = field, match } = {}) {
   return { keys: keys.split(' '), sort: keys.split(' ')[0], order, filters, get, match: match ?? ((row, f) => matchFields(get, row, f)) };
 }
 const rights = spec('block asset amount reason finderUntil', { order: 'desc', filters: {
-  ...strings('asset reason'), ...numbers('block'), ...bools('allowed minted pending'),
+  ...strings('asset deployment reason'), ...numbers('block'), ...bools('allowed minted pending'),
   whoMayMint: enumFilter(['me', 'finder', 'bitmap', 'landowner', 'public', 'holder', 'none']),
 } });
 const finds = spec('block asset pattern count finder findHeight', { order: 'desc', filters: { ...strings('owner asset'), ...numbers('block'), ...bools('minted') }, get: (r, k) => field(r, k === 'owner' ? 'finder' : k) });

@@ -115,20 +115,20 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   }, false);
   register('refine_compound', 'Continue exact tier comparison for an accepted v2 compound. Reuse this action ID after uncertainty; each accepted step retains its cursor.',
     { actionId, asset: z.string().regex(/^c2:[0-9a-f]{64}$/), steps: z.number().int().positive().safe().optional() }, args => agent.refineCompound(args), false);
-  register('mint_idea', 'Choose an eligible unminted block that fits your balance, preferring supplied UTC dates.', { asset, specialDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).default([]) }, async ({ asset, specialDates }) => {
+  register('mint_idea', 'Choose an eligible unminted block that fits your balance, preferring supplied UTC dates.', { asset, deployment: z.string().min(1).optional(), specialDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(100).default([]) }, async ({ asset, deployment, specialDates }) => {
     const balance = await agent.trac.balance(agent.owner, asset);
     if (BigInt(balance) === 0n) return { suggestion: null, reason: 'no_balance' };
     const context = await agent.namedContext();
-    const suggestion = (strategies.chooseMint ?? chooseMint)({ candidates: publicIdentities(await candidates(asset)), owner: encodeTracAddress(agent.owner), counted: (await agent.trac.head()).counted, balance, settings: context?.settings, specialDates }) ?? null;
+    const suggestion = (strategies.chooseMint ?? chooseMint)({ candidates: publicIdentities(await candidates(asset, { deployment })), owner: encodeTracAddress(agent.owner), counted: (await agent.trac.head()).counted, balance, settings: context?.settings, specialDates }) ?? null;
     return { suggestion, reason: suggestion ? null : 'no_eligible_slot' };
   });
   register('mint_on_chain', 'Reserve units with a signed quote. Then use pay_mint, poll_mint and inscribe_mint; the player pays and inscribes from their own wallet.', {
     actionId, asset: mintAsset, amount: units, deployment: z.string().min(1).optional(), block: z.union([height, decimal]).optional(), receiver: z.string().min(1).max(128).optional(), payer: z.string().min(1).max(128).optional(), kind: z.enum(['tap', 'ethereum']).default('tap'), compound: z.boolean().default(false)
   }, async args => {
     const addresses = agent.paymentAddresses(args);
-    return agent.makeReal({ ...args, ...addresses, candidate: args.compound ? undefined : (await candidates(args.asset, { block: args.block, kind: args.kind })).find(c => c.find && String(c.find.block) === String(args.block)) });
+    return agent.makeReal({ ...args, ...addresses, candidate: args.compound ? undefined : (await candidates(args.asset, { block: args.block, kind: args.kind, ...(args.deployment ? { deployment: args.deployment } : {}) })).find(c => c.find && String(c.find.block) === String(args.block)) });
   }, false);
-  register('asset_tickers', 'List registered tickers sharing one asset supply. Omitted mint choices use its official ticker.',
+  register('asset_tickers', 'List registered tickers, each with the full pattern supply. Omitted mint choices use its official ticker.',
     { asset: deploymentAsset, after: z.string().optional(), limit: z.number().int().positive().optional() }, ({ asset, ...page }) => agent.service.assetTickers(asset, page));
   register('report_ticker_payment', 'Report explicit confirmed TAP payment inscriptions for an additional ticker; never broadcasts a payment.',
     { id: hex, paymentIds: z.array(z.string().regex(/^[0-9a-f]{64}i[0-9]+$/)), expire: z.boolean().optional() }, args =>

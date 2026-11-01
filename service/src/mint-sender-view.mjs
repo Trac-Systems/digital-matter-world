@@ -115,7 +115,7 @@ export class MintSenderView {
     const counted = mints.store.get('meta', 'ruleState')?.counted ?? null;
     return { keyId: this.keyId, rows: page.filter(r => validRequestId(r.id) && r.value.kind === 'tap' && validDestination(r.value.payer, this.network) && validDestination(r.value.receiver, this.network))
       .map(({ id, value }) => {
-        const winner = value.publicMint ? mints.store.get('accountRecords', publicScanKey(publicPlotId(value.request.asset, value.request.block)))?.winner : null;
+        const winner = value.publicMint ? mints.store.get('accountRecords', publicScanKey(publicPlotId(value.request.asset, value.request.block, value.intent?.supplyScope ?? value.request.supplyScope)))?.winner : null;
         return { requestId: id, receiver: value.receiver, payer: value.payer,
           ...(value.mintFunding ? { refundReserveSats: value.mintFunding.refundReserveSats } : {}),
           ...(winner?.id === id ? { fundingReference: winner.reference } : {}),

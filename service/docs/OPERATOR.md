@@ -16,8 +16,9 @@ The gateway must be running; commands use a private filesystem inbox.
 
 Players pay the quoted recipients directly. Ethereum payers also submit the
 committee-authorized escrow release and pay gas. Payment must be final before
-Trac consumes the reserved units and the committee issues a permanent
-receiver-bound mint permit. The player then inscribes it from their own wallet.
+the committee issues a permanent receiver-bound mint permit. Official mints
+consume the reserved units. After independent-supply activation, additional
+pattern and compound tickers keep them held until verified completion or refund. The player then inscribes it from their own wallet.
 Retain request IDs, payment credits, fixed payout bindings and signed permits
 through retries and downtime; the service does not send refunds or payouts.
 

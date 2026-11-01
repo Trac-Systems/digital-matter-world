@@ -12,7 +12,7 @@ const asset = z.string().regex(/^(?:[0-9a-z]{1,24}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a
 const page = { cursor: z.string().min(1).max(8192).optional(), limit: number.min(1).max(200).optional(),
   sort: z.string().min(1).max(64).optional(), order: z.enum(['asc', 'desc']).optional() };
 const fields = {
-  asset: asset.optional(), owner: key.optional(), address: key.optional(), agent: key.optional(), actor: key.optional(), discoverer: key.optional(), firstMaker: key.optional(),
+  asset: asset.optional(), deployment: z.string().regex(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/).optional(), owner: key.optional(), address: key.optional(), agent: key.optional(), actor: key.optional(), discoverer: key.optional(), firstMaker: key.optional(),
   from: height.optional(), to: height.optional(), block: height.optional(), height: height.optional(), window: height.optional(), since: height.optional(),
 };
 for (const name of ['found', 'linked', 'minted', 'allowed', 'pending', 'nonzero', 'positive', 'header']) fields[name] = z.boolean().optional();

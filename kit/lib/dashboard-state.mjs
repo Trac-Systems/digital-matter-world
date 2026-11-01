@@ -145,7 +145,7 @@ export class DashboardState {
     return this.journal.db.prepare("SELECT id FROM actions WHERE scope=? AND id LIKE 'mint/%' AND id NOT LIKE '%/reservation-v2' ORDER BY rowid DESC")
       .all(this.journal.scope).map(({ id }) => this.journal.get(id)).filter(row => row.body?.request);
   }
-  savedSlot(slot) { return this.savedMints().find(row => sameSlot(row.body.request, slot)); }
+  savedSlot(slot) { return this.savedMints().find(row => sameSlot(row.body.request, slot) && (row.body.request.deployment ?? null) === (slot.deployment ?? null)); }
   idOf(row) { return financialMintId(this.agent.network, row.body.request); }
   async payout() {
     const binding = wireIdentities((await this.service.payoutBinding(this.agent.address, 'tap')).binding);
@@ -165,7 +165,7 @@ export class DashboardState {
   merged() { return this.mergedIds ??= COMPOUND_IDENTITY_V4_MERGES.network === this.agent.network ? validateCompoundMerges(COMPOUND_IDENTITY_V4_MERGES) : new Map(); }
   async candidate(slot) {
     dashboardCheck(assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
-    const rows = await this.context.candidates(slot.asset, { block: slot.block, kind: 'tap' });
+    const rows = await this.context.candidates(slot.asset, { block: slot.block, kind: 'tap', ...(slot.deployment ? { deployment: slot.deployment } : {}) });
     const candidate = rows.find(row => row.find && sameSlot(row.find, slot));
     dashboardCheck(candidate, 'mint_right_unavailable', 403);
     dashboardCheck(integer(candidate.find.count) && BigInt(candidate.find.count) > 0n, 'invalid_claim_response', 502);
@@ -221,7 +221,7 @@ export class DashboardState {
     const minted = !!(row.minted || c.minted || status?.state === 'minted');
     const pending = !minted && status?.state !== 'expired' && !!(c.pending || saved || status);
     const reason = statusError ?? this.mintReason(c, balance);
-    return { asset: row.asset, block: String(row.block), count: String(c.find.count),
+    return { asset: row.asset, block: String(row.block), ...(c.deployment ? { deployment: c.deployment } : {}), count: String(c.find.count),
       name: await this.name(row.asset, row.name ?? row.pattern?.name), minted, pending,
       payable: !minted && status?.payable === true, requestId: requestId(id) ? id : null,
       state: minted ? 'minted' : status?.state ?? (pending ? 'pending' : 'unminted'),
@@ -235,20 +235,21 @@ export class DashboardState {
       paymentLink: requestId(id) ? this.service.paymentLink(id, this.agent.paymentOrigin) : null };
   }
   // asset: one pattern only, in the form the gateway lists it (see patterns()).
-  async claims({ cursor, limit = 25, asset } = {}) {
+  async claims({ cursor, limit = 25, asset, deployment } = {}) {
     dashboardCheck(Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
     dashboardCheck(asset === undefined || assetId(asset), 'invalid_asset');
+    dashboardCheck(!deployment || asset && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment), 'invalid_deployment');
     let position = claimCursor(cursor);
     const claims = [], balances = new Map();
     // The sources are disjoint: own finder-week rows, then other allowed and
     // blocked eligible rows. Each gateway cursor retains its filters/order.
     while (position && claims.length < limit) {
       const { source } = position;
-      const options = { limit: limit - claims.length, sort: 'block', order: 'desc', cursor: position.cursor, minted: false, ...(asset ? { asset } : {}) };
-      const page = source === 'finds'
+      const options = { limit: limit - claims.length, sort: 'block', order: 'desc', cursor: position.cursor, minted: false, ...(asset ? { asset } : {}), ...(deployment ? { deployment } : {}) };
+      const page = source === 'finds' && !deployment
         ? await this.service.profile(this.agent.address, { ...options, collection: 'finds' })
-        : await this.service.mintRights(this.agent.address, { ...options, allowed: source === 'allowed' });
-      const entries = source === 'finds' ? page.finds : page.mintRights;
+        : await this.service.mintRights(this.agent.address, { ...options, ...(source === 'finds' ? { whoMayMint: 'finder' } : { allowed: source === 'allowed' }) });
+      const entries = source === 'finds' && !deployment ? page.finds : page.mintRights;
       dashboardCheck(Array.isArray(entries), 'invalid_claim_page', 502);
       for (let i = 0; i < entries.length; i += 4) {
         const rows = await Promise.all(entries.slice(i, i + 4).map(async row => {
@@ -310,10 +311,11 @@ export class DashboardState {
       this.service.mintRights(address, { limit: 50, minted: false }).then(p => p.mintRights),
       this.service.profile(address, { collection: 'balances', limit: 50 }).then(p => p.balances)].map(read => read.catch(() => [])));
     for (const rows of pages) for (const row of Array.isArray(rows) ? rows : []) if (!row.compound) add(row.asset);
+    for (const row of Array.isArray(pages[2]) ? pages[2] : []) if (!row.compound && /^[1-9][0-9]*$/.test(String(row.amount ?? ''))) add(row.asset, { held: true });
     const list = [...found.values()].sort((a, b) => patternNumber(a.asset) < patternNumber(b.asset) ? -1 : patternNumber(a.asset) > patternNumber(b.asset) ? 1 : 0);
     const shown = list.slice(0, PATTERN_LIMIT), patterns = [];
     for (let i = 0; i < shown.length; i += 4) patterns.push(...await Promise.all(shown.slice(i, i + 4).map(p => this.patternRow(p))));
-    return { patterns: patterns.filter(p => p.discovered || p.claims !== 0), more: discoveries.more || list.length > PATTERN_LIMIT };
+    return { patterns: patterns.filter(p => p.discovered || p.claims !== 0 || p.otherTickers), more: discoveries.more || list.length > PATTERN_LIMIT };
   }
   async patternRow(p) {
     let deployment = null;
@@ -327,6 +329,11 @@ export class DashboardState {
       this.collect(cursor => this.service.mintRights(this.agent.address, { asset: id, limit: 50, minted: false, cursor }), 'mintRights', COUNT_PAGES).catch(() => null),
       p.name && p.tier !== null && p.tier !== undefined ? null : this.pattern(p.asset).catch(() => null)]);
     const token = tokenState(deployment);
+    // Every ticker mints each block once. With its official blocks all minted, a pattern whose units the agent
+    // still holds stays listed while it has another ticker, so its Tickers choice stays reachable.
+    const claims = finds && rights ? new Set([...unique(finds.rows), ...unique(rights.rows)]).size : null;
+    const otherTickers = p.held && !p.discovered && claims === 0 && token === 'deployed'
+      ? await this.service.assetTickers(p.asset, { limit: 2 }).then(r => Array.isArray(r?.rows) && r.rows.length > 1, () => false) : false;
     return { asset: p.asset, id, name: p.name ?? deployment?.displayLabel ?? (detail && detail.name !== p.asset ? detail.name : 'Pattern #' + p.asset.slice(3)), tier: p.tier ?? detail?.tier ?? null, discovered: p.discovered,
       token, deploymentState: deployment?.state ?? null,
       // A wallet-sent inscription the gateway saw on Bitcoin, until its state moves on.
@@ -337,7 +344,7 @@ export class DashboardState {
       // During the discoverer's week only the discoverer deploys; after it anyone may.
       deployer: token === 'deployed' ? null : deployment?.deployer ?? null, ownWeek: !!deployment?.deployer && deployment.deployer.discoverer === this.agent.address,
       // null: the count could not be read this time.
-      claims: finds && rights ? new Set([...unique(finds.rows), ...unique(rights.rows)]).size : null, moreClaims: !!(finds?.more || rights?.more),
+      claims, moreClaims: !!(finds?.more || rights?.more), ...(otherTickers ? { otherTickers } : {}),
       deploymentLink: token === 'deployed' ? null : this.service.deploymentLink(p.asset, this.agent.address, this.agent.paymentOrigin) };
   }
   async status(id, slot) {
@@ -397,7 +404,7 @@ export class DashboardState {
       const id = this.idOf(row); let status;
       try { status = await this.status(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
       if (status.state !== 'minted') requests.push({ asset: row.body.request.asset, name: (await this.unitLabel(row.body.request.asset)).name, block: row.body.request.block, requestId: id,
-        state: status.state, payable: status.payable === true, error: status.error ?? null, inflight: sentOnBitcoin(status.inflight, ['payment', 'mint']),
+        ...(row.body.request.deployment ? { deployment: row.body.request.deployment } : {}), state: status.state, payable: status.payable === true, error: status.error ?? null, inflight: sentOnBitcoin(status.inflight, ['payment', 'mint']),
         paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) });
     }
     return { requests, next: offset + limit < saved.length ? offset + limit : null, batch: this.batch };
@@ -405,7 +412,7 @@ export class DashboardState {
   mint(slot) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
     dashboardCheck(slot && Object.keys(slot).every(k => ['asset', 'block', 'deployment'].includes(k)) && assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
-    const key = canonicalAsset(slot.asset) + '/' + slot.block;
+    const key = canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '');
     if (this.inflight.has(key)) return this.inflight.get(key);
     const task = this.queue.then(() => this.mintNow(slot));
     this.queue = task.catch(() => {});
@@ -446,7 +453,7 @@ export class DashboardState {
     const body = old?.body;
     dashboardCheck(!body || body.receiver === payout && body.payer === payout && body.kind === 'tap', 'saved_payout_changed', 409);
     const args = old ? this.savedArguments(old, slot) : {
-      actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + canonicalAsset(slot.asset) + '/' + slot.block).slice(0, 48),
+      actionId: 'dashboard-' + digest(this.agent.network + '/' + this.agent.owner + '/' + canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '')).slice(0, 48),
       asset: slot.asset, block: String(slot.block), ...(slot.deployment === undefined ? {} : { deployment: slot.deployment }), amount: String(c.find.count), receiver: payout, payer: payout, kind: 'tap', compound: false };
     const result = await runTool(this.context, 'mint_on_chain', args);
     const saved = this.savedSlot(slot), id = saved ? this.idOf(saved) : result.request?.id ?? result.request?.requestId;

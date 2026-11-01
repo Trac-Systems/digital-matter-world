@@ -1,3 +1,4 @@
+import { tickerSupplyScope, mintPlotKey } from './per-ticker-supply-activation.js';
 import { paymentProgress, paymentCommitment } from './mint-payments.js';
 import { recordGet, recordSet } from './record-index.js';
 import { assert, integer, hex, hash, stableJSON, exactKeys } from './core.js';
@@ -19,7 +20,7 @@ export function applyMintInput({ input, network, counted, tip, hashAt, state, se
   const { request: r, sig, receiver, evidence: e, op } = input;
   assert(verifyRequest('rq', network, r, sig, op === 'rq' ? counted : r?.until), 'owner_signature');
   assert(typeof receiver === 'string' && receiver.length > 0 && receiver.length <= 128 && hash(receiver) === r.receive, 'receiver_binding');
-  const id = pendingId(network, r), key = Object.hasOwn(r, 'block') ? `${r.asset}/${r.block}` : null;
+  const id = pendingId(network, r), key = Object.hasOwn(r, 'block') ? mintPlotKey(r.asset, r.block, tickerSupplyScope(e.context?.deployment ?? e.authorization?.deployment, counted)) : null;
   const mints = { holds: {}, pending: {}, minted: {}, ...state.mints };
   let next = { ...mints, holds: { ...mints.holds }, pending: { ...mints.pending }, minted: { ...mints.minted } }, operation;
   if (op === 'rq') {
@@ -37,7 +38,7 @@ export function applyMintInput({ input, network, counted, tip, hashAt, state, se
     assert(e.hold === null || key && hex(e.hold.id, 32) && integer(e.hold.expiry), 'mint_hold');
     if (key && next.holds[key] && counted <= next.holds[key].expiry) assert(same(e.hold, { id: next.holds[key].id, expiry: next.holds[key].expiry }), 'mint_hold_changed');
     if (key && e.hold) next.holds[key] = e.hold;
-    const accepted = acceptMintRequest({ state: next, request: r, sig, network, counted, find: c.find, compound: d.kind === 'compound',
+    const accepted = acceptMintRequest({ state: next, request: r, sig, network, counted, find: c.find, compound: d.kind === 'compound', deployment: d,
       link: c.link, currentHolder: e.bitmap?.agent ?? null, minted: e.minted, balance: e.balance, settings });
     next = accepted.state; operation = accepted.op;
     state.balances = recordSet(state.balances, r.owner, { ...recordGet(state.balances, r.owner), [r.asset]: (BigInt(e.balance) - BigInt(r.amount)).toString() });

@@ -233,3 +233,58 @@ test('agent mint projections and cached responses open linked plots at the setti
     assert.equal((await api.read(path)).mintRights[0].allowed, false);
   } finally { await store.close(); }
 });
+
+test('mint rights and block detail retain official status while an additional ticker mints independently', async () => {
+  const f = await setup(), { store, api } = f;
+  try {
+    const asset = 'p2:0', deployment = rules.hash('extra-deployment') + 'i0', generation = rules.hash('extra-generation'), mint = rules.hash('extra-mint');
+    await store.transact([
+      { space: 'meta', id: 'ruleState', value: { batchVersion: 2, counted: rules.PER_TICKER_SUPPLY_HEIGHT } },
+      { space: 'publicDeployments', id: asset, value: { id: 'official', suspended: false } },
+      { space: 'publicBalances', id: owner + '/' + asset, value: { owner, asset, amount: '10' } },
+      { space: 'finds', id: rules.findIdV2('1', '0'), value: { block: '1', pattern: '0', asset, count: '3', finder: owner, findHeight: '10', finderUntil: '20' } },
+      { space: 'accountRecords', id: 'fd/external/' + rules.hashObject(deployment), value: generation },
+      { space: 'accountRecords', id: 'fd/' + generation, value: { asset, deployment, official: 'official-generation', minted: '0', reserved: '0', maximum: '100' } }
+    ]);
+    const right = async selection => (await api.read('/agents/' + address + '/mintRights?' + new URLSearchParams({ asset, block: '1', ...(selection ? { deployment: selection } : {}) }))).mintRights[0];
+    assert.equal((await right()).allowed, true); assert.equal((await right(deployment)).allowed, true);
+    await store.transact([
+      { space: 'accountRecords', id: rules.capacityPlotKey(asset, '1', deployment), value: mint },
+      { space: 'accountRecords', id: 'dc/' + mint, value: { state: 'reserved', asset, plot: '1', supplyScope: deployment } }
+    ]);
+    assert.equal((await right(deployment)).pending.id, mint); assert.equal((await right()).pending, null);
+    await store.transact([
+      { space: 'accountRecords', id: 'dc/' + mint, value: { state: 'minted', asset, plot: '1', supplyScope: deployment } },
+      { space: 'minted', id: rules.mintPlotKey(asset, '1', deployment), value: { id: mint } }
+    ]);
+    assert.equal((await right(deployment)).minted.id, mint); assert.equal((await right()).allowed, true);
+    assert.equal((await api.read('/blocks/1')).minted, false);
+    await store.put('minted', rules.mintPlotKey(asset, '1'), { id: rules.hash('official-mint') });
+    assert.equal((await right()).allowed, false); assert.equal((await right(deployment)).minted.id, mint);
+    await assert.rejects(right(rules.hash('unregistered') + 'i0'), /financial_deployment_pending/);
+  } finally { await store.close(); }
+});
+
+
+test('claimed-block cache and filtered pages use the selected ticker completion', async () => {
+  const f = await setup(), { store, api } = f;
+  try {
+    await store.put('feedEvents', '1', event(0, 20)); while (store.count('feedEvents')) await f.feeds.events();
+    const asset = 'p2:0', deployment = rules.hash('cached-extra') + 'i0', generation = rules.hash('cached-generation'), id = rules.hash('cached-mint');
+    await store.transact([
+      { space: 'meta', id: 'ruleState', value: { batchVersion: 2, counted: rules.PER_TICKER_SUPPLY_HEIGHT } },
+      { space: 'accountRecords', id: 'fd/external/' + rules.hashObject(deployment), value: generation },
+      { space: 'accountRecords', id: 'fd/' + generation, value: { asset, deployment, official: 'official-generation' } }
+    ]);
+    const path = '/patterns/' + asset + '/claimed-blocks?' + new URLSearchParams({ deployment });
+    const before = await api.response(path); assert.equal(JSON.parse(before.bytes).rows[0].minted, false);
+    await store.transact([
+      { space: 'accountRecords', id: rules.capacityPlotKey(asset, '20', deployment), value: id },
+      { space: 'accountRecords', id: 'dc/' + id, value: { state: 'minted', asset, plot: '20', supplyScope: deployment } }
+    ]);
+    const after = await api.response(path); assert.notEqual(after.etag, before.etag); assert.equal(JSON.parse(after.bytes).rows[0].minted, true);
+    assert.equal((await api.read(path + '&minted=true')).rows.length, 1);
+    assert.equal((await api.read(path + '&minted=false')).rows.length, 0);
+    assert.equal((await api.read('/patterns/' + asset + '/claimed-blocks')).rows[0].minted, false);
+  } finally { await store.close(); }
+});

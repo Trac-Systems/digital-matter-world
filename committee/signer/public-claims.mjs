@@ -1,3 +1,4 @@
+import { capacityPlotKey, mintPlotKey } from '../../rules/src/per-ticker-supply-activation.js';
 import { check, equal } from './crypto.mjs';
 import { hex } from '../../rules/src/core.js';
 import { publicPlotId } from '../../rules/src/public-mint.js';
@@ -6,7 +7,7 @@ import { POINT_BATCH_SIZE, pointBatch, pointResults } from '../../rules/src/poin
 // All reads here belong to this verifier's predecessor. A gateway may supply
 // its own draft overlay, but no signer receives another reader's answers.
 export async function readPublicWinners(reads, pairs, at, overlay) {
-  pointBatch(pairs.map(([asset, block]) => `dc/plot/${asset}/${block}`));
+  pointBatch(pairs.map(([asset, block, deployment]) => capacityPlotKey(asset, block, deployment)));
   check(typeof reads.financialRecord === 'function', 'public_mint_evidence_missing');
   const records = async keys => {
     const result = new Map(), remote = [];
@@ -28,7 +29,7 @@ export async function readPublicWinners(reads, pairs, at, overlay) {
     }
     return result;
   };
-  const keys = pairs.map(([asset, block]) => `dc/plot/${asset}/${block}`), plots = await records(keys);
+  const keys = pairs.map(([asset, block, deployment]) => capacityPlotKey(asset, block, deployment)), plots = await records(keys);
   const ids = [...plots.values()].filter(row => !row.error && hex(row.value, 32)).map(row => 'fp/' + row.value);
   const funding = await records(ids);
   return keys.map(key => {
@@ -44,9 +45,9 @@ export async function readPublicWinners(reads, pairs, at, overlay) {
   });
 }
 
-export async function readPublicWinner(reads, asset, block, at) {
+export async function readPublicWinner(reads, asset, block, at, deployment = null) {
   check(typeof reads.financialRecord === 'function', 'public_mint_evidence_missing');
-  const id = await reads.financialRecord(`dc/plot/${asset}/${block}`, at);
+  const id = await reads.financialRecord(capacityPlotKey(asset, block, deployment), at);
   if (id === null || id === undefined) return null;
   check(hex(id, 32), 'public_mint_evidence');
   const funding = await reads.financialRecord('fp/' + id, at);
@@ -61,12 +62,12 @@ export async function verifyPublicMintEvidence(files, reads, at) {
   let pending = [];
   const flush = async () => {
     if (!pending.length) return;
-    const rows = await readPublicWinners(reads, pending.map(row => [row.asset, row.block]), at);
-    pending.forEach((row, i) => checked.set(row.asset + '/' + row.block, rows[i]));
+    const rows = await readPublicWinners(reads, pending.map(row => [row.asset, row.block, ...(row.deployment ? [row.deployment] : [])]), at);
+    pending.forEach((row, i) => checked.set(mintPlotKey(row.asset, row.block, row.deployment), rows[i]));
     pending = [];
   };
   for (const file of files) for (const row of file.publicMintEvidence ?? []) {
-    const key = row.asset + '/' + row.block;
+    const key = mintPlotKey(row.asset, row.block, row.deployment);
     if (!checked.has(key)) { checked.set(key, null); pending.push(row); }
     if (pending.length === POINT_BATCH_SIZE) await flush();
   }
@@ -74,7 +75,7 @@ export async function verifyPublicMintEvidence(files, reads, at) {
   // Validate in the original evidence order, including duplicate rows. Reads
   // are concurrent; evidence bytes and the first failed comparison are stable.
   for (const file of files) for (const row of file.publicMintEvidence ?? []) {
-    const answer = checked.get(row.asset + '/' + row.block);
+    const answer = checked.get(mintPlotKey(row.asset, row.block, row.deployment));
     if (answer.error) throw Error(answer.error);
     check(answer.value === row.id, 'public_mint_evidence_read');
   }
@@ -83,8 +84,8 @@ export async function verifyPublicMintEvidence(files, reads, at) {
 export async function verifyPublicPermit({ reads, source, funding, permit, id, at }) {
   check(source?.publicMint === true && source.requestId === id && funding?.publicMint === true && funding.owner === null &&
     funding.state === 'consumed' && funding.permitHash === permit.digest, 'public_permit_binding');
-  check(await readPublicWinner(reads, source.asset, source.request.block, at) === id, 'public_minted');
-  const scan = await reads.financialRecord('fp/public/' + publicPlotId(source.asset, source.request.block), at);
+  check(await readPublicWinner(reads, source.asset, source.request.block, at, source.capacity?.supplyScope) === id, 'public_minted');
+  const scan = await reads.financialRecord('fp/public/' + publicPlotId(source.asset, source.request.block, source.capacity?.supplyScope), at);
   check(scan?.winner?.id === id && scan.winner.permitHash === permit.digest &&
     equal(scan.winner.source, source), 'public_permit_binding');
 }

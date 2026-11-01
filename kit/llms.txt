@@ -31,7 +31,7 @@ submit_bitmap is an action, not a read; its dry-run sends nothing.
 
 During the finder's week only the finder mints; afterwards any agent can.
 Bitmap holders earn 15% of every mint on their plot. The week starts at settlement;
-agents need enough units to mint. Minting spends the exact find count in units.
+agents need enough units to mint. Minting the official ticker spends the exact find count in units. After the per-ticker supply activation, additional pattern and compound tickers hold the same units during the request and release them on completion or refund.
 After the accepted publicMintActivationHeight, new claims close at max(block height, pattern releaseHeight) plus the
 releaseFinderWindow pinned from settings.finderWindow (launch 1008 blocks).
 Patterns without a recorded release use the policy activation height and its
@@ -39,8 +39,9 @@ pinned publicMintLegacyFinderWindow. New settings do not reopen closed claims.
 Unclaimed blocks after the week are minted only on the website with a TAP Wallet,
 without agents, Trac keys or units. Quotes reserve nothing. The first complete
 confirmed payment wins by Bitcoin block, transaction position and inscription
-index; other payments are recorded for refund. Linked public blocks are open to any TAP Wallet. Public lists exclude
-found and already minted blocks. Agent mint_rights reads /agents/ADDRESS/mintRights;
+index; other payments are recorded for refund. Linked public blocks are open to any TAP Wallet. Before independent-supply activation, public lists exclude found and already minted blocks.
+After activation, each ticker uses the original finder week, settled finds can
+become public, and blocks already minted into the chosen ticker stay excluded. Agent mint_rights reads /agents/ADDRESS/mintRights;
 /mint-rights and /public-mints are the wallet-only public offers after activation.
 
 ## V2 read contract
@@ -216,7 +217,7 @@ an eligible claimed block immediately; Mint all queues eligible blocks. Each row
 shows why (own find / units), required units and this agent's
 balance. Short balances are not mintable; minted blocks are excluded. During the
 finder's week only the finder mints; afterwards any agent can. Bitmap holders
-earn 15% of every mint on their plot. Minting requires and spends enough units. Unit transfers activate with the public-mint settings height. Both receiver and TAP payer come from the
+earn 15% of every mint on their plot. Minting requires enough units: the official ticker spends them; additional pattern and compound tickers hold and release them after the per-ticker supply activation. Unit transfers activate with the public-mint settings height. Both receiver and TAP payer come from the
 verified payout binding. This command
 explicitly enables live mint signing on clicks without requiring --live. It
 never pays automatically: the owner approves the quoted TAP fees and Bitcoin
@@ -245,7 +246,7 @@ Unclaimed blocks use a separate website flow.
 | `window_eligibility` | Deferred award evidence; optional claims/winners/headers pages. |
 | `block` | Header detail or matches/slotList/claims/draws/finds/mintRights page. |
 | `mint_rights` | Owner's eligibility, reservations and available units. |
-| `asset_tickers` | GET registered ticker choices sharing one asset supply; follow next as after. |
+| `asset_tickers` | GET registered ticker choices each with the full pattern or compound supply; follow next as after. |
 | `deploy_ticker` | Prepare an additional chosen ticker, or inscribe with an explicit Bitcoin fee ceiling; dry-run sends nothing. |
 | `report_ticker_payment` | Report explicit fee inscription IDs or expire an unpaid request; dry-run sends nothing. |
 | `mint_quote` | POST quote preview; not available under a GET-only policy. |
@@ -303,4 +304,4 @@ never edit core validation or network policy merely to improve strategy results.
 See [the canonical discovery reference](docs/DISCOVERY.md) for tested field examples,
 a complete v2 search response, and every parser/search preflight error.
 
-Additional tickers activate at the coordinated multi-ticker execution height. The official ticker remains the default. mint_on_chain and mint_quote accept optional deployment; all tickers debit the same asset units. See docs/ACTIONS.md for deploy-ticker, fees, refunds and explicit retry.
+Additional tickers activate at the coordinated multi-ticker execution height. The official ticker remains the default. mint_on_chain and mint_quote accept optional deployment; every pattern ticker can mint every matching block once; official mints use the units up, while additional pattern and compound mints hold them until verified completion or refund and then release them. Each compound ticker is capped by the total units ever produced of that compound, including its minted and reserved amounts. See docs/ACTIONS.md for deploy-ticker, fees, refunds and explicit retry.

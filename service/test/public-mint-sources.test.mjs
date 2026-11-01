@@ -507,3 +507,108 @@ for (const opaque of [false, true]) test(`public selected ticker binds its deplo
   await assert.rejects(f.reads.publicMintQuote(f.input), /already_minted/);
   await assert.rejects(f.reads.publicMintQuote({ ...f.input, deployment: extra.id }), /already_minted/);
 });
+
+for (const opaque of [false, true]) test(`independent ticker public batch pays all rewards and each deploy holder; opaque=${opaque}`, async () => {
+  const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
+  const f = fixture({ deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee,
+    feeSettings: flatSettings, bitmapMintOpenHeight: '100', ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
+  let height = r.PER_TICKER_SUPPLY_HEIGHT; f.setHeight(height);
+  const official = f.context.deployment, extra = { ...official, id: r.hash('independent-extra') + 'i0', tick: 'independent', officialDeployment: official.id };
+  f.context.find = { asset: f.input.asset, block: f.input.block, count: 3, finder: r.hash('finder'), findHeight: '100', finderUntil: '102', settingsHash: r.hashObject(f.document) };
+  f.context.finderAddress = '1BitcoinEaterAddressDontSendf59kuE';
+  f.context.discoverer = f.context.finderAddress;
+  f.context.link = { block: '100', linkHeight: '99' }; f.context.bitmapHolder = { address: f.context.finderAddress };
+  f.records.set('fd/extra', { asset: f.input.asset, deployment: extra.id, official: 'generation', minted: '0', reserved: '0', maximum: '1000000' });
+  f.records.set('fd/external/' + r.hashObject(extra.id), 'extra');
+  f.reads.assetContext = async (_a, _b, _at, quote, _admitted, selection) => {
+    const id = selection ?? quote?.deploymentId; return { ...f.context, deployment: id === extra.id ? extra : official };
+  };
+  const quotes = [await f.reads.publicMintQuote(f.input), await f.reads.publicMintQuote({ ...f.input, deployment: extra.id })];
+  assert.deepEqual(quotes[0].split, quotes[1].split);
+  for (const role of ['finder', 'landowner', 'discoverer', 'treasury', 'burn', 'deployer']) assert.ok(BigInt(quotes[0].split[role]) > 0n, role);
+  if (opaque) for (const q of quotes) await f.register(q);
+  const transitions = [], evidences = [];
+  for (const q of quotes) {
+    height = r.nextUint(height); f.setHeight(height);
+    const reference = f.pay(q); if (opaque) await f.reveal(q, reference);
+    const scope = q.intent.supplyScope, id = r.publicPlotId(f.input.asset, f.input.block, scope);
+    f.records.set(publicScanKey(id), { next: { height, transactionIndex: '0', inscriptionIndex: '0' }, scannedHeight: String(BigInt(height) - 1n), blockHash: r.hash('block/' + (BigInt(height) - 1n)), winner: null });
+    const transition = { type: 'public-scan', id, asset: f.input.asset, block: f.input.block, ...(scope ? { deployment: scope } : {}), previous: r.hashObject(f.records.get(publicScanKey(id))) };
+    transitions.push(transition);
+  }
+  // f.pay seeds the official fixture cursor; restore its first payment block.
+  const firstHeight = String(BigInt(height) - 1n), officialId = transitions[0].id;
+  f.records.set(publicScanKey(officialId), { next: { height: firstHeight, transactionIndex: '0', inscriptionIndex: '0' }, scannedHeight: String(BigInt(firstHeight) - 1n), blockHash: r.hash('block/' + (BigInt(firstHeight) - 1n)), winner: null });
+  transitions[0].previous = r.hashObject(f.records.get(publicScanKey(officialId)));
+  for (const transition of transitions) evidences.push({ ...await f.reads.publicMintScan(transition, { counted: height }), claim: { pattern: '0', claimed: false, publicWinner: null } });
+  const inputs = [], operations = [];
+  for (let i = 0; i < transitions.length; i++) {
+    const plan = await financialPlan({ transition: transitions[i], evidence: evidences[i] }, { read: f.reads.financialRecord, height, document: f.document });
+    inputs.push({ transition: transitions[i], evidence: evidences[i], operations: plan }); operations.push(...plan);
+  }
+  await verifyFinancialExecution({ files: [{ ops: operations, financialOperations: inputs }], reads: { ...f.reads, financialEvidence: f.reads.publicMintScan }, document: f.document, network: 'test', height, at: { counted: height } });
+  for (const op of operations) await applyPaymentPage({ get: f.reads.financialRecord, put: (k, v) => f.records.set(k, v) }, op, { network: 'test', height, settings: accountSettings(f.document) });
+  for (let i = 0; i < 2; i++) {
+    const winner = f.records.get(publicScanKey(transitions[i].id)).winner;
+    assert.ok(winner); assert.equal(winner.source.deployer.deployment, quotes[i].deployment.id);
+    assert.equal(winner.source.deployer.amount, quotes[i].split.deployer);
+    assert.deepEqual(winner.source.intent.split, quotes[i].split);
+    await assert.rejects(f.reads.publicMintQuote({ ...f.input, ...(i ? { deployment: extra.id } : {}) }), /already_minted/);
+  }
+  const { installCapacitySources } = await import('../src/financial-capacity-sources.mjs');
+  const reader = { ...f.reads, deploymentHolders: async ids => ids.map(id => ({ id,
+    address: id === extra.id ? f.input.tapAddress : '1BitcoinEaterAddressDontSendf59kuE' })),
+    mint: async id => { const source = f.records.get('fi/source/' + id), funding = f.records.get('fp/' + id); return {
+      accepted: true, fail: false, confirmations: 1, permitHash: funding.permitHash, deployment: source.deployment.id,
+      amount: source.amount, receiver: source.receiver, tick: source.deployment.tick, committee: source.deployment.privilegePublicKey,
+      block: source.request.block, inscription: r.hash('completed/' + id) + 'i0' }; } };
+  installCapacitySources(reader, { network: 'test', bitcoinNetwork: 'mainnet', accepted: async id => {
+    const source = f.records.get('fi/source/' + id), funding = f.records.get('fp/' + id);
+    return { source, funding, row: { request: source.request, receiver: source.receiver, permit: { prv: { hash: funding.permitHash } } } };
+  } });
+  reader.financialEvidence = (transition, at) => reader.financialCapacityEvidence(transition.action, at);
+  const finishes = quotes.map(q => ({ type: 'lifecycle', id: q.id, action: { type: 'capacity-finish', id: q.id,
+    permitHash: f.records.get('fp/' + q.id).permitHash } }));
+  const finished = await buildFinancialExecution({ store: { get: (space, id) => space === 'accountRecords' ? f.records.get(id) ?? null : null },
+    reads: reader, transitions: finishes, document: f.document, height, at: { counted: height } });
+  await verifyFinancialExecution({ files: [{ ops: finished.operations, financialOperations: finished.inputs }], reads: reader,
+    document: f.document, network: 'test', height, at: { counted: height } });
+  for (let i = 0; i < quotes.length; i++) {
+    const liability = finished.inputs[i].evidence.commissions.find(c => c.role === 'deployer');
+    assert.equal(liability.deployment, quotes[i].deployment.id); assert.equal(liability.amount, quotes[i].split.deployer);
+    assert.equal(liability.to, i ? f.input.tapAddress : '1BitcoinEaterAddressDontSendf59kuE');
+  }
+  for (const op of finished.operations) await applyPaymentPage({ get: f.reads.financialRecord, put: (k, v) => f.records.set(k, v) }, op,
+    { network: 'test', height, settings: accountSettings(f.document) });
+  assert.equal(f.records.get('fd/generation').minted, '3'); assert.equal(f.records.get('fd/extra').minted, '3');
+});
+
+test('finder week follows the find on every public ticker and ends without a deployment wait', async () => {
+  const f = fixture(), height = r.PER_TICKER_SUPPLY_HEIGHT; f.setHeight(height);
+  const official = f.context.deployment, extra = { ...official, id: r.hash('week-extra') + 'i0', officialDeployment: official.id };
+  f.context.find = { findHeight: String(BigInt(height) - 1n), finderUntil: r.nextUint(height) };
+  f.context.finderAddress = f.input.tapAddress;
+  f.reads.assetContext = async (_a, _b, _at, _q, _admitted, selection) => ({ ...f.context, deployment: selection ? extra : official });
+  for (const deployment of [undefined, extra.id]) {
+    assert.ok(await f.reads.publicMintQuote({ ...f.input, deployment }));
+    const other = fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(45))).toString('hex'), 'regtest');
+    await assert.rejects(f.reads.publicMintQuote({ ...f.input, deployment, tapAddress: other }), /finder_only/);
+  }
+  f.setHeight(r.nextUint(height));
+  f.context.finderAddress = 'different-wallet';
+  assert.ok(await f.reads.publicMintQuote({ ...f.input, deployment: extra.id }));
+});
+
+
+test('pre-activation additional public checkout is refunded without taking the official plot after activation', async () => {
+  const f = fixture(), height = r.PER_TICKER_SUPPLY_HEIGHT; f.setHeight(String(BigInt(height) - 1n));
+  const official = f.context.deployment, extra = { ...official, id: r.hash('crossing-extra') + 'i0', tick: 'crossing', officialDeployment: official.id };
+  f.reads.assetContext = async (_a, _b, _at, quote, _admitted, selection) => ({ ...f.context,
+    deployment: (selection ?? quote?.deploymentId) === extra.id ? extra : official });
+  const quote = await f.reads.publicMintQuote({ ...f.input, deployment: extra.id }); assert.equal(quote.intent.supplyScope, undefined);
+  f.setHeight(height); const payment = f.pay(quote), result = await f.settle();
+  assert.equal(result.payments[0].complete, false); assert.equal(result.payments[0].refusal, 'public_quote_changed');
+  assert.equal(f.records.get(publicScanKey(r.publicPlotId(f.input.asset, f.input.block))).winner, null);
+  assert.equal(f.records.get(publicRefundKey({ id: quote.id, reference: payment })).state, 'owed');
+  assert.ok(await f.reads.publicMintQuote(f.input));
+});

@@ -44,7 +44,11 @@ export class AcceptedAssetSupply {
           if (action.type === 'consume' && !burns.has(action.id) && !state.get('prodAssetSupplyBurns', action.id)) {
             const obligation = await trac('read', ['ao/' + action.id]);
             check(obligation?.state === 'consumed' && obligation.permitHash === action.permitHash, 'asset_supply_mint_binding', 503);
-            add(obligation.asset, -BigInt(obligation.amount)); burns.add(action.id);
+            const capacity = rules.perTickerSupplyActive(batch.execution?.height ?? 0) ? await trac('read', ['dc/' + action.id]) : null;
+            // Additional ticker permits keep their units in the account's held
+            // balance. Their later release moves them without changing supply.
+            if (!rules.mintRetainsUnits(capacity)) add(obligation.asset, -BigInt(obligation.amount));
+            burns.add(action.id);
           }
         }
         if (op.op === 'mk') add(op.asset, BigInt(op.amount));

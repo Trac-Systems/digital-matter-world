@@ -292,7 +292,7 @@ export function mount(root, { id, onPublicMint }) {
       BEFORE_PAY.includes(status.state) && !status.payable && !failed && !status.sentInscription ? h('div.callout.busy', {}, PAY_SOON) : null,
       ms && ms.state !== 'waiting_funding' && !failed && state !== 'minted' && !SENDER_STOPPED.includes(ms.state) && !txid(ms.revealTxid) ? h('div.callout.info', {}, PAID_ONCE) : null,
       ms && SENDER_STOPPED.includes(ms.state) && state === 'permit_issued' ? h('div.callout.warn', {}, NEEDS_USER, typeof ms.message === 'string' && ms.message.length <= 200 ? h('div.small', {}, ms.message) : null) : null,
-      state === 'permit_issued' && !serverSends ? h('p.lead', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your units have been consumed once. This permit has no expiry; you can inscribe when ready.') : null,
+      state === 'permit_issued' && !serverSends ? h('p.lead', {}, status.publicMint ? 'Your payment won. This permit has no expiry; you can inscribe when ready.' : 'Your permanent permit is ready. It has no expiry; you can inscribe when ready.') : null,
       state === 'minted' ? h('div.callout.good', {}, 'Minted. ', status.inscription ? ['Inscription ', hashEl(status.inscription)] : null) : null,
       inflightNote(paymentSent, { detail: 'It is counted once Bitcoin confirms it; nothing else to do.' }));
     const fees = status.missing.length ? table(status.missing, [

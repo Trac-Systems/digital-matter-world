@@ -196,7 +196,7 @@ export class Pipeline {
         input.settingsDocuments = input.namedEvidence.settingsDocuments;
       }
       const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
-      const publicMintRead = (asset, block) => readPublicWinner({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, asset, block);
+      const publicMintRead = (asset, block, deployment) => readPublicWinner({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, asset, block, deployment);
       const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes'),
         ...(publicClaimsActive ? { publicMintGet: publicMintRead,
           publicMintBatch: pairs => readPublicWinnerBatch({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, pairs) } : {}) } : undefined;

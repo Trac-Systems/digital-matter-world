@@ -461,7 +461,7 @@ class PublicReadIndex {
         for (const space of ['receiptObservations', 'batches', 'mints', 'publicClaims', 'publicDraws'])
           for (const { id } of this.db.prepare('SELECT id FROM records WHERE space=?').all(space)) this.record(space, id);
         for (const { id } of this.db.prepare("SELECT id FROM records WHERE space='finds'").all()) finds.add(id);
-        for (const space of ['links', 'minted']) for (const { id } of this.db.prepare('SELECT id FROM records WHERE space=?').all(space)) blocks.add(Number(id.split('/').at(-1)));
+        for (const space of ['links', 'minted']) for (const { id } of this.db.prepare('SELECT id FROM records WHERE space=?').all(space)) id.split('/').length <= 2 && blocks.add(Number(id.split('/').at(-1)));
       }
       for (const c of changes) {
         if (c.space === 'publicEvents') this.event(c.id);
@@ -472,7 +472,7 @@ class PublicReadIndex {
           if (old) blocks.add(old.block);
         }
         if (c.space === 'links' || this.ready && c.space === 'headers' && this.views.patterns().length) blocks.add(Number(c.id));
-        if (['minted', 'holds', 'replay/mints/holds'].includes(c.space)) {
+        if (['minted', 'holds', 'replay/mints/holds'].includes(c.space) && c.id.split('/').length === 2) {
           const block = Number(c.id.split('/').at(-1));
           if (Number.isSafeInteger(block)) blocks.add(block);
           if (c.space === 'minted') {
@@ -500,7 +500,7 @@ class PublicReadIndex {
           }
         }
         for (const { entry: { row } } of this.finds.rows.values()) blocks.add(row.block);
-        for (const { id } of this.db.prepare("SELECT id FROM records WHERE space='minted'").all()) blocks.add(Number(id.split('/').at(-1)));
+        for (const { id } of this.db.prepare("SELECT id FROM records WHERE space='minted'").all()) id.split('/').length <= 2 && blocks.add(Number(id.split('/').at(-1)));
       }
       if (!this.ready || changedPatterns || changes.some(c => c.space === 'meta' && c.id === 'ruleState')) {
         this.score('patterns', this.views.patterns().map(p => [p.discoverer, 'discoveries']));

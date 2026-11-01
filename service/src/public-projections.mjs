@@ -1,3 +1,4 @@
+import { selectedMintScope, acceptedPlotStatus } from './mint-assets.mjs';
 import { payoutBalance, payoutPolicyHash } from './payout-values.mjs';
 import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
@@ -115,7 +116,10 @@ export function publicProjectionRevision(store, input) {
     '/finds': ['finds'], '/feed': ['publicEvents'], '/events': ['publicEvents'], '/receipts': ['receiptObservations'], '/records/batches': ['batches'], '/window-eligibility': ['windowEligibility'] };
   let scopes = sources[path], clock = false, match;
   if (path.startsWith('/payouts/')) scopes = [{ beneficiaries: 'payoutTotals', owed: 'commissionOwed', paid: 'payoutPaid' }[path.slice(9)] ?? 'payoutTotals'];
-  if ((match = /^\/patterns\/([^/]+)\/(claimed-blocks|claimed-pages|blocks)$/.exec(path))) scopes = ['claimed2/' + match[1], 'claimedPageManifests/' + match[1], 'catalogPatterns/' + match[1], 'mintedAsset/' + match[1], 'links'];
+  if ((match = /^\/patterns\/([^/]+)\/(claimed-blocks|claimed-pages|blocks)$/.exec(path))) {
+    scopes = ['claimed2/' + match[1], 'claimedPageManifests/' + match[1], 'catalogPatterns/' + match[1], 'mintedAsset/' + match[1], 'links'];
+    if (url.searchParams.has('deployment')) { scopes.push('accountRecords', 'minted'); clock = true; }
+  }
   if (path === '/mint-rights' || path.endsWith('/mintRights')) { scopes = ['finds', 'links', 'minted', 'holds', 'replay/mints/holds', 'submittedBitmaps', 'publicBalances', 'publicBalanceHeads', 'publicDeployments', 'meta/publicRegistryRevision', 'accountRecords', 'financialHealth']; clock = true; }
   if (path.startsWith('/world') || /^\/blocks(?:\/|$)/.test(path) && !path.endsWith('/mintRights')) { scopes = ['world', 'finds', 'publicEvents', 'links', 'minted', 'submittedBitmaps']; clock = true; }
   if ((match = /^\/agents\/([0-9a-f]{64})(?:\/(\w+))?$/.exec(path)) && match[2] !== 'mintRights') {
@@ -171,10 +175,13 @@ function rights(store, owner, params, settings, onlyBlock) {
   check(/^[0-9a-f]{64}$/.test(owner ?? ''), 'agent_key');
   const clock = clocks(store), revision = ['finds', 'links', 'minted', 'holds', 'replay/mints/holds', 'submittedBitmaps', 'publicBalances', 'publicDeployments', 'meta/publicRegistryRevision', 'publicBalanceHeads/' + owner, 'accountRecords', 'financialHealth'].map(s => projectionRevision(store, s)).join('/') + '/' + clock.counted + '/' + (store.get('meta', 'head')?.hash ?? '') + '/' + (settings.document?.values.bitmapMintOpenHeight ?? '');
   const blocked = financialBlock(store, ['ar/' + owner, 'ar/supply', 'fp/chain']);
-  const p = paging(params, 'rights/' + owner + '/' + (onlyBlock ?? ''), revision, settings, ['asset', 'block', 'allowed', 'whoMayMint', 'reason', 'minted', 'pending']);
+  const p = paging(params, 'rights/' + owner + '/' + (onlyBlock ?? ''), revision, settings, ['asset', 'deployment', 'block', 'allowed', 'whoMayMint', 'reason', 'minted', 'pending']);
   check(!params.has('sort') || params.get('sort') === 'block', 'projection_sort');
   const block = onlyBlock ?? params.get('block'), namedAsset = params.get('asset');
   if (namedAsset) check(rules.assetIdV2(namedAsset) || /^p[0-9a-z]{1,23}$/.test(namedAsset), 'asset');
+  const selection = params.get('deployment');
+  check(!selection || namedAsset, 'mint_deployment_asset');
+  const scope = selection ? selectedMintScope(store, namedAsset, selection, clock.counted) : null;
   const compoundsPhase = p.anchor?.[0] === 'compounds';
   const filtering = ['allowed', 'reason', 'whoMayMint', 'minted', 'pending'].some(k => params.has(k));
   for (const key of ['allowed', 'minted', 'pending']) if (params.has(key)) check(['true', 'false'].includes(params.get(key)), 'rights_filter');
@@ -220,12 +227,13 @@ function rights(store, owner, params, settings, onlyBlock) {
     const balanceHead = store.get('publicBalanceHeads', owner) ?? balance;
     const balanceKnown = !account || balanceHead?.root === account.root && balanceHead?.revision === account.revision;
     const amount = balanceKnown ? balance?.amount ?? '0' : null;
-    const minted = store.get('minted', f.asset + '/' + f.block), hold = store.get('holds', f.asset + '/' + f.block) ?? store.get('replay/mints/holds', f.asset + '/' + f.block);
+    const key = rules.mintPlotKey(f.asset, f.block, scope), accepted = rules.perTickerSupplyActive(clock.counted) ? acceptedPlotStatus(store, f.asset, f.block, scope) : {};
+    const minted = store.get('minted', key) ?? accepted.minted, hold = accepted.pending ?? store.get('holds', key) ?? store.get('replay/mints/holds', key);
     const pending = hold && (hold.safeToReplace === false || rules.compareUint(rules.decimalV2(hold.expiry), clock.counted) >= 0);
     const deployment = store.get('publicDeployments', f.asset), registryRevision = store.get('meta', 'publicRegistryRevision');
     const registered = deployment && (registryRevision == null || deployment.registryRevision === registryRevision) ? !deployment.suspended : null;
     const allowed = !!(!blocked && rightAllowed && registered && amount !== null && BigInt(amount) >= BigInt(f.count) && !minted && !pending);
-    return { ...f, find: f, link: link ?? null, amount: String(f.count), balance: amount, finderUntil: rules.decimalV2(f.finderUntil), right: role, whoMayMint: role,
+    return { ...f, ...(selection ? { deployment: selection } : {}), ...(scope ? { supplyScope: scope, unitsConsumed: false } : {}), find: f, link: link ?? null, amount: String(f.count), balance: amount, finderUntil: rules.decimalV2(f.finderUntil), right: role, whoMayMint: role,
       eligible: rightAllowed, rightAllowed, allowed, deploymentRegistered: registered, minted, pending: pending ? { id: hold.id, expiry: hold.expiry } : null,
       currentHolder: fresh ? bitmap.agent : null, ownership: fresh ? 'verified_at_snapshot' : 'unverified_or_stale',
       reason: blocked ?? (minted ? 'minted' : pending ? 'pending' : !registered ? 'asset_unregistered' : amount === null ? 'balance_projection_pending' : BigInt(amount) < BigInt(f.count) ? 'insufficient_balance' : rightAllowed === null ? 'holder_unavailable' : role),

@@ -114,7 +114,7 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
         amount: obligation.amount, state, funding: funding ? { state: funding.state, paid: funding.paid, root: funding.root } : null,
         permitHash: obligation.permitHash ?? null, ...get('publicMintReceipts', id), batch, source: 'accepted_financial_delta' });
       if (capacity?.state === 'minted' && capacity.plot !== null) {
-        put('minted', capacity.asset + '/' + capacity.plot, { id, batch, evidence: capacity.evidence });
+        put('minted', rules.mintPlotKey(capacity.asset, capacity.plot, capacity.supplyScope), { id, batch, evidence: capacity.evidence });
         put('feedBlockChanges', 'mint/' + id, { block: capacity.plot, asset: capacity.asset });
       }
     }

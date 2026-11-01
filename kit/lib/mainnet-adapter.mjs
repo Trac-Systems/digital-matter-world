@@ -71,8 +71,14 @@ export async function create({ wallet, network, config, service, dryRun = true, 
     'tnkBalance', 'tnkRequireValidators', 'prepareTnkTransfer', 'submitTnkTransfer', 'tnkTransactionStatus'];
   const trac = { network, ...Object.fromEntries(methods.map(method => [method, async (...args) => (await connect())[method](...args)])) };
   return { trac, source,
-    candidates: async (asset, { block } = {}) => collect(cursor => service.mintRights(publicAddress(wallet), {
-      asset, ...(block === undefined ? {} : { block }), limit: 200, sort: 'block', order: 'asc', cursor }), 'mintRights'),
+    candidates: async (asset, { block, deployment } = {}) => {
+      if (deployment && !/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment)) {
+        deployment = (await service.tickerState(asset, deployment)).entry?.id;
+        check(deployment, 'Selected ticker is not registered');
+      }
+      return collect(cursor => service.mintRights(publicAddress(wallet), {
+        asset, ...(deployment === undefined ? {} : { deployment }), ...(block === undefined ? {} : { block }), limit: 200, sort: 'block', order: 'asc', cursor }), 'mintRights');
+    },
     compounds: () => collect(cursor => service.compounds({ limit: 200, cursor }), 'compounds'),
     close: async () => { if (connecting) await connecting.catch(() => {}); await runtime?.close(); },
   };

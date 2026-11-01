@@ -124,3 +124,28 @@ valid Unicode and one-character tickers. Official permit serialization retains
 its original grammar and bytes. Wallet code invoking `deploymentContent` for
 an additional ticker supplies `{validateTicker: validateChosenTicker}`; the kit
 player does this after checking the job's activation height.
+
+## Independent ticker supply
+
+At `PER_TICKER_SUPPLY_HEIGHT`, additional pattern tickers use independent accepted
+block markers and public payment scans. Official tickers retain their existing
+keys. Every mint keeps the full rewards and its selected deployment-holder share.
+The finder week is taken from the original find, never the ticker deployment.
+Additional pattern and compound agent mints hold units through permit issuance
+and release them on verified completion or refund; official mints continue
+consuming them. Each additional compound ticker is bounded by the authenticated
+account supply leaf’s cumulative `issued` counter, never the uint64 TAP maximum
+alone. The reservation’s account operation touches that leaf and records
+`supplyIssued` and `supplyDeployment` in its obligation. Capacity admission checks
+`minted + reserved + amount <= supplyIssued` and retains the checked counter.
+Later production can raise the cap; burns cannot lower it. A merged old id keeps
+its own production cap, while the new id receives the merged production.
+Reservations admitted before activation retain their original burn behavior.
+
+`GET /mint-rights`, owner/block mint-rights routes, and
+`GET /patterns/:asset/claimed-blocks` accept `deployment` as an immutable
+deployment inscription ID, together with the named asset where required.
+`GET /public-mints?asset=...&deployment=...` and
+`GET /public-mints/:asset/:block?deployment=...` use the same selector. Omission
+means official. Existing ticker lists report each deployment’s own `fd` counter.
+No state migration or historical scan is required.

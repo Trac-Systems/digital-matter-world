@@ -1,4 +1,4 @@
-import { patternMint } from './mint-assets.mjs';
+import { patternMint, selectedMintScope } from './mint-assets.mjs';
 import { findRankRecord } from './public-rankings.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
@@ -16,9 +16,10 @@ export function claimedPageV2(store, asset, params, settings = {}) {
   projectionReady(store, 'claimed2/' + asset);
   const s = { ...R3_RESOURCES, ...settings }, limit = Number(params.get('limit') ?? s.patternDetailRows);
   check(/^p2:(0|[1-9][0-9]*)$/.test(asset) && Number.isSafeInteger(limit) && limit > 0 && limit <= s.patternDetailRows, 'claimed_query');
-  for (const key of params.keys()) check(['limit', 'cursor', 'found', 'minted', 'order', 'sort'].includes(key) && params.getAll(key).length === 1, 'claimed_query');
+  for (const key of params.keys()) check(['limit', 'cursor', 'found', 'minted', 'order', 'sort', 'deployment'].includes(key) && params.getAll(key).length === 1, 'claimed_query');
   const order = params.get('order') ?? 'asc'; check(['asc', 'desc'].includes(order) && (!params.has('sort') || params.get('sort') === 'block'), 'claimed_order');
-  const revision = (store.get('claimedRevision', asset) ?? '0') + '/' + projectionRevision(store, 'mintedAsset/' + asset) + '/' + projectionRevision(store, 'catalogPatterns/' + asset), filters = {};
+  const deployment = params.get('deployment'), scope = selectedMintScope(store, asset, deployment, store.get('meta', 'ruleState')?.counted ?? '0');
+  const revision = (deployment ? deployment + '/' + projectionRevision(store, 'accountRecords') + '/' + projectionRevision(store, 'minted') + '/' : '') + (store.get('claimedRevision', asset) ?? '0') + '/' + projectionRevision(store, 'mintedAsset/' + asset) + '/' + projectionRevision(store, 'catalogPatterns/' + asset), filters = {};
   for (const key of ['found', 'minted']) if (params.has(key)) { check(['true', 'false'].includes(params.get(key)), 'claimed_filter'); filters[key] = params.get(key) === 'true'; }
   let after = '';
   if (params.has('cursor')) {
@@ -28,8 +29,8 @@ export function claimedPageV2(store, asset, params, settings = {}) {
   }
   const where = ['asset=?'], args = [asset];
   if (after) { where.push(`heightKey${order === 'asc' ? '>' : '<'}?`); args.push(after); }
-  for (const [key, value] of Object.entries(filters)) { where.push(`${key}=?`); args.push(+value); }
-  const index = Object.hasOwn(filters, 'found') ? Object.hasOwn(filters, 'minted') ? 'claimedBlocksV2Status' : 'claimedBlocksV2Found' : Object.hasOwn(filters, 'minted') ? 'claimedBlocksV2Minted' : null;
+  for (const [key, value] of Object.entries(filters)) { if (scope && key === 'minted') continue; where.push(`${key}=?`); args.push(+value); }
+  const index = scope ? null : Object.hasOwn(filters, 'found') ? Object.hasOwn(filters, 'minted') ? 'claimedBlocksV2Status' : 'claimedBlocksV2Found' : Object.hasOwn(filters, 'minted') ? 'claimedBlocksV2Minted' : null;
   const rows = store.db.prepare(`SELECT value FROM claimedBlocksV2 ${index ? 'INDEXED BY ' + index : ''} WHERE ${where.join(' AND ')} ORDER BY heightKey ${order} LIMIT ?`).all(...args, limit + 1);
   const catalog = store.get('catalogPatterns', asset), result = { v: 3, patternId: asset, catalogRevision: catalog?.catalogRevision ?? revision,
     projectionRevision: revision, countMeaning: 'verified_submitted_blocks', knownMatchCount: catalog?.knownMatchCount ?? store.countUint('claimed2/' + asset),
@@ -38,13 +39,14 @@ export function claimedPageV2(store, asset, params, settings = {}) {
   for (const row of rows.slice(0, limit)) {
     const value = JSON.parse(row.value), find = store.get('finds', rules.findIdV2(value.height, value.pattern));
     projectionReady(store, 'block/' + value.height);
-    const projected = { height: value.height, block: value.height, found: !!find, finder: find?.finder ?? null, minted: !!patternMint(store, asset, value.height), link: store.get('links', heightKey(value.height)), hash: value.hash, count: value.count, contribution: value.contribution,
-      find, mint: patternMint(store, asset, value.height), provenance: value.provenance };
+    const projected = { height: value.height, block: value.height, found: !!find, finder: find?.finder ?? null, minted: !!patternMint(store, asset, value.height, scope), link: store.get('links', heightKey(value.height)), hash: value.hash, count: value.count, contribution: value.contribution,
+      find, mint: patternMint(store, asset, value.height, scope), provenance: value.provenance };
     const nextCursor = Buffer.from(JSON.stringify({ asset, revision, order, filters, after: value.height })).toString('base64url');
     if (Buffer.byteLength(JSON.stringify(publicIdentities({ ...result, rows: [...result.rows, projected], nextCursor, next: nextCursor }))) > s.publicPageBytes) {
       check(result.rows.length, 'claimed_row_budget', 503); more = true; break;
     }
-    result.rows.push(projected); result.nextCursor = nextCursor;
+    if (!scope || filters.minted === undefined || projected.minted === filters.minted) result.rows.push(projected);
+    result.nextCursor = nextCursor;
   }
   if (!more) result.nextCursor = null;
   return result;

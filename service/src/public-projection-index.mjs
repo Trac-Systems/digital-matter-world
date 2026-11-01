@@ -141,7 +141,7 @@ export function projectPublicRecord(store, op, previous, { rebuild = false } = {
       item('links', '', id, row, rules.uintKeyV2(h)); block(h, 'linked', Number(!!row) - Number(!!previous));
     }
   }
-  if (op.space === 'minted' && patternLedgerAsset(id.split('/')[0])) {
+  if (op.space === 'minted' && id.split('/').length === 2 && patternLedgerAsset(id.split('/')[0])) {
     const [ledger, height] = id.split('/'), asset = patternCatalogId(ledger);
     block(height, 'mints', Number(!!row) - Number(!!previous));
     projectionStatement(db, 'UPDATE claimedBlocksV2 SET minted=? WHERE asset=? AND heightKey=?').run(Number(!!row), asset, rules.uintKeyV2(height));

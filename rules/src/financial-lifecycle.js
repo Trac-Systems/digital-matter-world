@@ -1,3 +1,4 @@
+import { perTickerSupplyActive, mintRetainsUnits } from './per-ticker-supply-activation.js';
 import { freeLinkActive } from './free-link-activation.js';
 import { feeFor } from './fees.js';
 import { multiTickerActive } from './multi-ticker-activation.js';
@@ -87,6 +88,8 @@ export async function financialLifecyclePlan({ transition: t, evidence: e }, { r
     else assert(e.state === 'revoked_unpaid' && hex(e.revocation, 32) && landed(e), 'financial_payout_not_revoked');
   } else if (a.type === 'deployment-open' || a.type === 'deployment-add') {
     assert(a.type !== 'deployment-add' || multiTickerActive(height), 'multi_ticker_inactive');
+    if (a.type === 'deployment-add' && perTickerSupplyActive(height))
+      assert(a.maximum === (await read('fd/' + a.official))?.maximum, 'deployment_full_supply');
     const { type, id, ...deployment } = a;
     assert(e.state === 'deployed' && landed(e) && same(e.deployment, deployment) && e.minted === '0' && e.outstanding === '0' &&
       e.remaining === a.maximum, 'financial_deployment_evidence');
@@ -102,6 +105,8 @@ export async function financialLifecyclePlan({ transition: t, evidence: e }, { r
       ...funding.capacity, plot: funding.capacity.block === null ? null : String(funding.capacity.block) } : null);
     assert(e.state === 'minted' && landed(e) && e.permitHash === a.permitHash && e.deployment === row?.deployment &&
       e.asset === row?.asset && e.amount === row?.amount && e.plot === row?.plot && hex(e.receipt, 32), 'financial_capacity_mint');
+    if (mintRetainsUnits(row) && !row.publicMint) return [op, { op: 'ar', actions: [{
+      type: 'release-mint', id: a.id, terms: row.terms, evidence: commitment }] }];
   } else if (a.type === 'capacity-release') {
     assert(e.state === 'refunded' && e.terms === (await read('ao/' + a.id))?.terms, 'financial_capacity_release');
   } else if (a.type === 'recovery-inventory') {

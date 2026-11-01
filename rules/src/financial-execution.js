@@ -1,3 +1,4 @@
+import { perTickerSupplyActive, compoundSupplyCapped } from './per-ticker-supply-activation.js';
 import { multiTickerActive } from './multi-ticker-activation.js';
 import { ordinalCodec } from './integers-v2.js';
 import { assert, hex, hashObject, stableJSON, exactKeys } from './core.js';
@@ -35,8 +36,9 @@ async function financialEffects(input, { read, height, document }) {
   if (t.type === 'public-scan') {
     const e = input.evidence;
     if (claimsNeverCloseActive(document, height)) validatePublicScanClaim(e.claim, t.asset);
-    assert(publicMintActive(document, height) && exactKeys(t, ['type', 'id', 'asset', 'block', 'previous']) &&
-      t.id === publicPlotId(t.asset, t.block) && e.requestId === t.id && e.asset === t.asset && e.block === t.block &&
+    assert(publicMintActive(document, height) && exactKeys(t, ['type', 'id', 'asset', 'block', 'previous', ...(t.deployment ? ['deployment'] : [])]) &&
+      (!t.deployment || perTickerSupplyActive(height)) && (e.deployment ?? null) === (t.deployment ?? null) &&
+      t.id === publicPlotId(t.asset, t.block, t.deployment) && e.requestId === t.id && e.asset === t.asset && e.block === t.block &&
       t.previous === e.previous && e.previous === hashObject(await read('fp/public/' + t.id) ?? null), 'public_scan_binding');
     const { requestId, ...fields } = e;
     return [{ op: 'fp', v: 2, type: 'public-scan', id: t.id, ...fields }];
@@ -58,7 +60,8 @@ async function financialEffects(input, { read, height, document }) {
       'financial_reservation_binding');
     const capacity = input.evidence.capacity, generation = input.evidence.generationCapacity ?? (capacity && Object.hasOwn(capacity, 'plot') ? capacity : null), external = capacity && !Object.hasOwn(capacity, 'plot') ? capacity : null;
     assert(!await read('fd/asset/' + t.action.asset) || generation, 'financial_capacity_required');
-    return [ar([t.action]), fp({ type: 'open', owner: t.action.owner, terms: t.action.terms, fees: t.fees,
+    const snapshot = generation && compoundSupplyCapped(await read('fd/' + generation.deployment), height);
+    return [ar([t.action, ...(snapshot ? [{ type: 'snapshot-supply', id: t.id, deployment: generation.deployment }] : [])]), fp({ type: 'open', owner: t.action.owner, terms: t.action.terms, fees: t.fees,
       ...(external ? { capacity: external } : {}) }), ...(generation ? reserveCapacity(t, input.evidence, generation) : [])];
   }
   const funding = await read('fp/' + t.id);

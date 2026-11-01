@@ -222,7 +222,7 @@ export class PublicViews {
     check(Number.isSafeInteger(from) && Number.isSafeInteger(to) && from >= 0 && to >= from && to < this.history.length, 'world_range');
     const finds = new Map(), rounds = this.store.get('meta', 'ruleState')?.rounds ?? [];
     for (const f of this.finds()) { if (!finds.has(f.block)) finds.set(f.block, []); finds.get(f.block).push(f); }
-    const minted = new Set(this.rows('minted').map(r => Number(r.id.split('/').at(-1))));
+    const minted = new Set(this.rows('minted').filter(r => r.id.split('/').length === 2).map(r => Number(r.id.split('/').at(-1))));
     return Array.from({ length: to - from + 1 }, (_, i) => {
       const height = from + i;
       return { height, ...rules.plotRegion(height), hash: this.history.hashAt(height), claimable: height <= counted, found: !!finds.get(height)?.length,
@@ -261,7 +261,7 @@ export class PublicViews {
     const names = new Map(this.patterns().map(p => [rules.patternAsset(p), p.name]));
     const totals = new Map();
     for await (const row of this.catalogRows('mints')) {
-      if (row.state !== 'minted') continue;
+      if (row.state !== 'minted' || this.store.get('accountRecords', 'dc/' + row.id)?.supplyScope || row.request?.supplyScope || row.intent?.supplyScope) continue;
       const total = totals.get(row.request.asset) ?? { minted: 0, madeReal: 0n };
       total.minted++; total.madeReal += BigInt(row.request.amount ?? 0);
       totals.set(row.request.asset, total);

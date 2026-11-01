@@ -85,7 +85,7 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
         return row;
       };
     }
-    const publicMintGet = (asset, block) => publicMints.get(asset, block);
+    const publicMintGet = (asset, block, deployment) => publicMints.get(asset, block, deployment);
     const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet, publicMintGet });
     parentPort.postMessage({ id, output: claimDatabase ? { ...output, claimEvidence: claimProof.value(), namedEvidence: namedProof.value() } : output });
   } catch (e) { parentPort.postMessage({ id, error: e.message }); }

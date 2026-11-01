@@ -122,3 +122,21 @@ test('signer worker batched fallback reproduces serial signed bytes, digest and 
     assert.ok(batches.length > 0); assert.ok(batches.every(b => b.length <= 64));
   }
 });
+
+test('signer winner reads and permanent mint slots are independent per accepted ticker', async () => {
+  const f = fixture(), deployment = hash('extra') + 'i0', extra = hash('extra-winner');
+  const source = { ...f.source, requestId: extra, capacity: { supplyScope: deployment }, deployment: { ...f.source.deployment, id: deployment } };
+  f.records.set(`dc/plot/${f.asset}/${f.block}/${deployment}`, extra);
+  f.records.set('fp/' + extra, f.funding);
+  f.records.set('fp/public/' + publicPlotId(f.asset, f.block, deployment), { winner: { id: extra, source, permitHash: f.digest } });
+  const evidence = [{ asset: f.asset, block: f.block, id: f.id }, { asset: f.asset, block: f.block, deployment, id: extra }];
+  await verifyPublicMintEvidence([{ publicMintEvidence: evidence }], f.reads);
+  await assert.rejects(verifyPublicMintEvidence([{ publicMintEvidence: [{ ...evidence[1], id: f.id }] }], f.reads), /public_mint_evidence_read/);
+  assert.deepEqual(await readPublicWinners(f.reads, [[f.asset, f.block], [f.asset, f.block, deployment]]), [{ value: f.id }, { value: extra }]);
+  const official = await f.policy.approve(f.proposal);
+  f.reads.publicMintPermit = async () => ({ source, funding: f.funding, permit: { digest: f.digest } });
+  const selected = await f.policy.approve({ ...f.proposal, id: extra });
+  assert.ok(official.slots.includes(`mint/block/${f.asset}/${f.block}`));
+  assert.ok(selected.slots.includes(`mint/block/${f.asset}/${f.block}/${deployment}`));
+  assert.equal(official.slots.some(slot => selected.slots.includes(slot)), false);
+});

@@ -270,3 +270,21 @@ test('public list stops labeling linked plots holder-only exactly at the open-mi
   assert.equal(f.mints.state('p2:0', '100').bitmapHolderOnly, false);
   assert.equal(f.mints.list(new URLSearchParams({ asset: 'p2:0' })).rows[0].bitmapHolderOnly, false);
 });
+
+
+test('public block detail and list distinguish an additional ticker pending or completed mint from the official ticker', async t => {
+  const f = await fixture(t, false, r.PER_TICKER_SUPPLY_HEIGHT), block = '100'; await f.occurrence(block);
+  const deployment = r.hash('read-extra') + 'i0', generation = r.hash('read-generation'), id = r.hash('read-mint');
+  await f.store.transact([
+    { space: 'accountRecords', id: 'fd/external/' + r.hashObject(deployment), value: generation },
+    { space: 'accountRecords', id: 'fd/' + generation, value: { asset: f.asset, deployment, official: 'official-generation' } },
+    { space: 'accountRecords', id: r.capacityPlotKey(f.asset, block, deployment), value: id },
+    { space: 'accountRecords', id: 'dc/' + id, value: { state: 'reserved', asset: f.asset, plot: block, supplyScope: deployment } }
+  ]);
+  const chosen = () => f.mints.state(f.asset, block, undefined, deployment);
+  assert.equal(chosen().state, 'block_pending'); assert.equal(f.mints.state(f.asset, block).state, 'public');
+  assert.equal(f.mints.list(new URLSearchParams({ asset: f.asset, deployment })).rows.length, 0);
+  assert.equal(f.mints.list(new URLSearchParams({ asset: f.asset })).rows.length, 1);
+  await f.store.put('accountRecords', 'dc/' + id, { state: 'minted', asset: f.asset, plot: block, supplyScope: deployment });
+  assert.equal(chosen().state, 'already_minted'); assert.equal(f.mints.state(f.asset, block).state, 'public');
+});

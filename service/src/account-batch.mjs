@@ -62,9 +62,14 @@ export class AccountExecution {
       else if (a.type === 'craft') for (const [asset] of [...a.in, ...a.out]) balance(a.owner, asset, true);
       else if (['credit', 'transfer', 'reserve', 'lock'].includes(a.type)) {
         balance(a.owner, a.asset, a.type === 'credit'); if (a.type === 'transfer') balance(a.to, a.asset);
-      } else if (['consume', 'refund'].includes(a.type)) {
+      } else if (a.type === 'snapshot-supply') {
+        const obligation = await this.getAsync('ao/' + a.id) ?? actions.find(row => row.type === 'reserve' && row.id === a.id);
+        if (!obligation) throw Error('obligation_missing');
+        supplyKeys.add(accountKey('supply', obligation.asset));
+      } else if (['consume', 'refund', 'release-mint'].includes(a.type)) {
         const obligation = await this.getAsync('ao/' + a.id); if (!obligation) throw Error('obligation_missing');
-        balance(obligation.owner, obligation.asset, a.type === 'consume');
+        const capacity = a.type === 'consume' && await this.getAsync('dc/' + a.id);
+        balance(obligation.owner, obligation.asset, a.type === 'consume' && !rules.mintRetainsUnits(capacity));
       } else if (['claim-lock', 'refund-lock'].includes(a.type)) {
         const lock = await this.getAsync('al/' + a.id); if (!lock) throw Error('account_lock_missing');
         for (const [asset] of lock.assets ?? [[lock.asset, lock.amount]]) {
@@ -94,7 +99,7 @@ export class AccountExecution {
       operation = { ...operation, sequence: funding.sequence, previous: funding.root, revision: usage.revision,
         proof: this.availability.prove(usage.root, operation.items.map(i => accountKey('payment', i.key))) };
     }
-    await applyPaymentPage(this.adapter(), operation, { network: this.document.network, height: this.height, settings: this.settings,
+    await applyPaymentPage(this.adapter(), operation, { network: this.document.network, height: this.height, executionHeight: this.executionHeight, settings: this.settings,
       capture: (root, proof, replacements) => this.availability.update(root, proof, replacements, this.settings) });
     this.assetTouches += operation.proof?.leaves.length ?? 0;
     this.operations.push(operation); return operation;

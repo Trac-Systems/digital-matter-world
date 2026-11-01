@@ -38,8 +38,8 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
       check(publicClaims && preparePublicMint, 'public_claim_projection_required');
       const { pattern, asset } = rules.publicPatternForAsset(publicClaims.patterns, transition.asset);
       check(asset === transition.asset, 'public_claim_asset');
-      await preparePublicMint(asset, transition.block);
-      evidence = { ...evidence, claim: rules.publicScanClaim({ ...publicClaims, pattern, asset, block: transition.block }) };
+      await preparePublicMint(asset, transition.block, transition.deployment);
+      evidence = { ...evidence, claim: rules.publicScanClaim({ ...publicClaims, pattern, asset, block: transition.block, deployment: transition.deployment }) };
     }
     const input = { transition, evidence };
     if (reads.financialChainAnchor && transition.type !== 'beacon-recovery' && !transition.action?.type?.startsWith('recovery-')) input.chainAnchor = await reads.financialChainAnchor({ at, prior: await execution.getAsync('fp/chain'), ethereum: evidence.ethereumAnchor });
@@ -116,7 +116,7 @@ export class FinancialExecution {
       const key = capacityKey(capacity.deployment), pending = BigInt(this.store.get('financialAdmissionCapacity', key) ?? '0');
       const accepted = BigInt(this.store.get('accountRecords', key) ?? '0') + imported;
       check(pending + accepted + BigInt(capacity.amount) <= BigInt(capacity.remaining), 'financial_capacity_reserved', 409);
-      const plot = capacity.block === null ? null : plotKey(capacity.asset, capacity.block);
+      const plot = capacity.block === null ? null : plotKey(capacity.asset, capacity.block, capacity.supplyScope);
       check(!plot || !this.store.get('financialAdmissionPlot', plot), 'financial_plot_reserved', 409);
       writes.push({ space: 'financialAdmissionCapacity', id: key, value: (pending + BigInt(capacity.amount)).toString() },
         ...(plot ? [{ space: 'financialAdmissionPlot', id: plot, value: id }] : []));
@@ -173,7 +173,7 @@ export class FinancialExecution {
     if (admission.capacity) {
       const c = admission.capacity, key = capacityKey(c.deployment), n = (capacities.get(key) ?? BigInt(this.store.get('financialAdmissionCapacity', key))) - BigInt(c.amount);
       check(n >= 0n, 'financial_admission_accounting'); capacities.set(key, n);
-      release.push({ space: 'financialAdmissionCapacity', id: key, value: n.toString() }, ...(c.block === null ? [] : [{ space: 'financialAdmissionPlot', id: plotKey(c.asset, c.block) }]));
+      release.push({ space: 'financialAdmissionCapacity', id: key, value: n.toString() }, ...(c.block === null ? [] : [{ space: 'financialAdmissionPlot', id: plotKey(c.asset, c.block, c.supplyScope) }]));
     }
     return release;
   }
@@ -204,7 +204,7 @@ export class FinancialExecution {
       const store = args.accountStore ?? this.store;
       const input = { settings: { document: this.document }, executionHeight: args.height };
       const publicReaders = publicClaimReaders({ input, store, claimNodes: new Map(),
-        publicMintRead: (asset, block) => readPublicWinner({ store, reads: this.reads, at: args.at }, asset, block) });
+        publicMintRead: (asset, block, deployment) => readPublicWinner({ store, reads: this.reads, at: args.at }, asset, block, deployment) });
       args = { ...args, preparePublicMint: publicReaders.prepare,
         publicClaims: rules.publicClaimProjection({ state: store.get('meta', 'ruleState') }, input, publicReaders.readers) };
     }

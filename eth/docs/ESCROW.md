@@ -15,7 +15,9 @@ The committee address represents a secp256k1 threshold key. The contract verifie
 one ordinary ECDSA signature; the external signing system enforces the 3-of-5
 threshold. It does not verify Bitcoin transactions or prove that a mint happened.
 For mint payments, the committee verifies the request and fixed split before release.
-Release must be final before Trac units are consumed and a permit is issued.
+Release must be final before a permit is issued. Official mints consume Trac
+units; after independent-supply activation, additional tickers hold them until
+verified mint completion or refund.
 A valid committee signature suffices for a live payment's fixed split; the escrow
 does not separately check delivery. This applies to replacement committees too.
 
@@ -250,8 +252,10 @@ the recipients or amounts. The service has no Ethereum transaction sender.
 
 An open deposit only pins the Trac reservation. It remains refundable at its
 Ethereum deadline and cannot authorize a permanent permit. After release and all
-its items have one confirmation, Trac consumes the units exactly once and the
-committee signs the receiver-bound permit. The player inscribes from their own
+its items have one confirmation, the committee signs the receiver-bound permit.
+Official mints consume the units exactly once; after independent-supply
+activation, additional pattern and compound tickers retain their hold until
+verified mint completion or refund. The player inscribes from their own
 Bitcoin wallet whenever ready. A refunded deposit never produces a permit.
 The service never pays a refund or inscription fee on the player's behalf.
 

@@ -55,7 +55,7 @@ The receiver and TAP payer are your agent's verified, bound TAP payout address,
 shown at the top. Complete `bind_payout_wallet` first if no binding is present.
 During the finder's week only the finder mints; afterwards any agent can.
 Bitmap holders earn 15% of every mint on their plot. Agents need enough units
-of that asset to mint. Minting spends the required units. `transfer` submits unit authorizations after the public-mint settings activation; see
+of that asset to mint. Minting the official ticker spends the required units. After the per-ticker supply activation, an additional pattern ticker holds the same units until mint completion or refund, then releases them. `transfer` submits unit authorizations after the public-mint settings activation; see
 [unit transfers](docs/ACTIONS.md#unit-transfers-on-v2). Unclaimed blocks use a separate website flow.
 All mint requests still pass shared validation and accepted reservation.
 
@@ -570,7 +570,9 @@ The flow is:
    missing items with a locally signed token-auth redeem. Amounts stay exact. Any share owed to the payer stays in their wallet and is
    omitted from `fees`; `fullFees` shows the original split.
 3. `poll_mint {id,timeoutMs?}` waits up to 120 seconds. When payment is final,
-   the committee consumes the reserved Trac units once and issues the permit.
+   the committee issues the permit. Official mints consume the reserved units;
+   after independent-supply activation, additional tickers keep them held until
+   verified mint completion or refund.
 4. `inscribe_mint {id,maxFeeSats,feeRate?}` builds the commit/reveal to
    the player's address.
 5. Poll again until the **indexer**, not the broadcast response, reports `minted`.
@@ -655,7 +657,8 @@ The client stops a quote explicitly requiring a native burn item instead of
 substituting a different payment.
 
 Payment precedes the permit. Paid fees are not refunded by us. A permit has no
-expiry because its Trac units have already been consumed. A new quote does not
+expiry; its Trac units have either been consumed for the official ticker or
+remain held for an additional ticker until verified mint completion. A new quote does not
 justify spending units reserved by an unresolved earlier request.
 
 Build the checked-in browser module with `npm run build:player-wallet`. Run
@@ -771,4 +774,4 @@ it needs no wallet signing or payment. Mint admission independently
 rechecks the named ownership evidence. Follow `next` / `nextCursor` even when
 an indexed work page is empty; `total:null` means no exact total was computed.
 
-After coordinated multi-ticker activation, `dmw deploy-ticker ASSET TICKER --config FILE` previews an additional ticker. Use `--live` to prepare it and review the fee; `deploy_ticker` and `report_ticker_payment` expose the same actions through MCP. Pattern and compound mints accept an optional deployment choice, defaulting to official. All choices share the same asset supply. Full workflow and refund funding: [docs/ACTIONS.md](docs/ACTIONS.md#additional-tap-tickers).
+After coordinated multi-ticker activation, `dmw deploy-ticker ASSET TICKER --config FILE` previews an additional ticker. Use `--live` to prepare it and review the fee; `deploy_ticker` and `report_ticker_payment` expose the same actions through MCP. Pattern and compound mints accept an optional deployment choice, defaulting to official. After independent-supply activation, each pattern or compound ticker has its own full supply. Each pattern block can be minted once into each ticker; each compound ticker is capped by the total units ever produced of that compound. Additional tickers hold units and release them on verified completion or refund. Full workflow and refund funding: [docs/ACTIONS.md](docs/ACTIONS.md#additional-tap-tickers).

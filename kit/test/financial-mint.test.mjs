@@ -137,3 +137,22 @@ test('ticker tool dry run never requests a fee or inscribes and read choices use
   const result = await tool.run(tool.schema.parse({ asset: 'p2:1', ticker: 'chosen' }));
   assert.equal(result.state, 'dry-run'); assert.equal(result.sent, false);
 });
+
+
+test('active additional ticker mint uses its own candidate and refuses a candidate from another ticker', async t => {
+  const directory = await temp(t), network = 'dmw-kit-test', wallet = testWallet();
+  const { PER_TICKER_SUPPLY_HEIGHT } = await import('../../rules/src/index.js');
+  const settings = settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '20', values: SETTINGS_PROFILE });
+  const context = { settings, settingsHash: hashObject(settings) }, deployment = 'd'.repeat(64) + 'i0';
+  const journal = await Journal.open(directory, network, { intervalMs: 0 }); cleanup(t, () => journal.close());
+  const service = { network, mintQuote: async input => { assert.equal(input.deployment, deployment); return { feeQuote: { settingsHash: context.settingsHash, deploymentId: deployment } }; } };
+  const agent = new Agent({ wallet, network, service, journal, dryRun: true, trac: { network, head: async () => ({ counted: PER_TICKER_SUPPLY_HEIGHT }) } });
+  const intent = { asset: 'p2:0', block: '1', amount: '3', receiver: 'receiver', payer: 'payer', kind: 'tap', deployment };
+  const candidate = { deployment, minted: false, pending: null,
+    find: { asset: intent.asset, block: '1', count: '3', finder: agent.owner, findHeight: '10', finderUntil: '20', settingsHash: context.settingsHash } };
+  const result = await makeFinancialMint(agent, intent, 'additional', candidate, context);
+  assert.equal(result.state, 'dry-run'); assert.equal(result.request.deployment, deployment);
+  await assert.rejects(makeFinancialMint(agent, intent, 'wrong', { ...candidate, deployment: undefined }, context), /Mint candidate deployment mismatch/);
+  for (const flags of [{ minted: true }, { pending: { id: 'pending' } }])
+    await assert.rejects(makeFinancialMint(agent, intent, 'duplicate', { ...candidate, ...flags }, context), /Mint right unavailable/);
+});

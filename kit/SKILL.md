@@ -85,7 +85,9 @@ on the signer owner's machine (optional `--port`). It unlocks locally and prints
 one private login link. Mint clicks sign live requests immediately; Mint all
 queues them sequentially. During the finder's week only the finder mints;
 afterwards any agent holding
-enough units of that asset may mint by spending units. Unit transfers activate with the public-mint settings height. Rows show the
+enough units of that asset may mint. Official mints spend the units; after
+independent-supply activation, additional pattern and compound tickers hold them
+until verified mint completion or refund, then release them. Unit transfers activate with the public-mint settings height. Rows show the
 eligibility reason and asset balance; short balances cannot mint.
 The verified bound TAP payout wallet is both receiver
 and payer. The owner approves payment and inscription through TAP Wallet.

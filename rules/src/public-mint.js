@@ -1,3 +1,4 @@
+import { perTickerSupplyActive } from './per-ticker-supply-activation.js';
 import { assert, hashObject, hex } from './core.js';
 import { decimalV2, uintV2 } from './integers-v2.js';
 
@@ -31,8 +32,18 @@ export const discovererWeekEnd = (pattern, settings) => claimDeadline(pattern, 0
 export function assertClaimOpen({ pattern, block, height, settings }) {
   if (publicMintActive(settings, height) && !claimsNeverCloseActive(settings, height)) assert(BigInt(decimalV2(height)) < BigInt(claimDeadline(pattern, block, settings)), 'claim_deadline');
 }
-export function publicBlockRight({ pattern, block, height, settings, find, reserved, headerAward, minted }) {
+export function publicBlockRight({ pattern, block, height, settings, find, reserved, headerAward, minted, executionHeight = height }) {
   assert(publicMintActive(settings, height), 'public_mint_inactive');
+  if (perTickerSupplyActive(executionHeight)) {
+    if (minted) return { state: 'already_minted' };
+    if (find) {
+      const until = find.finderUntil ?? String(BigInt(decimalV2(find.findHeight)) + BigInt(publicMintValues(settings).finderWindow));
+      return BigInt(decimalV2(height)) < BigInt(until) ? { state: 'finder', finderUntil: until } : { state: 'public' };
+    }
+    if (reserved && !reserved.publicMint || headerAward) return { state: 'claimed' };
+    const publicFrom = claimDeadline(pattern, block, settings);
+    return BigInt(decimalV2(height)) < BigInt(publicFrom) ? { state: 'not_yet_public', publicFrom } : { state: 'public' };
+  }
   if (claimsNeverCloseActive(settings, height)) {
     if (minted || reserved?.publicMint) return { state: 'already_minted' };
     if (find || reserved || headerAward) return { state: 'claimed' };
@@ -45,7 +56,8 @@ export function publicBlockRight({ pattern, block, height, settings, find, reser
   if (find || reserved || headerAward) return { state: 'claimed', claimDeadline: deadline };
   return { state: BigInt(decimalV2(height)) < BigInt(deadline) ? 'claim_window_open' : 'public', claimDeadline: deadline };
 }
-export const publicPlotId = (asset, block) => hashObject(['dmw-public-plot-v1', asset, decimalV2(block)]);
+export const publicPlotId = (asset, block, scope = null) => hashObject(scope
+  ? ['dmw-public-plot-v2', asset, decimalV2(block), scope] : ['dmw-public-plot-v1', asset, decimalV2(block)]);
 export const publicRequestId = (network, intent) => hashObject(['dmw-public-request-v1', network, intent]);
 export function paymentOrder(a, b) {
   for (const key of ['height', 'transactionIndex', 'inscriptionIndex']) {

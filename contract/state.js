@@ -286,7 +286,7 @@ export class StateTransition {
       if (version?.version !== 2) return 'account_v2_inactive';
       budget.assets += op.proof?.leaves?.length ?? 0;
       if (budget.assets > settings.batch_assets) return 'batch_assets';
-      try { await applyPaymentPage(this, op, { network: this.options.network, height, settings: version.settings }); return null; }
+      try { await applyPaymentPage(this, op, { network: this.options.network, height, executionHeight, settings: version.settings }); return null; }
       catch (error) { return error.message; }
     }
     if (op.op === 'mx') {

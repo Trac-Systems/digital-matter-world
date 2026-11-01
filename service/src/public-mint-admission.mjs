@@ -19,7 +19,7 @@ export function publicMintClientIP(req) {
 export function openPublicMint(store, row, height) {
   if (!row?.publicMint || row.permit || BigInt(height) > BigInt(row.expiry) ||
       ['expired', 'minted', 'refundable', 'cancelled', 'rejected'].includes(row.state)) return false;
-  const scan = store.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block)));
+  const scan = store.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block, row.intent?.supplyScope ?? row.request.supplyScope)));
   return !scan?.winner && store.count('publicMintRefundsByRequest/' + row.id) === 0;
 }
 

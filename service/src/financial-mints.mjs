@@ -103,12 +103,14 @@ export class FinancialMints extends Mints {
     const capacity = this.store.get('accountRecords', 'dc/' + id), external = funding?.capacity;
     const blocked = financialBlock(this.store, ['fp/' + id, 'ao/' + id, 'dc/' + id, 'fp/usage',
       ...(capacity ? ['fd/' + capacity.deployment] : []), ...(external ? [capacityKey(external.deployment),
-        'fi/deployment/' + external.deployment, ...(external.block === null ? [] : [plotKey(external.asset, external.block)])] : [])]);
+        'fi/deployment/' + external.deployment, ...(external.block === null ? [] : [plotKey(external.asset, external.block, external.supplyScope)])] : [])]);
     const status = { ...publicMint(row), financialVersion: 2, state: row.state,
       payable: !blocked && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
       // The reported, not yet confirmed mint inscription: every page hides a second inscribe.
       ...(row.mintInscription && row.state !== 'minted' ? { sentInscription: row.mintInscription } : {}),
-      reservation: obligation?.state ?? 'pending', funding: funding ? { state: funding.state, paid: funding.paid, sequence: funding.sequence, root: funding.root } : null,
+      ...(rules.mintRetainsUnits(capacity) ? { unitsConsumed: false,
+        unitsHeld: !!obligation && !obligation.unitsReleased && ['reserved', 'consumed'].includes(obligation.state) } : {}),
+      reservation: rules.mintRetainsUnits(capacity) && obligation?.state === 'consumed' ? obligation.unitsReleased ? 'released' : 'held' : obligation?.state ?? 'pending', funding: funding ? { state: funding.state, paid: funding.paid, sequence: funding.sequence, root: funding.root } : null,
       ...(row.work ? { transition: { id: row.work, state: this.store.get('financialAccepted', row.work)?.state ?? 'queued',
         reason: this.store.get('financialDeferred', row.work)?.reason ?? null } } : {}) };
     return this.mintSender?.decorate(row, status) ?? status;
@@ -326,7 +328,8 @@ export class FinancialMints extends Mints {
       const signed = await this.committee.signature('mint/' + row.id, { network: this.network, kind: 'mint', version: 2, request: row.request, signature: row.signature, receiver: row.receiver });
       if (!signed) return;
       check(signed.payload?.prv?.hash === p.permit.digest && signed.payload.prv.address === row.receiver, 'financial_permit_binding');
-      await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, permit: signed.payload, unitsConsumed: true, state: 'permit_issued', missing: [] } },
+      await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, permit: signed.payload,
+        unitsConsumed: !rules.mintRetainsUnits(this.store.get('accountRecords', 'dc/' + row.id)), state: 'permit_issued', missing: [] } },
         { space: 'financialPermitDelivery', id: row.id, value: { digest: p.permit.digest, session: signed.session } },
         { space: 'financialActiveMints', id: row.id }, { space: ownerSpace(row.request.owner), id: row.id }, { space: 'financialIssuedMints', id: row.id, value: true }]); return;
     }

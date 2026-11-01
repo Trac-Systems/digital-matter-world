@@ -69,6 +69,17 @@ test('ticker payment quote, wallet items, confirmation and completion use the si
   await assert.rejects(f.payments.refuse(input.id, 'ticker_taken', f.at), /ticker_payment_terminal/);
 });
 
+test('a confirmed ticker fee counts when the inclusion read reports decimal-string confirmations (mainnet heights)', async t => {
+  const f = await fixture(t), { input } = await f.request();
+  const included = f.reads.included;
+  f.reads.included = async (...args) => { const r = await included(...args); return r && { ...r, height: String(r.height), confirmations: String(r.confirmations) }; };
+  const reference = f.pay(input.id);
+  assert.equal((await f.payments.payment({ id: input.id, paymentIds: [reference] }, f.at)).state, 'paid');
+  const verified = await verifyTickerDeployPayment(f.reads, f.store.get('tickerPayments', input.id), f.at, f.options);
+  assert.equal(verified.final, true);
+  assert.ok(verified.receipts.every(r => r.confirmations === 2));
+});
+
 test('deploy fee admission is gated by execution height and rejects occupied or official names before payment', async t => {
   const f = await fixture(t);
   const before = { ...f.at, executionHeight: String(BigInt(rules.MULTI_TICKER_HEIGHT) - 1n) };

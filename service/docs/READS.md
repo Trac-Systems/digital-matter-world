@@ -161,8 +161,11 @@ lookup hints. The readers verify payment independently. `GET /mint/REQUEST_ID`
 returns `awaiting_payment`, `partly_paid`, `paid`, `permit_issued`, `minted` or
 `expired`, plus missing items. Seen payment holds the units. Late payment either
 re-reserves available units or becomes matching same-owner/payer/rail credit.
-After final payment, the accepted Trac operation consumes units once and the
-committee signs a permanent receiver-bound permit. `permit`, `mintContent` and
+After final payment, the committee signs a permanent receiver-bound permit.
+Official mints consume units once. After independent-supply activation,
+additional pattern and compound mints keep units held until verified completion
+or refund; their status reports `unitsConsumed:false`, `unitsHeld` and
+`reservation:"held"` or `"released"`. `permit`, `mintContent` and
 `inscriptionText` remain retrievable. Submitting `inscription` to the payment
 route adds an indexer lookup hint; it never triggers a second unit debit.
 

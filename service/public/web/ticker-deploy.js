@@ -9,6 +9,7 @@ import { site } from './console/js/api.js';
 import { walletError } from './console/js/wallet-errors.js';
 import { TapWalletMint, BrowserMintJournal, tapWalletCapabilities } from './console/js/inscribe/wallet.js';
 import { tickerWords, quoteFeeText, chosenTicker, forgetTickers, SAME_REWARDS } from './console/js/tickers.js';
+import { scriptText } from './console/js/inscribe/public.js';
 
 // Protocol responses keep their network fields; the display adapter strips them.
 async function api(path, body) {
@@ -32,10 +33,10 @@ export function tickerPage(root, { asset, id }) {
   const actions = h('div.row.actions'), note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
   const say = (text, kind = '') => { note.className = 'callout' + (kind ? ' ' + kind : ''); clear(note, text); };
   root.append(h('div.page', {}, h('div.page-head', {}, h('h1', {}, 'Deploy your own ticker')),
-    h('p.lead-text', {}, `Your ticker is another TAP token for ${compound ? 'this compound' : 'this pattern'}. It shares the units of the official token: a unit minted into one ticker cannot be minted into another. Every mint into your ticker pays the same rewards, plus a share to whoever holds your deploy inscription.`),
+    h('p.lead-text', {}, `Your ticker is another TAP token for ${compound ? 'this compound' : 'this pattern'}. It can mint the full supply independently of every other ticker. Every mint into your ticker pays the same rewards, plus a share to whoever holds your deploy inscription.`),
     h('div.flow', {}, progress, h('div.grid.cols-main', {},
       h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions)), body), side))));
-  let stopped = false, busy = false, timer, target, wallet, job, lastRegister = 0, lastInflight = 0;
+  let stopped = false, busy = false, timer, target, wallet, job, lastRegister = 0, lastInflight = 0, lastLookup = 0;
   const journal = new BrowserMintJournal();
   const attempt = async (fn, clicked) => {
     if (busy || stopped) return; busy = true;
@@ -65,10 +66,30 @@ export function tickerPage(root, { asset, id }) {
     try { await api('/mint/ticker-payment', { id, paymentIds: [paymentId] }); }
     catch (error) { if (!/payment|confirm|unconfirmed|request_pending|request_failed/.test(error.message)) throw error; }
   };
+  // TAP Wallet's receipt names the payment's funding transaction, not the redeem inscription the fee is
+  // counted by. Find that inscription from this browser's wallet record, else on Bitcoin by this request's
+  // fee data (a payment sent from another browser). The gateway verifies whatever is reported.
+  const walletSent = async () => (await journal.get(`${target.bitcoinNetwork}/${job.receiver}/ticker/${id}`))?.payment;
+  const sentPayment = async () => {
+    const own = await wallet.paymentInscription('ticker/' + id, job.receiver).catch(() => null);
+    if (own) return own;
+    const markers = (job.fee?.fees ?? []).map(f => f.dta).filter(d => typeof d === 'string' && d.startsWith('dmw-ticker-pay-v1|'));
+    if (!markers.length || !job.receiver || target.bitcoinNetwork === 'regtest') return null;
+    const response = await fetch('https://mempool.space' + (target.bitcoinNetwork === 'mainnet' ? '' : '/' + target.bitcoinNetwork) + '/api/address/' +
+      encodeURIComponent(job.receiver) + '/txs', { redirect: 'error', signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (!response?.ok) return null;
+    for (const tx of await response.json()) {
+      const script = tx.status?.confirmed && tx.vin?.[0]?.witness?.find(w => w.length > 200);
+      if (script && markers.some(marker => scriptText(script).includes(marker))) return tx.txid + 'i0';
+    }
+    return null;
+  };
+  const found = async paymentId => { await journal.put(paidKey(), { paymentId, oneApproval: job.oneApproval === true }); await report(paymentId); };
 
   const draw = async () => {
     const registered = job.state === 'registered', fee = job.fee, free = !fee || BigInt(fee.price ?? 0) === 0n;
     const ticker = job.ticker ?? job.entry?.tick, receipt = await journal.get(receiptKey()), paid = await journal.get(paidKey());
+    const sent = !paid?.paymentId && PAY_STATES.includes(job.fee?.state) ? await walletSent() : null;
     if (stopped) return;
     // A payment this browser sent without the set-aside (an older wallet) keeps the two steps.
     const one = !free && job.oneApproval === true && paid?.oneApproval !== false && !receipt, funding = fee?.refundFunding;
@@ -83,9 +104,9 @@ export function tickerPage(root, { asset, id }) {
     } else if (job.state === 'awaiting_fee' && PAY_STATES.includes(fee?.state)) {
       lead.append(h('div', {}, h('div.small.muted', {}, fee.state === 'partly_paid' ? 'Remaining deploy fee' : 'Deploy fee'), h('div.price', {}, quoteFeeText(fee))));
       if (one && funding?.deploySats) lead.append(h('div', {}, h('div.small.muted', {}, 'Bitcoin for the deploy inscription'), h('div.mono', {}, `${fmtInt(funding.deploySats)} sats`)));
-      if (paid?.paymentId) lead.append(h('div.callout.info', {}, one ? AUTO_SENT + ' This page updates by itself.' : 'Fee sent. It is credited once Bitcoin confirms it; this page reports it and updates by itself.'));
+      if (paid?.paymentId || sent?.state === 'submitted') lead.append(h('div.callout.info', {}, one ? AUTO_SENT + ' This page updates by itself.' : 'Fee sent. It is credited once Bitcoin confirms it; this page reports it and updates by itself.'));
       else if (fee.payable) next.push(button(one ? 'Pay & deploy' : 'Pay deploy fee', pay, 'primary'));
-      if (fee.state === 'awaiting_payment' && !paid?.paymentId) next.push(button('Cancel request', cancel, 'quiet'));
+      if (fee.state === 'awaiting_payment' && !paid?.paymentId && sent?.state !== 'submitted') next.push(button('Cancel request', cancel, 'quiet'));
     } else if (job.state === 'awaiting_fee' && fee?.state === 'paid' || job.state === 'awaiting_fee' && free) {
       lead.append(h('div.callout.busy', {}, one ? AUTO_SENT + ' This page updates by itself.' : 'Fee paid. Your deploy inscription is being prepared; this page updates by itself.'));
     } else if (job.state === 'awaiting_player_deploy') {
@@ -129,6 +150,10 @@ export function tickerPage(root, { asset, id }) {
     ]), { flush: true }));
     // A sent fee or inscription is reported again until it counts.
     if (paid?.paymentId && PAY_STATES.includes(fee?.state) && Date.now() - lastRegister > 30000) { lastRegister = Date.now(); void report(paid.paymentId).catch(() => {}); }
+    else if (!paid?.paymentId && PAY_STATES.includes(fee?.state) && Date.now() - lastLookup > 30000) {
+      lastLookup = Date.now();
+      void sentPayment().then(async paymentId => { if (paymentId && !stopped) { await found(paymentId); await refresh(); } }).catch(() => {});
+    }
     if (receipt && job.state === 'awaiting_player_deploy' && job.inflight?.revealTxid !== receipt.inscriptionId.slice(0, 64) && Date.now() - lastInflight > 30000)
       void reportInflight({ revealTxid: receipt.inscriptionId.slice(0, 64), inscriptionId: receipt.inscriptionId });
     if (receipt && job.state === 'awaiting_player_deploy' && Date.now() - lastRegister > 30000) void register(receipt.inscriptionId).then(() => refresh()).catch(error => { if (!stopped) say(TICKER_ERROR(error), 'bad'); });
@@ -145,7 +170,8 @@ export function tickerPage(root, { asset, id }) {
     let result = await wallet.payTickerFee(job);
     if (result.retryable && await confirmModal({ title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if your wallet shows no sent payment for this ticker.', rows: [], confirm: 'Retry payment' })) result = await wallet.payTickerFee(job, { retry: true });
     if (result.localState === 'payment_pending') throw Error(result.message);
-    if (/^[0-9a-f]{64}i[0-9]+$/.test(result.paymentId ?? '')) { await journal.put(paidKey(), { paymentId: result.paymentId, oneApproval: one }); await report(result.paymentId); }
+    const paymentId = /^[0-9a-f]{64}i[0-9]+$/.test(result.paymentId ?? '') ? result.paymentId : await sentPayment().catch(() => null);
+    if (paymentId) { await journal.put(paidKey(), { paymentId, oneApproval: one }); await report(paymentId); }
     await refresh();
   }
   async function cancel() {

@@ -62,7 +62,7 @@ export class Policy {
       context = { ...context, counted };
     const approval = await this.replayBatch(this.network, proposal, { ...context, authority,
       replayNodes: this.reads.replayNodes?.bind(this.reads), claimNode: this.reads.claimNode?.bind(this.reads), namedNode: this.reads.namedNode?.bind(this.reads),
-      publicMintGet: (asset, block) => readPublicWinner(this.reads, asset, block, { counted: context.counted, last: context.last }),
+      publicMintGet: (asset, block, deployment) => readPublicWinner(this.reads, asset, block, { counted: context.counted, last: context.last }, deployment),
       publicMintBatch: pairs => readPublicWinners(this.reads, pairs, { counted: context.counted, last: context.last }) });
     await verifyPublicMintEvidence(approval.files, this.reads, { counted: context.counted, last: context.last });
     this.receiptFences?.checkBatch(proposal.batch, approval.files, context.renewal);
@@ -144,7 +144,7 @@ export class Policy {
       await verifyPublicPermit({ reads: this.reads, source, funding, permit: p, id: proposal.id, at });
       check(source.receiver === proposal.receiver && source.deployment.privilegePublicKey === this.publicKey &&
         equal(at, await this.reads.batchStamp()), 'public_permit_binding');
-      return { digest: p.digest, slots: [`mint/request/${proposal.id}`, `mint/block/${source.asset}/${source.request.block}`],
+      return { digest: p.digest, slots: [`mint/request/${proposal.id}`, 'mint/block/' + rules.mintPlotKey(source.asset, source.request.block, source.capacity?.supplyScope)],
         details: { version: 'public-v1', id: proposal.id, receiver: source.receiver, request: source.request, intent: source.intent,
           payment: { kind: 'tap', commitment: funding.consumedRoot }, deployment: source.deployment, permit: p }, permit: p };
     }
@@ -157,7 +157,7 @@ export class Policy {
       check(equal(at, await this.reads.batchStamp()), 'financial_snapshot_changed');
       const details = { version: 2, id, request: row.request, signature: row.signature, receiver: row.receiver, deployment: source.deployment,
         payment: { kind: row.kind, commitment: financialPaymentHash(funding) }, permit: p, commissions: [] };
-      return { digest: p.digest, slots: [`mint/request/${id}`, ...(source.deployment.kind === 'dmt' ? [`mint/block/${row.request.asset}/${row.request.block}`] : [])], details, permit: p };
+      return { digest: p.digest, slots: [`mint/request/${id}`, ...(source.deployment.kind === 'dmt' ? ['mint/block/' + rules.mintPlotKey(row.request.asset, row.request.block, source.capacity?.supplyScope)] : [])], details, permit: p };
     }
     const plan = await paidMintPlan({ reads: this.reads, bitcoinNetwork: this.bitcoinNetwork, network: this.network, publicKey: this.publicKey, confirmations: this.confirmations, request: proposal.request, signature: proposal.signature, receiver: proposal.receiver, consumed: true });
     const { details, permit: p } = plan;

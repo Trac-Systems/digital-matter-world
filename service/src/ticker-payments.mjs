@@ -58,13 +58,15 @@ export async function verifyTickerDeployPayment(reads, row, at, options) {
   const document = await reads.financialSettings(quote.settingsHash);
   check(typeof reads.withTapSnapshot === 'function', 'ticker_snapshot_required');
   const pageSize = Math.min(document.values.paymentPage, lookupLimits(options.lookupSettings).paymentIds);
-  const receipts = await reads.withTapSnapshot(at, async () => {
+  const receipts = (await reads.withTapSnapshot(at, async () => {
     const result = [];
     // Page explicit references; no lifetime cap can strand partial payments.
     for (let offset = 0; offset < references.length; offset += pageSize)
       result.push(...await tapReceipts(reads, row, references.slice(offset, offset + pageSize), options.lookupSettings, { at, confirmedOnly: true }));
     return result;
-  });
+  // Mainnet inclusion reads count confirmations from decimal-string heights; fee progress counts whole numbers.
+  })).map(receipt => typeof receipt.confirmations === 'string' && /^(0|[1-9][0-9]{0,14})$/.test(receipt.confirmations)
+    ? { ...receipt, confirmations: Number(receipt.confirmations) } : receipt);
   const progress = rules.paymentProgress(quote.fees, receipts);
   return { requestId: row.id, settingsHash: quote.settingsHash, quote, receipts, ...progress,
     paymentHash: rules.paymentCommitment(progress.allocations) };

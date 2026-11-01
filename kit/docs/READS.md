@@ -142,3 +142,15 @@ Each row contains `ticker`, bare `tick`, string `ordinal`, `deploymentId`,
 Unknown current holder/capacity is null; these fields do not trigger history
 queries. Follow `next` as `after` to read further pages.
 `mint_quote` accepts optional `deployment`; omitted choices stay official.
+
+## Ticker-specific mint status
+
+After `PER_TICKER_SUPPLY_HEIGHT`, pass `deployment` (the immutable inscription id)
+with `asset` to `mint_rights`, a block's `mintRights`, or a pattern's
+`claimed-blocks` page to read that ticker's minted and pending status. Omission
+means the official ticker. `mint_on_chain`, `mint_quote` and `mint_idea` pass the
+same choice through candidate selection and quoting. Each pattern ticker has
+its own full supply and one mint per matching block. Each compound ticker
+can mint up to the total units ever produced of that compound. A new ticker does not
+restart the finder's original week. Ticker lists report each deployment's own
+accepted `unitsMinted` counter. Never subtract another ticker's mints from it.

@@ -132,8 +132,10 @@ compound prices use the greater of that multiplier and `compoundMinimum`.
 Check the request’s quote before paying. Existing requests keep their signed terms.
 
 The mint order is **quote → you pay → permit → you inscribe**. Once every fee
-item is final, your reserved Trac units are consumed once and the committee
-issues a permit bound to your Bitcoin address. The permit has no expiry. The
+item is final, the committee issues a permit bound to your Bitcoin address.
+Official mints consume the reserved Trac units. After independent-supply
+activation, additional pattern and compound tickers hold them until verified
+mint completion or refund, then return them to your balance. The permit has no expiry. The
 kit's `pay_mint`, `poll_mint` and `inscribe_mint` tools resume the saved request;
 the console uses your connected TAP Wallet. You pay the Bitcoin miner fees and,
 on Ethereum, deposit/release gas. Ethereum payment still requires a Bitcoin

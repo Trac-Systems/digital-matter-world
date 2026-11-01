@@ -337,3 +337,43 @@ test('your patterns: a new pattern without claims offers Deploy, a deployed one 
   assert.equal(f.calls.some(c => c.path.startsWith('/mint/deployment/') || c.method !== 'GET'), false);
   assert.equal(f.packets.length, 0);
 });
+
+
+test('your patterns: held units keep a pattern listed when its official blocks are all minted and another ticker exists', async t => {
+  const f = await dashboardFixture(t), { call, dashboard } = await start(t, f);
+  f.minted.add('11'); f.minted.add('12');
+  const official = { tick: 'dmwtest', ordinal: '1', deploymentId: 'a'.repeat(64) + 'i0' }, extra = { tick: 'tests', ordinal: '2', deploymentId: 'b'.repeat(64) + 'i0' };
+  let tickers = [official]; const asked = [];
+  f.service.assetTickers = async (asset, options) => { asked.push([asset, options]); return { rows: tickers, next: null }; };
+  const listed = async () => { dashboard.state.patternCache = null; return (await (await call('/api/patterns')).json()).patterns.map(p => [p.asset, p.token, p.claims, p.otherTickers ?? false]); };
+  // One ticker: nothing left to mint, so the pattern stays hidden as before.
+  assert.deepEqual(await listed(), []);
+  assert.deepEqual(asked, [['p2:1', { limit: 2 }]]);
+  // Another ticker can still mint every block: the row (and its Tickers choice) stays.
+  tickers = [official, extra];
+  assert.deepEqual(await listed(), [['p2:1', 'deployed', 0, true]]);
+  // Without units nothing can be minted into any ticker, and nothing more is read.
+  f.balances.set('p2:1', { amount: '0', current: true }); asked.length = 0;
+  assert.deepEqual(await listed(), []);
+  assert.deepEqual(asked, []);
+  // An open official claim lists the pattern as before, without a ticker read.
+  f.balances.set('p2:1', { amount: '100', current: true }); f.minted.delete('12');
+  assert.deepEqual(await listed(), [['p2:1', 'deployed', 1, false]]);
+  assert.deepEqual(asked, []);
+  assert.equal(f.packets.length, 0);
+});
+
+test('dashboard gives each ticker its own saved mint action and resumes its selected request', async t => {
+  const f = await dashboardFixture(t), { dashboard } = await start(t, f);
+  const { PER_TICKER_SUPPLY_HEIGHT } = await import('../../rules/src/index.js'); f.clock.counted = PER_TICKER_SUPPLY_HEIGHT;
+  const deployment = 'd'.repeat(64) + 'i0', candidates = f.context.candidates, quote = f.service.mintQuote.bind(f.service);
+  f.context.candidates = async (asset, options) => (await candidates(asset, options)).map(c => ({ ...c, ...(options.deployment ? { deployment: options.deployment } : {}) }));
+  f.service.mintQuote = async input => { const value = await quote(input); return { ...value,
+    feeQuote: { ...value.feeQuote, ...(input.deployment ? { deploymentId: input.deployment } : {}) } }; };
+  const slot = { asset: 'p2:1', block: '12' }, official = await dashboard.state.mint(slot), extra = await dashboard.state.mint({ ...slot, deployment });
+  assert.notEqual(official.requestId, extra.requestId); assert.equal(f.packets.length, 4);
+  assert.equal((await dashboard.state.mint(slot)).requestId, official.requestId);
+  assert.equal((await dashboard.state.mint({ ...slot, deployment })).requestId, extra.requestId); assert.equal(f.packets.length, 4);
+  const open = await dashboard.state.requests(); assert.equal(open.requests.find(r => r.requestId === extra.requestId).deployment, deployment);
+  assert.equal(f.journal.recent().filter(r => r.id.startsWith('mint/') && !r.id.endsWith('/reservation-v2')).length, 2);
+});

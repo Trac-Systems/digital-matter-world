@@ -283,7 +283,7 @@ test('the Mint page lists only the public blocks the API returns, with one Mint 
   assert.match(await list.locator('tbody tr').nth(2).innerText(), /Payment confirmed/);
   assert.equal(await list.locator('tbody tr').first().locator('td').first().getByRole('link').getAttribute('href'), '/pattern/p2:0');
   assert.equal(await list.locator('tbody tr').first().getByRole('link', { name: '151' }).getAttribute('href'), '/block/151');
-  await list.getByText('Blocks show up here once their 1-week finder window has passed without a claim.', { exact: true }).waitFor();
+  await list.getByText('For each ticker, eligible blocks appear here once their 1-week finder window has passed.', { exact: true }).waitFor();
   assert.ok(!calls.some(([, path]) => path.startsWith('/mint-rights')), 'no agent mint rights are read');
   assert.equal(await p.getByRole('heading', { name: 'What you can mint', exact: true }).count(), 0);
   assert.doesNotMatch(await p.locator('main').innerText(), /ask your agent to mint|Mint On-Chain/i);
@@ -316,6 +316,90 @@ test('a block opened from elsewhere shows its point-read state and mints only wh
     assert.doesNotMatch(await box.innerText(), /claim week|claim_window_open|already_minted|price/i);
   }
   assert.ok(calls.some(([, path]) => path === '/public-mints/p2:0/151'));
+});
+
+// The world block panel: every ticker of a pattern mints the block once, whatever the other tickers did.
+const finderKey = '22'.repeat(32), extraTicker = { tick: 'digits', ordinal: '2', deploymentId: 'b'.repeat(64) + 'i0', deployer: tapAddress };
+const officialTicker = { tick: 'dmwdigit', ordinal: '1', deploymentId: 'a'.repeat(64) + 'i0', deployer: tapAddress };
+const blockRight = more => ({ asset: 'p2:0', block: 7, amount: '1', deploymentRegistered: true, allowed: false, rightAllowed: true, whoMayMint: 'public', reason: 'minted',
+  finderUntil: '5', finder: finderKey, minted: { id: 'c'.repeat(64) }, pending: null, balance: '5', ...more });
+async function worldBlock(t, tickerRows) {
+  const { p } = await publicMintPage(t, { connected: true }), rights = [];
+  // mintFlow on the public pages opens /mint; here it only records what the panel hands it.
+  await p.route('**/web/console/js/flows.js', async route => { const response = await route.fetch();
+    route.fulfill({ response, body: (await response.text()).replace('export const mintFlow = ', 'export const mintFlow = o => { (globalThis.mintCalls ??= []).push(o); return false; };\nconst openMint = ') }); });
+  await p.route(/\/wallets\//, route => json(route, { address: tapAddress, rail: 'tap', players: [{ agent: finderKey, rail: 'tap' }], more: false }));
+  await p.route(/\/world\/map\?/, route => json(route, { tip: 10, counted: 10, from: 0, to: 10, marks: [] }));
+  await p.route(/\/blocks\/7$/, route => json(route, { height: 7, x: 1, y: 0, halving: 0, region: 0, found: true, minted: true, header: { hash: 'ab'.repeat(32), time: 1 }, mintRights: [blockRight()] }));
+  await p.route(/\/blocks\/7\/mintRights\?/, route => { const u = new URL(route.request().url()), deployment = u.searchParams.get('deployment'); rights.push(Object.fromEntries(u.searchParams));
+    json(route, { mintRights: [deployment === extraTicker.deploymentId ? blockRight({ deployment, allowed: true, reason: 'public', minted: null }) : blockRight()], total: 1, next: null }); });
+  await p.route(/\/assets\/p2(?::|%3A)0\/tickers\?/, route => tickerRows ? json(route, { rows: tickerRows, next: null }) : json(route, { error: 'not_found' }, 404));
+  await p.goto(server.url + '/block/7');
+  const table = p.locator('aside.blockpanel .section-label', { hasText: 'Who may mint it now' }).locator('xpath=following-sibling::div[contains(@class, "paged")][1]');
+  await table.locator('tbody tr').first().getByText('Minted', { exact: true }).waitFor();
+  return { p, table, rights };
+}
+
+test('a block minted into the official ticker offers Mint On-Chain for another ticker that has not minted it', async t => {
+  const { p, table, rights } = await worldBlock(t, [officialTicker, extraTicker]);
+  await p.getByText('Each pattern in a block can be minted once into each of its tickers.', { exact: false }).waitFor();
+  const row = table.locator('tbody tr').first(), pick = p.locator('aside.blockpanel').getByRole('combobox', { name: 'Ticker' });
+  await pick.waitFor();
+  await p.locator('aside.blockpanel').getByText('Mint Digit into', { exact: true }).waitFor();
+  assert.deepEqual(await pick.locator('option').allInnerTexts(), ['dmwdigit · Official', 'digits']);
+  assert.equal(await row.getByRole('button', { name: 'Mint On-Chain' }).count(), 0, 'the official ticker has minted this block');
+  if (process.env.DMW_SHOTS) await p.locator('aside.blockpanel').screenshot({ path: process.env.DMW_SHOTS + '/world-panel-2-tickers.png' });
+  await pick.selectOption(extraTicker.deploymentId);
+  await row.getByText('You may mint', { exact: true }).waitFor();
+  assert.deepEqual(rights.at(-1), { owner: finderKey, asset: 'p2:0', deployment: extraTicker.deploymentId, limit: '1' });
+  await row.locator('button.primary', { hasText: 'Mint On-Chain' }).click();
+  assert.deepEqual(await p.evaluate(() => globalThis.mintCalls), [{ asset: 'p2:0', block: 7, amount: '1', deployment: extraTicker.deploymentId, ticker: 'digits' }]);
+  if (process.env.DMW_SHOTS) await p.locator('aside.blockpanel').screenshot({ path: process.env.DMW_SHOTS + '/world-panel-2-tickers-chosen.png' });
+  // Back to Official: its own state again, without another read.
+  const asked = rights.length;
+  await pick.selectOption('');
+  await row.getByText('Minted', { exact: true }).waitFor();
+  assert.equal(await row.getByRole('button', { name: 'Mint On-Chain' }).count(), 0);
+  assert.equal(rights.length, asked);
+});
+
+test('with one ticker the block panel rows stay exactly as without tickers', async t => {
+  const markup = async tickerRows => {
+    const { p, table, rights } = await worldBlock(t, tickerRows);
+    await p.waitForFunction(() => !document.querySelector('aside.blockpanel .paged[aria-busy="true"]'));
+    await p.waitForLoadState('networkidle');
+    assert.equal(await p.locator('aside.blockpanel').getByRole('combobox', { name: 'Ticker' }).count(), 0);
+    assert.ok(rights.every(r => !('deployment' in r) && !('asset' in r)));
+    if (tickerRows && process.env.DMW_SHOTS) await p.locator('aside.blockpanel').screenshot({ path: process.env.DMW_SHOTS + '/world-panel-1-ticker.png' });
+    return p.locator('aside.blockpanel').innerHTML();
+  };
+  // The whole panel: the same rows, the same buttons and no ticker line.
+  assert.equal(await markup([officialTicker]), await markup(null));
+});
+
+test('a pattern’s block list shows Minted for the chosen ticker; one ticker keeps the list as it was', async t => {
+  const open = async tickerRows => {
+    const { p } = await publicMintPage(t), reads = [];
+    await p.route(/\/assets\/p2(?::|%3A)0\/tickers\?/, route => tickerRows ? json(route, { rows: tickerRows, next: null }) : json(route, { error: 'not_found' }, 404));
+    await p.route(/\/patterns\/p2(?::|%3A)0\/claimed-blocks\?/, route => { const u = new URL(route.request().url()); reads.push(Object.fromEntries(u.searchParams));
+      json(route, { rows: [{ block: 7, height: 7, count: '1', found: true, finder: finderKey, minted: !u.searchParams.has('deployment'), link: null }], next: null, nextCursor: null }); });
+    await p.goto(server.url + '/pattern/p2:0');
+    const blocks = p.locator('section.panel .section-label', { hasText: 'Blocks agents have submitted so far' }).locator('xpath=following-sibling::div[1]');
+    await blocks.locator('tbody tr').first().waitFor();
+    await p.waitForLoadState('networkidle');
+    return { p, blocks, reads };
+  };
+  const single = await open([officialTicker]), none = await open(null);
+  assert.equal(await single.blocks.getByRole('combobox', { name: 'Ticker' }).count(), 0);
+  assert.equal(await single.blocks.innerHTML(), await none.blocks.innerHTML());
+  assert.ok(single.reads.every(r => !('deployment' in r)));
+  const two = await open([officialTicker, extraTicker]), pick = two.blocks.getByRole('combobox', { name: 'Ticker' });
+  await pick.waitFor();
+  assert.equal(await two.blocks.locator('tbody tr td').nth(4).innerText(), 'Minted');
+  await pick.selectOption(extraTicker.deploymentId);
+  await two.blocks.locator('tbody tr td').nth(4).getByText('no', { exact: true }).waitFor();
+  assert.equal(two.reads.at(-1).deployment, extraTicker.deploymentId);
+  if (process.env.DMW_SHOTS) await two.blocks.locator('xpath=ancestor::section[1]').screenshot({ path: process.env.DMW_SHOTS + '/pattern-blocks-2-tickers.png' });
 });
 
 test('unopened point reads and list rows show the exact opening block in their existing state labels', async t => {
@@ -436,7 +520,7 @@ test('a lost race or a cancelled quote leaves the list without starting a reques
 for (const [name, status, error] of [['missing', 404, 'not_found'], ['inactive', 503, 'public_mint_inactive']]) test(`a ${name} public mint API shows a calm opens-soon note`, async t => {
   const { p } = await publicMintPage(t, { list: route => json(route, { error }, status) }), list = panel(p, 'Public blocks');
   await p.goto(server.url + '/mint');
-  await list.getByText('Public minting opens soon. Blocks show up here once their 1-week finder window has passed without a claim.', { exact: true }).waitFor();
+  await list.getByText('Public minting opens soon. For each ticker, eligible blocks appear here once their 1-week finder window has passed.', { exact: true }).waitFor();
   assert.equal(await list.getByRole('alert').count(), 0, 'no error wall');
   assert.equal(await list.getByRole('button', { name: 'Mint', exact: true }).count(), 0);
   assert.equal(await list.locator('table').count(), 0);

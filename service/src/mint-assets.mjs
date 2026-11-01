@@ -12,10 +12,10 @@ export const deploymentAssetId = asset => typeof asset === 'string' &&
 // only an alias for those patterns, never a second pool of mintable units.
 // Public catalog rows use p2 ids; imported mint records retain the original
 // ledger id. Resolve that alias at read time without duplicating mint counts.
-export function patternMint(store, asset, block) {
+export function patternMint(store, asset, block, scope = null) {
   const catalog = patternCatalogId(asset), pattern = catalog && store.get('patternsByAsset', catalog);
   const ledger = pattern?.legacy?.asset ?? asset;
-  return store.get('minted', `${ledger}/${block}`) ?? (catalog && store.get('minted', `${catalog}/${block}`)) ?? null;
+  return store.get('minted', rules.mintPlotKey(ledger, block, scope)) ?? (catalog && store.get('minted', rules.mintPlotKey(catalog, block, scope))) ?? (scope ? acceptedPlotStatus(store, ledger, block, scope).minted : null) ?? null;
 }
 
 export async function mintAssetDefinition(store, requestedAsset) {
@@ -45,4 +45,22 @@ export async function acceptedCompoundDefinition(reads, asset) {
   check(compoundAssetV2(asset), 'deployment_asset');
   const { compound, maker } = await acceptedAssetProvenance({ store: reads.store, reads, asset });
   return { ...compound, firstMaker: maker };
+}
+
+// Public projections use only accepted point records. A deployment selection
+// must be an immutable inscription id; omitted selections mean official.
+export function selectedMintScope(store, asset, deployment, height) {
+  if (!deployment) return null;
+  check(typeof deployment === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment), 'mint_deployment_selection');
+  const generation = store.get('accountRecords', 'fd/external/' + rules.hashObject(deployment));
+  const row = generation && store.get('accountRecords', 'fd/' + generation);
+  const catalog = patternCatalogId(asset), ledger = catalog && store.get('patternsByAsset', catalog)?.legacy?.asset || asset;
+  check(row?.asset === ledger && row.deployment === deployment, 'financial_deployment_pending', 409);
+  return rules.tickerSupplyScope(row, height);
+}
+export function acceptedPlotStatus(store, asset, block, scope = null) {
+  const id = store.get('accountRecords', rules.capacityPlotKey(asset, rules.decimalV2(block), scope));
+  const capacity = id && store.get('accountRecords', 'dc/' + id);
+  return { minted: capacity?.state === 'minted' ? { id } : null,
+    pending: capacity && ['reserved', 'issued'].includes(capacity.state) ? { id, expiry: null, safeToReplace: false } : null };
 }

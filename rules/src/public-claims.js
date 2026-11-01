@@ -1,3 +1,4 @@
+import { perTickerSupplyActive, mintPlotKey } from './per-ticker-supply-activation.js';
 import { assert, exactKeys, hex, stableJSON, utf8 } from './core.js';
 import { decimalV2, findIdV2, patternAssetV2 } from './integers-v2.js';
 import { recordGet, recordSet } from './record-index.js';
@@ -29,14 +30,21 @@ export function publicTaken(state, slot) {
   if (reservation?.publicMint === true) return reservation.winner;
   return state.publicMintGet?.(slot.asset, decimalV2(slot.block)) ?? null;
 }
-export function publicScanClaim({ state, pattern, asset, block, settings, height }) {
+export function publicScanClaim({ state, pattern, asset, block, settings, height, deployment = null }) {
   assert(claimsNeverCloseActive(settings, height), 'claims_never_close_inactive');
   const number = decimalV2(pattern.number), id = findIdV2(decimalV2(block), number);
   assert(asset === patternLedgerAsset(pattern), 'public_claim_asset');
-  const publicWinner = publicTaken(state, { id, asset, block });
+  assert(!deployment || perTickerSupplyActive(height), 'per_ticker_supply_inactive');
+  const slot = deployment ? id + '/' + deployment : id;
+  const publicWinner = recordGet(state.claimReservations, slot)?.publicMint
+    ? recordGet(state.claimReservations, slot).winner : state.publicMintGet?.(asset, decimalV2(block), deployment) ?? null;
   const reservation = recordGet(state.claimReservations, id), draw = recordGet(state.headerAwards, decimalV2(block));
-  const claimed = !publicWinner && !!(recordGet(state.finds, id) || reservation ||
-    draw && BigInt(draw.senderCount) > 0n && BigInt(number) < BigInt(draw.catalog.nextNumber));
+  const find = recordGet(state.finds, id);
+  const claimed = !publicWinner && (perTickerSupplyActive(height)
+    // Settled finds use the finder's original week. Payment reconstruction
+    // verifies the payer during that week. Unsettled claims still fence scans.
+    ? !find && !!(reservation && !reservation.publicMint || draw && BigInt(draw.senderCount) > 0n && BigInt(number) < BigInt(draw.catalog.nextNumber))
+    : !!(find || reservation || draw && BigInt(draw.senderCount) > 0n && BigInt(number) < BigInt(draw.catalog.nextNumber)));
   return { pattern: number, claimed, publicWinner };
 }
 export function validatePublicScanClaim(claim, asset) {
@@ -46,15 +54,15 @@ export function validatePublicScanClaim(claim, asset) {
   return claim;
 }
 export function applyPublicClaimScan({ state, patterns, operation, settings, height }) {
-  const { asset, block, payments } = operation;
+  const { asset, block, payments, deployment } = operation;
   const { pattern } = publicPatternForAsset(patterns, asset);
-  const claim = publicScanClaim({ state, pattern, asset, block, settings, height });
+  const claim = publicScanClaim({ state, pattern, asset, block, settings, height, deployment });
   validatePublicScanClaim(operation.claim, asset);
   assert(stableJSON(operation.claim) === stableJSON(claim), 'public_claim_binding');
   // The contract independently binds publicWinner to its existing scan row.
   const winner = claim.publicWinner ?? settlePublicPayments(null, payments, claim).winner?.id;
   if (winner && !claim.claimed) {
-    const id = findIdV2(decimalV2(block), claim.pattern);
+    const base = findIdV2(decimalV2(block), claim.pattern), id = deployment ? base + '/' + deployment : base;
     state.claimReservations = recordSet(state.claimReservations, id,
       { publicMint: true, winner, asset, block: decimalV2(block), pattern: claim.pattern });
   }
@@ -66,23 +74,24 @@ export function applyPublicClaimScan({ state, patterns, operation, settings, hei
 // abort replay, never turn into an ordinary rejected agent move.
 export function publicMintEvidenceReader(evidence = [], read, maxBytes) {
   assert(Array.isArray(evidence) && utf8(stableJSON(evidence)).length <= maxBytes, 'public_mint_evidence_budget');
-  const supplied = new Map(), used = new Map(), key = (asset, block) => `${asset}/${block}`;
+  const supplied = new Map(), used = new Map(), key = mintPlotKey;
   let usedBytes = 2;
   for (const row of evidence) {
-    assert(exactKeys(row, ['asset', 'block', 'id']) && patternCatalogId(row.asset) && decimalV2(row.block) === row.block &&
-      (row.id === null || hex(row.id, 32)) && !supplied.has(key(row.asset, row.block)), 'public_mint_evidence');
-    supplied.set(key(row.asset, row.block), row);
+    assert(exactKeys(row, ['asset', 'block', 'id', ...(row.deployment ? ['deployment'] : [])]) &&
+      (!row.deployment || /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(row.deployment)) && patternCatalogId(row.asset) && decimalV2(row.block) === row.block &&
+      (row.id === null || hex(row.id, 32)) && !supplied.has(key(row.asset, row.block, row.deployment)), 'public_mint_evidence');
+    supplied.set(key(row.asset, row.block, row.deployment), row);
   }
   return {
-    get(asset, block) {
-      const id = key(asset, block);
+    get(asset, block, deployment = null) {
+      const id = key(asset, block, deployment);
       if (!used.has(id)) {
         let row = supplied.get(id);
         if (!row) {
           let answer;
-          try { answer = read?.(asset, block); } catch { throw Error('public_mint_evidence_missing'); }
+          try { answer = read?.(asset, block, deployment); } catch { throw Error('public_mint_evidence_missing'); }
           assert(answer === null || hex(answer, 32), 'public_mint_evidence_missing');
-          row = { asset, block, id: answer };
+          row = { asset, block, id: answer, ...(deployment ? { deployment } : {}) };
         }
         usedBytes += utf8(stableJSON(row)).length + (used.size ? 1 : 0);
         assert(usedBytes <= maxBytes, 'public_mint_evidence_budget');

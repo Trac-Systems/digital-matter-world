@@ -1,3 +1,4 @@
+import { mintPlotKey } from './per-ticker-supply-activation.js';
 import { assert, hex, integer, stableJSON, utf8 } from './core.js';
 import { parseHeader } from './headers.js';
 import { checkMove } from './moves.js';
@@ -261,7 +262,7 @@ export function finalizePublicClaims(output, input, readers = {}) {
   // public reservation; the checkpoint itself already contains both.
   for (const field of CLAIM_MAPS) saved.state[field] = Object.entries(recordChanges(saved.state[field]))
     .reduce((index, [key, value]) => recordSet(index, key, value), output.state[field]);
-  const used = new Map([...(output.file.publicMintEvidence ?? []), ...evidence.rows()].map(row => [`${row.asset}/${row.block}`, row]));
+  const used = new Map([...(output.file.publicMintEvidence ?? []), ...evidence.rows()].map(row => [mintPlotKey(row.asset, row.block, row.deployment), row]));
   return { ...output, state: saved.state, claimWrites: [...writes.values()], file: { ...output.file, claimRoot: saved.state.claimRoot,
     publicMintEvidence: [...used].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, row]) => row) } };
 }

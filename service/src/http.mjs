@@ -111,7 +111,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
       if (mints?.publicMints && ['GET', 'HEAD'].includes(req.method) &&
           (operatorURL.pathname.startsWith('/public-mints') || operatorURL.pathname === '/mint-rights' && rules.publicMintActive(mints.document, intake.store.get('meta', 'ruleState')?.counted ?? '0'))) {
         const path = decodeURIComponent(operatorURL.pathname), detail = /^\/public-mints\/([^/]+)\/(0|[1-9][0-9]*)$/.exec(path);
-        let result = path === '/public-mints/refunds' ? mints.publicMints.refunds(operatorURL.searchParams, req.headers['x-mint-requester-secret']) : detail ? mints.publicMints.state(detail[1], detail[2]) :
+        let result = path === '/public-mints/refunds' ? mints.publicMints.refunds(operatorURL.searchParams, req.headers['x-mint-requester-secret']) : detail ? mints.publicMints.state(detail[1], detail[2], undefined, operatorURL.searchParams.get('deployment')) :
           ['/public-mints', '/mint-rights'].includes(path) ? mints.publicMints.list(operatorURL.searchParams) : null;
         if (result && path === '/public-mints/refunds' && mints.mintSender) result = { ...result, rows: result.rows.map(r => mints.mintSender.decorateRefund(r)) };
         check(result, 'not_found', 404); res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');

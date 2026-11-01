@@ -3,7 +3,7 @@ import { get, bus, store, site } from '../api.js';
 import { mineral, title, symbol, fieldName, FIELDS, who, assetName, rememberCompound, compoundInputs, compoundKey, tierOf, spectrumText, generationText, namedText, assetLink, agentLink, currentAsset, inflightLine } from '../words.js';
 import { compoundMintFlow, wallet } from '../flows.js';
 import * as flows from '../flows.js';
-import { tickerList, deployTickerForm } from '../tickers.js';
+import { tickers, tickerList, tickerChoice, deployTickerForm } from '../tickers.js';
 import { pagedTable } from '../paged.js';
 import { feePrice } from '../money.js';
 
@@ -109,8 +109,10 @@ export function mount(root, params = {}) {
       tickerList(p.asset), ownTicker(p.asset),
       h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
     if (seq !== rowsSeq) return;
-    clear(blocks, pagedTable({
-      path: `/patterns/${p.asset}/${p.asset.startsWith('p2:') ? 'claimed-blocks' : 'blocks'}`, key: 'rows', limit: 25,
+    // Each ticker mints every block once: with several tickers, Minted is shown for the chosen one (Official first).
+    const choice = p.asset.startsWith('p2:') ? tickerChoice(p.asset, { onChange: () => list.reset() }) : null;
+    const list = pagedTable({
+      path: () => `/patterns/${p.asset}/${p.asset.startsWith('p2:') ? 'claimed-blocks' : 'blocks'}` + (choice?.value() ? '?' + new URLSearchParams({ deployment: choice.value() }) : ''), key: 'rows', limit: 25,
       sorts: [['block:desc', 'Newest block'], ['block:asc', 'Oldest block'], ...(p.asset.startsWith('p2:') ? [] : [['count:desc', 'Most units']])],
       filters: [{ name: 'found', label: 'Found', value: '', options: [['', 'All'], ['true', 'Found'], ['false', 'Unfound']] },
         { name: 'minted', label: 'Minted', value: '', options: [['', 'All'], ['true', 'Minted'], ['false', 'Not minted']] }],
@@ -123,7 +125,9 @@ export function mount(root, params = {}) {
         { key: 'minted', label: 'Minted', render: r => r.minted ? pill('Minted', 'minted') : h('span.faint', {}, 'no') },
         { key: 'link', label: 'Bitmap', render: r => r.link ? pill('linked', 'ink') : h('span.faint', {}, '–') },
       ],
-    }).el);
+    });
+    clear(blocks, list.el);
+    if (choice) tickers(p.asset).then(rows => { if (rows?.length > 1 && seq === rowsSeq) { choice.el.style.padding = '8px 14px 0'; blocks.prepend(choice.el); } });
   }
   function compoundPanel(c) {
     rememberCompound(c);

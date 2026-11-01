@@ -115,9 +115,9 @@ export function legacyDeployPolicyText(status) {
 // Every pattern and compound mint, whichever ticker it goes to, also pays the minted ticker's deploy holder.
 export function deployerSharePolicyText(status) {
   const bps = status?.settings?.values?.deployerShareBps;
-  if (!Number.isSafeInteger(bps) || bps <= 0) return 'Each pattern and compound can have several tokens on TAP. They share its units, and every mint pays the same rewards whichever ticker it goes to.';
+  if (!Number.isSafeInteger(bps) || bps <= 0) return 'Each pattern and compound can have several tokens on TAP. Each has the full supply, and every mint pays the same rewards whichever ticker it goes to.';
   const share = String(Math.floor(bps / 100)) + (bps % 100 ? '.' + String(bps % 100).padStart(2, '0').replace(/0+$/, '') : '');
-  return `Each pattern and compound can have several tokens on TAP. They share its units, and every mint pays the same rewards whichever ticker it goes to; ${share} % of each mint fee comes from the burn and goes to the holder of the minted ticker's deploy inscription, through the public payout ledger.`;
+  return `Each pattern and compound can have several tokens on TAP. Each has the full supply, and every mint pays the same rewards whichever ticker it goes to; ${share} % of each mint fee comes from the burn and goes to the holder of the minted ticker's deploy inscription, through the public payout ledger.`;
 }
 
 export function legacyDeployPaymentText(status) {

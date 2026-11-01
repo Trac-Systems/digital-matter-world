@@ -1,4 +1,4 @@
-import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument, multiTickerActive } from '../../rules/src/index.js';
+import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument, multiTickerActive, perTickerSupplyActive } from '../../rules/src/index.js';
 import { wireIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { financialMintDigest, financialMintId } from '../../rules/src/financial-mint.js';
 import { accountActionDigest } from '../../contract/root-accounts.js';
@@ -32,6 +32,7 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
       next: [{ tool: 'inscribe_deployment', arguments: { asset: quote.asset ?? asset } }] } :
       { next: [{ tool: 'mint_on_chain', arguments: { ...intent, actionId } }] }) };
   check(!quote.asset || quote.asset === asset, 'Mint ledger asset mismatch');
+  check(compound || !intent.deployment || !perTickerSupplyActive(head.counted) || candidate?.deployment === quote.feeQuote?.deploymentId, 'Mint candidate deployment mismatch');
   check(quote.feeQuote?.settingsHash === policyHash, 'Financial quote settings mismatch');
   const request = old?.body.request ?? { v: 2, owner, asset, amount, ...(intent.deployment === undefined ? {} : { deployment: quote.feeQuote.deploymentId }), receive: sha256(receiver), ...(block === undefined ? {} : { block }), nonce: nonce(),
     until: addUint(decimalV2(head.counted), String(v.moveFreshnessTips)), expires: addUint(decimalV2(head.counted), String(v.pendingBlocks)), settingsHash: policyHash };

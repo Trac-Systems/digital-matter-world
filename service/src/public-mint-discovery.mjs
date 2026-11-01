@@ -49,7 +49,7 @@ export async function discoverPublicMintPayments(mints, at) {
       const row = { id, payer: intent.tapAddress, quote: { fees: intent.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) })) } };
       try {
         const receipts = await publicPaymentReceipts(reads, row, [reference], at);
-        if (receipts.length) await mints.queuePlot(intent.asset, intent.block, from.height);
+        if (receipts.length) await mints.queuePlot(intent.asset, intent.block, from.height, [], rules.perTickerSupplyActive(at.executionHeight ?? at.counted) ? intent.supplyScope : null);
       } catch (error) {
         if (!['payment_redeem', 'payment_item_binding'].includes(error.message)) throw error;
       }

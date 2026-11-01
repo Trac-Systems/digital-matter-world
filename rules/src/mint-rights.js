@@ -1,3 +1,4 @@
+import { tickerSupplyScope, mintPlotKey } from './per-ticker-supply-activation.js';
 import { bitmapMintOpenActive } from './public-mint.js';
 import { recordGet } from './record-index.js';
 import { assert, integer, hex, findId } from './core.js';
@@ -34,7 +35,7 @@ export function mintRight({ find, owner, counted, link = null, currentHolder = n
 // Invoke in accepted contract order and persist atomically with that acceptance.
 // The caller supplies fresh indexed mint status, Bitmap holder and Trac balance.
 export function acceptMintRequest({ state = { holds: {}, minted: {}, pending: {} }, request, sig, network, counted,
-  find = null, compound = false, link = null, currentHolder = null, minted = false, balance, settings = {} }) {
+  find = null, compound = false, deployment = null, link = null, currentHolder = null, minted = false, balance, settings = {} }) {
   const s = { ...MINT_DEFAULTS, ...settings }, op = makeRealOp({ request, sig }, network, counted), id = pendingId(network, request);
   assert(typeof balance === 'string' && /^(0|[1-9][0-9]*)$/.test(balance) && BigInt(balance) >= BigInt(request.amount), 'mint_balance');
   const nonceKey = `${request.owner}:${request.nonce}`;
@@ -44,7 +45,7 @@ export function acceptMintRequest({ state = { holds: {}, minted: {}, pending: {}
   else {
     assert(find && request.block === find.block && request.asset === find.asset && request.amount === String(find.count), 'mint_count');
     const right = mintRight({ find, owner: request.owner, counted, link, currentHolder, finderWindow: s.finderWindow, settings: s });
-    assert(right.allowed, `mint_${right.role}`); key = `${request.asset}/${request.block}`;
+    assert(right.allowed, `mint_${right.role}`); key = mintPlotKey(request.asset, request.block, tickerSupplyScope(deployment, counted));
     assert(!minted && !state.minted[key], 'already_minted');
     const hold = state.holds[key]; assert(!hold || counted > hold.expiry, 'block_pending');
   }

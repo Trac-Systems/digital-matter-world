@@ -1,3 +1,4 @@
+import { perTickerSupplyActive, tickerSupplyScope, capacityPlotKey, compoundSupplyCapped } from '../rules/src/per-ticker-supply-activation.js';
 import { freeLinkActive } from '../rules/src/free-link-activation.js';
 import { multiTickerActive } from '../rules/src/multi-ticker-activation.js';
 import { releaseFinancialCapacity } from './financial-capacity.js';
@@ -29,7 +30,7 @@ export async function financialUnfrozen(store, records) {
 // These effects execute only in a quorum-authenticated v2 batch. The matching
 // rules planner checks independently reconstructed chain evidence. No elapsed
 // timeout revokes a permit or proves an external transfer/refund.
-export async function applyFinancialLifecycle(store, op, { network, height, limits }) {
+export async function applyFinancialLifecycle(store, op, { network, height, executionHeight = height, limits }) {
   const a = op.action, clock = ordinalCodec(typeof height === 'string');
   check(keys(op, ['op', 'v', 'id', 'type', 'action', 'evidence', ...(a?.type === 'ticker-refund' ? ['refund'] : [])]) && hex(op.evidence) && a?.id === op.id && typeof a.type === 'string', 'lifecycle_operation');
   const exact = names => check(keys(a, ['type', 'id', ...names]), 'lifecycle_fields');
@@ -145,6 +146,7 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
     check(official?.asset === a.asset && !official.official && hex(a.official) &&
       typeof a.deployment === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(a.deployment) && positive(a.maximum) && uint(a.limit) &&
       !await get('fd/' + a.id) && !await get('fd/external/' + hash(a.deployment)), 'deployment_identity');
+    check(!perTickerSupplyActive(executionHeight) || a.maximum === official.maximum, 'deployment_full_supply');
     put('fd/' + a.id, { asset: a.asset, deployment: a.deployment, official: a.official, generation: '0', previous: null,
       maximum: a.maximum, limit: a.limit, reserved: '0', minted: '0', evidence: op.evidence });
     put('fd/external/' + hash(a.deployment), a.id);
@@ -156,9 +158,16 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
       (await get('fd/asset/' + d.asset) === a.deployment || multiTickerActive(height) && d.official && (await get('fd/' + d.official))?.asset === d.asset) && (a.plot === null || uint(a.plot)), 'capacity_identity');
     check(BigInt(d.reserved) + BigInt(d.minted) + BigInt(obligation.amount) <= BigInt(d.maximum) &&
       (d.limit === '0' || BigInt(obligation.amount) <= BigInt(d.limit)), 'capacity_exhausted');
-    const plot = a.plot === null ? null : 'dc/plot/' + d.asset + '/' + a.plot;
+    const scope = tickerSupplyScope(d, executionHeight);
+    const capped = compoundSupplyCapped(d, executionHeight);
+    if (capped) {
+      check(a.plot === null && obligation.supplyDeployment === a.deployment && uint(obligation.supplyIssued), 'capacity_supply_snapshot');
+      check(BigInt(d.reserved) + BigInt(d.minted) + BigInt(obligation.amount) <= BigInt(obligation.supplyIssued), 'capacity_supply_exhausted');
+    }
+    const plot = a.plot === null ? null : capacityPlotKey(d.asset, a.plot, scope);
     check(!plot || !await get(plot), 'capacity_plot');
-    put('dc/' + a.id, { state: 'reserved', deployment: a.deployment, asset: d.asset, amount: obligation.amount, plot: a.plot, terms: obligation.terms });
+    put('dc/' + a.id, { state: 'reserved', deployment: a.deployment, asset: d.asset, amount: obligation.amount, plot: a.plot, terms: obligation.terms,
+      ...(scope ? { supplyScope: scope } : {}), ...(capped ? { supplyIssued: obligation.supplyIssued } : {}) });
     put('fd/' + a.deployment, { ...d, reserved: (BigInt(d.reserved) + BigInt(obligation.amount)).toString() });
     if (plot) put(plot, a.id);
   } else if (['capacity-issue', 'capacity-finish', 'capacity-release'].includes(a.type)) {
@@ -187,7 +196,7 @@ export async function applyFinancialLifecycle(store, op, { network, height, limi
       check(BigInt(d.reserved) >= BigInt(row.amount), 'capacity_accounting');
       put('fd/' + row.deployment, { ...d, reserved: (BigInt(d.reserved) - BigInt(row.amount)).toString(), minted: (BigInt(d.minted) + (minted ? BigInt(row.amount) : 0n)).toString() });
       put('dc/' + a.id, { ...row, state: minted ? 'minted' : 'released', evidence: op.evidence });
-      if (!minted && row.plot !== null) put('dc/plot/' + row.asset + '/' + row.plot, null);
+      if (!minted && row.plot !== null) put(capacityPlotKey(row.asset, row.plot, row.supplyScope), null);
     }
   } else if (a.type === 'recovery-inventory') {
     exact(['previous', 'tip']);

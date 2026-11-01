@@ -4,6 +4,7 @@ import { heightToPlot, plotToHeight } from '../spiral.js';
 import { mineral, assetName, mintRule, fieldName, who, isMe, title, assetHref, assetLink, agentLink, addressLink, blockLink } from '../words.js';
 import { mintFlow, linkFlow, run, wallet } from '../flows.js';
 import { pagedTable } from '../paged.js';
+import { tickers, tickerChoice } from '../tickers.js';
 
 const C = {
   bg: '#EFE9DC', plain: ['#E2D9C8', '#DAD0BD'], claims: ['#C9D59A', '#BBCB88'], found: ['#A9C072', '#9DB767'],
@@ -320,23 +321,58 @@ export function mount(root, params) {
     const me = wallet?.player(), mayMint = r => r.allowed || r.rightAllowed && r.reason === 'asset_unregistered' && BigInt(r.balance ?? '0') >= BigInt(r.amount);
     // The v2 read lists one owner's rights only, so a public block without a player offers a wallet whenever it has a find.
     const ownerOnly = site.public && !me, offerWallet = wallet && !wallet.connected() && (b.mintRights ? b.mintRights.some(r => !r.minted) : !!b.found);
-    out.push(h('div.section-label', offerWallet ? { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } } : {}, 'Who may mint it now',
-      offerWallet ? h('button.btn.sm', { style: { textTransform: 'none', letterSpacing: 'normal' }, onclick: () => wallet.open() }, 'Connect wallet to mint') : null));
+    const offer = () => h('button.btn.sm', { style: { textTransform: 'none', letterSpacing: 'normal' }, onclick: () => wallet.open() }, 'Connect wallet to mint');
+    const offerStyle = { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' };
+    const rightsLabel = h('div.section-label', offerWallet ? { style: offerStyle } : {}, 'Who may mint it now', offerWallet ? offer() : null);
+    out.push(rightsLabel);
+    // A block minted into the official ticker can still be minted into another ticker of its pattern.
+    if (wallet && !wallet.connected() && !offerWallet && b.mintRights?.length) Promise.all([...new Set(b.mintRights.map(r => r.asset))].map(tickers))
+      .then(lists => { if (lists.some(rows => rows?.length > 1)) { Object.assign(rightsLabel.style, offerStyle); rightsLabel.append(offer()); } });
     // The finder window stays exclusive; linked land earns a share after minting opens.
     out.push(h('div.small.muted', { style: { padding: '0 14px 8px' } },
-      'Only a settled find can be minted. During the finder’s week only the finder mints; afterwards any agent with enough units can. Bitmap holders earn 15% of every mint on their plot. Each pattern in a block is minted once.'));
+      'Only a settled find can be minted. During the finder’s week only the finder mints; afterwards any agent with enough units can. Bitmap holders earn 15% of every mint on their plot. Each pattern in a block can be minted once into each of its tickers.'));
     // Public reads come in the server's own order (pattern, then block); it has no other sort.
-    out.push(ownerOnly ? h('div.small.muted', { style: { padding: '0 14px 10px' } }, 'Connect a wallet linked to your agent to see what you may mint here.') : pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: site.public ? [] : [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
+    const ruleCell = r => {
+      if (me && mayMint(r)) { const rule = mintRule(r, counted); return h('span', {}, pill('You may mint', 'good'), tipIcon(`${rule.label}. ${rule.text}`)); }
+      const rule = mintRule(site.public && !me ? { ...r, allowed: false } : r, counted); return h('span', {}, pill(rule.label, rule.kind), tipIcon(rule.text));
+    };
+    // deployment: the chosen ticker's deploy inscription; the official ticker has none.
+    const actCell = (r, deployment, ticker) => (r.allowed || r.rightAllowed || site.public) && !r.minted && !r.pending ? h(`button.btn.sm${!wallet || me && mayMint(r) ? '.primary' : ''}`,
+      { onclick: () => mintFlow({ asset: r.asset, block: H, amount: r.amount, ...(deployment ? { deployment, ticker } : {}) }) }, 'Mint On-Chain') : null;
+    // A pattern with several tickers gets the ticker choice above the table (Official first), and its row shows the
+    // rights for the chosen ticker: each ticker mints the block once, whatever the others did. One ticker: no change.
+    const picks = new Map(), choices = h('div', { style: { padding: '0 14px 10px' } });
+    const show = async (pick, deployment) => {
+      const tr = pick.name.closest('tr'), seq = ++pick.asked, r = pick.row; if (!tr) return;
+      const fill = (rule, act) => { clear(tr.children[2], rule ?? h('span.faint', {}, '–')); clear(tr.children[3], act ?? h('span.faint', {}, '–')); };
+      if (!deployment) { fill(ruleCell(r), actCell(r)); return; }
+      let row;
+      try { row = (await get(`/blocks/${H}/mintRights?` + new URLSearchParams({ ...(me ? { owner: me.agent } : {}), asset: r.asset, deployment, limit: '1' }))).mintRights?.find(x => x.asset === r.asset); }
+      catch (e) { if (seq === pick.asked) fill(h('span.small', { style: { color: 'var(--bad)' } }, e.message)); return; }
+      if (seq === pick.asked) fill(row && ruleCell(row), row && actCell(row, deployment, pick.choice.label()));
+    };
+    const withTickers = (r, name) => {
+      const known = picks.get(r.asset);
+      if (known) { Object.assign(known, { row: r, name }); if (known.choice.value()) queueMicrotask(() => show(known, known.choice.value())); return name; }
+      const pick = { row: r, name, asked: 0 };
+      pick.choice = tickerChoice(r.asset, { onChange: deployment => show(pick, deployment) });
+      picks.set(r.asset, pick);
+      tickers(r.asset).then(rows => {
+        if (!(rows?.length > 1)) return;
+        choices.append(h('div', { style: { paddingTop: choices.childElementCount ? '8px' : 0 } }, h('div.small.muted', { style: { marginBottom: '4px' } }, 'Mint ', assetLink(r.asset), ' into'), pick.choice.el));
+        if (!choices.isConnected) rights.before(choices);
+      });
+      return name;
+    };
+    const rights = ownerOnly ? h('div.small.muted', { style: { padding: '0 14px 10px' } }, 'Connect a wallet linked to your agent to see what you may mint here.') : pagedTable({ ...small, path: `/blocks/${H}/mintRights${me ? '?owner=' + me.agent : ''}`, key: 'mintRights', sorts: site.public ? [] : [['asset:asc', 'Pattern'], ['amount:desc', 'Most units']],
       empty: 'Nothing to mint here yet: no agent has a settled find in this block.',
       columns: [
-        { key: 'asset', label: 'Pattern', render: r => h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetLink(r.asset)) },
+        { key: 'asset', label: 'Pattern', render: r => withTickers(r, h('span', {}, h('span.swatch', { style: { background: mineral(r.asset) } }), assetLink(r.asset))) },
         { key: 'amount', label: 'Units', num: true },
-        { key: 'rule', label: 'May mint', render: r => {
-          if (me && mayMint(r)) { const rule = mintRule(r, counted); return h('span', {}, pill('You may mint', 'good'), tipIcon(`${rule.label}. ${rule.text}`)); }
-          const rule = mintRule(site.public && !me ? { ...r, allowed: false } : r, counted); return h('span', {}, pill(rule.label, rule.kind), tipIcon(rule.text));
-        } },
-        { key: 'act', label: '', render: r => (r.allowed || r.rightAllowed || site.public) && !r.minted && !r.pending ? h(`button.btn.sm${!wallet || me && mayMint(r) ? '.primary' : ''}`, { onclick: () => mintFlow({ asset: r.asset, block: H, amount: r.amount }) }, 'Mint On-Chain') : null },
-      ] }).el);
+        { key: 'rule', label: 'May mint', render: ruleCell },
+        { key: 'act', label: '', render: r => actCell(r) },
+      ] }).el;
+    out.push(rights);
 
     out.push(h('div.section-label', {}, 'Patterns in this block'));
     // Public matches are the verified submitted rows, by pattern; the v2 read takes no filter or sort.

@@ -33,6 +33,7 @@ export function installCapacitySources(reads, { network, bitcoinNetwork = 'mainn
     if (entry.officialDeployment) {
       const official = financialGenerationId(network, asset, entry.officialDeployment), acceptedOfficial = await reads.financialRecord('fd/' + official, at);
       check(acceptedOfficial?.asset === asset && acceptedOfficial.deployment === entry.officialDeployment, 'official_deployment_required');
+      check(!rules.perTickerSupplyActive(at?.executionHeight ?? at?.counted ?? await reads.counted()) || maximum === acceptedOfficial.maximum, 'deployment_full_supply');
       const deployment = { asset, deployment: entry.id, official, maximum, limit: d.lim ?? '0' };
       return { id, action: { type: 'deployment-add', id, ...deployment }, evidence: { requestId: id, state: 'deployed', confirmations: 1,
         deployment, minted: '0', outstanding: '0', remaining } };

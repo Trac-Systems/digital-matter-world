@@ -161,7 +161,7 @@ export function mount(el) {
   const tickerPicks = new Map(), patternTickers = h('div'), compoundTickers = h('div');
   let lastClaims = null;
   const choiceOf = asset => {
-    if (!tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { single: 'Official ticker. ' + SAME_REWARDS, onChange: () => { if (lastClaims) drawClaims(lastClaims); drawCompounds(); } }));
+    if (!tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { single: 'Official ticker. ' + SAME_REWARDS, onChange: () => { if (!asset.startsWith('c')) pick(asset); drawCompounds(); } }));
     return tickerPicks.get(asset);
   };
   const tickersButton = (asset, name, box, compound) => whenTickers(asset, h('button.btn.sm.ghost', { type: 'button', onclick: () => {
@@ -185,7 +185,7 @@ export function mount(el) {
     if (button) { button.disabled = true; button.textContent = 'Signing…'; button.classList.add('busy'); }
     say(`Minting ${label}: your agent is signing the mint request…`, 'busy');
     let result;
-    const deployment = tickerPicks.get(row.asset)?.value();
+    const deployment = row.requestId ? row.deployment : row.deployment ?? tickerPicks.get(row.asset)?.value();
     try { result = await api('/api/mint', { asset: row.asset, block: row.block, ...(deployment ? { deployment } : {}) }); }
     catch (error) { status.set({ state: 'failed', detail: words(error.message) }); if (button) { button.disabled = false; button.textContent = idle; button.classList.remove('busy'); } throw error; }
     if (result.requestId) { status.set({ state: 'complete', detail: 'Request ready. Pay and inscribe with your wallet.' }); go('/mint/' + result.requestId); return; }
@@ -249,7 +249,9 @@ export function mount(el) {
           p.deployer && !waits ? h('div.small.muted', {}, 'Whoever deploys holds the deploy inscription and can add art to it later.') : null,
           p.token === 'deployed' ? tickersButton(p.asset, nameOf(p.asset, p.name), patternTickers, false) : null); } },
       { key: 'claims', label: 'Unminted claims', render: p => h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } },
-        h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null) },
+        h('span.mono', {}, countText(p.claims, p.moreClaims)), p.claims > 0 ? h('button.btn.sm.ghost', { onclick: () => showClaims(p) }, 'Show claims') : null,
+        // Its official blocks are minted; another ticker can still mint them.
+        p.otherTickers ? h('div.small.muted', {}, 'In the official ticker. Choose another ticker under Tickers.') : null) },
     ], { sortable: false }) : h('div.empty', {}, 'No patterns yet. When your agent discovers a pattern, it appears here with its Deploy button.'));
     if (data.more) patternList.append(h('div.empty.small', {}, 'Showing the first patterns only.'));
     patternList.append(patternTickers);
@@ -299,7 +301,7 @@ export function mount(el) {
   }
   async function loadClaims() {
     let data;
-    try { data = await api('/api/claims?' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}), ...(claimAsset ? { asset: claimAsset } : {}) })); }
+    try { data = await api('/api/claims?' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}), ...(claimAsset ? { asset: claimAsset } : {}), ...(tickerPicks.get(claimAsset)?.value() ? { deployment: tickerPicks.get(claimAsset).value() } : {}) })); }
     catch (error) { if (cursor && /cursor_stale/.test(error.message)) { cursor = undefined; page = 1; return loadClaims(); } throw error; }
     if (!stopped) drawClaims(data);
   }

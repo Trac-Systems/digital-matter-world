@@ -105,3 +105,30 @@ test('claim decisions are mandatory and identity-bound only at the new activatio
   await applyPublicScan(f.store, op, { ...f.context, height: '109' });
   assert.equal(f.db.get(publicScanKey(op.id)).winner.id, payment(1).id);
 });
+
+test('per-ticker public scans have independent winners, capacity and refunds', async () => {
+  const { PER_TICKER_SUPPLY_HEIGHT, capacityPlotKey } = await import('../../rules/src/per-ticker-supply-activation.js');
+  const f = fixture(), extra = hash('extra') + 'i0', extraGeneration = hash('extra-generation');
+  f.context.height = PER_TICKER_SUPPLY_HEIGHT;
+  f.db.set('fd/' + extraGeneration, { asset, deployment: extra, official: generation, minted: '0', reserved: '0', maximum: '20' });
+  f.db.set('fd/external/' + hashObject(extra), extraGeneration);
+  const a = payment(1), b = payment(2);
+  b.deployment = extra; b.source.deployment.id = extra; b.source.generation = extraGeneration;
+  b.source.capacity = { ...b.source.capacity, deployment: extra, supplyScope: extra };
+  const official = scan(f, [a]), other = { ...scan(f, [b]), id: publicPlotId(asset, block, extra), deployment: extra };
+  await applyPublicScan(f.store, official, f.context); await applyPublicScan(f.store, other, f.context);
+  assert.equal(f.db.get(publicScanKey(official.id)).winner.id, a.id);
+  assert.equal(f.db.get(publicScanKey(other.id)).winner.id, b.id);
+  assert.equal(f.db.get(capacityPlotKey(asset, block)), a.id);
+  assert.equal(f.db.get(capacityPlotKey(asset, block, extra)), b.id);
+  for (const p of [a, b]) assert.deepEqual(f.db.get('fp/' + p.id).fees, p.source.fees);
+  const late = { ...b, id: hash('late-extra'), reference: hash('late-payment') + 'i0', height: '101' };
+  await applyPublicScan(f.store, { ...other, previous: hashObject(f.db.get(publicScanKey(other.id))),
+    from: other.next, next: { ...other.next, height: '102' }, payments: [late] }, f.context);
+  assert.equal(f.db.get(publicRefundKey(late)).winner, b.id);
+  const before = [...f.db];
+  await assert.rejects(applyPublicScan(f.store, { ...other, payments: [a] }, f.context), /public_scan_sequence|public_scan_payments/);
+  assert.deepEqual([...f.db], before);
+  const old = fixture(); old.context.height = String(BigInt(PER_TICKER_SUPPLY_HEIGHT) - 1n);
+  await assert.rejects(applyPublicScan(old.store, other, old.context), /per_ticker_supply_inactive/);
+});

@@ -6,6 +6,7 @@ import { financialUnfrozen } from './financial-lifecycle.js';
 import { compoundMergeManifest, validateCompoundMerges, COMPOUND_MERGE_ACCOUNT_MARKER } from '../rules/src/compound-merge-v4.js';
 import { hashObject } from '../rules/src/core.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
+import { compoundSupplyCapped, mintRetainsUnits } from '../rules/src/per-ticker-supply-activation.js';
 
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
 const hex = x => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
@@ -31,7 +32,7 @@ export async function applyRootAccounts(store, operation, { network, height, set
   check(operation?.v === 2 && operation.op === 'ar' && Array.isArray(operation.actions) && operation.actions.length > 0 && operation.actions.length <= limits.actions &&
     Array.isArray(operation.accounts) && operation.supply && hex(operation.availability), 'account_operation');
   check(jsonBytes(operation) <= limits.proofBytes, 'account_operation_bytes');
-  const accounts = new Map(), supplyChanges = new Map(), obligations = new Map(), locks = new Map();
+  const accounts = new Map(), supplyChanges = new Map(), obligations = new Map(), locks = new Map(), supplySnapshots = new Map();
   for (const packet of operation.accounts) {
     check(hex(packet.owner) && uint(packet.revision) && !accounts.has(packet.owner), 'account_owner');
     const current = await store.get('ar/' + packet.owner) ?? { revision: '0', root: EMPTY_ACCOUNT_ROOT };
@@ -101,6 +102,17 @@ export async function applyRootAccounts(store, operation, { network, height, set
       authorize(action); check(!await obligation(action.id) && positive(action.amount) && hex(action.terms), 'obligation_exists');
       change(action.owner, action.asset, -BigInt(action.amount), BigInt(action.amount));
       obligations.set(action.id, { state: 'reserved', owner: action.owner, asset: action.asset, amount: action.amount, terms: action.terms });
+    } else if (action.type === 'snapshot-supply') {
+      const old = await obligation(action.id), deployment = await store.get('fd/' + action.deployment);
+      await financialUnfrozen(store, ['fd/' + action.deployment]);
+      check(Object.keys(action).length === 3 && hex(action.deployment) && old?.state === 'reserved' &&
+        old.supplyIssued === undefined && !supplySnapshots.has(action.id) && deployment?.asset === old.asset &&
+        compoundSupplyCapped(deployment, executionHeight), 'obligation_supply_snapshot');
+      // Touch the leaf in this operation; the proof is authenticated below
+      // before the snapshot or any account changes can be written.
+      supply(old.asset, 0n);
+      supplySnapshots.set(action.id, old.asset);
+      obligations.set(action.id, { ...old, supplyDeployment: action.deployment });
     } else if (action.type === 'lock') {
       authorize(action);
       check(hex(action.id) && hex(action.to) && hex(action.hash) && positive(action.amount) && clock.valid(action.refund) &&
@@ -119,6 +131,14 @@ export async function applyRootAccounts(store, operation, { network, height, set
         change(refund ? lock.owner : lock.to, name, BigInt(amount));
       }
       locks.set(action.id, { ...lock, state: refund ? 'refunded' : 'claimed' });
+    } else if (action.type === 'release-mint') {
+      await financialUnfrozen(store, ['dc/' + action.id]);
+      const old = await obligation(action.id), capacity = await store.get('dc/' + action.id);
+      check(old?.state === 'consumed' && !old.unitsReleased && capacity?.state === 'minted' && mintRetainsUnits(capacity) &&
+        capacity.asset === old.asset && capacity.amount === old.amount && capacity.terms === old.terms && capacity.permitHash === old.permitHash &&
+        action.terms === old.terms && hex(action.evidence), 'obligation_mint_release');
+      change(old.owner, old.asset, BigInt(old.amount), -BigInt(old.amount));
+      obligations.set(action.id, { ...old, unitsReleased: true });
     } else if (['consume', 'refund'].includes(action.type)) {
       const old = await obligation(action.id);
       check(old?.state === 'reserved' && hex(action.evidence), 'obligation_terminal');
@@ -133,8 +153,10 @@ export async function applyRootAccounts(store, operation, { network, height, set
         const capacity = await store.get('dc/' + action.id);
         check(capacity?.state === 'reserved' && capacity.asset === old.asset && capacity.amount === old.amount && capacity.terms === old.terms, 'obligation_capacity');
       }
-      change(old.owner, old.asset, action.type === 'refund' ? BigInt(old.amount) : 0n, -BigInt(old.amount));
-      if (action.type === 'consume') { check(hex(action.permitHash), 'obligation_permit'); supply(old.asset, 0n, BigInt(old.amount)); }
+      const capacity = await store.get('dc/' + action.id);
+      const hold = action.type === 'consume' && mintRetainsUnits(capacity);
+      change(old.owner, old.asset, action.type === 'refund' ? BigInt(old.amount) : 0n, hold ? 0n : -BigInt(old.amount));
+      if (action.type === 'consume') { check(hex(action.permitHash), 'obligation_permit'); if (!hold) supply(old.asset, 0n, BigInt(old.amount)); }
       obligations.set(action.id, { ...old, state: action.type === 'refund' ? 'refunded' : 'consumed', evidence: action.evidence,
         ...(action.type === 'consume' ? { permitHash: action.permitHash } : {}) });
     } else throw Error('account_action');
@@ -162,6 +184,8 @@ export async function applyRootAccounts(store, operation, { network, height, set
     const root = verifyAccountProof(currentSupply.root, operation.supply.proof, supplyUpdates, limits);
     writes.push(['ar/supply', { root, revision: (BigInt(currentSupply.revision) + 1n).toString() }]);
   } else check(equal(operation.supply.proof, { leaves: [], nodes: [] }), 'supply_untouched');
+  for (const [id, name] of supplySnapshots) obligations.set(id, { ...obligations.get(id),
+    supplyIssued: supplyUpdates.get(accountKey('supply', name)).issued });
   // No partial writes on any invalid proof, including a late supply failure.
   if (capture) {
     for (const [owner, a] of accounts) capture(owner, a.current.root, a.packet.proof, a.updates);

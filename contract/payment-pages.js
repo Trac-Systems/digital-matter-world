@@ -23,12 +23,12 @@ export const paymentCreditDigest = (network, action) => {
 // The containing batch authenticates the independent chain checks. Payment
 // usage is a sparse authenticated set, so a request can fund an arbitrary
 // number of bounded pages without retaining a growing allocation array.
-export async function applyPaymentPage(store, op, { network, height, settings = {}, capture = null }) {
+export async function applyPaymentPage(store, op, { network, height, executionHeight = height, settings = {}, capture = null }) {
   const limits = assetSettings(settings), clock = ordinalCodec(typeof height === 'string');
   check(op?.op === 'fp' && op.v === 2 && hex(op.id) && jsonBytes(op) <= limits.proofBytes, 'funding_operation');
   if (op.type === 'public-scan') return applyPublicScan(store, op, { network, height, settings: limits });
   if (op.type === 'public-payment') return applyPublicPayment(store, op, { network, height, settings: limits });
-  if (op.type === 'lifecycle') return applyFinancialLifecycle(store, op, { network, height, limits });
+  if (op.type === 'lifecycle') return applyFinancialLifecycle(store, op, { network, height, executionHeight, limits });
   await financialUnfrozen(store, ['fp/' + op.id, 'fp/usage', ...(op.credit ? ['fc/' + op.credit] : [])]);
   const key = 'fp/' + op.id, old = await store.get(key), writes = [];
   if (op.type === 'checkpoint') {
@@ -41,7 +41,7 @@ export async function applyPaymentPage(store, op, { network, height, settings = 
   } else if (op.type === 'open') {
     check(!old && hex(op.owner) && hex(op.terms) && Array.isArray(op.fees) && op.fees.length > 0 && op.fees.length <= limits.paymentPage &&
       op.fees.every(f => hex(f.key) && positive(f.amount)) && new Set(op.fees.map(f => f.key)).size === op.fees.length, 'funding_terms');
-    if (op.capacity) writes.push(...await reserveFinancialCapacity(store, op.id, op.capacity));
+    if (op.capacity) writes.push(...await reserveFinancialCapacity(store, op.id, op.capacity, executionHeight));
     writes.push([key, { owner: op.owner, terms: op.terms, fees: op.fees, paid: op.fees.map(() => '0'), sequence: '0', root: EMPTY_ALLOCATION_ROOT, state: 'open', ...(op.capacity ? { capacity: op.capacity } : {}) }]);
   } else if (op.type === 'page' || op.type === 'surplus') {
     const surplus = op.type === 'surplus';

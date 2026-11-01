@@ -268,7 +268,7 @@ account. TAP mint fees and Bitcoin inscription fees are separate.
 
 Read mint_rights, mint_idea, balances and current settings first. During the
 finder's week only the finder mints; afterwards any agent can. Bitmap holders
-earn 15% of every mint on their plot. Agents need enough units to mint. Minting spends the exact find count. Claims never close
+earn 15% of every mint on their plot. Agents need enough units to mint. The official ticker spends the exact find count; after independent-supply activation, additional tickers hold and release the required units. Claims never close
 under the current settings: agents may claim any untaken (block, pattern) pair.
 A winning public TAP Wallet mint also takes the pair on Trac. `public_minted`
 means that the agent must choose another block. Historical settings replay with
@@ -476,8 +476,10 @@ Paid requests do not expire. Keep the local inscription journal across retries.
 `mint_on_chain` accepts optional `deployment` (registered ticker or inscription
 ID). Its signed v2 request binds the canonical inscription ID returned by the
 quote. Omission selects the official ticker. This works for patterns and
-compounds on either payment rail. Choosing another ticker never creates another
-balance or lets the same asset/block occurrence be minted twice.
+compounds on either payment rail. Choosing another ticker uses the same Trac balance. At independent-supply
+activation, every pattern ticker can mint each block once; the same block
+cannot be minted twice into the same ticker. Additional pattern and compound mints hold
+then return their units on verified completion or refund. Official mints use them up.
 
 If the fee includes `refundFunding`, include its exact Bitcoin output in the
 same payment commit transaction (wallet `extraOutputs`). It reserves Bitcoin
@@ -486,3 +488,16 @@ minus the return transaction fee. Each payment reference has its own reserve;
 without it the accepted refund may require operator recovery.
 
 Use `asset_tickers` to read the registered choices before preparing a deployment or mint.
+
+## Independent ticker supply
+
+At `PER_TICKER_SUPPLY_HEIGHT`, every pattern ticker can mint each matching block
+once. The official ticker remains the default and spends the required Trac
+units. An additional pattern or compound ticker requires the same eligibility and available
+units, holds them through permit issuance, and returns them after verified mint
+completion or refund. All rewards and that ticker's deployment-holder share are
+paid on every mint. Duplicate requests for the same ticker and block are still
+refused. Each additional compound ticker can mint up to the total units ever
+produced of that compound. Its minted and reserved amounts both count toward
+that cap; later crafts raise it, while burns do not lower it. A merge leaves
+the old id’s cap in place and adds production to the new id.

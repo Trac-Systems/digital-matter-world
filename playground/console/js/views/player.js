@@ -298,7 +298,7 @@ export function mount(root, params) {
   function mintForm() {
     const comp = (store.player?.balances ?? []).filter(b => b.amount !== '0' && assetKind(b.asset) === 'compound');
     return h('div.form', {},
-      h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. After payment is final, your units are consumed and your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
+      h('p.small.muted', { style: { margin: 0 } }, 'Pay the quote from your TAP Wallet. Making real into the official ticker uses your units up; another ticker holds them until completion or refund. After payment is final, your permit is ready. You then inscribe to your own Bitcoin address and pay your own miner fees.'),
       kv([['Who may mint a block', 'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot.'],
         ['Fee', `Tiers 1–5 (equal under flat fees): ${Array.from({ length: 5 }, (_, i) => feePrice(store.status?.feePolicy, 'find', i + 1)).join(' / ')}`], ['Split', 'Finder 30 % · Bitmap holder 15 % (burned if unlinked) · burned 20 % · discoverer 5 % · treasury 30 %']]),
       h('div.row', {}, h('button.btn.primary', { onclick: () => mintFlow({}) }, 'Choose a block to mint')),
