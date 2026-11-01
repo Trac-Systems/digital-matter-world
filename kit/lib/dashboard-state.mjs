@@ -103,7 +103,7 @@ const tnkFailure = error => {
   return code.startsWith('tnk_') ? Object.assign(Error(code), { code, status: TNK_LATER.includes(code) ? 503 : 400 }) : error;
 };
 
-// Financial requests have their own sequential queue. Mining's per-tip move
+// Financial requests are independently identified. Mining's per-tip move
 // allowance must not make a human's mint click wait for another Bitcoin block.
 export function dashboardJournal(journal) {
   return Object.assign(Object.create(journal), { waitTurn: async getHead => getHead(), finishTurn() {} });
@@ -116,7 +116,7 @@ export class DashboardState {
     this.context = context; this.agent = context.agent;
     dashboardCheck(!this.agent.dryRun, 'dashboard_requires_live_signer');
     this.journal = this.agent.journal; this.service = this.agent.service;
-    this.queue = Promise.resolve(); this.inflight = new Map(); this.names = new Map(); this.closed = false;
+    this.inflight = new Map(); this.names = new Map(); this.closed = false;
     this.batch = null; this.batchTask = null; this.walletLocks = new Map(); this.instance = randomUUID();
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_wallet (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key))');
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_sends (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
@@ -414,12 +414,7 @@ export class DashboardState {
     dashboardCheck(slot && Object.keys(slot).every(k => ['asset', 'block', 'deployment'].includes(k)) && assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
     const key = canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '');
     if (this.inflight.has(key)) return this.inflight.get(key);
-    const queued = Date.now();
-    const task = this.queue.then(() => {
-      if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`mint timing: waited ${Date.now() - queued}ms behind earlier mint clicks\n`);
-      return this.mintNow(slot);
-    });
-    this.queue = task.catch(() => {});
+    const task = Promise.resolve().then(() => this.mintNow(slot));
     this.inflight.set(key, task);
     task.finally(() => this.inflight.delete(key)).catch(() => {});
     return task;
@@ -966,8 +961,7 @@ export class DashboardState {
     dashboardCheck(value && Object.keys(value).sort().join(',') === (value.deployment === undefined ? 'amount,asset' : 'amount,asset,deployment') && (value.deployment === undefined || typeof value.deployment === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(value.deployment)) && /^c2:[0-9a-f]{64}$/.test(value.asset) && amountText(String(value.amount)) && BigInt(value.amount) > 0n, 'invalid_compound_mint');
     const key = 'compound/' + value.asset;
     if (this.inflight.has(key)) return this.inflight.get(key);
-    const task = this.queue.then(() => this.mintCompoundNow(value.asset, String(value.amount).trim(), value.deployment));
-    this.queue = task.catch(() => {});
+    const task = Promise.resolve().then(() => this.mintCompoundNow(value.asset, String(value.amount).trim(), value.deployment));
     this.inflight.set(key, task);
     task.finally(() => this.inflight.delete(key)).catch(() => {});
     return task;
@@ -1214,7 +1208,7 @@ export class DashboardState {
   }
   async close() {
     this.closed = true; this.wakeSend?.();
-    try { await this.batchTask; await this.queue; await this.sendTail; await this.tnkTail; await this.craftTail; }
+    try { await this.batchTask; await Promise.allSettled([...this.inflight.values()]); await this.sendTail; await this.tnkTail; await this.craftTail; }
     finally {
       if (this.active) this.journal.db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance);
       this.active = false;

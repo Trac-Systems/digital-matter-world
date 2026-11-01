@@ -53,17 +53,17 @@ export class AccountExecution {
     const touch = (owner, kind, id) => { const keys = owners.get(owner) ?? new Set(); keys.add(accountKey(kind, id)); owners.set(owner, keys); };
     const balance = (owner, asset, supply = false) => { this.balances.set(owner + '/' + asset, { owner, asset }); touch(owner, 'balance', asset); if (supply) supplyKeys.add(accountKey('supply', asset)); };
     for (const a of actions) {
-      if (['transfer', 'craft', 'reserve', 'lock'].includes(a.type)) touch(a.owner, 'nonce', a.nonce);
+      if (['transfer', 'craft', 'reserve', 'reserve-n', 'lock'].includes(a.type)) touch(a.owner, 'nonce', a.nonce);
       if (a.type === 'compound-merge') {
         const manifest = rules.compoundMergeManifest(this.document.network, this.executionHeight, this.mergeManifest);
         if (!manifest) throw Error('compound_merge_authorization');
         for (const row of manifest.rows) { balance(row.holder, row.oldId, true); balance(row.holder, row.newId, true); }
       } else if (a.type === 'credits') for (const [asset] of a.assets) balance(a.owner, asset, true);
       else if (a.type === 'craft') for (const [asset] of [...a.in, ...a.out]) balance(a.owner, asset, true);
-      else if (['credit', 'transfer', 'reserve', 'lock'].includes(a.type)) {
+      else if (['credit', 'transfer', 'reserve', 'reserve-n', 'lock'].includes(a.type)) {
         balance(a.owner, a.asset, a.type === 'credit'); if (a.type === 'transfer') balance(a.to, a.asset);
       } else if (a.type === 'snapshot-supply') {
-        const obligation = await this.getAsync('ao/' + a.id) ?? actions.find(row => row.type === 'reserve' && row.id === a.id);
+        const obligation = await this.getAsync('ao/' + a.id) ?? actions.find(row => ['reserve', 'reserve-n'].includes(row.type) && row.id === a.id);
         if (!obligation) throw Error('obligation_missing');
         supplyKeys.add(accountKey('supply', obligation.asset));
       } else if (['consume', 'refund', 'release-mint'].includes(a.type)) {

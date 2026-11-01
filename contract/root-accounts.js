@@ -19,6 +19,12 @@ export const accountActionDigest = (network, action) => {
   return sha256(utf8ToBytes('dmw-account-action-v2|' + network + '|' + canonicalJSON(unsigned)));
 };
 
+// A distinct action/domain leaves every v2 digest and revision check unchanged.
+export const reserveNonceDigest = (network, action) => {
+  const { sig, ...unsigned } = action;
+  return sha256(utf8ToBytes('dmw-account-action-v3|' + network + '|' + canonicalJSON(unsigned)));
+};
+
 // Called only inside an authenticated, version-2 notary batch. It derives the
 // updates from actions, rather than trusting caller-supplied replacement roots.
 // One root/revision per touched agent and one supply root are written. Nonces
@@ -61,6 +67,14 @@ export async function applyRootAccounts(store, operation, { network, height, set
       typeof action.sig === 'string' && /^[0-9a-f]{128}$/.test(action.sig) && ed25519.verify(action.sig, accountActionDigest(network, action), action.owner, { zip215: false }), 'account_signature');
     const key = accountKey('nonce', action.nonce); check(read(a, key) === null, 'account_replay'); a.updates.set(key, 'used');
   };
+  const authorizeReserveNonce = action => {
+    const a = account(action.owner);
+    check(Object.keys(action).sort().join(',') === 'amount,asset,id,nonce,owner,sig,terms,type,until' &&
+      action.type === 'reserve-n' && hex(action.nonce) && clock.valid(action.until) && clock.compare(height, action.until) <= 0 &&
+      typeof action.sig === 'string' && /^[0-9a-f]{128}$/.test(action.sig) &&
+      ed25519.verify(action.sig, reserveNonceDigest(network, action), action.owner, { zip215: false }), 'account_signature');
+    const key = accountKey('nonce', action.nonce); check(read(a, key) === null, 'account_replay'); a.updates.set(key, 'used');
+  };
   const obligation = async id => {
     check(hex(id), 'obligation_id');
     if (!obligations.has(id)) obligations.set(id, await store.get('ao/' + id));
@@ -100,6 +114,10 @@ export async function applyRootAccounts(store, operation, { network, height, set
       for (const [name, amount] of action.out) { pair(action.owner, name, amount, 1n); supply(name, BigInt(amount)); }
     } else if (action.type === 'reserve') {
       authorize(action); check(!await obligation(action.id) && positive(action.amount) && hex(action.terms), 'obligation_exists');
+      change(action.owner, action.asset, -BigInt(action.amount), BigInt(action.amount));
+      obligations.set(action.id, { state: 'reserved', owner: action.owner, asset: action.asset, amount: action.amount, terms: action.terms });
+    } else if (action.type === 'reserve-n') {
+      authorizeReserveNonce(action); check(!await obligation(action.id) && positive(action.amount) && hex(action.terms), 'obligation_exists');
       change(action.owner, action.asset, -BigInt(action.amount), BigInt(action.amount));
       obligations.set(action.id, { state: 'reserved', owner: action.owner, asset: action.asset, amount: action.amount, terms: action.terms });
     } else if (action.type === 'snapshot-supply') {

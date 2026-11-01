@@ -5,7 +5,7 @@ import { Store } from '../src/store.mjs';
 import { AccountExecution } from '../src/account-batch.mjs';
 import { buildFinancialExecution, FinancialExecution } from '../src/financial-execution.mjs';
 import { verifyFinancialExecution } from '../../committee/signer/financial-execution.mjs';
-import { accountActionDigest } from '../../contract/root-accounts.js';
+import { accountActionDigest, reserveNonceDigest } from '../../contract/root-accounts.js';
 import { applyRootAccounts } from '../../contract/root-accounts.js';
 import { applyPaymentPage, surplusCreditId, paymentCreditDigest } from '../../contract/payment-pages.js';
 import { accountKey, readAccountLeaf } from '../../contract/account-tree.js';
@@ -37,11 +37,12 @@ async function fixture(t) {
     return result;
   };
   const source = (transition, evidence) => { sources.set(r.hashObject(transition), evidence); return transition; };
-  const reserve = (n, fees = [{ key: nonce(500), amount: '65' }]) => {
-    const id = nonce(n), evidence = { owner: alice.address, asset: 'p2:0', amount: '7', fees };
+  const reserve = (n, fees = [{ key: nonce(500), amount: '65' }], parallel = false, amount = '7') => {
+    const id = nonce(n), evidence = { owner: alice.address, asset: 'p2:0', amount, fees };
     const action = { type: 'reserve', owner: alice.address, asset: evidence.asset, amount: evidence.amount, id, terms: r.hashObject(evidence),
       revision: store.get('accountRecords', 'ar/' + alice.address).revision, nonce: nonce(n + 1000), until: 20 };
-    action.sig = Buffer.from(ed25519.sign(accountActionDigest(network, action), alice.secret)).toString('hex');
+    if (parallel) { action.type = 'reserve-n'; delete action.revision; }
+    action.sig = Buffer.from(ed25519.sign((parallel ? reserveNonceDigest : accountActionDigest)(network, action), alice.secret)).toString('hex');
     return source({ type: 'reserve', id, action, fees }, evidence);
   };
   const evidence = (id, fields) => ({ requestId: id, owner: alice.address, terms: store.get('accountRecords', 'fp/' + id).terms, ...fields });
@@ -209,4 +210,118 @@ test('financial verification derives transfers together with claim credits and c
   assert.deepEqual(f.balance(), { available: '91', held: '7' });
   assert.equal(f.store.get('publicBalances', bob.address + '/p2:0').amount, '1');
   assert.equal(f.store.get('accountRecords', 'ao/' + reservation.id).state, 'reserved');
+});
+
+for (const count of [2, 5]) test(`builder, independent signer and contract agree on ${count} merged nonce reservations`, async t => {
+  const f = await fixture(t), requests = Array.from({ length: count + 1 }, (_, i) => f.reserve(6000 + i, undefined, true));
+  const result = await f.execute(requests.slice(0, count));
+  assert.equal(result.operations.filter(op => op.op === 'ar').length, 1);
+  assert.equal(result.operations[0].accounts.length, 1);
+  assert.equal(result.operations[0].accounts[0].proof.leaves.length, count + 1);
+  assert.equal(result.inputs[0].reserveGroup, count);
+  assert.equal(f.store.get('accountRecords', 'ar/' + alice.address).revision, '2');
+  await f.execute(requests.slice(count));
+  assert.deepEqual(f.balance(), { available: String(100 - (count + 1) * 7), held: String((count + 1) * 7) });
+});
+
+test('merged reservations defer excess actions to a later batch without resigning', async t => {
+  const f = await fixture(t), transitions = Array.from({ length: 5 }, (_, i) => f.reserve(6100 + i, undefined, true));
+  const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '10', values: { ...f.document.values, accountActions: 2 } });
+  const first = await buildFinancialExecution({ ...f, document, transitions, height: 10, defer: true });
+  assert.equal(first.inputs.length, 2); assert.equal(first.deferred.length, 3);
+  assert.ok(first.deferred.every(d => d.reason === 'account_operation'));
+  await verifyFinancialExecution({ files: [{ ops: first.operations, financialOperations: first.inputs }], reads: f.reads, document, network, height: 10 });
+  await f.store.transact(first.writes);
+  const second = await buildFinancialExecution({ ...f, document, transitions: transitions.slice(2), height: 10, defer: true });
+  assert.equal(second.inputs.length, 2); assert.equal(second.deferred.length, 1);
+  await verifyFinancialExecution({ files: [{ ops: second.operations, financialOperations: second.inputs }], reads: f.reads, document, network, height: 10 });
+});
+
+test('merged reserve verification rejects omitted actions, group substitution and changed commitments', async t => {
+  const f = await fixture(t), transitions = [f.reserve(6200, undefined, true), f.reserve(6201, undefined, true)];
+  const result = await buildFinancialExecution({ ...f, transitions, height: 10 });
+  for (const mutate of [
+    f => f.financialOperations[0].operations[0].actions.pop(),
+    f => { f.financialOperations[0].reserveGroup = 1; },
+    f => { f.financialOperations[0].reserveGroup = null; },
+    f => { f.financialOperations[1].transition.action.owner = bob.address; },
+    f => { f.financialOperations[0].recordCommitments.pop(); },
+  ]) {
+    const file = structuredClone({ ops: result.operations, financialOperations: result.inputs }); mutate(file);
+    file.ops = file.financialOperations.flatMap(i => i.operations);
+    await assert.rejects(verifyFinancialExecution({ files: [file], reads: f.reads, document: f.document, network, height: 10 }));
+  }
+});
+
+test('concurrent admissions cap each owner, hold exact available units and release on accept or expiry', async t => {
+  const f = await fixture(t), queue = new FinancialExecution({ ...f, resources: { pendingMintsPerAgent: 3 } });
+  const requests = Array.from({ length: 4 }, (_, i) => f.reserve(6300 + i, undefined, true, '30'));
+  const admitted = await Promise.all(requests.slice(0, 3).map(t => queue.admit(t, { counted: 10 })));
+  assert.equal(f.store.get('financialAdmissionCount', alice.address), 3);
+  assert.equal(f.store.get('financialAdmissionHeld', alice.address + '/p2:0'), '90');
+  await assert.rejects(queue.admit(requests[3], { counted: 10 }), e => e.status === 409 && e.message === 'financial_owner_fair_share');
+  assert.deepEqual(await queue.admit(requests[0], { counted: 10 }), admitted[0]);
+  await queue.expire(admitted[0].id, { counted: 21 });
+  assert.equal(f.store.get('financialAdmissionHeld', alice.address + '/p2:0'), '60');
+  await assert.rejects(queue.admit(f.reserve(6310, undefined, true, '41'), { counted: 10 }), e => e.status === 409 && e.message === 'financial_balance_reserved');
+  const result = await queue.build({ height: 10 });
+  await f.store.transact([...result.writes, ...queue.acceptedOperations({ proposal: { batch: { n: '1' } }, items: [{ output: { file: { financialOperations: result.inputs } } }] })]);
+  assert.equal(f.store.count('financialAdmissionCount'), 0);
+  assert.equal(f.store.get('financialAdmissionHeld', alice.address + '/p2:0'), '0');
+  assert.equal(f.store.count('financialAdmissionNonce'), 0);
+  assert.equal(f.store.count('financialQueue'), 0);
+  assert.deepEqual(f.balance(), { available: '40', held: '60' });
+});
+
+test('legacy admission lock and pending nonce holds exclude each other', async t => {
+  const f = await fixture(t), queue = new FinancialExecution(f), old = f.reserve(6400), next = f.reserve(6401, undefined, true);
+  const admitted = await queue.admit(old, { counted: 10 });
+  await assert.rejects(queue.admit(next, { counted: 10 }), /financial_account_reserved/);
+  await queue.expire(admitted.id, { counted: 21 });
+  await queue.admit(next, { counted: 10 });
+  await assert.rejects(queue.admit(old, { counted: 10 }), /financial_account_reserved/);
+});
+
+for (const limit of ['accountLeaves', 'accountProofBytes', 'batchBytes']) test(`nonce reserve packing respects ${limit} and carries unchanged signatures forward`, async t => {
+  const f = await fixture(t), transitions = [f.reserve(6500, undefined, true), f.reserve(6501, undefined, true)];
+  const single = await buildFinancialExecution({ ...f, transitions: transitions.slice(0, 1), height: 10 });
+  const max = limit === 'accountLeaves' ? 2 : limit === 'accountProofBytes' ? Buffer.byteLength(r.stableJSON(single.operations[0])) :
+    Buffer.byteLength(r.stableJSON(single.operations)) + f.document.values.batchEnvelopeReserveBytes;
+  const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '10', values: { ...f.document.values, [limit]: max } });
+  const first = await buildFinancialExecution({ ...f, document, transitions, height: 10, defer: true });
+  assert.equal(first.inputs.length, 1); assert.equal(first.deferred.length, 1);
+  assert.deepEqual(first.inputs[0].transition, transitions[0]);
+  await f.store.transact(first.writes);
+  // Later batches can have larger proofs as nonce leaves accumulate; normal
+  // configured limits admit the original second signed request unchanged.
+  const later = await f.execute(transitions.slice(1));
+  assert.deepEqual(later.inputs[0].transition, transitions[1]);
+});
+
+test('a merged balance underflow or duplicate nonce cannot leave partial effects', async t => {
+  const f = await fixture(t), a = f.reserve(6600, undefined, true, '60'), b = f.reserve(6601, undefined, true, '41');
+  await assert.rejects(f.execute([a, b]), /account_insufficient/);
+  assert.deepEqual(f.balance(), { available: '100', held: '0' });
+  const e = await f.reads.financialEvidence(b);
+  b.action.nonce = a.action.nonce; b.action.amount = e.amount = '1'; b.action.terms = r.hashObject(e);
+  b.action.sig = Buffer.from(ed25519.sign(reserveNonceDigest(network, b.action), alice.secret)).toString('hex'); f.source(b, e);
+  await assert.rejects(f.execute([a, b]), /account_replay/);
+  assert.deepEqual(f.balance(), { available: '100', held: '0' });
+});
+
+test('a failing group extension restores the last verified proof without re-reading unavailable sources', async t => {
+  const f = await fixture(t), a = f.reserve(6700, undefined, true), b = f.reserve(6701, undefined, true);
+  const evidence = f.reads.financialEvidence; let aReads = 0;
+  f.reads.financialEvidence = async transition => {
+    if (transition.id === b.id || ++aReads > 1) throw Error('source_unavailable');
+    return evidence(transition);
+  };
+  const result = await buildFinancialExecution({ ...f, transitions: [a, b], height: 10, defer: true });
+  assert.equal(result.inputs.length, 1); assert.equal(result.inputs[0].transition.id, a.id);
+  assert.equal(result.deferred.length, 1); assert.equal(result.deferred[0].reason, 'source_unavailable');
+  f.reads.financialEvidence = evidence;
+  await verifyFinancialExecution({ files: [{ ops: result.operations, financialOperations: result.inputs }], reads: f.reads, document: f.document, network, height: 10 });
+  await f.store.transact(result.writes);
+  assert.deepEqual(f.balance(), { available: '93', held: '7' });
+  assert.equal(f.store.get('accountRecords', 'ao/' + b.id), null);
 });

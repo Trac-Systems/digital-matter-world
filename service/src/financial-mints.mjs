@@ -137,8 +137,11 @@ export class FinancialMints extends Mints {
     if (!row) {
       check(!this.financial.admissionReady || await this.financial.admissionReady(), 'financial_admission_fenced', 503);
       check(rules.compareOrdinal(counted, r.until) <= 0 && body.feeQuote, 'financial_request_expired');
+      check((this.store.get('financialAdmissionCount', r.owner) ?? 0) < this.financial.resources.pendingMintsPerAgent, 'financial_owner_fair_share', 409);
       check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
-      const quote = await step('quote', this.quote({ ...(r.deployment ? { deployment: r.deployment } : {}), asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote }));
+      // Concurrent identical quote reads may share their result. Request-specific
+      // fee identities must never mutate another request's signed terms.
+      const quote = structuredClone(await step('quote', this.quote({ ...(r.deployment ? { deployment: r.deployment } : {}), asset: r.asset, amount: r.amount, ...(r.block === undefined ? {} : { block: r.block }), kind: body.kind, payer: body.payer, receiver: body.receiver, feeQuote: body.feeQuote })));
       if (quote.deploymentNeeded || quote.state === 'deployment_pending') return quote;
       check(quote.asset === r.asset, 'mint_asset_use_ledger');
       if (this.reads.financialFeePlan && quote.feeQuote.settingsHash) {
@@ -159,13 +162,13 @@ export class FinancialMints extends Mints {
       row = { id, request: r, signature: body.signature, receiver: body.receiver, payer: body.payer, kind: body.kind, authorization: body.authorization,
         requestedFeeQuote: body.feeQuote, quote, feeAuthorization, state: 'authorizing', created: counted, expiry: r.expires, paymentIds: [] };
       row = this.mintSender?.bind(row) ?? row;
-      const at = await step('stamp', this.reads.batchStamp()), evidence = await step('reservation evidence', this.reads.financialReservation(row, at)),
-        account = await step('account', this.reads.financialRecord('ar/' + r.owner, at));
+      const at = await step('stamp', this.reads.batchStamp()), evidence = await step('reservation evidence', this.reads.financialReservation(row, at));
       row.context = { deployment: evidence.deployment };
       row.reservationEvidence = evidence;
-      row.reservationAction = { type: 'reserve', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: rules.hashObject(evidence),
-        revision: account?.revision ?? '0', nonce: r.nonce, until: r.until };
+      row.reservationAction = { type: 'reserve-n', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: rules.hashObject(evidence),
+        nonce: r.nonce, until: r.until };
       await this.gate(() => {
+        check((this.store.get('financialAdmissionCount', r.owner) ?? 0) < this.financial.resources.pendingMintsPerAgent, 'financial_owner_fair_share', 409);
         check(this.store.count('financialActiveMints') < this.resources.activeMints && this.store.count(ownerSpace(r.owner)) < this.resources.mintsPerAgent, 'mint_capacity', 503);
         return this.store.transact([{ space: 'mints', id, value: row }, { space: 'financialActiveMints', id, value: true }, { space: ownerSpace(r.owner), id, value: true }]);
       });

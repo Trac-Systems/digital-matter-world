@@ -26,7 +26,7 @@ import { verifyFinancialExecution } from '../../committee/signer/financial-execu
 import { Policy } from '../../committee/signer/policy.mjs';
 import { attachPermit } from '../../committee/signer/adapter.mjs';
 import { verifyMintResult } from '../../committee/signer/certificate.mjs';
-import { accountActionDigest } from '../../contract/root-accounts.js';
+import { accountActionDigest, reserveNonceDigest } from '../../contract/root-accounts.js';
 import { financialMintDigest, financialMintId } from '../../rules/src/financial-mint.js';
 import { payerDigest } from '../src/mints.mjs';
 import { FeeQuotes, createFeePolicy } from '../src/fees.mjs';
@@ -104,8 +104,12 @@ async function setup(t, values = {}, initialCounted = 100, options = {}) {
     const request = { v: 2, owner: who.address, asset, ...(selection ? { deployment: quote.feeQuote.deploymentId } : {}), ...(options.legacyElement ? { block: '42' } : {}), amount: '3', receive: r.hash('regtest-receiver'), nonce: r.hash(nonce), until: r.ordinalCodec(typeof counted === 'string').add(counted, 20), expires: r.ordinalCodec(typeof counted === 'string').add(counted, 432), settingsHash: quote.feeQuote.settingsHash };
     const body = { request, signature: Buffer.from(ed25519.sign(financialMintDigest(network, request), who.secret)).toString('hex'), receiver: 'regtest-receiver', payer: kind === 'tap' ? 'regtest-payer' : '0x' + 'e'.repeat(40), kind, feeQuote: quote.feeQuote };
     body.authorization = Buffer.from(ed25519.sign(payerDigest(network, body), who.secret)).toString('hex');
-    const pending = await mints.request(body), action = pending.reservationAction;
-    return { body, id: financialMintId(network, request), action: { ...action, sig: Buffer.from(ed25519.sign(accountActionDigest(network, action), who.secret)).toString('hex') } };
+    const pending = await mints.request(body); let action = pending.reservationAction;
+    if (options.legacyReservations) {
+      action = { ...action, type: 'reserve', revision: store.get('accountRecords', 'ar/' + who.address).revision };
+      await store.put('mints', pending.id, { ...store.get('mints', pending.id), reservationAction: action });
+    }
+    return { body, id: financialMintId(network, request), action: { ...action, sig: Buffer.from(ed25519.sign((action.type === 'reserve-n' ? reserveNonceDigest : accountActionDigest)(network, action), who.secret)).toString('hex') } };
   };
   const execute = async () => {
     const result = await financial.build({ height: counted, at: await stamp() });
@@ -295,7 +299,7 @@ test('expired admissions retain signed drafts and release only unaccepted local 
   const queued = f.store.list('financialQueue', { limit: 10 })[0], capacity = f.store.get('financialAdmission', queued.id).capacity;
   await f.store.put('meta', 'draft', { proposal: { batch: { ops: [{ op: 'ar', actions: [p.action] }] } } });
   f.counted(121); await f.mints.tick();
-  assert.equal(f.store.count('financialAdmissionOwner'), 1);
+  assert.equal(f.store.get('financialAdmissionCount', f.owner.address), 1);
   await f.store.transact([{ space: 'meta', id: 'draft' }]); await f.mints.tick();
   assert.equal(f.mints.public(p.id).state, 'expired');
   assert.equal(f.store.count('financialAdmissionOwner'), 0); assert.equal(f.store.count('financialQueue'), 0);
@@ -304,7 +308,7 @@ test('expired admissions retain signed drafts and release only unaccepted local 
 });
 
 test('admission reserves account revision and deployment capacity before acknowledging competing intents', async t => {
-  const f = await setup(t), a = await f.prepare('a'), b = await f.prepare('b');
+  const f = await setup(t, {}, 100, { legacyReservations: true }), a = await f.prepare('a'), b = await f.prepare('b');
   await f.mints.request({ ...a.body, reserve: a.action });
   await assert.rejects(f.mints.request({ ...b.body, reserve: b.action }), /financial_account_reserved/);
   assert.equal(f.store.count('financialQueue'), 1);
@@ -314,7 +318,7 @@ test('admission reserves account revision and deployment capacity before acknowl
 });
 
 test('slow admission verification does not hold durable submissions and cannot commit across their revision', async t => {
-  const f = await setup(t), p = await f.prepare('overlap');
+  const f = await setup(t, {}, 100, { legacyReservations: true }), p = await f.prepare('overlap');
   const scope = f.reads.financialScope;
   let release, started;
   const blocked = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { started = resolve; });
@@ -629,7 +633,7 @@ test('a client-held legacy quote enters v2 admission at its original price after
     receiver: 'regtest-receiver', payer: 'regtest-payer', kind: 'tap', feeQuote: quote.feeQuote };
   body.authorization = Buffer.from(ed25519.sign(payerDigest(network, body), f.owner.secret)).toString('hex');
   const prepared = await f.mints.request(body), action = prepared.reservationAction;
-  await f.mints.request({ ...body, reserve: { ...action, sig: Buffer.from(ed25519.sign(accountActionDigest(network, action), f.owner.secret)).toString('hex') } });
+  await f.mints.request({ ...body, reserve: { ...action, sig: Buffer.from(ed25519.sign((action.type === 'reserve-n' ? reserveNonceDigest : accountActionDigest)(network, action), f.owner.secret)).toString('hex') } });
   await f.execute(); assert.equal(f.store.get('mints', prepared.id).quote.price, quote.price);
   assert.deepEqual(f.store.get('mints', prepared.id).requestedFeeQuote, quote.feeQuote);
 });
@@ -1223,4 +1227,47 @@ test('signed financial mint admission binds Bitcoin funding before acceptance an
   await f.mints.request(body);
   assert.deepEqual(f.store.get('mints', first.id).mintFunding, quote);
   assert.equal(funding.view.page(f.mints, new URLSearchParams()).rows[0].refundReserveSats, quote.refundReserveSats);
+});
+
+test('eight concurrent mint admissions survive restart, merge capacity and release every pending hold', async t => {
+  const f = await setup(t, {}, '100', { custody: true });
+  const prepared = await Promise.all(Array.from({ length: 8 }, (_, i) => f.prepare('parallel-' + i)));
+  assert.ok(prepared.every(p => p.action.type === 'reserve-n' && !Object.hasOwn(p.action, 'revision')));
+  await Promise.all(prepared.map(p => f.mints.request({ ...p.body, reserve: p.action })));
+  assert.equal(f.store.get('financialAdmissionCount', f.owner.address), 8);
+  assert.equal(f.store.get('financialAdmissionHeld', f.owner.address + '/c1'), '24');
+  assert.equal(f.store.count('financialAdmissionOwner'), 0);
+  await assert.rejects(f.prepare('parallel-ninth'), e => e.status === 409 && e.message === 'financial_owner_fair_share');
+  await f.reopen();
+  assert.equal(f.store.get('financialAdmissionCount', f.owner.address), 8);
+  const result = await f.execute();
+  assert.equal(result.inputs.length, 8);
+  assert.equal(result.operations.filter(op => op.op === 'ar').length, 1);
+  assert.equal(result.operations[0].accounts.length, 1);
+  assert.equal(f.store.get('financialAdmissionHeld', f.owner.address + '/c1'), '0');
+  assert.equal(f.store.count('financialAdmissionCount'), 0);
+  assert.equal(f.store.count('financialAdmissionNonce'), 0);
+  const key = capacityKey(f.context.deployment.id);
+  assert.equal(f.store.get('financialAdmissionCapacity', key), '0');
+  assert.equal(f.store.get('accountRecords', key), '24');
+  for (const p of prepared) assert.equal(f.store.get('accountRecords', 'ao/' + p.id).state, 'reserved');
+});
+
+test('new admission verification overlaps queue writes but is fenced by accepted roots', async t => {
+  const f = await setup(t), p = await f.prepare('new-overlap');
+  const scope = f.reads.financialScope;
+  let release, started;
+  const blocked = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { started = resolve; });
+  f.reads.financialScope = options => {
+    const reads = scope(options), evidence = reads.financialEvidence;
+    reads.financialEvidence = async (...args) => { started(); await blocked; return evidence(...args); };
+    return reads;
+  };
+  const admission = f.mints.request({ ...p.body, reserve: p.action }); await entered;
+  await f.financial.gate(async () => {}); // Same gate used for accepted pipeline writes.
+  release(); await assert.rejects(admission, /financial_snapshot_changed/);
+  assert.equal(f.store.count('financialAdmission'), 0);
+  f.reads.financialScope = scope;
+  await f.mints.request({ ...p.body, reserve: p.action });
+  assert.equal(f.store.get('financialAdmissionCount', f.owner.address), 1);
 });

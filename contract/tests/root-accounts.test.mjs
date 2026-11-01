@@ -100,3 +100,34 @@ for (const height of ['9007199254740991', '9223372036854775807', '9'.repeat(80)]
   await applyRootAccounts(f.store, refund, { ...context, height: next(6) }); f.commit();
   assert.equal(f.db.get('al/' + lock.id).state, 'refunded');
 });
+
+for (const count of [2, 5]) test(`nonce reservations merge ${count} holds and survive intervening revisions`, async () => {
+  const { reserveNonceDigest } = await import('../root-accounts.js');
+  const f = ledger(), balance = accountKey('balance', 'p0'), context = { network: f.network, height: 10 };
+  await applyRootAccounts(f.store, f.op([{ type: 'credit', owner: alice.address, asset: 'p0', amount: '100' }], [f.packet(alice.address, [balance])], ['p0']), context); f.commit();
+  f.leaves.set(alice.address, new Map([[balance, { available: '100', held: '0' }]]));
+  const sign = a => ({ ...a, sig: Buffer.from(ed25519.sign(reserveNonceDigest(f.network, a), alice.secret)).toString('hex') });
+  const actions = Array.from({ length: count + 1 }, (_, n) => sign({ type: 'reserve-n', owner: alice.address, asset: 'p0', amount: '7',
+    id: nonce(500 + n), terms: nonce(600), nonce: nonce(700 + n), until: 20 }));
+  const packet = list => f.op(list, [f.packet(alice.address, [balance, ...list.map(a => accountKey('nonce', a.nonce))])]);
+  const apply = async list => {
+    await applyRootAccounts(f.store, packet(list), context); f.commit();
+    for (const a of list) f.leaves.get(alice.address).set(accountKey('nonce', a.nonce), 'used');
+    const held = [...f.leaves.get(alice.address).values()].filter(v => v === 'used').length * 7;
+    f.leaves.get(alice.address).set(balance, { available: String(100 - held), held: String(held) });
+    assert.equal(f.db.get('ar/' + alice.address).root, accountTree(f.leaves.get(alice.address)).root);
+  };
+  await apply(actions.slice(0, count));
+  assert.equal(f.db.get('ar/' + alice.address).revision, '2');
+  await apply(actions.slice(count)); // Signed before the preceding batch landed.
+  await assert.rejects(applyRootAccounts(f.store, packet([actions[0]]), context), /account_replay/);
+  const fresh = { ...actions[0], id: nonce(800), nonce: nonce(801) }; delete fresh.sig;
+  for (const a of [sign({ ...fresh, until: 9 }), sign({ ...fresh, revision: '3' }), f.sign(fresh), { ...sign(fresh), terms: nonce(999) }])
+    await assert.rejects(applyRootAccounts(f.store, packet([a]), context), /account_signature/);
+  await assert.rejects(applyRootAccounts(f.store, packet([sign({ ...fresh, amount: '100' })]), context), /account_insufficient/);
+  const legacy = f.sign({ ...fresh, type: 'reserve', revision: '1' });
+  await assert.rejects(applyRootAccounts(f.store, packet([legacy]), context), /account_signature/);
+  const duplicate = sign({ ...fresh, id: nonce(802) });
+  await assert.rejects(applyRootAccounts(f.store, packet([sign(fresh), duplicate]), context), /account_replay/);
+  assert.equal(f.writes.size, 0);
+});

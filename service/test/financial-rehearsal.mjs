@@ -299,6 +299,22 @@ try {
     [...fees, ...linkFees].filter(f => f.role === 'burn').reduce((n, f) => n + BigInt(f.amount), 0n).toString());
   assert.equal(publicSourceCalls, 0); recorded.publicPageSourceCalls = publicSourceCalls;
   pass('actual paid mint/link receipts and burn totals appear on public projection pages with zero source calls');
+  const revisionBeforeParallel = contract.db.get('ar/' + alice.address).revision;
+  const parallel = await Promise.all(Array.from({ length: 3 }, (_, n) => agent.makeReal({ ...mintIntent,
+    actionId: 'parallel-regtest-' + n, amount: '1' })));
+  const parallelIds = parallel.map(result => result.request.requestId);
+  assert.equal(new Set(parallelIds).size, 3);
+  assert.equal(store.get('financialAdmissionCount', alice.address), 3);
+  assert.equal(store.get('financialAdmissionHeld', alice.address + '/c1'), '3');
+  await progress(() => parallelIds.every(id => runtime.mints.public(id).payable));
+  const parallelBatch = store.list('batches', { limit: 100 }).at(-1).value.batch;
+  const grouped = parallelBatch.ops.filter(op => op.op === 'ar' && op.actions.some(a => a.type === 'reserve-n'));
+  assert.equal(grouped.length, 1); assert.equal(grouped[0].actions.length, 3); assert.equal(grouped[0].accounts.length, 1);
+  assert.equal(contract.db.get('ar/' + alice.address).revision, String(BigInt(revisionBeforeParallel) + 1n));
+  assert.equal(store.count('financialAdmissionCount'), 0);
+  assert.equal(store.get('financialAdmissionHeld', alice.address + '/c1'), '0');
+  recorded.parallelReservations = { requests: parallelIds.length, accountOperations: grouped.length, actions: grouped[0].actions.length };
+  pass('three concurrent kit reservations share one account packet through five independent HTTP signers/TSS and the notary');
   recorded.acceptedV2Batches = String(BigInt((await contract.state().batchLast()).n) - 1n);
   recorded.request = id; recorded.payment = paymentId; recorded.mint = mintedId;
   recorded.link = { id: linkId, bitmap: bitmapId, block: bitmapBlock, payment: linkPaymentId };

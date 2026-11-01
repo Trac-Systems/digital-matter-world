@@ -51,6 +51,19 @@ async function financialEffects(input, { read, height, document }) {
   if (t.type === 'lifecycle') return financialLifecyclePlan(input, { read, height, document });
   const fp = fields => ({ op: 'fp', v: 2, id: t.id, ...fields });
   const ar = actions => ({ op: 'ar', actions });
+  if (t.type === 'reserve' && t.action?.type === 'reserve-n') {
+    assert(!input.evidence.request?.deployment || multiTickerActive(height), 'multi_ticker_inactive');
+    assert(exactKeys(t, ['type', 'id', 'action', 'fees']) && t.action?.type === 'reserve-n' && t.action.id === t.id &&
+      t.action.terms === evidence && Array.isArray(t.fees) && t.fees.length <= document.values.paymentPage &&
+      stableJSON(t.fees) === stableJSON(input.evidence.fees), 'financial_reservation');
+    assert(input.evidence.owner === t.action.owner && input.evidence.asset === t.action.asset && input.evidence.amount === t.action.amount,
+      'financial_reservation_binding');
+    const capacity = input.evidence.capacity, generation = input.evidence.generationCapacity ?? (capacity && Object.hasOwn(capacity, 'plot') ? capacity : null), external = capacity && !Object.hasOwn(capacity, 'plot') ? capacity : null;
+    assert(!await read('fd/asset/' + t.action.asset) || generation, 'financial_capacity_required');
+    const snapshot = generation && compoundSupplyCapped(await read('fd/' + generation.deployment), height);
+    return [ar([t.action, ...(snapshot ? [{ type: 'snapshot-supply', id: t.id, deployment: generation.deployment }] : [])]), fp({ type: 'open', owner: t.action.owner, terms: t.action.terms, fees: t.fees,
+      ...(external ? { capacity: external } : {}) }), ...(generation ? reserveCapacity(t, input.evidence, generation) : [])];
+  }
   if (t.type === 'reserve') {
     assert(!input.evidence.request?.deployment || multiTickerActive(height), 'multi_ticker_inactive');
     assert(exactKeys(t, ['type', 'id', 'action', 'fees']) && t.action?.type === 'reserve' && t.action.id === t.id &&
@@ -105,11 +118,33 @@ export function financialOperationShape(operation) {
 export function financialBatchOperations(inputs, document) {
   assert(Array.isArray(inputs) && inputs.length <= document.values.mintOperationBudget, 'financial_batch_budget');
   assert(inputs.filter(i => /^(?:legacy-)?link-/.test(i.transition?.action?.type ?? '')).length <= document.values.linkOperationBudget, 'financial_link_budget');
+  financialReserveGroups(inputs);
   const operations = [];
   for (const input of inputs) {
-    assert(exactKeys(input, ['transition', 'evidence', 'operations', ...(input.chainAnchor ? ['chainAnchor'] : []), ...(input.recordCommitments ? ['recordCommitments'] : [])]) && Array.isArray(input.operations) && input.operations.length > 0 &&
+    assert(exactKeys(input, ['transition', 'evidence', 'operations', ...(input.chainAnchor ? ['chainAnchor'] : []), ...(input.recordCommitments ? ['recordCommitments'] : []), ...(input.reserveGroup !== undefined ? ['reserveGroup'] : [])]) && Array.isArray(input.operations) && input.operations.length > 0 &&
       input.operations.every(op => op.v === 2 && ['ar', 'fp', 'br'].includes(op.op)), 'financial_batch_input');
     operations.push(...input.operations);
   }
   return operations;
+}
+
+// Only the new nonce-authorized path may share one account operation. Keep
+// individual inputs/identities so accepted evidence and recovery stay addressable.
+export const nonceReservation = t => t?.type === 'reserve' && t.action?.type === 'reserve-n';
+export function financialReserveGroups(inputs) {
+  const groups = [];
+  for (let i = 0; i < inputs.length;) {
+    const first = inputs[i], size = first.reserveGroup === undefined ? 1 : first.reserveGroup, group = inputs.slice(i, i + size);
+    if (first.reserveGroup !== undefined) {
+      assert(Number.isSafeInteger(size) && size > 0 && group.length === size &&
+        group.every((input, n) => nonceReservation(input.transition) && input.transition.action.owner === first.transition.action.owner &&
+          (!n || input.reserveGroup === undefined)), 'financial_reserve_group');
+    }
+    groups.push(group); i += size;
+  }
+  return groups;
+}
+export function mergedReservePlans(plans) {
+  assert(plans.length > 0 && plans.every(p => p[0]?.op === 'ar' && p.slice(1).every(op => op.op !== 'ar')), 'financial_reserve_plan');
+  return plans.map((plan, i) => [...(i ? [] : [{ op: 'ar', actions: plans.flatMap(p => p[0].actions) }]), ...plan.slice(1)]);
 }

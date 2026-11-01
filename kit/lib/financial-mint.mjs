@@ -1,7 +1,7 @@
 import { hashObject, stableJSON, mintRight, decimalV2, addUint, validateSettingsDocument, multiTickerActive, perTickerSupplyActive } from '../../rules/src/index.js';
 import { wireIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { financialMintDigest, financialMintId } from '../../rules/src/financial-mint.js';
-import { accountActionDigest } from '../../contract/root-accounts.js';
+import { accountActionDigest, reserveNonceDigest } from '../../contract/root-accounts.js';
 import { check, sha256, nonce } from './check.mjs';
 import { signBytes, signPaymentIntent } from './signing.mjs';
 
@@ -14,9 +14,17 @@ const stepTimer = label => {
   return { step: async (name, value) => { const at = Date.now(); try { return await value; } finally { steps.push(`${name} ${Date.now() - at}ms`); } },
     done: () => process.stderr.write(`${label} timing: ${steps.join(', ')}; total ${Date.now() - start}ms\n`) };
 };
+const mintInflight = new WeakMap();
 export async function makeFinancialMint(agent, intent, actionId, candidate, context) {
+  let active = mintInflight.get(agent);
+  if (!active) { active = new Map(); mintInflight.set(agent, active); }
+  const fingerprint = sha256(stableJSON(intent)), prior = active.get(actionId);
+  if (prior) { check(prior.fingerprint === fingerprint, 'Conflicting mint action ID'); return prior.task; }
   const timer = stepTimer('mint');
-  try { return await makeFinancialMintTimed(agent, intent, actionId, candidate, context, timer.step); } finally { timer.done(); }
+  const task = makeFinancialMintTimed(agent, intent, actionId, candidate, context, timer.step);
+  active.set(actionId, { fingerprint, task });
+  task.finally(() => { active.delete(actionId); timer.done(); }).catch(() => {});
+  return task;
 }
 async function makeFinancialMintTimed(agent, intent, actionId, candidate, context, step) {
   const { journal, service, network, wallet, owner } = agent, key = `mint/${actionId}`, old = journal.get(key);
@@ -53,7 +61,7 @@ async function makeFinancialMintTimed(agent, intent, actionId, candidate, contex
     signature: signBytes(wallet, financialMintDigest(network, request)),
     authorization: signPaymentIntent(wallet, network, { request, receiver, payer, kind, feeQuote: quote.feeQuote }) };
   const saved = journal.reserve(key, intent, body), id = financialMintId(network, request), reservationKey = key + '/reservation-v2';
-  await step('trac head + turn', journal.waitTurn(() => agent.trac.head())); journal.mark(key, 'sending');
+  journal.mark(key, 'sending');
   try {
     let reservation = journal.get(reservationKey), response;
     if (!reservation) {
@@ -70,9 +78,12 @@ async function makeFinancialMintTimed(agent, intent, actionId, candidate, contex
         evidence.expiry === request.expires && evidence.settingsHash === request.settingsHash &&
         stableJSON(evidence.request) === stableJSON(request) && stableJSON(evidence.quote) === stableJSON(saved.body.feeQuote) &&
         evidence.signature === saved.body.signature && evidence.authorization === saved.body.authorization, 'Mint reservation terms mismatch');
-      check(action && /^(0|[1-9][0-9]*)$/.test(action.revision) && stableJSON(action) === stableJSON({ type: 'reserve', id, owner, asset, amount,
+      const parallel = action?.type === 'reserve-n';
+      if (parallel) check(stableJSON(action) === stableJSON({ type: 'reserve-n', id, owner, asset, amount,
+        terms: hashObject(evidence), nonce: request.nonce, until: request.until }), 'Mint reservation action mismatch');
+      else check(action && /^(0|[1-9][0-9]*)$/.test(action.revision) && stableJSON(action) === stableJSON({ type: 'reserve', id, owner, asset, amount,
         terms: hashObject(evidence), revision: action.revision, nonce: request.nonce, until: request.until }), 'Mint reservation action mismatch');
-      const reserve = { ...action, sig: signBytes(wallet, accountActionDigest(network, action)) };
+      const reserve = { ...action, sig: signBytes(wallet, (parallel ? reserveNonceDigest : accountActionDigest)(network, action)) };
       reservation = journal.reserve(reservationKey, { id, terms: action.terms }, { version: 2, reserve });
     }
     response = wireIdentities(await step('reserve', service.requestMint({ ...saved.body, reserve: reservation.body.reserve })));
@@ -81,5 +92,4 @@ async function makeFinancialMintTimed(agent, intent, actionId, candidate, contex
       next: [{ tool: 'poll_mint', arguments: { id } }, { tool: 'pay_mint', arguments: { id } }, { tool: 'inscribe_mint', arguments: { id } }] };
     journal.mark(reservationKey, 'submitted', { id }); journal.mark(key, 'submitted', result); return result;
   } catch (error) { journal.mark(key, 'unknown'); throw error; }
-  finally { journal.finishTurn(); }
 }

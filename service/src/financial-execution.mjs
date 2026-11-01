@@ -1,6 +1,8 @@
+import { accountKey } from '../../contract/account-tree.js';
 import { AccountExecution } from './account-batch.mjs';
 import { creditActions } from '../../rules/src/account-batch.js';
-import { financialPlan } from '../../rules/src/financial-execution.js';
+import { executeNonceReservations } from './nonce-reservations.mjs';
+import { financialPlan, nonceReservation } from '../../rules/src/financial-execution.js';
 import { rules } from './rules.mjs';
 import { check, serial } from './util.mjs';
 import { assetResources } from './asset-resources.mjs';
@@ -28,7 +30,43 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
   check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
   const creditOperations = [...execution.operations], inputs = [], deferred = [];
   let linkInputs = priorLinkInputs;
+  const handled = new Set();
   for (const transition of transitions) {
+    if (handled.has(transition)) continue;
+    if (nonceReservation(transition)) {
+      const snapshot = () => ({ records: new Map(execution.changed), nodes: new Map(execution.availability.pending),
+        balances: new Map(execution.balances), operations: [...execution.operations], touches: execution.assetTouches });
+      const checkpoint = snapshot();
+      const restore = state => {
+        execution.changed = new Map(state.records); execution.availability.pending = new Map(state.nodes);
+        execution.balances = new Map(state.balances); execution.operations = [...state.operations]; execution.assetTouches = state.touches;
+      };
+      const owner = transition.action.owner, selected = [];
+      let packed = [], accepted = checkpoint;
+      for (const candidate of transitions.filter(t => !handled.has(t) && nonceReservation(t) && t.action.owner === owner)) {
+        handled.add(candidate); restore(checkpoint);
+        try {
+          // A later observation cannot add another packet for this owner's
+          // new reserves in the same batch. Its queue entries remain valid.
+          check(!priorOperations.some(op => op.op === 'ar' && op.actions.some(a => a.type === 'reserve-n' && a.owner === owner)), 'financial_account_batch_full');
+          const proposed = await executeNonceReservations({ execution, transitions: [...selected, candidate], sources, reads, document, height, at });
+          const combined = [...priorOperations, ...execution.operations];
+          check(combined.length + 2 <= document.values.batchOps && Buffer.byteLength(rules.stableJSON(combined)) +
+            document.values.batchEnvelopeReserveBytes <= document.values.batchBytes, 'financial_batch_bytes');
+          check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
+          selected.push(candidate); packed = proposed; accepted = snapshot();
+        } catch (error) {
+          if (!defer) throw error;
+          deferred.push({ id: rules.hashObject(['dmw-financial-transition-v2', candidate]), reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_evidence_unavailable' });
+          // Keep the last fully verified group without querying its sources
+          // again while rolling back a later failed candidate.
+          restore(accepted);
+        }
+      }
+      inputs.push(...packed);
+      for (const input of packed) reservations.set(input.transition.id, input.evidence);
+      continue;
+    }
     const checkpoint = { records: new Map(execution.changed), nodes: new Map(execution.availability.pending), balances: new Map(execution.balances), count: execution.operations.length, touches: execution.assetTouches };
     try {
     const link = /^(?:legacy-)?link-/.test(transition.action?.type ?? '');
@@ -73,8 +111,8 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
 export class FinancialExecution {
   constructor({ store, reads, document, resources }) {
     Object.assign(this, { store, reads, document }); this.resources = assetResources(resources);
-    const commit = serial(); this.revision = 0;
-    this.gate = task => commit(async () => { const result = await task(); this.revision++; return result; });
+    const commit = serial(); this.revision = 0; this.acceptedRevision = 0;
+    this.gate = (task, { pending = false } = {}) => commit(async () => { const result = await task(); this.revision++; if (!pending) this.acceptedRevision++; return result; });
     this.linkReconciler = new FinancialLinkReconciler({ store, reads, financial: this, resources });
   }
   existing(id) { return this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null); }
@@ -92,7 +130,7 @@ export class FinancialExecution {
     check(this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     // Submission is a durable intent, not a claim of payment or acceptance.
     await this.store.put('financialQueue', key, transition); return { id: key, state: 'queued' };
-  }); }
+  }, { pending: true }); }
   async admit(transition, at) {
     const id = rules.hashObject(['dmw-financial-transition-v2', transition]);
     const old = this.existing(id);
@@ -100,7 +138,7 @@ export class FinancialExecution {
     check(!this.admissionReady || await this.admissionReady(), 'financial_admission_fenced', 503);
     check(transition.type === 'reserve' && this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     check(Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
-    const revision = this.revision, document = this.document;
+    const revision = this.revision, acceptedRevision = this.acceptedRevision, document = this.document, parallel = nonceReservation(transition);
     const result = await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document, height: at.counted, at });
     const owner = transition.action.owner, capacity = result.inputs[0].evidence.capacity;
     const imported = capacity ? BigInt(await this.reads.financialRecord('fi/deployment/' + capacity.deployment, at) ?? '0') : 0n;
@@ -108,10 +146,30 @@ export class FinancialExecution {
     const existing = this.existing(id); if (existing) return existing;
     // The pipeline commits accepted roots under this same short gate. Source
     // verification can overlap other work, but cannot commit across a change.
-    check(revision === this.revision && document === this.document, 'financial_snapshot_changed', 503);
+    check((parallel ? acceptedRevision === this.acceptedRevision : revision === this.revision) && document === this.document, 'financial_snapshot_changed', 503);
     check(this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
     check(!this.store.get('financialAdmissionOwner', owner), 'financial_account_reserved', 409);
-    const writes = [{ space: 'financialAdmissionOwner', id: owner, value: id }];
+    const count = this.store.get('financialAdmissionCount', owner) ?? 0, writes = [];
+    let hold;
+    if (parallel) {
+      check(count < this.resources.pendingMintsPerAgent, 'financial_owner_fair_share', 409);
+      const a = transition.action, key = owner + '/' + a.asset, nonce = owner + '/' + a.nonce;
+      check(!this.store.get('financialAdmissionNonce', nonce), 'financial_nonce_reserved', 409);
+      const pending = BigInt(this.store.get('financialAdmissionHeld', key) ?? '0');
+      // This leaf was authenticated by buildFinancialExecution against the
+      // accepted account root. The acceptedRevision fence protects that root;
+      // pending counters are read afresh inside the short commit gate.
+      const packet = result.operations.find(op => op.op === 'ar').accounts.find(p => p.owner === owner);
+      const available = packet.proof.leaves?.find(l => l.key === accountKey('balance', a.asset))?.value?.available ?? '0';
+      check(pending + BigInt(a.amount) <= BigInt(available), 'financial_balance_reserved', 409);
+      hold = { asset: a.asset, amount: a.amount, nonce: a.nonce };
+      writes.push({ space: 'financialAdmissionCount', id: owner, value: count + 1 },
+        { space: 'financialAdmissionHeld', id: key, value: (pending + BigInt(a.amount)).toString() },
+        { space: 'financialAdmissionNonce', id: nonce, value: id });
+    } else {
+      check(count === 0, 'financial_account_reserved', 409);
+      writes.push({ space: 'financialAdmissionOwner', id: owner, value: id });
+    }
     if (capacity) {
       const key = capacityKey(capacity.deployment), pending = BigInt(this.store.get('financialAdmissionCapacity', key) ?? '0');
       const accepted = BigInt(this.store.get('accountRecords', key) ?? '0') + imported;
@@ -121,9 +179,9 @@ export class FinancialExecution {
       writes.push({ space: 'financialAdmissionCapacity', id: key, value: (pending + BigInt(capacity.amount)).toString() },
         ...(plot ? [{ space: 'financialAdmissionPlot', id: plot, value: id }] : []));
     }
-    await this.store.transact([...writes, { space: 'financialAdmission', id, value: { owner, capacity: capacity ?? null } }, { space: 'financialQueue', id, value: transition }]);
+    await this.store.transact([...writes, { space: 'financialAdmission', id, value: { owner, capacity: capacity ?? null, ...(hold ? { hold } : {}) } }, { space: 'financialQueue', id, value: transition }]);
     return { id, state: 'queued' };
-  }); }
+  }, { pending: true }); }
   async admitLink(transition, at) {
     const id = rules.hashObject(['dmw-financial-transition-v2', transition]);
     if (this.store.get('financialAccepted', id) || this.store.get('financialQueue', id)) return { id, state: 'queued' };
@@ -140,7 +198,7 @@ export class FinancialExecution {
     await this.store.transact([{ space: 'financialAdmissionLink', id: block, value: id },
       { space: 'financialAdmission', id, value: { link: block } }, { space: 'financialQueue', id, value: transition }]);
     return { id, state: 'queued' };
-  }); }
+  }, { pending: true }); }
   pending() { return this.store.count('financialQueue') > 0; }
   async expire(id, at) {
     const transition = this.store.get('financialQueue', id);
@@ -164,12 +222,22 @@ export class FinancialExecution {
     if (draft?.proposal?.batch?.ops?.some(o => o.id === transition.id || o.op === 'ar' && o.actions.some(a => a.id === transition.id))) return false;
     await this.store.transact([...this.releaseAdmission(id), { space: 'financialQueue', id }, { space: 'financialDeferred', id },
       { space: 'financialRejected', id, value: { reason: 'reservation_expired', height: at.counted } }]); return true;
-  }); }
-  releaseAdmission(id, capacities = new Map()) {
+  }, { pending: true }); }
+  releaseAdmission(id, capacities = new Map(), owners = new Map(), balances = new Map()) {
     const admission = this.store.get('financialAdmission', id), release = [];
     if (!admission) return release;
     if (admission.link !== undefined) return [{ space: 'financialAdmission', id }, { space: 'financialAdmissionLink', id: admission.link }];
-    release.push({ space: 'financialAdmission', id }, { space: 'financialAdmissionOwner', id: admission.owner });
+    release.push({ space: 'financialAdmission', id });
+    if (admission.hold) {
+      const { owner, hold } = admission, key = owner + '/' + hold.asset;
+      const count = (owners.get(owner) ?? this.store.get('financialAdmissionCount', owner) ?? 0) - 1;
+      const amount = (balances.get(key) ?? BigInt(this.store.get('financialAdmissionHeld', key) ?? '0')) - BigInt(hold.amount);
+      check(count >= 0 && amount >= 0n, 'financial_admission_accounting');
+      owners.set(owner, count); balances.set(key, amount);
+      release.push({ space: 'financialAdmissionCount', id: owner, ...(count ? { value: count } : {}) },
+        { space: 'financialAdmissionHeld', id: key, value: amount.toString() },
+        { space: 'financialAdmissionNonce', id: owner + '/' + hold.nonce });
+    } else release.push({ space: 'financialAdmissionOwner', id: admission.owner });
     if (admission.capacity) {
       const c = admission.capacity, key = capacityKey(c.deployment), n = (capacities.get(key) ?? BigInt(this.store.get('financialAdmissionCapacity', key))) - BigInt(c.amount);
       check(n >= 0n, 'financial_admission_accounting'); capacities.set(key, n);
@@ -181,6 +249,11 @@ export class FinancialExecution {
     const after = this.store.get('meta', 'financialCursor') ?? '', limit = Math.min(this.resources.workPage, this.document.values.mintOperationBudget);
     let rows = this.store.list('financialQueue', { after, limit });
     if (!rows.length && after) rows = this.store.list('financialQueue', { limit });
+    else if (after && rows.length < limit && rows.some(row => nonceReservation(row.value))) {
+      // Complete the bounded circular page so a cursor left by earlier work
+      // does not split one owner's ready reserves across otherwise empty batches.
+      rows.push(...this.store.list('financialQueue', { limit: limit - rows.length }).filter(row => row.id <= after));
+    }
     return rows;
   }
   async build(args) {
@@ -213,14 +286,14 @@ export class FinancialExecution {
     return !!this.prepared;
   }
   acceptedOperations(draft) {
-    const capacities = new Map();
+    const capacities = new Map(), owners = new Map(), balances = new Map();
     const projected = new Map(), view = { get: (space, id) => projected.has(space + '/' + id) ? projected.get(space + '/' + id) : this.store.get(space, id) };
     return draft.items.flatMap(item => {
       const records = new Map((item.output.accountWrites ?? []).filter(w => w.space === 'accountRecords').map(w => [w.id, w.value]));
       const accepted = { get: (space, id) => space === 'accountRecords' && records.has(id) ? records.get(id) : view.get(space, id) };
       const localWrites = (item.output.file.financialOperations ?? []).flatMap(input => {
         const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
-        const local = [...this.releaseAdmission(id, capacities), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted)];
+        const local = [...this.releaseAdmission(id, capacities, owners, balances), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted)];
         for (const write of local) projected.set(write.space + '/' + write.id, write.value);
         return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
           request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },

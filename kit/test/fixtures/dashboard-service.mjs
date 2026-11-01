@@ -11,7 +11,7 @@ import { hashObject, settingsRevision, SETTINGS_PROFILE, mintRight } from '../..
 import { publicIdentities, wireIdentities } from '../../../rules/src/trac-address.js';
 import { bindingId, bindingMessage, attestBinding } from '../../../rules/src/payout-bindings.mjs';
 import { financialMintId, verifyFinancialMintRequest } from '../../../rules/src/financial-mint.js';
-import { accountActionDigest } from '../../../contract/root-accounts.js';
+import { reserveNonceDigest } from '../../../contract/root-accounts.js';
 import { verifyPayer } from '../../../service/src/mints.mjs';
 import { signTestPayout, testPayoutAddress } from '../../../service/test/payout-wallets.mjs';
 import { createWeb } from '../../../service/src/web.mjs';
@@ -75,13 +75,13 @@ export async function dashboardFixture(t, { http = false, site = false } = {}) {
       assert.equal(r.amount, claims.find(f => f.asset === r.asset && f.block === r.block).count); assert.equal(body.receiver, binding.request.address); assert.equal(body.payer, binding.request.address);
       const evidence = { version: 2, requestId: id, owner: r.owner, asset: r.asset, amount: r.amount, receiver: body.receiver, payer: body.payer,
         rail: body.kind, expiry: r.expires, settingsHash: r.settingsHash, request: r, quote: body.feeQuote, signature: body.signature, authorization: body.authorization };
-      const action = { type: 'reserve', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: hashObject(evidence), revision: '0', nonce: r.nonce, until: r.until };
+      const action = { type: 'reserve-n', id, owner: r.owner, asset: r.asset, amount: r.amount, terms: hashObject(evidence), nonce: r.nonce, until: r.until };
       if (!body.reserve) {
         records.set(id, { requestId: id, owner, asset: r.asset, block: r.block, receiver: body.receiver, payer: body.payer, amount: r.amount, state: 'authorizing', payable: false, fees: [], missing: [], payBy: { rail: 'tap' } });
         return response({ id, state: 'authorizing', reservationEvidence: evidence, reservationAction: action });
       }
       const { sig, ...reserve } = body.reserve;
-      assert.deepEqual(reserve, action); assert.equal(ed25519.verify(sig, accountActionDigest(network, reserve), owner), true);
+      assert.deepEqual(reserve, action); assert.equal(ed25519.verify(sig, reserveNonceDigest(network, reserve), owner), true);
       if (lose) { lose = false; return response({ error: 'lost_response' }, 503); }
       const state = { ...records.get(id), state: 'awaiting_payment', payable: true,
         missing: [{ role: 'treasury', to: binding.request.address, amount: '1000000000000000000', ticker: 'tap', tt: 'a', dta: id }] };

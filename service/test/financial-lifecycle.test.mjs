@@ -6,7 +6,7 @@ import { AccountExecution } from '../src/account-batch.mjs';
 import { buildFinancialExecution, FinancialExecution } from '../src/financial-execution.mjs';
 import { FinancialLinkReconciler } from '../src/financial-lifecycle.mjs';
 import { verifyFinancialExecution } from '../../committee/signer/financial-execution.mjs';
-import { accountActionDigest, applyRootAccounts } from '../../contract/root-accounts.js';
+import { accountActionDigest, reserveNonceDigest, applyRootAccounts } from '../../contract/root-accounts.js';
 import { applyPaymentPage, paymentCreditDigest, EMPTY_ALLOCATION_ROOT } from '../../contract/payment-pages.js';
 import { custodyId, lifecycleDigest, recoveryEnd, recoveryPageHash } from '../../contract/financial-lifecycle.js';
 import { accountKey, readAccountLeaf } from '../../contract/account-tree.js';
@@ -647,4 +647,28 @@ for (const active of [false, true]) test(`delayed compound batch uses execution 
   for (const w of built.writes.filter(w => w.space === 'accountRecords')) assert.deepEqual(state.writes.get(w.id), w.value);
   assert.equal(state.writes.get('dc/' + transition.id).supplyIssued, active ? '7' : undefined);
   assert.equal(state.writes.get('dc/' + transition.id).supplyScope, active ? f.extra + 'i0' : undefined);
+});
+
+
+test('merged nonce reserves authenticate one compound supply proof and preserve each ticker capacity snapshot', async t => {
+  const f = await compoundFixture(t), transitions = [];
+  for (let n = 0; n < 3; n++) {
+    const transition = f.mint(nonce(8000 + n), f.extra, '2'), evidence = await f.reads.financialEvidence(transition);
+    transition.action.type = 'reserve-n'; delete transition.action.revision;
+    transition.action.sig = Buffer.from(ed25519.sign(reserveNonceDigest(network, transition.action), alice.secret)).toString('hex');
+    transitions.push(f.source(transition, evidence));
+  }
+  const before = f.record('ar/' + alice.address).revision, result = await f.execute(transitions);
+  assert.equal(result.operations.filter(op => op.op === 'ar').length, 1);
+  assert.equal(result.operations[0].actions.length, 6);
+  assert.equal(result.operations[0].supply.proof.leaves.length, 1);
+  assert.equal(f.record('ar/' + alice.address).revision, String(BigInt(before) + 1n));
+  assert.deepEqual(f.balance(), { available: '1', held: '6' });
+  for (const transition of transitions) {
+    assert.equal(f.record('ao/' + transition.id).supplyIssued, '7');
+    assert.equal(f.record('dc/' + transition.id).supplyIssued, '7');
+  }
+  for (const transition of transitions) await f.execute([f.credit(transition.id)]);
+  assert.deepEqual(f.balance(), { available: '7', held: '0' });
+  assert.deepEqual(f.supplyLeaf(), { issued: '7', burned: '0' });
 });

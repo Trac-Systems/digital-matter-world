@@ -156,3 +156,33 @@ test('active additional ticker mint uses its own candidate and refuses a candida
   for (const flags of [{ minted: true }, { pending: { id: 'pending' } }])
     await assert.rejects(makeFinancialMint(agent, intent, 'duplicate', { ...candidate, ...flags }, context), /Mint right unavailable/);
 });
+
+test('mint_on_chain overlaps three requests, preserves action idempotency and ignores mining turn exhaustion', { timeout: 10000 }, async t => {
+  const { dashboardFixture } = await import('./fixtures/dashboard-service.mjs');
+  const { runTool } = await import('../lib/tools.mjs');
+  const f = await dashboardFixture(t); f.minted.delete('10');
+  f.agent.journal = f.journal; f.journal.take(20);
+  const original = f.service.requestMint.bind(f.service), pending = [], bodies = [];
+  let ready; const entered = new Promise(resolve => { ready = resolve; });
+  f.service.requestMint = async body => {
+    if (body.reserve) {
+      bodies.push(body); const wait = new Promise(resolve => pending.push(resolve));
+      if (bodies.length === 3) ready(); await wait;
+    }
+    return original(body);
+  };
+  t.after(() => pending.forEach(resolve => resolve()));
+  const args = ['12', '11', '10'].map(block => ({ actionId: 'parallel-' + block, asset: 'p2:1', block, amount: '3',
+    receiver: f.binding.request.address, payer: f.binding.request.address, kind: 'tap' }));
+  const tasks = [...args, args[0]].map(a => runTool(f.context, 'mint_on_chain', a));
+  await entered;
+  await assert.rejects(runTool(f.context, 'mint_on_chain', { ...args[0], amount: '4' }), /Conflicting mint action ID/);
+  assert.equal(new Set(bodies.map(b => b.request.nonce)).size, 3);
+  pending.forEach(resolve => resolve());
+  const results = await Promise.all(tasks);
+  assert.equal(new Set(results.map(r => r.request.requestId)).size, 3);
+  assert.equal(results[0].request.requestId, results[3].request.requestId);
+  assert.equal(f.packets.length, 6);
+  const retry = await runTool(f.context, 'mint_on_chain', args[0]);
+  assert.equal(retry.request.requestId, results[0].request.requestId); assert.equal(f.packets.length, 6);
+});

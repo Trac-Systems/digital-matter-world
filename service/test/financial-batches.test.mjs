@@ -15,7 +15,7 @@ import { installGatewayActivation } from '../src/v2-runtime.mjs';
 import { Policy } from '../../committee/signer/policy.mjs';
 import { rebuildBatch } from '../../committee/signer/adapter.mjs';
 import { preflightBatch } from '../../committee/signer/preflight.mjs';
-import { accountActionDigest } from '../../contract/root-accounts.js';
+import { accountActionDigest, reserveNonceDigest } from '../../contract/root-accounts.js';
 import { lifecycleDigest } from '../../contract/financial-lifecycle.js';
 import { batchDigest } from '../../contract/signing.js';
 import { harness, deployment, committeeSecret, alice, nonce } from '../../contract/tests/helpers/harness.mjs';
@@ -147,5 +147,28 @@ for (const observationsPerBatch of [1, 3]) test(`financial intents pass policy, 
     assert.equal(approvals, observationsPerBatch === 1 ? 7 : 6); assert.equal(store.count('financialAccepted'), observationsPerBatch === 1 ? 6 : 7);
     const accepted = store.list('batches', { limit: 10 }).at(-1).value.batch;
     assert.equal(Buffer.from(batchDigest(network, accepted)).toString('hex').length, 64);
+    // The new format travels through full rules replay, independent policy,
+    // notary execution, acceptance indexes and a gateway restart.
+    financial.resources.workPage = 8;
+    const previousRevision = contract.db.get('ar/' + alice.address).revision, parallel = [];
+    for (let n = 0; n < 5; n++) {
+      const id = nonce(100 + n), a = { type: 'reserve-n', owner: alice.address, asset: 'p0', amount: '3', id,
+        terms: r.hashObject(evidence), nonce: nonce(200 + n), until: '20' };
+      a.sig = Buffer.from(ed25519.sign(reserveNonceDigest(network, a), alice.secret)).toString('hex');
+      const transition = { type: 'reserve', id, action: a, fees };
+      parallel.push(transition); source.set(r.hashObject(transition), evidence); await financial.submit(transition);
+    }
+    for (let i = 0; i < 3 && store.count('financialQueue'); i++) await pipeline.tick();
+    assert.equal(store.count('financialQueue'), 0);
+    const mergedBatch = store.list('batches', { limit: 20 }).at(-1).value.batch;
+    const merged = mergedBatch.ops.filter(o => o.op === 'ar' && o.actions.some(a => a.type === 'reserve-n'));
+    assert.equal(merged.length, 1); assert.equal(merged[0].actions.length, 5); assert.equal(merged[0].accounts.length, 1);
+    assert.equal(contract.db.get('ar/' + alice.address).revision, String(BigInt(previousRevision) + 1n));
+    for (const t of parallel) {
+      assert.equal(contract.db.get('ao/' + t.id).state, 'reserved');
+      assert.ok(store.get('financialAdmissions', t.id));
+    }
+    await pipeline.close(); await store.close(); store = await Store.open(path); create();
+    for (const t of parallel) assert.equal((await financial.submit(t)).state, 'accepted');
   } finally { await pipeline.close(); await store.close(); }
 });

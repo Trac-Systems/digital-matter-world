@@ -4,7 +4,7 @@ import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { applyRootAccounts } from '../../contract/root-accounts.js';
 import { applyPaymentPage } from '../../contract/payment-pages.js';
 import { accountSettings } from '../../rules/src/account-settings.js';
-import { financialPlan, financialOperationShape } from '../../rules/src/financial-execution.js';
+import { financialPlan, financialOperationShape, financialReserveGroups, mergedReservePlans } from '../../rules/src/financial-execution.js';
 import { check, equal } from './crypto.mjs';
 import { verifyCreditOperations } from '../../rules/src/account-batch.js';
 import { hashObject } from '../../rules/src/core.js';
@@ -45,32 +45,49 @@ export async function verifyFinancialExecution({ files, reads, document, network
       ({ op: 'ac', to: w.winner, assets: [[w.asset, String(w.count)]] }));
     verifyCreditOperations(credits, prefix, file.crafts ?? [], file.transfers ?? [], file.compoundMerge);
     for (const op of prefix) await apply(op);
-    for (const input of inputs) {
-      let evidence = await sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at);
-      if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
-        // Full rules replay already derived this decision after agent closure
-        // and moves. The external scan is read at the accepted predecessor and
-        // therefore cannot itself observe same-observation claim reservations.
-        evidence = { ...evidence, claim: input.evidence.claim };
-      }
-      check(equal(evidence, input.evidence), 'financial_evidence_read');
-      const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type?.startsWith('recovery-') ?
-        await reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor }) : undefined;
-      check(equal(chainAnchor ?? null, input.chainAnchor ?? null), 'financial_chain_evidence');
-      const plan = await financialPlan({ transition: input.transition, evidence, ...(chainAnchor ? { chainAnchor } : {}) }, { read: store.get, height, document });
-      check(equal(plan, input.operations.map(financialOperationShape)), 'financial_effects');
-      const before = new Map(changed);
-      for (const op of input.operations) await apply(op);
-      if (input.recordCommitments || reads.financialChainAnchor) {
-        const commitments = [];
-        for (const [key, value] of changed) {
-          const old = before.has(key) ? before.get(key) : await reads.financialRecord(key, at);
-          if (!equal(value ?? null, old ?? null)) commitments.push([key, hashObject(value ?? null)]);
+    for (const group of financialReserveGroups(inputs)) {
+      // Grouped reserves are a new wire shape; legacy inputs follow their
+      // original sequential evidence/operation/commitment verification below.
+      let groupPlans, groupEvidence;
+      if (group[0].reserveGroup !== undefined) {
+        groupEvidence = []; const plans = [];
+        for (const input of group) {
+          const evidence = await sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at);
+          check(equal(evidence, input.evidence), 'financial_evidence_read');
+          groupEvidence.push(evidence);
+          plans.push(await financialPlan({ transition: input.transition, evidence }, { read: store.get, height, document }));
         }
-        commitments.sort(([a], [b]) => a < b ? -1 : 1);
-        check(equal(commitments, input.recordCommitments), 'financial_record_commitments');
+        groupPlans = mergedReservePlans(plans);
       }
-      if (input.transition.type === 'reserve' || input.transition.action?.type === 'link-reserve') reservations.set(input.transition.id, evidence);
+      for (const [index, input] of group.entries()) {
+        let evidence = groupEvidence ? groupEvidence[index] : await sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at);
+        if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
+          // Full rules replay already derived this decision after agent closure
+          // and moves. The external scan is read at the accepted predecessor and
+          // therefore cannot itself observe same-observation claim reservations.
+          evidence = { ...evidence, claim: input.evidence.claim };
+        }
+        check(equal(evidence, input.evidence), 'financial_evidence_read');
+        const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type?.startsWith('recovery-') ?
+          await reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor }) : undefined;
+        check(equal(chainAnchor ?? null, input.chainAnchor ?? null), 'financial_chain_evidence');
+        const plan = groupPlans ? [...groupPlans[index], ...(chainAnchor ? [{ op: 'fp', v: 2, type: 'checkpoint', id: input.transition.id,
+          previous: hashObject(await store.get('fp/chain') ?? null), anchor: chainAnchor }] : [])] :
+          await financialPlan({ transition: input.transition, evidence, ...(chainAnchor ? { chainAnchor } : {}) }, { read: store.get, height, document });
+        check(equal(plan, input.operations.map(financialOperationShape)), 'financial_effects');
+        const before = new Map(changed);
+        for (const op of input.operations) await apply(op);
+        if (input.recordCommitments || reads.financialChainAnchor) {
+          const commitments = [];
+          for (const [key, value] of changed) {
+            const old = before.has(key) ? before.get(key) : await reads.financialRecord(key, at);
+            if (!equal(value ?? null, old ?? null)) commitments.push([key, hashObject(value ?? null)]);
+          }
+          commitments.sort(([a], [b]) => a < b ? -1 : 1);
+          check(equal(commitments, input.recordCommitments), 'financial_record_commitments');
+        }
+        if (input.transition.type === 'reserve' || input.transition.action?.type === 'link-reserve') reservations.set(input.transition.id, evidence);
+      }
     }
   }
 }

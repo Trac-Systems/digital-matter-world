@@ -285,6 +285,13 @@ or an imported pattern's ledger asset (the catalog lists dmwflorite as p2:0 with
 mint_on_chain accepts `{actionId,asset,block?,amount,kind?,receiver?,payer?}`.
 Block accepts a canonical decimal string or safe number. The request and exact
 account reservation are separate saved signatures under the same intent.
+Separate Mint clicks and `mint_on_chain` action IDs proceed concurrently. New
+reservations use a nonce authorization that remains valid if another request
+lands first. The gateway allows up to eight pending reservations per agent by
+default and holds their exact total against available units. A full allowance
+returns `financial_owner_fair_share` (409); wait for acceptance or expiry and
+retry the same saved action ID. Duplicate clicks reuse the existing request.
+Saved older reservations retain their original signature and revision checks.
 authorizing is not reserved; reserving is not payable. Check mint_status/poll_mint
 and pay only after `payable:true` and accepted reservation. Existing requests
 retain their signed fees. No new quote frees an unresolved old reservation.

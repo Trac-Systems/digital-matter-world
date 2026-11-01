@@ -377,3 +377,32 @@ test('dashboard gives each ticker its own saved mint action and resumes its sele
   const open = await dashboard.state.requests(); assert.equal(open.requests.find(r => r.requestId === extra.requestId).deployment, deployment);
   assert.equal(f.journal.recent().filter(r => r.id.startsWith('mint/') && !r.id.endsWith('/reservation-v2')).length, 2);
 });
+
+test('three quick Mint clicks submit concurrently and duplicate clicks share one request', { timeout: 10000 }, async t => {
+  const f = await dashboardFixture(t, { http: true }), { call } = await start(t, f);
+  f.minted.delete('10');
+  const request = f.service.requestMint.bind(f.service), entered = [], pending = [];
+  let allEntered;
+  const all = new Promise(resolve => { allEntered = resolve; });
+  f.service.requestMint = async body => {
+    if (body.reserve) {
+      entered.push(body);
+      const blocked = new Promise(resolve => pending.push(resolve));
+      if (entered.length === 3) allEntered();
+      await blocked;
+    }
+    return request(body);
+  };
+  t.after(() => pending.forEach(resolve => resolve()));
+  const clicks = ['12', '11', '10', '12'].map(block => call('/api/mint', { asset: 'p2:1', block }));
+  await all; // No response has completed: every distinct request reached reserve.
+  assert.equal(new Set(entered.map(b => b.request.nonce)).size, 3);
+  assert.ok(entered.every(b => b.reserve.type === 'reserve-n' && !Object.hasOwn(b.reserve, 'revision')));
+  pending.forEach(resolve => resolve());
+  const responses = await Promise.all(clicks);
+  assert.ok(responses.every(r => r.status === 200));
+  const bodies = await Promise.all(responses.map(r => r.json()));
+  assert.equal(new Set(bodies.map(b => b.requestId)).size, 3);
+  assert.equal(bodies[0].requestId, bodies[3].requestId);
+  assert.equal(f.packets.length, 6);
+});

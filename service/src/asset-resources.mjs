@@ -1,6 +1,6 @@
 // Local resource settings. Consensus settings belong to the activated ruleset.
 export const ASSET_RESOURCES = Object.freeze({
-  activeMints: 2000, activeLinks: 2000, mintsPerAgent: 8, linksPerAgent: 8,
+  activeMints: 2000, activeLinks: 2000, mintsPerAgent: 8, linksPerAgent: 8, pendingMintsPerAgent: 8,
   publicMintsPerPayer: 8, publicMintsPerIP: 32, publicMintStartsPerMinute: 12,
   mintInputCapacity: 2000, workPage: 128, creditPage: 128,
   creditSources: 32, outboxPage: 128,

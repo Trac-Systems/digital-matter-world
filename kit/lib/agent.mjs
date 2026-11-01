@@ -521,16 +521,16 @@ export class Agent {
     payer = kind === 'tap' ? bitcoinAddress(payer, this.bitcoinNetwork, 'payer') : paymentPayer(kind, payer);
     return { receiver, payer, kind };
   }
-  makeReal({ actionId, asset, amount, block, deployment, receiver, payer, kind = 'tap', candidate, compound: isCompound = false }) {
-    const queued = Date.now(), debug = process.env.DMW_DASHBOARD_DEBUG === '1';
+  async makeReal({ actionId, asset, amount, block, deployment, receiver, payer, kind = 'tap', candidate, compound: isCompound = false }) {
+    const debug = process.env.DMW_DASHBOARD_DEBUG === '1';
+    this.actionId(actionId); candidate = wireIdentities(candidate);
+    ({ receiver, payer, kind } = this.paymentAddresses({ receiver, payer, kind }));
+    const id = `mint/${actionId}`, intent = { asset, amount, ...(block === undefined ? {} : { block }), ...(deployment === undefined ? {} : { deployment }), receiver, payer, kind, compound: isCompound };
+    const contextAt = Date.now(), context = await this.namedContext();
+    if (debug) process.stderr.write(`mint timing: rules context ${Date.now() - contextAt}ms\n`);
+    if (context) return await resumeLegacyFinancial(this, 'mint', actionId, intent) ?? makeFinancialMint(this, intent, actionId, candidate, context);
     return this.exclusive(async () => {
-      if (debug) process.stderr.write(`mint timing: waited ${Date.now() - queued}ms for the agent's other work\n`);
-      this.actionId(actionId); candidate = wireIdentities(candidate);
-      ({ receiver, payer, kind } = this.paymentAddresses({ receiver, payer, kind }));
-      const id = `mint/${actionId}`, intent = { asset, amount, ...(block === undefined ? {} : { block }), ...(deployment === undefined ? {} : { deployment }), receiver, payer, kind, compound: isCompound }, old = this.journal.get(id);
-      const contextAt = Date.now(), context = await this.namedContext();
-      if (debug) process.stderr.write(`mint timing: rules context ${Date.now() - contextAt}ms\n`);
-      if (context) return await resumeLegacyFinancial(this, 'mint', actionId, intent) ?? makeFinancialMint(this, intent, actionId, candidate, context);
+      const old = this.journal.get(id);
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting mint action ID');
       if (!this.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
       if (!this.dryRun && old) {
