@@ -23,6 +23,7 @@ import { manifestTrust } from '../lib/header-manifest.mjs';
 import { HistorySync } from '../lib/history-sync.mjs';
 import { loadRegtestHistory } from '../lib/headers.mjs';
 import { localBitcoinWallet, mempoolBitcoinSource } from '../lib/bitcoin-wallet.mjs';
+import { dashboardProfile, findDashboardControl, reserveDashboardControl, dashboardControlHandler, forwardDashboardTool } from '../lib/dashboard-control.mjs';
 
 const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, options: {
   directory: { type: 'string' }, config: { type: 'string' }, live: { type: 'boolean', default: false },
@@ -56,13 +57,22 @@ async function ask(prompt) {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try { return await new Promise(resolve => rl.question(prompt, resolve)); } finally { rl.close(); }
 }
+async function mcpSession(server) {
+  await new Promise(resolve => {
+    const end = () => { process.off('SIGTERM', end); process.off('SIGINT', end); process.stdin.off('end', end); resolve(); };
+    process.once('SIGTERM', end); process.once('SIGINT', end); process.stdin.once('end', end); server.server.onclose = end;
+  });
+}
+// One readable log line per pass: the outcome, never the full signed receipt.
+const huntSummary = r => JSON.stringify(Object.fromEntries(['state', 'claimState', 'phase', 'window', 'actionId', 'message', 'reason']
+  .filter(k => r?.[k] !== undefined).map(k => [k, r[k]]).concat(Array.isArray(r?.plots) ? [['plots', r.plots.length], ['patterns', r.patterns]] : [])));
 async function main() {
   check(supportedNode(), 'Use Node 24.22.1 or newer 24.x');
   const command = args[0] ?? 'help';
   const live = opts.live || command === 'dashboard';
   if (command === 'dashboard') check(opts.port === undefined || /^(0|[1-9][0-9]{0,4})$/.test(opts.port) && Number(opts.port) <= 65535, 'Invalid dashboard port');
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nWhile it runs, the dashboard keeps the agent claiming once per new Bitcoin block and reveals its saved patterns when due.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nWhile it runs, the dashboard keeps the agent claiming once per new Bitcoin block and reveals its saved patterns when due.\nCLI and MCP calls for the same signer and settings run inside the dashboard; each launch still needs the signer password.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
@@ -101,10 +111,38 @@ async function main() {
   }
   const password = await secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): ');
   if (command === 'init' || command === 'import') { print(await init({ directory, password, ...(command === 'import' ? { mnemonic: await secret('DMW_SIGNER_MNEMONIC', 'Recovery words: ') } : {}) })); return; }
-  const wallet = await unlock({ directory, password }); let journal, adapter, server, historySync, bitcoinWallet;
-  const shutdown = async () => { if (server) { const s = server; server = null; await s.close(); } await historySync?.close(); if (journal) { journal.close(); journal = null; } await adapter?.close?.(); bitcoinWallet?.close(); wipeWallet(wallet); };
+  const wallet = await unlock({ directory, password }); let journal, adapter, server, historySync, bitcoinWallet, controlLease;
+  const shutdown = async () => { if (server) { const s = server; server = null; await s.close(); } await historySync?.close(); if (journal) { journal.close(); journal = null; } await adapter?.close?.(); bitcoinWallet?.close(); await controlLease?.release(); wipeWallet(wallet); };
   try {
     if (command === 'address') { print({ address: publicAddress(wallet) }); return; }
+    let name, input = {};
+    if (command === 'deploy-ticker') { check(args.length === 3, 'Usage: deploy-ticker <asset> <ticker>'); name = 'deploy_ticker'; input = { asset: args[1], ticker: args[2], ...(opts.retry ? { retry: true } : {}), ...(opts['max-fee-sats'] ? { maxFeeSats: opts['max-fee-sats'] } : {}), ...(opts['fee-rate'] ? { feeRate: Number(opts['fee-rate']) } : {}) }; }
+    if (command === 'read' || command === 'action') {
+      check(args[1], 'Pass a tool name or action JSON file');
+      if (command === 'action' && args[1].endsWith('.json')) {
+        const action = JSON.parse(await readFile(args[1], 'utf8')); name = action.type; input = action.args ?? {};
+      } else { name = args[1]; input = args[2] ? JSON.parse(await readFile(args[2], 'utf8')) : {}; }
+      check(input && typeof input === 'object' && !Array.isArray(input), 'Tool arguments must be an object');
+    }
+    const toolInput = { ...input, ...(opts.limit === undefined ? {} : { limit: Number(opts.limit) }), ...(opts.cursor === undefined ? {} : { cursor: opts.cursor }) };
+    const scope = `${config.network}/${publicKey(wallet)}`, profile = dashboardProfile(config, opts);
+    if (['read', 'action', 'deploy-ticker', 'once', 'status', 'mcp'].includes(command)) {
+      const control = await findDashboardControl({ directory, scope, profile });
+      if (control) {
+        const invoke = (name, input, extra) => forwardDashboardTool(control, wallet, { name, input, readOnly: command === 'read', live,
+          waitForHistory: command !== 'mcp' && (command === 'once' || ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name)) }, extra);
+        if (command === 'mcp') {
+          process.stderr.write('Your dashboard is running; tool calls will run inside it.\n');
+          server = await serveMcp({}, { invoke }); await mcpSession(server);
+        } else {
+          const result = await invoke(command === 'once' ? 'mine_once' : command === 'status' ? 'status' : name,
+            ['once', 'status'].includes(command) ? {} : toolInput);
+          process.stderr.write('Your dashboard is running; this command ran inside it.\n'); print(result);
+        }
+        return;
+      }
+    }
+    if (command === 'dashboard') controlLease = await reserveDashboardControl({ directory, scope, owner: publicKey(wallet), profile });
     const production=config.mode==='mainnet';
     check(production || config.localOnly===true && isAbsolute(config.adapter??''), 'Use a public production target or a trusted local adapter');
     // Own the bounded gateway transport before an adapter installs process-wide
@@ -115,21 +153,13 @@ async function main() {
     if (production) console.log = console.info = console.debug = () => {};
     const adapterModule=production?await import('../lib/mainnet-adapter.mjs'):await import(pathToFileURL(config.adapter));
     adapter=await adapterModule.create({wallet,network:config.network,localOnly:!production,config,service,dryRun:!live});
-    journal = await Journal.open(directory, `${config.network}/${publicKey(wallet)}`);
+    journal = await Journal.open(directory, scope);
     const bitcoinNetwork = config.bitcoinNetwork ?? (config.powLimitBits === 0x207fffff ? 'regtest' : 'mainnet');
     bitcoinWallet = localBitcoinWallet({ wallet, network: bitcoinNetwork, authority: config.bitcoin?.authority,
       source: adapter.bitcoinSource ?? (bitcoinNetwork === 'mainnet' || config.bitcoin?.origin ? mempoolBitcoinSource({ network: bitcoinNetwork, ...config.bitcoin }) : undefined) });
-    const agent = new Agent({ wallet, network: config.network, service, trac: adapter.trac, journal: command === 'dashboard' ? dashboardJournal(journal) : journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
-      powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork });
-    let name, input = {};
-    if (command === 'deploy-ticker') { check(args.length === 3, 'Usage: deploy-ticker <asset> <ticker>'); name = 'deploy_ticker'; input = { asset: args[1], ticker: args[2], ...(opts.retry ? { retry: true } : {}), ...(opts['max-fee-sats'] ? { maxFeeSats: opts['max-fee-sats'] } : {}), ...(opts['fee-rate'] ? { feeRate: Number(opts['fee-rate']) } : {}) }; }
-    if (command === 'read' || command === 'action') {
-      check(args[1], 'Pass a tool name or action JSON file');
-      if (command === 'action' && args[1].endsWith('.json')) {
-        const action = JSON.parse(await readFile(args[1], 'utf8')); name = action.type; input = action.args ?? {};
-      } else { name = args[1]; input = args[2] ? JSON.parse(await readFile(args[2], 'utf8')) : {}; }
-      check(input && typeof input === 'object' && !Array.isArray(input), 'Tool arguments must be an object');
-    }
+    const agentOptions = { wallet, network: config.network, service, trac: adapter.trac, journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
+      powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork };
+    const agent = new Agent({ ...agentOptions, journal: command === 'dashboard' ? dashboardJournal(journal) : journal });
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
     const historyTool = ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
     const hunting = command === 'dashboard', session = ['mcp', 'once'].includes(command) || hunting;
@@ -146,16 +176,27 @@ async function main() {
     const strategies = (session || strategyTool) && (opts.strategy ?? config.strategy) ? await import(pathToFileURL(resolve(opts.strategy ?? config.strategy))) : {};
     const context = { agent, history, historySync, source, strategies, candidates: adapter.candidates, compounds: adapter.compounds };
     if (command === 'read' || command === 'action' || command === 'deploy-ticker') {
-      print(await runTool(context, name, { ...input, ...(opts.limit === undefined ? {} : { limit: Number(opts.limit) }), ...(opts.cursor === undefined ? {} : { cursor: opts.cursor }) }, { readOnly: command === 'read' }));
+      print(await runTool(context, name, toolInput, { readOnly: command === 'read' }));
       return;
     }
     if (command === 'status') print(await agent.status());
     else if (command === 'once') print(await agent.runOnce({ history, source, strategy: strategies.chooseClaims }));
     else if (command === 'dashboard') {
-      server = await serveDashboard(context, { port: Number(opts.port ?? 0) });
+      // Keep both launch modes immutable, including their PlayerMint helpers.
+      // Forwarded calls retain the ordinary CLI journal's rate gates.
+      const forwardAgents = { live: new Agent({ ...agentOptions, dryRun: false }), dry: new Agent({ ...agentOptions, dryRun: true }) };
+      // Exclusive agent actions share one turn queue with mining and clicks;
+      // their closures still use their own immutable launch mode and journal.
+      for (const forwarded of Object.values(forwardAgents)) forwarded.exclusive = fn => agent.exclusive(fn);
+      const control = dashboardControlHandler(controlLease, async ({ name, input, readOnly, live, waitForHistory }, extra) => {
+        if (waitForHistory) await historySync?.pending;
+        return runTool({ ...context, agent: live ? forwardAgents.live : forwardAgents.dry }, name, input, { readOnly, ...extra });
+      });
+      server = await serveDashboard(context, { port: Number(opts.port ?? 0), control });
+      await controlLease.publish(Number(new URL(server.origin).port));
       process.stdout.write(server.loginLink + '\n');
       let stop = false;
-      // The dashboard holds the agent's stores, so a separate `once` process cannot run beside it.
+      // Local CLI and MCP calls share this process's stores through control.
       const hunt = hunting && (async () => {
         let done = null;
         while (!stop) {
@@ -163,12 +204,12 @@ async function main() {
           try { tip = readInteger((await agent.service.health()).tip); } catch {}
           if (tip !== null && tip !== done) {
             try { const r = await runTool(context, 'mine_once', {}); done = tip;
-              process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${JSON.stringify(publicIdentities(r)).slice(0, 300)}\n`); }
+              process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${huntSummary(r)}\n`); }
             catch (error) { process.stdout.write(`${new Date().toISOString()} hunt tip ${tip} failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
             // The agent's own saved pattern proposals are revealed as soon as their window opens.
             try { for (const row of (await agent.hunting({ limit: 200 })).items.filter(r => r.type === 'discovery' && r.phase === 'reveal_window')) {
               const r = await runTool(context, 'reveal_pattern', { actionId: row.actionId });
-              process.stdout.write(`${new Date().toISOString()} reveal ${row.actionId}: ${JSON.stringify(publicIdentities(r)).slice(0, 300)}\n`); } }
+              process.stdout.write(`${new Date().toISOString()} reveal ${row.actionId}: ${huntSummary(r)}\n`); } }
             catch (error) { process.stdout.write(`${new Date().toISOString()} reveal failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
           }
           for (let i = 0; i < 20 && !stop; i++) await new Promise(resolve => setTimeout(resolve, 1000));
@@ -178,7 +219,7 @@ async function main() {
       stop = true; await hunt;
     } else if (command === 'mcp') {
       server = await serveMcp(context);
-      await new Promise(resolve => { const end = () => resolve(); process.once('SIGTERM', end); process.once('SIGINT', end); process.stdin.once('end', end); server.server.onclose = end; });
+      await mcpSession(server);
     } else throw new Error('Unknown command; run dmw --help');
   } finally { await shutdown(); }
 }

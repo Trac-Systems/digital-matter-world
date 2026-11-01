@@ -128,7 +128,11 @@ It prints one private login link (`http://127.0.0.1:<port>/…`) to the log, so 
 link to the player and tell them to open it in their browser on this computer. The
 link works once; to get a new one, stop the dashboard and start it again. Only one
 dashboard runs per signer. While it runs it keeps your agent mining: it claims every new Bitcoin block
-and reveals saved patterns when their window opens, so no separate `once` job is needed. Details: [Local dashboard](kit/README.md#local-dashboard).
+and reveals saved patterns when their window opens, so no separate `once` job is needed.
+Keep it running while your agent uses the CLI or MCP: calls for the same signer
+and settings run inside the dashboard. Each launch still needs your password;
+reads stay read-only and actions keep their usual dry-run default unless that
+CLI or MCP launch uses `--live`. Details: [Local dashboard](kit/README.md#local-dashboard).
 
 ### First reads
 
@@ -146,8 +150,9 @@ node bin/dmw.mjs once --live --config "$HOME/.dmw-signer/mainnet.json"
 
 `once --live` makes one mining pass with free moves. Discover and reveal patterns
 with your agent before expecting claims. The running dashboard already makes this
-pass every new Bitcoin block, so no scheduled `once` job is needed; `once` is for
-when the dashboard is stopped. Payments require your separate approval.
+pass every new Bitcoin block, so no scheduled `once` job is needed. An extra
+`once` call runs inside it while it is open, or directly when it is stopped.
+Payments require your separate approval.
 
 ## Player quick start
 

@@ -226,6 +226,15 @@ existing website request payment page. Keep the journal and resume the same
 request after interruption; local payment recovery survives port changes.
 Unclaimed blocks use a separate website flow.
 
+Keep the dashboard running during CLI or MCP use. Calls with the same signer
+journal and launch settings run inside it; without it they run directly. Each
+CLI/MCP launch still unlocks with the password and proves possession locally.
+Reads refuse actions; `action`, `deploy-ticker`, `once` and MCP keep their own
+dry-run defaults unless launched with `--live`. Tool names and results are
+unchanged. Restart the dashboard to change its config, header source or
+strategy. After a broken connection, inspect status and reuse the same action
+ID; never assume the action was not sent.
+
 ## Tools
 
 | Tool | Behavior |

@@ -44,6 +44,23 @@ While it runs, the dashboard keeps the agent mining: once per new Bitcoin block 
 claims or sends the header (like `once --live`) and reveals saved patterns whose
 reveal window is open. Its log records each pass.
 
+Keep it running while using `read`, `action`, `deploy-ticker`, `once`, `status`
+or MCP with the same signer and launch settings. These calls run inside the
+dashboard, sharing its Trac stores and journal. Each CLI/MCP launch still needs
+the signer password: it unlocks locally and signs a separate, short-lived
+control proof. `read` still refuses action tools; actions and `once` still
+default to dry-run, and MCP uses only its own launch's `--live` choice. Results
+stay unchanged; the CLI writes a forwarding notice to stderr.
+
+The private `dashboard-control.json` file (0600) contains a fresh control token;
+the loopback endpoint requires both that token and the unlock proof, and refuses
+browser origins and cookies. Clean shutdown removes the file; dead-process
+records are ignored. With no dashboard, commands run directly as before. A
+different config, header source or strategy is refused until the dashboard is
+restarted with those settings. If its connection breaks, check status and retry
+the same action ID: the command may already have run, so there is no automatic
+direct retry.
+
 The dashboard lists claimed blocks this agent is eligible to mint, with the
 reason (own find or units), required units, current asset balance
 and request state. Own finder-week blocks come first, then other eligible blocks

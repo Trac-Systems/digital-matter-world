@@ -46,7 +46,7 @@ async function proxy(req, res, url, upstream) {
   stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res);
 }
 
-export async function serveDashboard(context, { port = 0, state = new DashboardState(context) } = {}) {
+export async function serveDashboard(context, { port = 0, state = new DashboardState(context), control } = {}) {
   dashboardCheck(Number.isSafeInteger(port) && port >= 0 && port <= 65535, 'invalid_port');
   const token = randomBytes(32).toString('base64url');
   const session = state.session ? state.session(() => randomBytes(32).toString('base64url')) : randomBytes(32).toString('base64url');
@@ -65,6 +65,12 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       dashboardCheck(req.headers.host === new URL(origin).host && req.socket.remoteAddress === '127.0.0.1', 'local_only', 403);
       dashboardCheck(req.url.startsWith('/') && !req.url.startsWith('//'), 'invalid_route');
       const url = new URL(req.url, origin), path = url.pathname;
+      // The local CLI authenticates independently of the browser session.
+      // Reserve the whole namespace so it can never reach the site proxy.
+      if (path.startsWith('/control/')) {
+        dashboardCheck(control, 'not_found', 404);
+        await control.handle(req, res); return;
+      }
       dashboardCheck(['GET', 'POST'].includes(req.method), 'method_not_allowed', 405);
       if (req.method === 'POST') dashboardCheck(req.headers.origin === origin && !['cross-site', 'same-site'].includes(req.headers['sec-fetch-site']), 'origin_required', 403);
       if (req.method === 'GET' && path === '/login' && !url.search) {
@@ -179,5 +185,5 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
   cookieName = cookiePrefix + server.address().port;
   let closing;
   return { origin, loginLink: `${origin}/login#${token}`, state,
-    close() { return closing ??= (async () => { const stopped = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await state.close(); await stopped; })(); } };
+    close() { return closing ??= (async () => { const stopped = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await control?.close(); await state.close(); await stopped; })(); } };
 }
