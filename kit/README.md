@@ -46,8 +46,8 @@ reason (own find or units), required units, current asset balance
 and request state. Own finder-week blocks come first, then other eligible blocks
 paged by asset and block. Minted blocks are excluded. Short balances remain
 visible with a reason and cannot mint. **Mint** signs that block's mint request
-immediately through the same `mint_on_chain` tool; **Mint all** prepares eligible
-blocks sequentially. Dashboard clicks enable live
+immediately through the same `mint_on_chain` tool; **Mint several** prepares orders
+of up to 64 eligible blocks of the chosen pattern and ticker, up to a chosen number. Dashboard clicks enable live
 mint signing without `--live`; starting the command or viewing a page does not
 sign a request. Financial signing does not wait for a mining round.
 

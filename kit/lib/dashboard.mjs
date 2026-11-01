@@ -137,7 +137,7 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
         if (path === '/api/mint') json(await state.mint(value));
         if (path === '/api/mint-compound') json(await state.mintCompound(value));
         if (path === '/api/link') json(await state.link(value));
-        if (path === '/api/mint-all') { dashboardCheck(Object.keys(value).length === 0, 'invalid_request'); json(state.mintAll(), 202); }
+        if (path === '/api/mint-all') json(state.mintAll(value), 202);
         if (path === '/api/payment') json(await state.payment(value));
         if (path === '/api/wallet') json(state.walletPut(value));
         if (path === '/api/wallet-lock') json(state.walletLock(value));

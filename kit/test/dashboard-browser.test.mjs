@@ -637,3 +637,56 @@ test('My agent: a pattern with several tickers gets Mint into above its blocks; 
   assert.equal(minted[1].deployment, undefined);
   assert.deepEqual(errors, []);
 });
+
+test('My agent mints several blocks of one pattern as one order, next to the single Mint buttons', async t => {
+  const f = await dashboardFixture(t, { http: true, site: true }), dashboard = await serveDashboard(f.context); cleanup(t, () => dashboard.close());
+  const owner = f.agent.owner, settingsHash = f.claims[0].settingsHash;
+  for (const block of ['13', '14', '15']) f.claims.push({ asset: 'p2:1', block, count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  f.patterns.push({ number: '3', asset: 'p2:3', name: 'dmwother', tier: 2 });
+  f.claims.push({ asset: 'p2:3', block: '9', count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash });
+  f.balances.set('p2:3', { amount: '100', current: true });
+  const width = Number(process.env.DMW_DASHBOARD_WIDTH ?? 1280), shots = process.env.DMW_DASHBOARD_SHOTS;
+  const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
+  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => new URL(route.request().url()).origin === dashboard.origin ? route.continue() : route.abort());
+  await page.goto(dashboard.loginLink);
+  await page.waitForURL(dashboard.origin + '/me');
+  const claims = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Claimed blocks you may mint' }) });
+  await claims.getByRole('button', { name: 'Mint all 6 blocks', exact: true }).waitFor();
+  await page.getByText('Loading your agent…', { exact: true }).waitFor({ state: 'hidden' });
+  await claims.getByText('One wallet approval per 64 blocks. Fees and the Bitcoin set-aside are shown before you pay.', { exact: true }).waitFor();
+  await claims.getByRole('tab', { name: 'Test · 5' }).click();
+  await claims.getByRole('button', { name: 'Mint all 5 blocks', exact: true }).waitFor();
+  await assertEventually(async () => await claims.locator('tbody tr').count() === 5);
+  await claims.getByRole('spinbutton', { name: 'Number of blocks' }).fill('3');
+  await claims.getByRole('button', { name: 'Mint 3 blocks', exact: true }).click();
+  const pay = claims.getByRole('link', { name: 'Pay and mint 3 blocks', exact: true });
+  await pay.waitFor();
+  const bulk = f.packets.filter(p => p.terms);
+  assert.equal(bulk.length, 1); assert.equal(bulk[0].terms.asset, 'p2:1'); // The first three blocks as the list shows them (this fixture lists them unsorted).
+  assert.deepEqual(bulk[0].terms.members.map(m => m.block), ['11', '12', '13']);
+  const orderId = dashboard.state.bulkLive()[0].orderId;
+  assert.equal(await pay.getAttribute('href'), '/mint/bulk/' + orderId);
+  const order = claims.locator('tbody tr').filter({ has: page.getByRole('link', { name: 'Pay and mint 3 blocks', exact: true }) });
+  await order.getByText('ready to pay', { exact: true }).waitFor();
+  await order.getByText('minted 0/3', { exact: true }).waitFor();
+  assert.equal(await order.getByRole('link', { name: '11', exact: true }).getAttribute('href'), '/block/11');
+  assert.equal(await order.getByRole('link', { name: '13', exact: true }).getAttribute('href'), '/block/13');
+  await order.getByText(/^Bitcoin set-aside/).waitFor();
+  // Nothing reaches past the page's gutters; tables scroll inside their own box.
+  assert.equal(await page.evaluate(() => { const pg = document.querySelector('main .page'), box = pg.getBoundingClientRect(), pad = parseFloat(getComputedStyle(pg).paddingRight);
+    return [...pg.querySelectorAll('*')].every(e => !e.offsetParent || e.parentElement.closest('.tablewrap, .tabs') || e.getBoundingClientRect().right <= Math.min(box.right - pad, innerWidth) + 1); }), true);
+  if (shots) {
+    await page.evaluate(() => { const box = document.getElementById('toasts'); if (box) box.style.display = 'none'; });
+    await page.setViewportSize({ width, height: 2400 }); await page.mouse.move(0, 0);
+    await claims.screenshot({ path: `${shots}/mint-several-${width}.png` }); await page.setViewportSize({ width, height: 900 });
+  }
+  assert.equal(await claims.getByRole('button', { name: 'Try again', exact: true }).isVisible(), false);
+  // The single Mint of one row still signs its own request and opens its payment page.
+  await claims.locator('tbody tr').filter({ hasText: 'block 15' }).getByRole('button', { name: 'Mint', exact: true }).click();
+  await page.waitForURL(/\/mint\/[0-9a-f]{64}$/);
+  assert.ok(f.packets.some(p => p.request?.block === '15' && p.request.asset === 'p2:1'));
+  assert.equal(f.packets.filter(p => p.terms).length, 1);
+  assert.deepEqual(errors, []);
+});

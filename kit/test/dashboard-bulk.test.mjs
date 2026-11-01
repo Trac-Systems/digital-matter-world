@@ -163,6 +163,69 @@ test('bulk dashboard partitions distinct deployments and does not hold the singl
   assert.equal(f.state.inflight.size, 0);
 });
 
+test('Mint all takes only the chosen pattern and stops after the chosen number of blocks', async t => {
+  const f = await setup(t, 10), reads = [], claims = f.state.claims;
+  f.slots.slice(6).forEach(slot => { slot.asset = 'p2:2'; });
+  f.state.claims = async options => { reads.push(options); return claims(options); };
+  f.state.mintAll({ asset: 'p2:2', limit: 3 }); await f.state.batchTask;
+  assert.equal(f.packets.length, 1); assert.deepEqual(f.packets[0].terms.members.map(m => m.block), ['900006', '900007', '900008']);
+  assert.equal(f.packets[0].terms.asset, 'p2:2'); assert.equal(f.state.batch.state, 'complete'); assert.equal(f.state.batch.completed, 3);
+  assert.deepEqual(f.state.batch.filter, { asset: 'p2:2', limit: 3 }); assert.equal(reads[0].asset, 'p2:2');
+});
+
+test('blocks in an open bulk order are held from single Mint, and the planner waits at 24 open orders', async t => {
+  const f = await setup(t, 64 * 25 + 5);
+  f.state.mintAll(); await f.state.batchTask;
+  assert.equal(f.packets.length, 24); assert.equal(f.state.batch.state, 'waiting_slots'); assert.equal(f.state.bulkLive().length, 24);
+  const held = f.state.bulkHeldBlocks(); assert.equal(held.size, 24 * 64);
+  assert.equal(held.has('p2:1/' + f.packets[0].terms.members[0].block), true);
+});
+
+test('Mint all into one ticker takes only blocks of that deployment', async t => {
+  const f = await setup(t, 4), other = '9'.repeat(64) + 'i0';
+  f.slots[1].deployment = other; delete f.slots[3].deployment;
+  f.state.mintAll({ asset: 'p2:1', deployment: other }); await f.state.batchTask;
+  assert.equal(f.packets.length, 1); assert.equal(f.packets[0].terms.deployment, other);
+  assert.deepEqual(f.packets[0].terms.members.map(m => m.block), ['900001', '900003']);
+});
+
+test('Mint all checks its filter and refuses a different one while it runs', async t => {
+  const f = await setup(t, 2);
+  for (const bad of [{ asset: 'x' }, { deployment: 'a'.repeat(64) + 'i0' }, { asset: 'p2:1', limit: 0 }, { asset: 'p2:1', limit: 1.5 }, { blocks: 2 }])
+    assert.throws(() => f.state.mintAll(bad), { code: 'invalid_mint_all' });
+  const running = f.state.mintAll({ asset: 'p2:1' });
+  assert.throws(() => f.state.mintAll({}), { code: 'mint_all_running', status: 409 });
+  assert.equal(f.state.mintAll({ asset: 'p2:1' }).id, running.id); await f.state.batchTask;
+  assert.equal(f.state.batch.state, 'complete'); assert.notEqual(f.state.mintAll({}).id, running.id); await f.state.batchTask;
+});
+
+test('Mint all keeps its filter and count across a restart', async t => {
+  const f = await setup(t, 150); f.state.bulkLiveOrders = 1;
+  f.slots.slice(0, 20).forEach(slot => { slot.asset = 'p2:2'; });
+  const started = f.state.mintAll({ asset: 'p2:1', limit: 100 }); await f.state.batchTask;
+  assert.equal(f.packets.length, 1); assert.equal(f.packets[0].terms.members.length, 64); assert.equal(f.state.batch.state, 'waiting_slots');
+  await f.state.close();
+  const resumed = f.configure(new DashboardState(f.context)); cleanup(t, () => resumed.close()); resumed.bulkLiveOrders = 1;
+  assert.deepEqual(resumed.batch.filter, { asset: 'p2:1', limit: 100 }); assert.equal(resumed.batch.id, started.id);
+  assert.throws(() => resumed.mintAll({ asset: 'p2:2' }), { code: 'mint_all_running' });
+  const minted = () => { for (const row of f.records.values()) Object.assign(row.status, { state: 'minted', payable: false, progress: { reserved: 0, issued: 1, minted: 1, released: 0, unresolved: 0 } }); };
+  minted(); resumed.resumeBulkPlanner(); await resumed.batchTask;
+  assert.equal(f.packets.length, 2); assert.equal(f.packets[1].terms.members.length, 36);
+  minted(); resumed.resumeBulkPlanner(); await resumed.batchTask;
+  assert.equal(f.packets.length, 2); assert.equal(resumed.batch.state, 'complete'); assert.equal(resumed.batch.completed, 100);
+  const blocks = f.packets.flatMap(p => p.terms.members.map(m => Number(m.block)));
+  assert.equal(new Set(blocks).size, 100); assert.ok(blocks.every(block => block >= 900020)); assert.ok(f.packets.every(p => p.terms.asset === 'p2:1'));
+});
+
+test('the Mint all route passes a pattern and a count and rejects other fields', async t => {
+  const f = await setup(t, 5), { call } = await login(t, f);
+  assert.equal((await call('/api/mint-all', { asset: 'p2:1', limit: 2, extra: true })).status, 400);
+  const response = await call('/api/mint-all', { asset: 'p2:1', limit: 2 }); assert.equal(response.status, 202);
+  assert.deepEqual((await response.json()).filter, { asset: 'p2:1', limit: 2 }); await f.state.batchTask;
+  assert.equal(f.packets[0].terms.members.length, 2);
+  const orders = await (await call('/api/bulk')).json(); assert.equal(orders.orders.length, 1); assert.deepEqual(orders.planner.filter, { asset: 'p2:1', limit: 2 });
+});
+
 async function browser(t, origin, address) {
   const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
   const page = await browser.newPage(), errors = []; page.setDefaultTimeout(8000);

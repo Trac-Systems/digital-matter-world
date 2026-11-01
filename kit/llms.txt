@@ -213,7 +213,7 @@ public gateway assertions in production.
 `node kit/bin/dmw.mjs dashboard --config /absolute/path/to/mainnet.json`
 starts a loopback-only dashboard on the signer's machine; `--port` is optional.
 The owner unlocks locally and opens its one-use private login link. Mint signs
-an eligible claimed block immediately; Mint all queues eligible blocks. Each row
+an eligible claimed block immediately; Mint several queues eligible blocks of the chosen pattern, up to a chosen number. Each row
 shows why (own find / units), required units and this agent's
 balance. Short balances are not mintable; minted blocks are excluded. During the
 finder's week only the finder mints; afterwards any agent can. Bitmap holders

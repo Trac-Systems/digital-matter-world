@@ -536,9 +536,17 @@ require it. Review its ascending accepted members, `skipped` reasons and
    verified payment or a minted block. The server continues discovery and
    minting with the page closed.
 
-The dashboard's **Mint all** keeps a durable claim cursor and order journal,
-groups claims by asset/deployment/payer/receiver, and prepares at most four live
-orders. Later orders prepare as slots free. Each order requires its own wallet
+The dashboard's **Mint several** (My agent, Claimed blocks you may mint) keeps a
+durable claim cursor and order journal, groups claims by
+asset/deployment/payer/receiver, and prepares at most 24 live orders. Later
+orders prepare as slots free. It takes the chosen pattern tab, the chosen
+**Mint into** ticker and a number of blocks (all by default); the route is
+`POST /api/mint-all {asset?, deployment?, limit?}` (`deployment` needs `asset`,
+`limit` is a whole number from 1). The filter is saved with the planner, so a
+restart continues it. While one runs, a request with another filter is refused
+with `mint_all_running` (409); the same filter returns the running one. Its
+orders are listed under the panel, 25 per page, each with
+**Pay and mint N blocks** opening `/mint/bulk/<orderId>`. Each order requires its own wallet
 approval. Issued unresolved orders retain their slots. Single **Mint** clicks
 continue independently. Reloading resumes exact saved orders and payment
 receipts; it does not create replacement nonces.

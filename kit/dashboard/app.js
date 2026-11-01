@@ -125,7 +125,7 @@ async function refreshRequests() {
 const bulkReports = new Set();
 async function refreshBulkOrders() {
   const data = await api('/api/bulk'); bulkOrders.replaceChildren();
-  if (data.planner?.state === 'waiting_slots') bulkOrders.append(el('p', 'Four bulk orders can be active at once. Later orders prepare as completed orders free their slots.'));
+  if (data.planner?.state === 'waiting_slots') bulkOrders.append(el('p', 'Up to 24 bulk orders can be open at once. Later orders prepare as earlier ones finish.'));
   for (const row of data.orders) {
     const box = el('section', undefined, 'panel'), q = row.quote, status = row.status;
     box.append(el('h3', q?.terms ? `${q.terms.members.length} blocks · ${q.terms.ticker}` : 'Preparing bulk order'));

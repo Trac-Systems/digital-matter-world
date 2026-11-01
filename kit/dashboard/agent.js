@@ -5,13 +5,27 @@ import { h, clear, panel, table, hashEl, pill, toast, figures, short, tabs, tier
 import { isTracAddress } from '/rules/src/trac-address.js';
 import { assetName, mineral, INFLIGHT_TEXT, INFLIGHT_PAYMENT_TEXT, inflightLine } from '/web/console/js/words.js';
 import { store, site } from '/web/console/js/api.js';
-import { feePrice } from '/web/console/js/money.js';
+import { feePrice, tap, btc } from '/web/console/js/money.js';
 import { tickers, tickerList, tickerChoice, deployTickerForm, officialTickerForm, whenTickers, SAME_REWARDS } from '/web/console/js/tickers.js';
 // Request states before the wallet can pay: the row shows a spinner until Pay appears (the list refreshes every 15 s).
 const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
 // Claimed blocks per page: short enough that Open requests and Your patterns follow without a long scroll.
 const CLAIMS_PAGE = 12;
 const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
+// Bulk orders per page, as the gateway pages them.
+const ORDERS_PAGE = 25;
+// A bulk order in plain words: the server's order state, or the local step before it has one.
+const orderState = r => {
+  if (r.error && !r.prepared) return ['needs attention', 'bad'];
+  if (r.quote && !r.quote.terms) return ['not accepted', ''];
+  const s = r.status;
+  if (!r.prepared || !s || s.state === 'reserving') return ['preparing', 'info'];
+  if (s.state === 'minted') return ['minted', 'good'];
+  if (s.state === 'awaiting_payment') return !s.payable ? ['preparing', 'info'] : s.payment?.state && s.payment.state !== 'unseen' ? ['paying', 'info'] : ['ready to pay', 'warn'];
+  if (['paid', 'permit_pending', 'permit_issued', 'minting', 'partly_minted'].includes(s.state)) return ['minting', 'info'];
+  if (s.state === 'expired') return ['expired', ''];
+  return ['needs attention', 'bad'];
+};
 
 async function api(path, body) {
   const response = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -162,6 +176,9 @@ export function mount(el) {
   // and the way to deploy another. tickerPicks: the picked ticker per asset (Official unless picked).
   const tickerPicks = new Map(), patternTickers = h('div'), compoundTickers = h('div');
   let lastClaims = null;
+  // Mint several: the typed number of blocks ('' = all of the chosen pattern), the bulk planner and its orders.
+  let severalCount = '', planner = null, orderOffset = 0;
+  const several = h('div'), orders = h('div');
   // A fresh picker reads the current ticker list, so a ticker deployed since the page opened appears; it keeps the choice.
   const choiceOf = (asset, { fresh = false } = {}) => {
     if (fresh || !tickerPicks.has(asset)) tickerPicks.set(asset, tickerChoice(asset, { initial: tickerPicks.get(asset)?.value() ?? null, ...(asset.startsWith('c') ? { single: 'Official ticker. ' + SAME_REWARDS } : {}),
@@ -227,7 +244,7 @@ export function mount(el) {
     info.payoutAddress ? null : h('div.callout.bad', {}, 'No payout TAP wallet bound yet. Ask your agent to bind one before minting.'),
     h('p.muted', { style: { margin: 0 } }, 'Mint requests are signed here by your agent. You pay and inscribe on the request page with the wallet connected in the header (TAP Wallet, or MetaMask for bridged TAP).'));
   const drawClaims = data => {
-    lastClaims = data; next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile();
+    lastClaims = data; next = data.next; mintable = data.claims.filter(r => r.canMint).length; more.claims = !!next; drawProfile(); drawSeveral();
     clear(claims, data.claims.length ? table(data.claims, [
       { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', blockLink(r.block))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${fmtInt(r.count)} / ${fmtInt(r.balance)}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
@@ -242,7 +259,77 @@ export function mount(el) {
       h('button.btn.sm.ghost', { disabled: !cursor, onclick: () => { cursor = undefined; page = 1; act('Loading…', loadClaims); } }, 'First page'),
       h('button.btn.sm.ghost', { disabled: !next, onclick: () => { cursor = next; page++; act('Loading…', loadClaims); } }, 'Next page'));
   };
-  const pick = asset => { claimAsset = asset; cursor = undefined; page = 1; drawFilter(); drawMintInto(); act('Loading…', loadClaims); };
+  const pick = asset => { claimAsset = asset; severalCount = ''; cursor = undefined; page = 1; drawFilter(); drawMintInto(); drawSeveral(); act('Loading…', loadClaims); };
+  // Mint several: one bulk planner for the chosen pattern and ticker, up to the typed number of blocks.
+  // Each order of up to 64 blocks gets its own wallet approval on its payment page. The controls stay
+  // in place across refreshes, so a number being typed keeps its focus.
+  let severalTotal = 0, severalPlus = false, severalBusy = false;
+  const severalAll = () => !severalCount || Number(severalCount) >= severalTotal && !severalPlus;
+  const severalInput = h('input.input.mono', { type: 'number', min: '1', step: '1', inputmode: 'numeric', 'aria-label': 'Number of blocks', style: { width: '96px' },
+    oninput: () => { const v = severalInput.value.trim(); severalCount = v === String(severalTotal) && !severalPlus ? '' : v; drawSeveral(); } });
+  const severalGo = h('button.btn.sm.primary', { type: 'button', onclick: () => mintSeveral() });
+  const severalRetry = h('button.btn.sm', { type: 'button', style: { display: 'none' }, onclick: () => mintSeveral(planner?.filter ?? {}) }, 'Try again');
+  const severalNote = h('div.small.muted', { style: { marginTop: '4px' } });
+  const severalBox = h('div', { style: { padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
+    h('div.row', {}, h('span.small.muted', {}, 'Mint several'), severalInput, severalGo, severalRetry),
+    h('div.small.muted', { style: { marginTop: '6px' } }, 'One wallet approval per 64 blocks. Fees and the Bitcoin set-aside are shown before you pay.'), severalNote);
+  const drawSeveral = () => {
+    const shown = (patterns ?? []).filter(p => claimAsset ? p.id === claimAsset : p.claims > 0);
+    severalTotal = shown.reduce((n, p) => n + (p.claims ?? 0), 0); severalPlus = shown.some(p => p.moreClaims);
+    if (!info?.payoutAddress || !severalTotal) { clear(several); return; }
+    if (!several.firstChild) several.append(severalBox);
+    if (document.activeElement !== severalInput) severalInput.value = severalCount || String(severalTotal);
+    const running = ['running', 'waiting_slots'].includes(planner?.state), stuck = ['needs_attention', 'failed'].includes(planner?.state);
+    const n = Number(severalCount), ticker = claimAsset ? tickerPicks.get(claimAsset)?.label() : null;
+    severalGo.textContent = (severalAll() ? `Mint all ${countText(severalTotal, severalPlus)} blocks` : `Mint ${fmtInt(n)} block${n === 1 ? '' : 's'}`) + (ticker ? ' into ' + ticker : '');
+    severalGo.disabled = severalBusy || running || !!severalCount && !/^[1-9][0-9]*$/.test(severalCount);
+    severalGo.classList.toggle('busy', severalBusy); severalGo.title = running ? 'Mint several is still preparing orders.' : '';
+    severalRetry.style.display = stuck && !severalBusy ? '' : 'none';
+    const of = planner?.filter?.limit ? ` of ${fmtInt(planner.filter.limit)}` : '';
+    severalNote.style.color = stuck ? 'var(--bad)' : '';
+    severalNote.textContent = running ? `Preparing orders: ${fmtInt(planner.completed ?? 0)}${of} blocks so far.`
+      : stuck ? 'An order could not be prepared. Try again resumes it with the same blocks.' : '';
+  };
+  const mintSeveral = async again => {
+    if (severalBusy) return;
+    const n = Number(severalCount), deployment = claimAsset ? tickerPicks.get(claimAsset)?.value() : null;
+    const body = again ?? { ...(claimAsset ? { asset: claimAsset } : {}), ...(deployment ? { deployment } : {}), ...(severalAll() ? {} : { limit: n }) };
+    const status = toast({ what: 'Mint several', detail: 'Your agent is preparing orders of up to 64 blocks…', state: 'queued' });
+    severalBusy = true; drawSeveral();
+    try { planner = await api('/api/mint-all', body); }
+    catch (error) { status.set({ state: 'failed', detail: sendWords(error.message) }); say(sendWords(error.message), 'bad'); return; }
+    finally { severalBusy = false; drawSeveral(); }
+    status.set({ state: 'complete', detail: 'Orders appear under Orders. Each one has its own wallet approval.' });
+    orderOffset = 0; await loadOrders().catch(() => {});
+  };
+  // Orders: the bulk orders of Mint several, newest first, 25 per page; shown once there is one.
+  // Each order's button sits under its state, so a phone shows it without scrolling sideways.
+  const orderPager = h('div.pager-foot');
+  const drawOrders = data => {
+    planner = data.planner ?? null; drawSeveral();
+    if (!data.orders.length && !orderOffset) { clear(orders); return; }
+    const blocks = r => r.quote?.terms?.members.map(m => m.block) ?? r.input?.blocks ?? [];
+    clear(orders, h('div', { style: { borderTop: '1px solid var(--rule-2)' } }, h('div.section-label', {}, 'Orders'),
+      data.orders.length ? table(data.orders, [
+        { key: 'blocks', label: 'Blocks', render: r => { const b = blocks(r);
+          return h('div', {}, h('strong.nowrap', {}, `${fmtInt(b.length)} block${b.length === 1 ? '' : 's'}`), r.input?.asset ? h('div', {}, matter(r.input.asset)) : null,
+            b.length ? h('div.small.muted', {}, b.length === 1 ? ['block ', blockLink(b[0])] : ['blocks ', blockLink(b[0]), '–', blockLink(b[b.length - 1])]) : null,
+            r.status?.ticker ? h('div.small.muted', {}, 'into ', h('span.mono', {}, r.status.ticker)) : null); } },
+        { key: 'state', label: 'State', render: r => { const [text, kind] = orderState(r), s = r.status, n = s?.count ?? blocks(r).length;
+          return h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, pill(text, kind),
+            s ? h('div.small.muted', {}, `minted ${fmtInt(s.progress?.minted ?? 0)}/${fmtInt(n)}`) : null,
+            r.error ? h('div.small.muted', {}, r.prepared ? 'Could not refresh: ' + words(r.error) : words(r.error)) : null,
+            s?.payable && s.state === 'awaiting_payment' ? h('a.btn.sm.primary', { href: '/mint/bulk/' + r.orderId }, `Pay and mint ${fmtInt(s.count)} block${s.count === 1 ? '' : 's'}`)
+              : r.orderId && r.prepared ? h('a.btn.sm.ghost', { href: '/mint/bulk/' + r.orderId }, 'Open') : null); } },
+        { key: 'fee', label: 'Fees', render: r => r.quote?.terms ? h('div', {}, h('span.mono.nowrap', {}, tap(r.quote.terms.payableFeeAtoms)),
+          h('div.small.muted', {}, 'Bitcoin set-aside'), h('span.mono.small.nowrap', {}, btc(r.quote.terms.mintFunding.satoshis))) : null },
+      ], { sortable: false }) : h('div.empty', {}, 'No more orders.'), orderPager));
+    clear(orderPager, h('span.pager-total', {}, data.orders.length ? `${orderOffset + 1}–${orderOffset + data.orders.length}` : ''),
+      h('button.btn.sm.ghost', { disabled: !orderOffset, onclick: () => { orderOffset = 0; act('Loading…', loadOrders); } }, 'Newest'),
+      h('button.btn.sm.ghost', { disabled: data.next === null, onclick: () => { orderOffset = data.next; act('Loading…', loadOrders); } }, 'Older orders'));
+  };
+  // Poll faster only while the planner prepares orders; payment and minting follow with the page's refresh.
+  const ordersActive = () => planner?.state === 'running';
   // "Mint into": shown only for one chosen pattern with several tickers; every Mint below goes into that ticker.
   const drawMintInto = () => {
     if (!claimAsset) { clear(mintInto); return; }
@@ -269,7 +356,7 @@ export function mount(el) {
     oninput: e => { patternQuery = e.target.value; patternPage = 0; drawPatternList(); } });
   const patternMatches = p => { const q = patternQuery.trim().toLowerCase();
     return !q || [nameOf(p.asset, p.name), p.name, p.asset, unitKey(p.asset), p.ticker].some(v => typeof v === 'string' && v.toLowerCase().includes(q)); };
-  const drawPatterns = data => { patterns = data.patterns; patternsMore = !!data.more; drawFilter(); drawPatternList(); };
+  const drawPatterns = data => { patterns = data.patterns; patternsMore = !!data.more; drawFilter(); drawSeveral(); drawPatternList(); };
   const drawPatternList = () => {
     const found = patterns.filter(patternMatches), pages = Math.max(1, Math.ceil(found.length / PATTERN_PAGE));
     patternPage = Math.min(patternPage, pages - 1);
@@ -341,6 +428,9 @@ export function mount(el) {
   async function loadRequests() {
     const data = await api('/api/requests?' + new URLSearchParams({ offset: String(offset), limit: '10' })); if (!stopped) drawRequests(data);
   }
+  async function loadOrders() {
+    const data = await api('/api/bulk?' + new URLSearchParams({ offset: String(orderOffset), limit: String(ORDERS_PAGE) })); if (!stopped) drawOrders(data);
+  }
   async function loadPatterns() {
     let data;
     try { data = await api('/api/patterns'); } catch (error) { if (!stopped && !patterns) clear(patternList, h('div.callout.bad', {}, 'Could not load your patterns: ' + words(error.message))); return; }
@@ -354,7 +444,7 @@ export function mount(el) {
   }
   async function load() {
     info = await api('/api/info'); if (stopped) return; merged = info.merged ?? {}; drawProfile(); drawReceive();
-    await loadPatterns(); await loadClaims(); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
+    await loadPatterns(); await loadClaims(); await loadOrders().catch(() => {}); await loadUnits().catch(error => { if (!units) clear(sendBody, h('div.callout.bad', {}, 'Could not load your units: ' + sendWords(error.message))); });
     await loadSends(); await loadCraft(); await loadTnk().catch(() => {}); await loadTnkSends().catch(() => {}); await loadRequests(); await loadLinks();
   }
   // Send units on Trac: rows or a pasted list → review of every row → one
@@ -903,7 +993,7 @@ export function mount(el) {
       running ? ' · ' + plural(running, 'send') + ' in progress' : null);
   };
   clear(claimsPanel, panel('Claimed blocks you may mint', h('div', {}, h('p.muted', { style: { margin: 0, padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } },
-    'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, mintInto, claims, pager), { flush: true }));
+    'During the finder’s week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Unclaimed blocks after their week are public: see ', h('a', { href: '/mint' }, 'Mint'), '.'), filter, mintInto, several, claims, pager, orders), { flush: true }));
   clear(el, h('div.page', {},
     h('div.page-head', {}, h('div.grow', {}, h('h1', {}, 'My agent'), h('p', {}, 'Your agent’s claimed blocks and patterns, with one click to mint or deploy, compounds to craft, units to send on Trac, and its TNK. Everything else on this dashboard is the live site.'))),
     h('div.stack', {}, note, profile,
@@ -923,6 +1013,7 @@ export function mount(el) {
     if (sendsActive()) loadSends().catch(() => {});
     if (craftActive()) loadCraft().catch(() => {});
     if (tnkActive()) loadTnkSends().then(() => tnkActive() ? null : loadTnk()).catch(() => {});
+    if (ordersActive()) loadOrders().catch(() => {});
   }, 4000);
   return () => { stopped = true; clearInterval(timer); clearInterval(sendTimer); };
 }
