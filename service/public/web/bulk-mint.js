@@ -68,7 +68,7 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
     message.textContent = bulkProgress(status, localState);
     summary.replaceChildren(node('h2', 'Accepted order'), node('p', 'Blocks: ' + plan.terms.members.map(m => m.block).join(', ')),
       node('p', `Gross fee: ${tap(plan.terms.grossFeeAtoms)} TAP · Payable fee: ${tap(plan.terms.payableFeeAtoms)} TAP`),
-      node('p', `Bitcoin set aside: ${plan.terms.mintFunding.satoshis} sats`), node('p', 'Payer: ' + plan.terms.payer, 'mono'), node('p', 'Receiver: ' + plan.terms.receiver, 'mono'));
+      node('p', `Bitcoin set aside: ${plan.terms.mintFunding.satoshis} sats`), node('p', 'Returned to you after the mint, minus the Bitcoin network fees and the 546 sats per block that stay with the inscriptions.', 'small muted'), node('p', 'Payer: ' + plan.terms.payer, 'mono'), node('p', 'Receiver: ' + plan.terms.receiver, 'mono'));
     const progress = status.progress, permit = status.permit, sender = status.mintSender;
     summary.append(node('p', `Payment: ${status.payment?.state ?? status.state} · Permits ready: ${permit?.readyCount ?? 0}/${status.count} · Reveal batches sent: ${sender?.sentBatches ?? 0}/${sender?.totalBatches ?? 0}`),
       node('p', `Confirmed mints: ${progress?.minted ?? 0}/${status.count} · Released: ${progress?.released ?? 0} · Unresolved: ${progress?.unresolved ?? status.count}`));

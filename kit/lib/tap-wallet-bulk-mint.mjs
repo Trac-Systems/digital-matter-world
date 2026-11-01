@@ -3,6 +3,7 @@ import { validateBulkTerms, validateBulkFees, bulkOrderId, bulkWalletItems } fro
 import { ensure, fundingAddress } from './inscription-core.mjs';
 import { BrowserMintJournal, mintFundingOutput } from './tap-wallet-mint.mjs';
 import { tapWalletCapabilities, ensureTapAuthority } from './tap-wallet-actions.mjs';
+import { checkTapFunds } from './wallet-funds.mjs';
 
 const hex = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const inscription = value => typeof value === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(value);
@@ -22,8 +23,8 @@ export function bulkPaymentPlan(orderId, status, response, network) {
 // 32-item limit can accidentally split a bulk redeem into several payments.
 export class TapWalletBulkMint {
   constructor({ provider = globalThis.tapprotocol, readStatus, readTerms, reportPayment, network,
-    journal = new BrowserMintJournal('dmw-bulk-payments-v1'), fetchImpl = globalThis.fetch }) {
-    Object.assign(this, { provider, readStatus, readTerms, reportPayment, network, journal, fetchImpl });
+    journal = new BrowserMintJournal('dmw-bulk-payments-v1'), fetchImpl = globalThis.fetch, readerPath }) {
+    Object.assign(this, { provider, readStatus, readTerms, reportPayment, network, journal, fetchImpl, readerPath });
   }
   async connect() {
     const capabilities = await tapWalletCapabilities(this.provider);
@@ -81,6 +82,10 @@ export class TapWalletBulkMint {
       ensure(payable(latest.status) && latest.status.termsHash === first.status.termsHash &&
         stableJSON(latest.items) === stableJSON(first.items) && stableJSON(latest.extraOutputs) === stableJSON(first.extraOutputs),
       'Bulk payment changed while checking the wallet');
+      await this.checkAccount();
+      // Never open the wallet for a payment it cannot make: TAP for every group, Bitcoin for fees and the set-aside.
+      await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
+        items: first.items, extraOutputs: first.extraOutputs, fetchImpl: this.fetchImpl });
       await this.checkAccount();
       const payment = { state: 'sending', termsHash: first.status.termsHash, items: first.items, extraOutputs: first.extraOutputs, at: Date.now() };
       await this.journal.put(key, { ...saved, payment });

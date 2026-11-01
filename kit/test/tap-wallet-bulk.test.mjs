@@ -7,10 +7,12 @@ import { bulkOrderId, bulkMembersRoot, bulkFeeRoot } from '../../rules/src/bulk-
 import { TapWalletBulkMint } from '../lib/tap-wallet-bulk-mint.mjs';
 import { fundingAddress, hex } from '../lib/inscription-core.mjs';
 import { tapWallet1049 } from './tap-wallet-1049-fixture.mjs';
+import { walletFundsFetch, walletFundsReply, cardinalFixture } from './wallet-funds-fixture.mjs';
 
 function setup({ active = true } = {}) {
   const publicKey = hex(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true)), address = fundingAddress(publicKey, 'mainnet');
   const f = tapWallet1049({ address, publicKey, active }), records = new Map(), reports = [];
+  f.provider.getBitcoinUtxos = async () => [cardinalFixture()];
   const terms = { ...structuredClone(fixture.terms), payer: address }, feeManifest = structuredClone(fixture.feeManifest);
   const id = bulkOrderId(terms.network, terms.owner, terms.nonce);
   const status = { v: 1, orderId: id, termsHash: hashObject(terms), state: 'awaiting_payment', payable: true,
@@ -19,7 +21,7 @@ function setup({ active = true } = {}) {
   const journal = { get: async k => structuredClone(records.get(k)), put: async (k, v) => records.set(k, structuredClone(v)), lock: async (_, fn) => fn() };
   const options = { provider: f.provider, journal, network: 'mainnet', readStatus: async () => structuredClone(status),
     readTerms: async () => ({ v: 1, orderId: id, terms: structuredClone(terms), feeManifest: structuredClone(feeManifest) }),
-    reportPayment: async value => reports.push(value), fetchImpl: async () => assert.fail('no Bitcoin reads on a first payment') };
+    reportPayment: async value => reports.push(value), fetchImpl: walletFundsFetch };
   const wallet = new TapWalletBulkMint(options);
   return { ...f, records, reports, terms, feeManifest, id, status, options, wallet };
 }
@@ -70,7 +72,7 @@ test('bulk ambiguous reply and cancellation keep sending across reload; TAP abse
     await resumed.pay(f.id); assert.equal(calls, 1);
     resumed.fetchImpl = async () => Response.json({ chain_stats: { tx_count: 1 }, mempool_stats: { tx_count: 0 } });
     await assert.rejects(resumed.pay(f.id, { retry: true }), /already sent/); assert.equal(calls, 1);
-    resumed.fetchImpl = async url => Response.json(url.includes('/txs/') ? [] : { chain_stats: { tx_count: 0 }, mempool_stats: { tx_count: 0 } });
+    resumed.fetchImpl = async url => Response.json(walletFundsReply(url) ?? (url.includes('/txs/') ? [] : { chain_stats: { tx_count: 0 }, mempool_stats: { tx_count: 0 } }));
     if (error) await assert.rejects(resumed.pay(f.id, { retry: true }), /no payment receipt/);
     else await resumed.pay(f.id, { retry: true });
     assert.equal(calls, 2);
@@ -124,5 +126,15 @@ test('bulk refuses oversized member/group sets before a wallet call', async () =
     f => { f.terms.groups = Array.from({ length: 132 }, () => structuredClone(f.terms.groups[0])); }]) {
     const f = setup(); await f.wallet.connect(); mutate(f); f.status.termsHash = hashObject(f.terms);
     await assert.rejects(f.wallet.pay(f.id), /bulk_members|bulk_groups/); assert.equal(f.state.calls.length, 0);
+  }
+});
+
+test('bulk refuses before opening the wallet when TAP or Bitcoin is short', async () => {
+  for (const [funds, coins, message] of [[{ overall: '1' }, [cardinalFixture()], /Not enough TAP/], [{}, [cardinalFixture(2000)], /Not enough Bitcoin/]]) {
+    const f = setup(); await f.wallet.connect(); let opened = false;
+    f.provider.getBitcoinUtxos = async () => coins;
+    const transfer = f.provider.singleTxTransfer; f.provider.singleTxTransfer = async (...args) => { opened = true; return transfer(...args); };
+    f.wallet.fetchImpl = async url => ({ ok: true, json: async () => walletFundsReply(url, funds) });
+    await assert.rejects(f.wallet.pay(f.id), message); assert.equal(opened, false);
   }
 });
