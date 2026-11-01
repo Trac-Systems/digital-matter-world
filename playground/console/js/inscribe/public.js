@@ -309,7 +309,7 @@ export function mount(root, { id, onPublicMint }) {
     clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], status.asset ? ['Pattern', assetLink(status.asset)] : null, status.block != null ? ['Block', blockLink(status.block)] : null,
       status.actualTicker ? ['Ticker', h('span.mono', {}, status.actualTicker)] : null, ['Receiver', addressLink(status.receiver)], ['Units', fmtInt(status.amount)],
       paymentSent ? ['Payment sent', inflightLine(paymentSent)] : null,
-      aside ? ['Bitcoin for the mint inscription', sats(aside.satoshis)] : null,
+      aside ? ['Bitcoin for the mint inscription', h('span', {}, sats(aside.satoshis), h('div.small.muted', {}, 'Returned to you after the mint, minus the Bitcoin network fee and the 546 sats that stay with the inscription.'))] : null,
       ms?.state === 'returning' ? ['Set-aside', 'Being returned to you'] : ms?.state === 'returned' ? ['Set-aside', txid(ms.returnTxid) ? h('span', {}, 'Returned to you: ', txLink(ms.returnTxid, ms.returnTxid.slice(0, 12) + '…')) : 'Returned to you'] : null,
       status.publicMint && status.refunds?.length ? ['Refund', h('span', {}, status.refunds.flatMap((r, i) => [i ? ' · ' : '', refundStatus(r)]))] : null, status.publicMint && (status.reason || status.refunds?.[0]?.reason) ? ['Reason', walletError(status.reason ?? status.refunds[0].reason, status)] : null, status.inscription ? ['Inscription', hashEl(status.inscription)] : null]), { flush: true }));
     const next = [button('Refresh', refresh, 'quiet')], rest = [];
