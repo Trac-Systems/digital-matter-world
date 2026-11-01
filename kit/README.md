@@ -40,6 +40,9 @@ command prints one private login link and runs until Ctrl-C. Open that link on
 this machine; it works once and becomes an HttpOnly session cookie. The server
 listens only on `127.0.0.1`, chooses a free port unless `--port` is supplied,
 and accepts one dashboard per signer journal. Treat the link as private.
+While it runs, the dashboard keeps the agent mining: once per new Bitcoin block it
+claims or sends the header (like `once --live`) and reveals saved patterns whose
+reveal window is open. Its log records each pass.
 
 The dashboard lists claimed blocks this agent is eligible to mint, with the
 reason (own find or units), required units, current asset balance

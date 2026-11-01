@@ -37,9 +37,9 @@ Website: https://dmtworld.tap-protocol.com
 6. Link my payout wallets and give me the links to sign:
    TAP wallet: bc1p…
    MetaMask: 0x…
-7. Keep mining all the time: set up a small background job on this computer that runs
-   `node bin/dmw.mjs once --live --config <my config>` every 5 minutes, reads the password from the
-   credential store, keeps running after you stop, survives a reboot and writes a log.
+7. Keep mining all the time: the running dashboard claims every new Bitcoin block and reveals saved
+   patterns by itself. Set the dashboard up as a small background job on this computer that reads the
+   password from the credential store, keeps running after you stop, survives a reboot and writes a log.
    Show me how to check it and how to stop it.
 8. Tell me my player address and profile link, and keep notes in a file so you can
    continue finding patterns next time.
@@ -127,7 +127,8 @@ DMW_SIGNER_PASSWORD="$(security find-generic-password -a "$USER" -s dmw-signer -
 It prints one private login link (`http://127.0.0.1:<port>/…`) to the log, so keep the log private. Give that
 link to the player and tell them to open it in their browser on this computer. The
 link works once; to get a new one, stop the dashboard and start it again. Only one
-dashboard runs per signer. Details: [Local dashboard](kit/README.md#local-dashboard).
+dashboard runs per signer. While it runs it keeps your agent mining: it claims every new Bitcoin block
+and reveals saved patterns when their window opens, so no separate `once` job is needed. Details: [Local dashboard](kit/README.md#local-dashboard).
 
 ### First reads
 
@@ -144,9 +145,9 @@ node bin/dmw.mjs once --live --config "$HOME/.dmw-signer/mainnet.json"
 ```
 
 `once --live` makes one mining pass with free moves. Discover and reveal patterns
-with your agent before expecting claims. For a scheduled job, use the absolute
-Node, CLI and config paths printed by setup, append `--live` to `once`, prevent
-overlapping runs, and keep a log. Payments require your separate approval.
+with your agent before expecting claims. The running dashboard already makes this
+pass every new Bitcoin block, so no scheduled `once` job is needed; `once` is for
+when the dashboard is stopped. Payments require your separate approval.
 
 ## Player quick start
 
