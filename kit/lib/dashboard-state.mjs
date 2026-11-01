@@ -414,7 +414,11 @@ export class DashboardState {
     dashboardCheck(slot && Object.keys(slot).every(k => ['asset', 'block', 'deployment'].includes(k)) && assetId(slot.asset) && integer(slot.block) && (slot.deployment === undefined || typeof slot.deployment === 'string' && slot.deployment.length > 0), 'invalid_claim');
     const key = canonicalAsset(slot.asset) + '/' + slot.block + (slot.deployment ? '/' + slot.deployment : '');
     if (this.inflight.has(key)) return this.inflight.get(key);
-    const task = this.queue.then(() => this.mintNow(slot));
+    const queued = Date.now();
+    const task = this.queue.then(() => {
+      if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`mint timing: waited ${Date.now() - queued}ms behind earlier mint clicks\n`);
+      return this.mintNow(slot);
+    });
     this.queue = task.catch(() => {});
     this.inflight.set(key, task);
     task.finally(() => this.inflight.delete(key)).catch(() => {});
@@ -433,9 +437,11 @@ export class DashboardState {
   async mintNow(slot) {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
     if (slot.deployment !== undefined) dashboardCheck(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(slot.deployment), 'invalid_deployment');
+    const debug = process.env.DMW_DASHBOARD_DEBUG === '1', readsAt = Date.now();
     const c = await this.candidate(slot);
     dashboardCheck(!c.minted && !c.void, 'already_minted', 409);
     const payout = await this.payout(), old = this.savedSlot(slot);
+    if (debug) process.stderr.write(`mint timing: dashboard candidate and payout reads ${Date.now() - readsAt}ms\n`);
     if (old || c.pending) {
       const id = old ? this.idOf(old) : c.pending.id;
       try {

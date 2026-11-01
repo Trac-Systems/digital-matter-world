@@ -7,7 +7,18 @@ import { signBytes, signPaymentIntent } from './signing.mjs';
 
 // Two durable packets: the owner's mint intent and its exact account
 // reservation. A lost response never changes either signature or nonce.
+// With DMW_DASHBOARD_DEBUG=1 each step's time is written to stderr, so a slow mint shows where it waits.
+const stepTimer = label => {
+  if (process.env.DMW_DASHBOARD_DEBUG !== '1') return { step: (_, value) => value, done: () => {} };
+  const steps = [], start = Date.now();
+  return { step: async (name, value) => { const at = Date.now(); try { return await value; } finally { steps.push(`${name} ${Date.now() - at}ms`); } },
+    done: () => process.stderr.write(`${label} timing: ${steps.join(', ')}; total ${Date.now() - start}ms\n`) };
+};
 export async function makeFinancialMint(agent, intent, actionId, candidate, context) {
+  const timer = stepTimer('mint');
+  try { return await makeFinancialMintTimed(agent, intent, actionId, candidate, context, timer.step); } finally { timer.done(); }
+}
+async function makeFinancialMintTimed(agent, intent, actionId, candidate, context, step) {
   const { journal, service, network, wallet, owner } = agent, key = `mint/${actionId}`, old = journal.get(key);
   if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting mint action ID');
   if (!agent.dryRun && old && ['submitted', 'accepted', 'rejected'].includes(old.state)) return { ...old.result, state: old.state, replayed: true };
@@ -17,16 +28,16 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
   const legacy = /^p2:(0|[1-9][0-9]*)$/.test(requestedAsset) ? 'p' + BigInt(requestedAsset.slice(3)).toString(36) : null;
   const asset = old?.body.request.asset ?? (!compound && legacy && candidate?.find?.asset === legacy ? legacy : requestedAsset);
   const policyHash = old?.body.request.settingsHash ?? context.settingsHash;
-  const policy = policyHash === context.settingsHash ? context.settings : await agent.trac.settingsByHash(policyHash);
+  const policy = policyHash === context.settingsHash ? context.settings : await step('trac settings', agent.trac.settingsByHash(policyHash));
   check(hashObject(validateSettingsDocument(policy)) === policyHash && policy.network === network, 'Financial request settings mismatch');
   const v = policy.values;
-  const head = await agent.trac.head();
+  const head = await step('trac head', agent.trac.head());
   check(compound ? block === undefined : candidate?.find?.asset === asset && decimalV2(candidate.find.block) === block && String(candidate.find.count) === amount &&
     !candidate.void && !candidate.pending && !candidate.minted && mintRight({ find: candidate.find, owner, counted: head.counted,
       link: candidate.link, currentHolder: candidate.currentHolder, finderWindow: v.finderWindow, settings: policy }).allowed, 'Mint right unavailable');
   check(intent.deployment === undefined || multiTickerActive(head.counted), 'multi_ticker_inactive');
   const quoteInput = { ...(intent.deployment === undefined ? {} : { deployment: intent.deployment }), asset, amount, ...(block === undefined ? {} : { block }), kind, payer, receiver };
-  const quote = old?.body.feeQuote ? { feeQuote: old.body.feeQuote } : await service.mintQuote(quoteInput);
+  const quote = old?.body.feeQuote ? { feeQuote: old.body.feeQuote } : await step('quote', service.mintQuote(quoteInput));
   if (quote.deploymentNeeded || quote.state === 'deployment_pending') return { ...quote, signed: false,
     ...(quote.deploymentNeeded ? { deploymentLink: service.deploymentLink?.(quote.catalogAsset ?? asset, encodeTracAddress(owner), agent.paymentOrigin),
       next: [{ tool: 'inscribe_deployment', arguments: { asset: quote.asset ?? asset } }] } :
@@ -42,11 +53,11 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
     signature: signBytes(wallet, financialMintDigest(network, request)),
     authorization: signPaymentIntent(wallet, network, { request, receiver, payer, kind, feeQuote: quote.feeQuote }) };
   const saved = journal.reserve(key, intent, body), id = financialMintId(network, request), reservationKey = key + '/reservation-v2';
-  await journal.waitTurn(() => agent.trac.head()); journal.mark(key, 'sending');
+  await step('trac head + turn', journal.waitTurn(() => agent.trac.head())); journal.mark(key, 'sending');
   try {
     let reservation = journal.get(reservationKey), response;
     if (!reservation) {
-      response = wireIdentities(await service.requestMint(saved.body));
+      response = wireIdentities(await step('request', service.requestMint(saved.body)));
       if (response.deploymentNeeded || response.state === 'deployment_pending') {
         journal.mark(key, 'unknown');
         return { ...response, signed: true, next: response.deploymentNeeded ? [{ tool: 'inscribe_deployment', arguments: { asset } }] :
@@ -64,7 +75,7 @@ export async function makeFinancialMint(agent, intent, actionId, candidate, cont
       const reserve = { ...action, sig: signBytes(wallet, accountActionDigest(network, action)) };
       reservation = journal.reserve(reservationKey, { id, terms: action.terms }, { version: 2, reserve });
     }
-    response = wireIdentities(await service.requestMint({ ...saved.body, reserve: reservation.body.reserve }));
+    response = wireIdentities(await step('reserve', service.requestMint({ ...saved.body, reserve: reservation.body.reserve })));
     check((response.id ?? response.requestId) === id && response.state !== 'authorizing', 'Mint reservation not acknowledged');
     const result = { state: 'submitted', request: response, paymentLink: service.paymentLink(id, agent.paymentOrigin),
       next: [{ tool: 'poll_mint', arguments: { id } }, { tool: 'pay_mint', arguments: { id } }, { tool: 'inscribe_mint', arguments: { id } }] };

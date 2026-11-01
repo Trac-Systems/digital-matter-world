@@ -125,8 +125,10 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   register('mint_on_chain', 'Reserve units with a signed quote. Then use pay_mint, poll_mint and inscribe_mint; the player pays and inscribes from their own wallet.', {
     actionId, asset: mintAsset, amount: units, deployment: z.string().min(1).optional(), block: z.union([height, decimal]).optional(), receiver: z.string().min(1).max(128).optional(), payer: z.string().min(1).max(128).optional(), kind: z.enum(['tap', 'ethereum']).default('tap'), compound: z.boolean().default(false)
   }, async args => {
-    const addresses = agent.paymentAddresses(args);
-    return agent.makeReal({ ...args, ...addresses, candidate: args.compound ? undefined : (await candidates(args.asset, { block: args.block, kind: args.kind, ...(args.deployment ? { deployment: args.deployment } : {}) })).find(c => c.find && String(c.find.block) === String(args.block)) });
+    const addresses = agent.paymentAddresses(args), started = Date.now();
+    const candidate = args.compound ? undefined : (await candidates(args.asset, { block: args.block, kind: args.kind, ...(args.deployment ? { deployment: args.deployment } : {}) })).find(c => c.find && String(c.find.block) === String(args.block));
+    if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`mint timing: candidate ${Date.now() - started}ms\n`);
+    return agent.makeReal({ ...args, ...addresses, candidate });
   }, false);
   register('asset_tickers', 'List registered tickers, each with the full pattern supply. Omitted mint choices use its official ticker.',
     { asset: deploymentAsset, after: z.string().optional(), limit: z.number().int().positive().optional() }, ({ asset, ...page }) => agent.service.assetTickers(asset, page));
