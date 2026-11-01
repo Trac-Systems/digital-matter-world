@@ -1,4 +1,4 @@
-import { TapWalletMint, tapWalletCapabilities } from './wallet.js';
+import { TapWalletMint, TapWalletBulkMint, tapWalletCapabilities } from './wallet.js';
 const formatUnits = n => String(n ?? '–').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 // A pattern or compound by its name; its key only ever as a short "#…".
 const assetLabel = row => row.name ?? (/^c2:[0-9a-f]{64}$/.test(row.asset ?? '') ? 'Compound #' + row.asset.slice(3, 11) : /^p2:(0|[1-9][0-9]*)$/.test(row.asset ?? '') ? 'Pattern #' + row.asset.slice(3) : row.asset);
@@ -52,22 +52,22 @@ class LocalWalletJournal {
 const root = document.getElementById('app'), page = el('div', undefined, 'page');
 const note = el('p', '', 'note'); note.role = 'status'; note.setAttribute('aria-live', 'polite');
 const payout = el('p', '', 'mono'), owner = el('p', undefined, 'small muted');
-const rows = el('tbody'), requests = el('div', undefined, 'stack'), payment = el('div', undefined, 'stack');
+const rows = el('tbody'), requests = el('div', undefined, 'stack'), payment = el('div', undefined, 'stack'), bulkOrders = el('div', undefined, 'stack');
 const table = el('table'), head = el('tr');
 for (const label of ['Pattern', 'Block', 'Units / balance', 'Eligibility / state', '']) head.append(el('th', label));
 append(table, append(el('thead'), head), rows);
 const mintState = state => ({ public: 'Public', claimed: 'Claimed', already_minted: 'Minted', minted: 'Minted', paid: 'Payment confirmed', permit_issued: 'Being minted' })[state] ?? state.replaceAll('_', ' ');
 const mintReason = reason => ({ public_minted: 'This block was already taken by a public TAP Wallet mint.', claimed_first: 'An agent claimed this block before your payment was confirmed. Your payment is refunded.' })[reason] ?? reason?.replaceAll('_', ' ');
-let info, cursor, next, busy = false, activeId, wallet, timer, requestOffset = 0;
+let info, cursor, next, busy = false, activeId, wallet, bulkWallet, timer, requestOffset = 0;
 const paymentDrafts = new Map();
-const mintAll = button('Mint all', async () => { await api('/api/mint-all', {}); note.textContent = 'Preparing eligible claimed blocks one by one. Approve each payment in your wallet.'; await refresh(); });
+const mintAll = button('Mint all', async () => { await api('/api/mint-all', {}); note.textContent = 'Preparing bulk orders with up to 64 blocks each. Review and approve each order separately in your wallet.'; await refresh(); });
 const refreshButton = button('Refresh', () => refresh());
 const first = button('First', async () => { cursor = undefined; await refreshClaims(); });
 const more = button('Next', async () => { cursor = next; await refreshClaims(); });
 append(page, append(el('div', undefined, 'page-head'), el('h1', 'Claimed blocks you may mint')),
   el('p', "During the finder's week only the finder mints; afterwards any agent can. Bitmap holders earn 15% of every mint on their plot. Minting requires enough units. Units can be sent with transfer. Minting spends units and pays to your bound TAP wallet. You approve the TAP payment and Bitcoin inscription fees in TAP Wallet."), owner, payout,
   append(el('div', undefined, 'row'), mintAll, refreshButton), note,
-  table, append(el('div', undefined, 'row'), first, more), el('h2', 'Open requests'), requests, payment);
+  table, append(el('div', undefined, 'row'), first, more), el('h2', 'Bulk orders'), bulkOrders, el('h2', 'Open single requests'), requests, payment);
 root.append(page);
 async function attempt(action) {
   if (busy) return; busy = true;
@@ -121,6 +121,57 @@ async function refreshRequests() {
     ['unknown', 'authorizing'].includes(row.state) && row.block !== undefined ? button('Resume request', () => mint(row)) : null));
   if (requestOffset) requests.append(button('Newest requests', async () => { requestOffset = 0; await refreshRequests(); }));
   if (data.next !== null) requests.append(button('More requests', async () => { requestOffset = data.next; await refreshRequests(); }));
+}
+const bulkReports = new Set();
+async function refreshBulkOrders() {
+  const data = await api('/api/bulk'); bulkOrders.replaceChildren();
+  if (data.planner?.state === 'waiting_slots') bulkOrders.append(el('p', 'Four bulk orders can be active at once. Later orders prepare as completed orders free their slots.'));
+  for (const row of data.orders) {
+    const box = el('section', undefined, 'panel'), q = row.quote, status = row.status;
+    box.append(el('h3', q?.terms ? `${q.terms.members.length} blocks · ${q.terms.ticker}` : 'Preparing bulk order'));
+    if (q?.terms) {
+      box.append(el('p', 'Accepted blocks: ' + q.terms.members.map(m => m.block).join(', ')),
+        el('p', `Gross fee: ${formatTap(q.terms.grossFeeAtoms)} TAP · Payable: ${formatTap(q.terms.payableFeeAtoms)} TAP · Bitcoin set aside: ${q.terms.mintFunding.satoshis} sats`));
+    }
+    for (const [key, label] of [['skipped', 'Skipped'], ['deferred', 'Deferred to a later order']]) if (q?.[key]?.length)
+      box.append(el('p', label + ': ' + q[key].map(m => `${m.block} (${m.reason.replaceAll('_', ' ')})`).join(', ')));
+    if (row.error) box.append(el('p', row.error, 'note'));
+    if (status) {
+      const saved = await bulkWallet.journal.get(`${info.bitcoinNetwork}/${status.payer}/bulk/${row.orderId}`);
+      const localPayment = saved?.payment?.termsHash === status.termsHash ? saved.payment : null;
+      if (localPayment?.state === 'submitted' && !bulkReports.has(row.orderId)) {
+        try { await bulkWallet.report(row.orderId, localPayment); bulkReports.add(row.orderId); } catch { /* keep receipt and retry reporting */ }
+      }
+      if (localPayment?.state === 'submitted' && status.payment?.state === 'unseen') box.append(el('p', 'Wallet payment sent. Waiting for confirmed TAP transfers; you can close this page.'));
+      if (localPayment?.state === 'sending') box.append(el('p', 'Wallet result uncertain. Inspect TAP Wallet before explicitly retrying this order.'));
+      const p = status.progress, permit = status.permit, sender = status.mintSender;
+      box.append(el('p', `Payment: ${status.payment?.state ?? status.state} · Permits: ${permit?.readyCount ?? 0}/${status.count} · Reveal batches sent: ${sender?.sentBatches ?? 0}/${sender?.totalBatches ?? 0}`),
+        el('p', `Confirmed mints: ${p?.minted ?? 0}/${status.count} · Released: ${p?.released ?? 0} · Unresolved: ${p?.unresolved ?? status.count}`));
+      if (sender?.state === 'fee_wait') box.append(el('p', 'Waiting for Bitcoin fees to fit the signed allowance. No additional payment is requested.'));
+      if (status.creditReferences?.length) box.append(el('p', 'Payment recovery is owed; it has not been refunded.'));
+      if (status.state === 'reserving') box.append(el('p', 'The reservation is being accepted. Payment becomes available here after acceptance.'));
+      if (status.state !== 'minted' && sender?.sentBatches) box.append(el('p', 'Inscription transactions were sent. Waiting for confirmed TAP mints and final accounting.'));
+      box.append(button('Show member progress', async () => {
+        const members = await api(`/api/bulk/${row.orderId}/members?offset=0&limit=64`);
+        detail.replaceChildren(...members.members.map(m => el('p', `Block ${m.block}: ${m.state}${m.inscription ? ' · ' + m.inscription : ''}${m.reason ? ' · ' + m.reason : ''}`)));
+      }));
+      if (status.payable && status.state === 'awaiting_payment' && localPayment?.state !== 'submitted') box.append(button(localPayment?.state === 'sending' ? 'Check and retry this payment' : `Pay and mint ${status.count} blocks`, async () => {
+        bulkWallet.provider = globalThis.tapprotocol; await bulkWallet.connect();
+        const fresh = await bulkWallet.plan(row.orderId);
+        const retry = localPayment?.state === 'sending';
+        if (!confirm(retry ? 'Retry only if TAP Wallet shows no sent payment for this exact order. Bitcoin will also be checked.' : `Pay and mint ${fresh.status.count} blocks?\nPayable fee: ${formatTap(fresh.terms.payableFeeAtoms)} TAP\nBitcoin set aside: ${fresh.terms.mintFunding.satoshis} sats\nThis approval covers only this order.`)) return;
+        const result = await bulkWallet.pay(row.orderId, { retry });
+        note.textContent = result.localState === 'payment_submitted' ? 'Payment sent. Waiting for verified TAP transfers; minting follows automatically. You can close this page.' : 'Payment outcome is uncertain. Keep this order and inspect TAP Wallet before retrying.';
+        await refreshBulkOrders();
+      }));
+    }
+    if (row.error && q?.terms && !row.prepared) box.append(button('Resume saved order', async () => {
+      await api('/api/bulk/request', { actionId: row.actionId, quoteId: q.quoteId, maxPayableFeeAtoms: q.terms.payableFeeAtoms, maxSetAsideSats: q.terms.mintFunding.satoshis });
+      await refreshBulkOrders();
+    }));
+    const detail = el('div', undefined, 'stack'); box.append(detail); bulkOrders.append(box);
+  }
+  if (!data.orders.length) bulkOrders.append(el('p', 'Mint all prepares orders here. Each order has its own wallet approval.'));
 }
 const reportedPayments = new Set();
 async function refreshPayment() {
@@ -181,7 +232,9 @@ async function refresh() {
   disabled(mintAll, !info.payoutAddress || info.batch?.state === 'running');
   wallet ??= new TapWalletMint({ network: info.bitcoinNetwork, journal: new LocalWalletJournal(), readStatus: id => api('/api/requests/' + id),
     readPaymentPlan: id => api('/api/requests/' + id + '/plan'), notify: text => { note.textContent = text; } });
-  await refreshClaims(); await refreshRequests(); await refreshPayment();
+  bulkWallet ??= new TapWalletBulkMint({ network: info.bitcoinNetwork, journal: new LocalWalletJournal(), readStatus: id => api('/api/bulk/' + id),
+    readTerms: id => api('/api/bulk/' + id + '/terms'), reportPayment: report => api('/api/bulk/payment', report) });
+  await refreshClaims(); await refreshRequests(); await refreshBulkOrders(); await refreshPayment();
 }
 function poll() { timer = setTimeout(async () => { if (!busy) await attempt(refresh); poll(); }, 5000); }
 window.addEventListener('pagehide', () => clearTimeout(timer));

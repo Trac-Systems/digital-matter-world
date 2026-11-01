@@ -29,7 +29,8 @@ export class FinancialCustody {
     check(rules.hex(id, 32), 'financial_custody_id');
     const at = await this.reads.batchStamp(), row = await this.reads.financialRecord('bc/' + id, at);
     check(row, 'financial_custody_missing', 404);
-    const mint = this.store.get('mints', row.request), fee = mint?.reservationEvidence?.feeItems.find(f => financialFeeKey(f) === row.fee);
+    const mint = this.store.get('mints', row.request), fee = mint?.context?.kind === 'bulk-v1' ?
+      (await this.reads.bulkCustodyOriginal(row, at)).fee : mint?.reservationEvidence?.feeItems.find(f => financialFeeKey(f) === row.fee);
     check(fee, 'financial_custody_terms');
     const blocked = this.store.get('meta', 'financialRecoveryActive') || await this.reads.financialRecord('fr/active', at) ? 'financial_recovery_active' :
       await this.reads.financialRecord('fq/bc/' + id, at) || await this.reads.financialRecord('fq/fp/' + row.request, at) ? 'financial_quarantined' : null;
@@ -41,7 +42,8 @@ export class FinancialCustody {
   async payment({ id, reference, index }) {
     const row = await this.status(id); check(row.state === 'paying', 'financial_custody_claim');
     check(typeof reference === 'string' && reference.length <= 100 && Number.isSafeInteger(index) && index >= 0, 'financial_custody_reference');
-    const mint = this.store.get('mints', row.request), fee = mint?.reservationEvidence?.feeItems.find(f => financialFeeKey(f) === row.fee);
+    const mint = this.store.get('mints', row.request), fee = mint?.context?.kind === 'bulk-v1' ?
+      (await this.reads.bulkCustodyOriginal(row, await this.reads.batchStamp())).fee : mint?.reservationEvidence?.feeItems.find(f => financialFeeKey(f) === row.fee);
     check(fee, 'financial_custody_terms');
     const hint = { claim: row.claim, reference, index };
     const action = { type: 'custody-settle', id, claim: row.claim, receipt: custodyReceipt(this.network, fee.financialIdentity.domain, hint) };

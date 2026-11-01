@@ -4,10 +4,15 @@ export const ASSET_RESOURCES = Object.freeze({
   publicMintsPerPayer: 8, publicMintsPerIP: 32, publicMintStartsPerMinute: 12,
   mintInputCapacity: 2000, workPage: 128, creditPage: 128,
   creditSources: 32, outboxPage: 128,
+  bulkOrdersPerAgent: 24, activeBulkOrders: 512, bulkMintEnabled: true,
 });
 export function assetResources(overrides = {}) {
   const settings = { ...ASSET_RESOURCES, ...overrides };
   for (const [key, value] of Object.entries(settings)) {
+    if (key === 'bulkMintEnabled') {
+      if (typeof value !== 'boolean') throw Error('asset_resource_setting');
+      continue;
+    }
     if (!Object.hasOwn(ASSET_RESOURCES, key) || !Number.isSafeInteger(value) || value < 1 ||
         (['workPage', 'creditPage', 'outboxPage'].includes(key) && value > 4096)) throw Error('asset_resource_setting');
   }

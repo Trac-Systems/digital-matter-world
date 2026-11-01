@@ -8,6 +8,7 @@ import { verifyFinancialExecution } from './financial-execution.mjs';
 import { financialMintId, financialPaymentHash } from '../../rules/src/financial-mint.js';
 import { verifyRecoveryBatch } from './recovery-batch.mjs';
 import { readPublicWinner, readPublicWinners, verifyPublicMintEvidence, verifyPublicPermit } from './public-claims.mjs';
+import { verifyBulkPermit, bulkPublicReads } from './bulk-mint.mjs';
 
 const uint = n => Number.isSafeInteger(n) && n >= 0 || typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n);
 const positive = n => typeof n === 'string' && /^[1-9][0-9]*$/.test(n) && BigInt(n) < 1n << 256n;
@@ -60,11 +61,12 @@ export class Policy {
     if (proposal.batch.v === 1 && proposal.batch.ops.every(op => op.op === 'kv') && !proposal.batch.hx?.length && context.inputs.every(input =>
       !input.mintOperations?.length && !input.linkOperations?.length && input.entries.every(e => e.move.t !== 'craft')))
       context = { ...context, counted };
+    const publicReads = bulkPublicReads(this.reads);
     const approval = await this.replayBatch(this.network, proposal, { ...context, authority,
       replayNodes: this.reads.replayNodes?.bind(this.reads), claimNode: this.reads.claimNode?.bind(this.reads), namedNode: this.reads.namedNode?.bind(this.reads),
-      publicMintGet: (asset, block, deployment) => readPublicWinner(this.reads, asset, block, { counted: context.counted, last: context.last }, deployment),
-      publicMintBatch: pairs => readPublicWinners(this.reads, pairs, { counted: context.counted, last: context.last }) });
-    await verifyPublicMintEvidence(approval.files, this.reads, { counted: context.counted, last: context.last });
+      publicMintGet: (asset, block, deployment) => readPublicWinner(publicReads, asset, block, { counted: context.counted, last: context.last }, deployment),
+      publicMintBatch: pairs => readPublicWinners(publicReads, pairs, { counted: context.counted, last: context.last }) });
+    await verifyPublicMintEvidence(approval.files, publicReads, { counted: context.counted, last: context.last });
     this.receiptFences?.checkBatch(proposal.batch, approval.files, context.renewal);
     for (const [index, file] of approval.files.entries()) {
       const root = await this.reads.receiptCertificate(file.tip, file.tipHash, file.receiptRoot.v === 2 ? file.receiptRoot.segment : undefined);
@@ -138,10 +140,15 @@ export class Policy {
       details: { root: b.root, epoch: b.epoch, n: b.n, deadline: b.deadline, batch: b }, batch: b };
   }
   async mint(proposal) {
+    if (proposal.version === 'bulk-v1') {
+      check(rules.exactKeys(proposal, ['network', 'kind', 'version', 'orderId', 'index']), 'bulk_permit_proposal');
+      return verifyBulkPermit({ reads: this.reads, network: this.network, publicKey: this.publicKey,
+        orderId: proposal.orderId, index: proposal.index, at: await this.reads.batchStamp() });
+    }
     if (proposal.version === 'public-v1') {
       const at = await this.reads.batchStamp();
       const { source, funding, permit: p } = await this.reads.publicMintPermit(proposal.id, at);
-      await verifyPublicPermit({ reads: this.reads, source, funding, permit: p, id: proposal.id, at });
+      await verifyPublicPermit({ reads: bulkPublicReads(this.reads), source, funding, permit: p, id: proposal.id, at });
       check(source.receiver === proposal.receiver && source.deployment.privilegePublicKey === this.publicKey &&
         equal(at, await this.reads.batchStamp()), 'public_permit_binding');
       return { digest: p.digest, slots: [`mint/request/${proposal.id}`, 'mint/block/' + rules.mintPlotKey(source.asset, source.request.block, source.capacity?.supplyScope)],

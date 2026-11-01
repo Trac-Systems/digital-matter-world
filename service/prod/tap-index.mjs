@@ -3,6 +3,7 @@ import { lookupSettings } from './lookup-settings.mjs';
 import { check } from '../src/util.mjs';
 import { KeyedWork, parallelPage } from '../src/keyed-work.mjs';
 import { rules } from '../src/rules.mjs';
+import { installTapBatchReads } from './tap-batch.mjs';
 
 const segment = value => encodeURIComponent(value);
 const countOf = value => { check(typeof value === 'number' || typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value), 'tap_lookup_count'); const n = Number(value); check(Number.isSafeInteger(n) && n >= 0, 'tap_lookup_count'); return n; };
@@ -160,7 +161,7 @@ export function installTapLookups(reads, index) {
   reads.discoverPaymentIds = async (address, request) => (await index.paymentIds(address, request)).map(r => r.value.ins);
   reads.mintedInscription = id => index.minted(id);
   reads.mintByPermit = (address, tick, dta, amount) => index.mint(address, tick, dta, amount);
-  return reads;
+  return installTapBatchReads(reads, index);
 }
 
 // Explicit operator/bootstrap work; its cursor survives an interrupted launch.

@@ -11,7 +11,8 @@ export class Payouts {
     for (const item of draft.items) {
       const file = item.output.file;
       const commissions = [...file.commissions ?? [], ...(file.financialOperations ?? []).flatMap(input =>
-        input.transition.action?.type === 'capacity-finish' ? input.evidence.commissions ?? [] : [])];
+        input.transition.action?.type === 'capacity-finish' ? input.evidence.commissions ?? [] :
+          input.transition.type === 'bulk-finish' ? input.evidence.members.flatMap(m => (m.commissions ?? []).map(c => ({ ...c, bulkInscription: m.inscription }))) : [])];
       for (const commission of commissions) {
         const legacy = ['legacyDeploy', 'deployer'].includes(commission.role);
         const id = `${commission.id}/${commission.role}${legacy ? '/' + commission.deployment : ''}`;
@@ -29,7 +30,7 @@ export class Payouts {
         operations.push({ space: 'commissionOwed', id, value: { ...commission,
           rail: legacy ? 'tap' : this.store.get('mints', commission.id)?.kind ?? null,
           batch: draft.proposal.batch.n, observation: file.observation,
-          ...(legacy ? { source: commission.role === 'deployer' ? 'accepted_deployer_liability' : 'accepted_legacy_deploy_liability', inscription: file.financialOperations.find(input => input.transition.id === commission.id && input.transition.action?.type === 'capacity-finish')?.evidence.inscription } : {}) } });
+          ...(legacy ? { source: commission.role === 'deployer' ? 'accepted_deployer_liability' : 'accepted_legacy_deploy_liability', inscription: commission.bulkInscription ?? file.financialOperations.find(input => input.transition.id === commission.id && input.transition.action?.type === 'capacity-finish')?.evidence.inscription } : {}) } });
       }
     }
     return [...operations, ...[...totals].map(([id, value]) => ({ space: 'payoutTotals', id, value }))];

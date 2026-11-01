@@ -28,7 +28,7 @@ export async function dashboardFixture(t, { http = false, site = false } = {}) {
     walletSignature: signTestPayout(message, '02'.repeat(32), 'tap'), acceptedAt: Date.now() };
   binding.attestations = w.members.slice(0, 3).map((m, i) => attestBinding(binding, { network, bitcoinNetwork: 'regtest', signer: m.id, secret: testWallet(20 + i).secretKey.toString('hex') }));
   const fake = new FakeService({ network, history: history(), tip: 20 }), packets = [], calls = [];
-  const records = new Map(), claims = ['12', '11', '10'].map(block => ({ asset: 'p2:1', block, count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash: rulesContext.settingsHash }));
+  const bulkRecords = new Map(), records = new Map(), claims = ['12', '11', '10'].map(block => ({ asset: 'p2:1', block, count: '3', finder: owner, findHeight: '19', finderUntil: '1027', settingsHash: rulesContext.settingsHash }));
   const minted = new Set(['10']); let pause, lose = false;
   const clock = { counted: '20' }, balances = new Map([['p2:1', { amount: '100', current: true }]]), links = new Map(), holders = new Map(), unregistered = new Set();
   // Pattern overview reads: catalog rows, this agent's discoveries and read-only deployment states.
@@ -60,10 +60,35 @@ export async function dashboardFixture(t, { http = false, site = false } = {}) {
     if (path.includes('/agents/') && path.endsWith('/discoveries')) return page('discoveries', discoveries);
     const deployment = /^\/mint\/deployment-state\/(.+)$/.exec(path)?.[1];
     if (deployment) return response(deployments.get(deployment) ?? (unregistered.has(deployment)
-      ? { asset: deployment, state: 'awaiting_player_deploy', phase: 'element', catalogAsset: deployment } : { asset: deployment, state: 'registered', phase: 'deployment', catalogAsset: deployment }));
+      ? { asset: deployment, state: 'awaiting_player_deploy', phase: 'element', catalogAsset: deployment } : { asset: deployment, state: 'registered', phase: 'deployment', catalogAsset: deployment, entry: { id: '33'.repeat(32) + 'i0' } }));
     if (path === `/agents/${publicIdentities({ owner }).owner}/mintRights`) return page('mintRights', claims.map(candidate).filter(row =>
       ['asset', 'block'].every(key => !u.searchParams.has(key) || row[key] === u.searchParams.get(key)) &&
       ['allowed', 'minted'].every(key => !u.searchParams.has(key) || row[key] === (u.searchParams.get(key) === 'true'))));
+    if (path === '/mint/bulk/quote' && body) {
+      if (pause) await pause;
+      const { default: sample } = await import('../../../rules/test/fixtures/bulk-v1.json', { with: { type: 'json' } });
+      const { bulkOrderId, bulkMembersRoot, bulkFeeRoot } = await import('../../../rules/src/bulk-mint.js');
+      const terms = structuredClone(sample.terms), feeManifest = body.blocks.map((_, member) => ({ ...structuredClone(sample.feeManifest[0]), member }));
+      Object.assign(terms, { network, bitcoinNetwork: 'regtest', owner: body.owner, nonce: body.nonce, asset: body.asset, deployment: body.deployment, receiver: body.receiver, payer: body.payer });
+      terms.members = body.blocks.map(block => ({ block, amount: '3' })); terms.totalAmount = String(body.blocks.length * 3);
+      terms.membersRoot = bulkMembersRoot(terms.members); terms.feeRoot = bulkFeeRoot(feeManifest);
+      terms.groups[0].to = testPayoutAddress('03'.repeat(32), 'tap'); terms.groups[0].amount = terms.grossFeeAtoms = terms.payableFeeAtoms = String(body.blocks.length * 100);
+      terms.mintFunding.address = binding.request.address; terms.mintFunding.satoshis = body.blocks.length * 546 + 6546 + Number(terms.mintFunding.maxFeeSats);
+      terms.feeQuote.network = network; terms.feeQuote.deploymentId = terms.deployment;
+      terms.feeQuote.scope = JSON.stringify(['mint-bulk-v1', terms.asset, terms.deployment, terms.membersRoot]);
+      return Response.json({ v: 1, orderId: bulkOrderId(network, owner, body.nonce), quoteId: hashObject(terms), terms, feeManifest, skipped: [], deferred: [], payable: false });
+    }
+    if (path === '/mint/bulk/request' && body) {
+      packets.push(structuredClone(body)); const { sig, ...action } = body.reserve;
+      assert.equal(ed25519.verify(sig, reserveNonceDigest(network, action), owner), true);
+      const status = { v: 1, orderId: action.id, termsHash: hashObject(body.terms), state: 'awaiting_payment', payable: true, count: body.terms.members.length,
+        progress: { unresolved: body.terms.members.length }, ...Object.fromEntries(['asset', 'deployment', 'receiver', 'payer'].map(k => [k, body.terms[k]])) };
+      bulkRecords.set(action.id, { body, status }); return Response.json(status, { status: 202 });
+    }
+    const bulk = /^\/mint\/bulk\/([0-9a-f]{64})(\/terms)?$/.exec(path);
+    if (bulk && bulkRecords.has(bulk[1])) {
+      const row = bulkRecords.get(bulk[1]); return Response.json(bulk[2] ? { v: 1, orderId: bulk[1], terms: row.body.terms, feeManifest: row.body.feeManifest } : row.status);
+    }
     if (path === '/mint/quote' && body) {
       if (pause) await pause;
       if (!body.request) return response({ asset: body.asset, feeQuote: { settingsHash: rulesContext.settingsHash } });

@@ -13,6 +13,7 @@ export const custodyReceipt = (network, domain, hint) => rules.hashObject(['dmw-
 
 export function installCustodySources(reads, { network, bitcoinNetwork, accepted, payout, ethereumRPC }) {
   const original = async (row, at) => {
+    if ((await reads.financialRecord('fp/' + row.request, at))?.kind === 'bulk-v1') return reads.bulkCustodyOriginal(row, at);
     const { source, funding } = await accepted(row.request, at), fee = source.feeItems.find(f => financialFeeKey(f) === row.fee);
     check(fee?.financialIdentity?.beneficiary === row.owner && fee.to === row.custodian && fee.amount === row.amount &&
       source.rail === row.rail && funding.state === 'consumed', 'financial_custody_terms');

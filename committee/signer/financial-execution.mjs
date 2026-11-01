@@ -11,6 +11,7 @@ import { hashObject } from '../../rules/src/core.js';
 import { compareOrdinal } from '../../rules/src/integers-v2.js';
 import { applyBeaconRecovery } from '../../contract/beacon/recovery.js';
 import { claimsNeverCloseActive } from '../../rules/src/public-mint.js';
+import { bulkBatchWork } from '../../rules/src/bulk-execution.js';
 
 // Read accepted financial records from the independent notary snapshot, not
 // from gateway replay context. Sequential simulation checks each page against
@@ -26,6 +27,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
   const changed = new Map(), store = { get: async key => changed.has(key) ? changed.get(key) : await reads.financialRecord(key, at),
     put: (key, value) => changed.set(key, value), del: key => changed.set(key, null) }, settings = accountSettings(document);
   const reservations = new Map(), sources = reads.financialScope?.({ record: store.get, reservations }) ?? reads;
+  await bulkBatchWork(files.flatMap(f => f.financialOperations ?? []), { read: store.get });
   const apply = async op => {
     if (op.op === 'ar') await applyRootAccounts(store, op, { network, height, settings });
     else if (op.op === 'fp') await applyPaymentPage(store, op, { network, height, settings });
@@ -86,7 +88,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
           commitments.sort(([a], [b]) => a < b ? -1 : 1);
           check(equal(commitments, input.recordCommitments), 'financial_record_commitments');
         }
-        if (input.transition.type === 'reserve' || input.transition.action?.type === 'link-reserve') reservations.set(input.transition.id, evidence);
+        if (input.transition.type === 'reserve' || input.transition.type === 'reserve-many' || input.transition.action?.type === 'link-reserve') reservations.set(input.transition.id, evidence);
       }
     }
   }

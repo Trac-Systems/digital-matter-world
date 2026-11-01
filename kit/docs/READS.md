@@ -154,3 +154,34 @@ its own full supply and one mint per matching block. Each compound ticker
 can mint up to the total units ever produced of that compound. A new ticker does not
 restart the finder's original week. Ticker lists report each deployment's own
 accepted `unitsMinted` counter. Never subtract another ticker's mints from it.
+
+## Bulk mint orders
+
+Bulk routes return direct `v:1` wire objects with `Cache-Control:no-store`.
+Keep owner hex, decimal strings and signed Terms unchanged. The kit and wallet
+hash `/terms` and compare it to the accepted status before offering payment.
+
+| Read | Result |
+| --- | --- |
+| `poll_bulk_mint({orderId,offset:0,limit:64})` | Bulk status plus `memberPage`; no signing or spending. |
+| `GET /mint/bulk/ID` | State, payability, exact totals, payment, permit and sender progress. Use `Accept:application/json`; HTML opens the payment page. |
+| `GET /mint/bulk/ID/terms` | `{v:1,orderId,terms,feeManifest}`; exact destinations, amounts and Bitcoin set-aside. |
+| `GET /mint/bulk/ID/members?offset=0&limit=64` | Member IDs, blocks, amounts, state, inscription and reason. |
+| `GET /mint/bulk/ID/permit?offset=0&limit=16` | Available signatures in the requested window; `next` advances the window even when some signatures are missing. |
+| `GET /web-api/mint/bulk/ID[/terms]` | The same status or Terms response for the public payment page. |
+
+`reserving` is not payable; `paid` means all matching TAP transfers were
+verified. `permit.readyCount` can lag issuance while signature delivery recovers.
+`progress.issued` is cumulative, `minted` and `released` count verified terminal
+members, and `unresolved=count-minted-released`. Sent reveal batches are not
+confirmed mints. `needs_attention` never implies units were released.
+`creditReferences` indicate recovery liabilities, not completed refunds.
+
+Local dashboard routes use its private session and origin controls:
+`POST /api/bulk/quote` and `/request` accept the corresponding kit tool
+arguments; `GET /api/bulk/ID[/terms|/members|/permit]` forwards the reads above.
+`POST /api/bulk/payment` forwards the exact nullable
+`{orderId,paymentId,commitTxid,revealTxid}` report. At least one reference is
+required; hints never prove payment. The wallet commit txid is not assumed to
+be the redeem inscription's txid. `GET /api/bulk` lists the durable local orders
+and planner cursor state.

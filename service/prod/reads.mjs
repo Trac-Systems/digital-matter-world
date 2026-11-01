@@ -107,7 +107,9 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const tap = path => indexer.tap(path);
   const content = id => indexer.content(id);
   const request = async id => {
-    const row = await store.get('mints', id); check(row && verifyPayer(config.network, { request: row.request, receiver: row.receiver, payer: row.payer, kind: row.kind, feeQuote: row.requestedFeeQuote, authorization: row.authorization }), 'payer_authorization');
+    const row = await store.get('mints', id);
+    if (row?.context?.kind === 'bulk-v1') return row;
+    check(row && verifyPayer(config.network, { request: row.request, receiver: row.receiver, payer: row.payer, kind: row.kind, feeQuote: row.requestedFeeQuote, authorization: row.authorization }), 'payer_authorization');
     check(verifyFinancialMintRequest(config.network, row.request, row.signature, row.request.until) && financialMintId(config.network, row.request) === id, 'owner_signature'); return row;
   };
   const chainView = async view => {
@@ -268,9 +270,9 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const auth = await timeStep('ctx.privilegeContent', content(registered.privilege)), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), publicKey = recovered(authorityHash, auth.sig);
       check(auth.hash === authorityHash && publicKey === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
       const found = provenance ? provenance.find : registered.kind === 'dmt' ? await timeStep('ctx.find', find(asset, block, registered.pattern, typeof viewOrKind === 'object' ? viewOrKind : undefined)) : null;
-      const live = payoutSnapshot || typeof viewOrKind === 'string' ? [] : (await Promise.all((await store.list('activeMints', { limit: limits.legacyActivePageRows })).map(r => store.get('mints', r.id)))).filter(r => r.request.asset === asset && r.request.block === block);
+      const live = viewOrKind?.bulkMint || payoutSnapshot || typeof viewOrKind === 'string' ? [] : (await Promise.all((await store.list('activeMints', { limit: limits.legacyActivePageRows })).map(r => store.get('mints', r.id)))).filter(r => r.request.asset === asset && r.request.block === block);
       const kinds = new Set(live.map(r => r.kind));
-      const kind = payoutSnapshot ? JSON.parse(payoutSnapshot.scope)[3] : typeof viewOrKind === 'string' ? viewOrKind : kinds.size === 1 ? [...kinds][0] : registered.defaultPayKind ?? 'tap';
+      const kind = viewOrKind?.bulkMint ? 'tap' : payoutSnapshot ? JSON.parse(payoutSnapshot.scope)[3] : typeof viewOrKind === 'string' ? viewOrKind : kinds.size === 1 ? [...kinds][0] : registered.defaultPayKind ?? 'tap';
       check(payoutSnapshot || kinds.size <= 1 || typeof viewOrKind === 'string', 'ambiguous_payment_context');
       const destinations = registered[kind]; check(destinations, 'payment_destinations');
       const pattern = provenance ? provenance.pattern : config.v2 ? registered.pattern ?? await store.get('patternsByAsset', asset) : store instanceof EvidenceStore ? await store.get('patternsByAsset', asset) : (store.get('meta', 'patterns') ?? []).find(p => rules.patternAsset(p) === asset);

@@ -66,6 +66,12 @@ export class AccountExecution {
         const obligation = await this.getAsync('ao/' + a.id) ?? actions.find(row => ['reserve', 'reserve-n'].includes(row.type) && row.id === a.id);
         if (!obligation) throw Error('obligation_missing');
         supplyKeys.add(accountKey('supply', obligation.asset));
+      } else if (['consume-many', 'release-many'].includes(a.type)) {
+        const obligation = await this.getAsync('ao/' + a.id), funding = await this.getAsync('fp/' + a.id);
+        if (!obligation || funding?.kind !== 'bulk-v1') throw Error('bulk_obligation_missing');
+        const { bulkMemberId } = await import('../../rules/src/bulk-mint.js');
+        const capacity = await this.getAsync('dc/' + bulkMemberId(a.id, 0));
+        balance(obligation.owner, obligation.asset, a.type === 'consume-many' && !rules.mintRetainsUnits(capacity));
       } else if (['consume', 'refund', 'release-mint'].includes(a.type)) {
         const obligation = await this.getAsync('ao/' + a.id); if (!obligation) throw Error('obligation_missing');
         const capacity = a.type === 'consume' && await this.getAsync('dc/' + a.id);
@@ -99,7 +105,8 @@ export class AccountExecution {
       operation = { ...operation, sequence: funding.sequence, previous: funding.root, revision: usage.revision,
         proof: this.availability.prove(usage.root, operation.items.map(i => accountKey('payment', i.key))) };
     }
-    await applyPaymentPage(this.adapter(), operation, { network: this.document.network, height: this.height, executionHeight: this.executionHeight, settings: this.settings,
+    const apply = operation.type.startsWith('bulk-') ? (await import('../../contract/bulk-mint.js')).applyBulkPayment : applyPaymentPage;
+    await apply(this.adapter(), operation, { network: this.document.network, height: this.height, executionHeight: this.executionHeight, settings: this.settings,
       capture: (root, proof, replacements) => this.availability.update(root, proof, replacements, this.settings) });
     this.assetTouches += operation.proof?.leaves.length ?? 0;
     this.operations.push(operation); return operation;

@@ -7,6 +7,7 @@ import { compoundMergeManifest, validateCompoundMerges, COMPOUND_MERGE_ACCOUNT_M
 import { hashObject } from '../rules/src/core.js';
 import { ordinalCodec } from '../rules/src/integers-v2.js';
 import { compoundSupplyCapped, mintRetainsUnits } from '../rules/src/per-ticker-supply-activation.js';
+import { bulkAccountEffect } from './bulk-mint.js';
 
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
 const hex = x => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
@@ -149,6 +150,11 @@ export async function applyRootAccounts(store, operation, { network, height, set
         change(refund ? lock.owner : lock.to, name, BigInt(amount));
       }
       locks.set(action.id, { ...lock, state: refund ? 'refunded' : 'claimed' });
+    } else if (action.type === 'consume-many' || action.type === 'release-many') {
+      const old = await obligation(action.id), effect = await bulkAccountEffect(store, action, old);
+      change(old.owner, old.asset, effect.available, effect.held);
+      if (effect.burned) supply(old.asset, 0n, effect.burned);
+      obligations.set(action.id, effect.obligation);
     } else if (action.type === 'release-mint') {
       await financialUnfrozen(store, ['dc/' + action.id]);
       const old = await obligation(action.id), capacity = await store.get('dc/' + action.id);

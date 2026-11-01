@@ -27,7 +27,7 @@ export class ServiceClient {
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
-    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
+    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/mint/bulk/request', '/mint/bulk/payment', '/mint/bulk/finish', '/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
     const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: this.origin, route: path, method, status, code, reason, submission });
     let response;
     for (let attempt = 0; ; attempt++) try {
@@ -225,6 +225,33 @@ export class ServiceClient {
     check((move.v === 2 ? verifyReceiptV2 : verifyReceipt)(receipt, move, { network: this.network, gateway: this.gateway, hashAt: h => h === receipt.tip ? expected : null }), 'Invalid gateway receipt; submission outcome unknown');
     return receipt;
   }
+  async bulkMintQuote(input) {
+    const { BULK_LIMITS, validateBulkQuoteInput } = await import('../../rules/src/bulk-mint.js');
+    validateBulkQuoteInput(input);
+    return this.request('/mint/bulk/quote', { value: input, limit: BULK_LIMITS.quoteBytes });
+  }
+  async requestBulkMint(body) {
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    check(Buffer.byteLength(stableJSON(body)) <= BULK_LIMITS.requestBytes, 'Bulk request byte limit');
+    return this.request('/mint/bulk/request', { value: body });
+  }
+  bulkMintStatus(id) { check(hex32(id), 'Invalid bulk order ID'); return this.request('/mint/bulk/' + id); }
+  async bulkMintTerms(id) {
+    check(hex32(id), 'Invalid bulk order ID');
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    return this.request('/mint/bulk/' + id + '/terms', { limit: BULK_LIMITS.requestBytes });
+  }
+  bulkMintMembers(id, { offset = 0, limit = 64 } = {}) { return this.bulkMintPage(id, 'members', offset, limit); }
+  bulkMintPermit(id, { offset = 0, limit = 16 } = {}) { return this.bulkMintPage(id, 'permit', offset, limit); }
+  async bulkMintPage(id, kind, offset, limit) {
+    check(hex32(id), 'Invalid bulk order ID');
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    check(Number.isSafeInteger(offset) && offset >= 0 && offset < BULK_LIMITS.members && Number.isSafeInteger(limit) && limit >= 1 &&
+      limit <= (kind === 'permit' ? BULK_LIMITS.permitPage : BULK_LIMITS.members), 'Invalid bulk page');
+    return this.request('/mint/bulk/' + id + '/' + kind, { query: { offset, limit }, limit: BULK_LIMITS.permitBytes });
+  }
+  reportBulkPayment(report) { return this.request('/mint/bulk/payment', { value: report }); }
+  reportBulkFinish(report) { return this.request('/mint/bulk/finish', { value: report }); }
   quote(value) { return this.request('/mint/quote', { value }); }
   requestMint(value) { return this.request('/mint/quote', { value }); }
   mintStatus(id) { check(hex32(id), 'Invalid mint ID'); return this.request('/mint/' + id); }
@@ -254,7 +281,7 @@ export class ServiceClient {
   custodyStatus(id) { check(hex32(id), 'Invalid custody ID'); return this.request('/financial/custody/' + id); }
   reportCustodyPayment(value) { return this.request('/financial/custody/payment', { value }); }
   paymentLink(id, origin = this.origin, kind = 'mint') {
-    check(hex32(id) && ['mint', 'link'].includes(kind), 'Invalid payment request');
+    check(hex32(id) && ['mint', 'link', 'mint/bulk'].includes(kind), 'Invalid payment request');
     return `${gatewayOrigin(origin, this.mode)}/${kind}/${id}`;
   }
 }

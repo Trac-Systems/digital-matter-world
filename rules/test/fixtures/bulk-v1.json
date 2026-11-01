@@ -1,0 +1,4140 @@
+{
+  "v": 1,
+  "terms": {
+    "v": 1,
+    "network": "bulk-test",
+    "bitcoinNetwork": "mainnet",
+    "owner": "1111111111111111111111111111111111111111111111111111111111111111",
+    "nonce": "2222222222222222222222222222222222222222222222222222222222222222",
+    "asset": "p2:123",
+    "deployment": "3333333333333333333333333333333333333333333333333333333333333333i0",
+    "generation": "4444444444444444444444444444444444444444444444444444444444444444",
+    "ticker": "example",
+    "supplyScope": null,
+    "receiver": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+    "payer": "bc1pet7ep3czdu9k4wvdlz2fp5p8x2yp7t6ttyqg2c6cmh0lgeuu9lasmp9hsg",
+    "members": [
+      {
+        "block": "900000",
+        "amount": "3"
+      }
+    ],
+    "membersRoot": "ec75ff5751f996c49332918cde6b937638dfe10037eac07d5f8375b57ae14535",
+    "feeRoot": "3b5286c80a08362da92708e0e943be8261ecd0f52c7a769dab72460ece078448",
+    "groups": [
+      {
+        "to": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+        "ticker": "tap",
+        "tt": "a",
+        "amount": "100"
+      }
+    ],
+    "custody": [],
+    "totalAmount": "3",
+    "grossFeeAtoms": "100",
+    "payableFeeAtoms": "100",
+    "settingsHash": "5555555555555555555555555555555555555555555555555555555555555555",
+    "feeQuote": {
+      "network": "bulk-test",
+      "scope": "[\"mint-bulk-v1\",\"p2:123\",\"3333333333333333333333333333333333333333333333333333333333333333i0\",\"ec75ff5751f996c49332918cde6b937638dfe10037eac07d5f8375b57ae14535\"]",
+      "revision": "6666666666666666666666666666666666666666666666666666666666666666",
+      "baseFee": "100",
+      "unit": {
+        "currency": "TAP",
+        "denomination": "atomic",
+        "decimals": 18
+      },
+      "feeSettings": {
+        "tierMultipliers": [
+          1,
+          3,
+          10,
+          30,
+          100
+        ],
+        "compoundMinimum": 10,
+        "link": 0
+      },
+      "settingsHash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "issuedAt": 1793548800000,
+      "expiresAt": 1793549100000,
+      "validFrom": "974137",
+      "validUntil": "976153",
+      "deploymentId": "3333333333333333333333333333333333333333333333333333333333333333i0",
+      "mintOwnershipHash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "signature": "88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "until": "974139",
+    "expires": "974569",
+    "mintFunding": {
+      "address": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+      "satoshis": 9464,
+      "feeRate": 2,
+      "feeRateCeiling": 4,
+      "maxFeeSats": "2372",
+      "postageSats": 546,
+      "returnReserveSats": 6000,
+      "label": "your bulk mint inscriptions"
+    },
+    "terminalPolicy": "hold-issued-credit-unissued-v1"
+  },
+  "feeManifest": [
+    {
+      "member": 0,
+      "grossFeeAtoms": "100",
+      "shares": [
+        {
+          "role": "treasury",
+          "group": 0,
+          "beneficiary": null,
+          "gross": "100",
+          "payable": "100"
+        }
+      ],
+      "deferred": {
+        "legacyDeploy": "0",
+        "deployer": "0"
+      }
+    }
+  ],
+  "orderId": "0360c024813b629df7a90cb9eb6fd19f867e3675d79dbf5b8a26ddbaf41519d5",
+  "termsHash": "6fb299a243efad8496ff6de21f4fd6326474f5770563c99feb195d772cc59df9",
+  "reserve": {
+    "type": "reserve-n",
+    "id": "0360c024813b629df7a90cb9eb6fd19f867e3675d79dbf5b8a26ddbaf41519d5",
+    "owner": "1111111111111111111111111111111111111111111111111111111111111111",
+    "asset": "p2:123",
+    "amount": "3",
+    "terms": "6fb299a243efad8496ff6de21f4fd6326474f5770563c99feb195d772cc59df9",
+    "nonce": "2222222222222222222222222222222222222222222222222222222222222222",
+    "until": "974139"
+  },
+  "receiptRoot": "9999999999999999999999999999999999999999999999999999999999999999",
+  "permits": {
+    "paymentHash": "abc63e66862733d6f5d2046f5107eba624c58677274aa0dc736c12df1bf51016",
+    "permitRoot": "4ee94a9c0507009c301f0d59e0cfa5e8e5bd27726bfd5058b2fca4460bd46048",
+    "plans": [
+      {
+        "memberId": "baba02bdc81f4e2dbf8dd637331472b8f25627734e295cea97ddfd4e260bd3c7",
+        "index": 0,
+        "payload": {
+          "p": "tap",
+          "op": "dmt-mint",
+          "tick": "example",
+          "blk": "900000",
+          "dep": "3333333333333333333333333333333333333333333333333333333333333333i0",
+          "dta": "dmw-mint-v1|bulk-test|baba02bdc81f4e2dbf8dd637331472b8f25627734e295cea97ddfd4e260bd3c7|fa2add700acac8d2adc20ce9deecab09621939c76ea93b215e06eb6dbb046158|abc63e66862733d6f5d2046f5107eba624c58677274aa0dc736c12df1bf51016"
+        },
+        "digest": "a9266c4ddd0759f7d41162d578738a58b676f2214ae179c8e91d59110e77eb26",
+        "address": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+        "salt": "294e207ea09e7e791aa7bb9a09744fcaa526467081b805ddf0c4462e7e63abfc"
+      }
+    ]
+  },
+  "max64": {
+    "terms": {
+      "v": 1,
+      "network": "bulk-test",
+      "bitcoinNetwork": "mainnet",
+      "owner": "1111111111111111111111111111111111111111111111111111111111111111",
+      "nonce": "2222222222222222222222222222222222222222222222222222222222222222",
+      "asset": "p2:123",
+      "deployment": "3333333333333333333333333333333333333333333333333333333333333333i0",
+      "generation": "4444444444444444444444444444444444444444444444444444444444444444",
+      "ticker": "example",
+      "supplyScope": null,
+      "receiver": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+      "payer": "bc1pet7ep3czdu9k4wvdlz2fp5p8x2yp7t6ttyqg2c6cmh0lgeuu9lasmp9hsg",
+      "members": [
+        {
+          "block": "900000",
+          "amount": "3"
+        },
+        {
+          "block": "900001",
+          "amount": "3"
+        },
+        {
+          "block": "900002",
+          "amount": "3"
+        },
+        {
+          "block": "900003",
+          "amount": "3"
+        },
+        {
+          "block": "900004",
+          "amount": "3"
+        },
+        {
+          "block": "900005",
+          "amount": "3"
+        },
+        {
+          "block": "900006",
+          "amount": "3"
+        },
+        {
+          "block": "900007",
+          "amount": "3"
+        },
+        {
+          "block": "900008",
+          "amount": "3"
+        },
+        {
+          "block": "900009",
+          "amount": "3"
+        },
+        {
+          "block": "900010",
+          "amount": "3"
+        },
+        {
+          "block": "900011",
+          "amount": "3"
+        },
+        {
+          "block": "900012",
+          "amount": "3"
+        },
+        {
+          "block": "900013",
+          "amount": "3"
+        },
+        {
+          "block": "900014",
+          "amount": "3"
+        },
+        {
+          "block": "900015",
+          "amount": "3"
+        },
+        {
+          "block": "900016",
+          "amount": "3"
+        },
+        {
+          "block": "900017",
+          "amount": "3"
+        },
+        {
+          "block": "900018",
+          "amount": "3"
+        },
+        {
+          "block": "900019",
+          "amount": "3"
+        },
+        {
+          "block": "900020",
+          "amount": "3"
+        },
+        {
+          "block": "900021",
+          "amount": "3"
+        },
+        {
+          "block": "900022",
+          "amount": "3"
+        },
+        {
+          "block": "900023",
+          "amount": "3"
+        },
+        {
+          "block": "900024",
+          "amount": "3"
+        },
+        {
+          "block": "900025",
+          "amount": "3"
+        },
+        {
+          "block": "900026",
+          "amount": "3"
+        },
+        {
+          "block": "900027",
+          "amount": "3"
+        },
+        {
+          "block": "900028",
+          "amount": "3"
+        },
+        {
+          "block": "900029",
+          "amount": "3"
+        },
+        {
+          "block": "900030",
+          "amount": "3"
+        },
+        {
+          "block": "900031",
+          "amount": "3"
+        },
+        {
+          "block": "900032",
+          "amount": "3"
+        },
+        {
+          "block": "900033",
+          "amount": "3"
+        },
+        {
+          "block": "900034",
+          "amount": "3"
+        },
+        {
+          "block": "900035",
+          "amount": "3"
+        },
+        {
+          "block": "900036",
+          "amount": "3"
+        },
+        {
+          "block": "900037",
+          "amount": "3"
+        },
+        {
+          "block": "900038",
+          "amount": "3"
+        },
+        {
+          "block": "900039",
+          "amount": "3"
+        },
+        {
+          "block": "900040",
+          "amount": "3"
+        },
+        {
+          "block": "900041",
+          "amount": "3"
+        },
+        {
+          "block": "900042",
+          "amount": "3"
+        },
+        {
+          "block": "900043",
+          "amount": "3"
+        },
+        {
+          "block": "900044",
+          "amount": "3"
+        },
+        {
+          "block": "900045",
+          "amount": "3"
+        },
+        {
+          "block": "900046",
+          "amount": "3"
+        },
+        {
+          "block": "900047",
+          "amount": "3"
+        },
+        {
+          "block": "900048",
+          "amount": "3"
+        },
+        {
+          "block": "900049",
+          "amount": "3"
+        },
+        {
+          "block": "900050",
+          "amount": "3"
+        },
+        {
+          "block": "900051",
+          "amount": "3"
+        },
+        {
+          "block": "900052",
+          "amount": "3"
+        },
+        {
+          "block": "900053",
+          "amount": "3"
+        },
+        {
+          "block": "900054",
+          "amount": "3"
+        },
+        {
+          "block": "900055",
+          "amount": "3"
+        },
+        {
+          "block": "900056",
+          "amount": "3"
+        },
+        {
+          "block": "900057",
+          "amount": "3"
+        },
+        {
+          "block": "900058",
+          "amount": "3"
+        },
+        {
+          "block": "900059",
+          "amount": "3"
+        },
+        {
+          "block": "900060",
+          "amount": "3"
+        },
+        {
+          "block": "900061",
+          "amount": "3"
+        },
+        {
+          "block": "900062",
+          "amount": "3"
+        },
+        {
+          "block": "900063",
+          "amount": "3"
+        }
+      ],
+      "membersRoot": "f55e94100b9f56dc0dea8231aece439cf981d76a81edca7da2b4a5277dfdde88",
+      "feeRoot": "23d7a9c9140f16429bcf2ac2dc008144219996292bf0171a7fe091423e0950a2",
+      "groups": [
+        {
+          "to": "1BitcoinEaterAddressDontSendf59kuE",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "12800000000000000000"
+        },
+        {
+          "to": "bc1p02eqtadc0eda0z8gvekxpc2xuxzr48v5vmjvs4dd30xpf9gyh3jq9mcmcm",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p0gegyugjtjm6vy96n40cjpp7p60mp48wdv7zqmrxxx8qecyq6mas7gawl3",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p0l6sk6x0zayxx4wf36f737x2tnapz63rujr26a5rpgsagttjpx3snzhe6e",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p0mhjyc0dfenxyc3wtnh8g4nlpy9l4xmwkfspx0t4nzx293ng5yhs258spy",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p2efy6xjgy9qgad795e0slh8g6amp5rkswudsaj748ap3cppulg4s4jhna0",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p30g27zr0ywmner2tq59tvp99gl4vgzwgyy69h9ldryfxj8xvee3qv8r0rl",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p3u2yamm7slsx7sqa5zckxn9qk9x877ty4hfc398jm6dde29tsfkq7p4s2j",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p3yqg9tu4nqcn5vsvks66x843s2h7dl5eany7hqygyfdq0l2uwgyqlglg5v",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p45th8tnnywrjpyypuam26acs9ldet7t975x2hh36tv6lcq28jm4smqrc0q",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p47pvqe5p20pmjn9tmms96gdnurm48yxqwz0l00juad4v86whpnesv4ej7j",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p4kyea66ejlcyvwgcvuvntpxn5v346yx4fpl8slw5537xumc6r0zsfdz22t",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p4lxmayylem7723f8djatxkfra3c0r2m0u9wc8fcwm3gpg3kaufcsqufjta",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p4qqft2ckker99sxhvu2uytgt84ya0tgl0783mpa8sqx88x687k7qp2uduc",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p4ulylyaj4zp58cyf6qgp6d76mpdhtd7eh9ksy5xv2s6t49ldkfxqpda5lg",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p50wewm0kwsy98tdmq35jrkan4vt8lakxa4uaa0axkssyh23wfr0qp73k3m",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p54t3clcmjxu7xatd92yg9cc2s7tnvv2ztrk9a9wc949a6wqazzssx3ttj5",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p57l4ndt5c2rrpkcna7zkawlnur8ad0y7gy62f5wddlntjy9a7v2q0dwyu2",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p595zhf4r4gquaxafefy4atg7ydchynzps8k3ncpvkck8wa4m9tqq462hhc",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p59gdgxtxp7c6a5nzwwpz2qpulghphfm8ul9nc7apa80v2ceexjzq2hgryq",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p5aw2uccnnd0j32754u8pznxj54nl4rpnquleetfngkf46m6yeu5qgtpsdr",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p5e0nkfe7j40f8pwy2wnytlzfh2vc4427rykl7l2y7p7mxm7yzuxsr0kwxj",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p5fzxvgwgyzy36fstyvcdlx3gkhru8e0vhmdfhy67fpjr2vd9q4gsxtkly0",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p5l7pme5vnksnn0nwngkc0ns6khyaddx83skvvxgcp9842ujmq2gssv4662",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p5r872knmvrraew9lq0h309grxah0gthlwfmxt0tk2kq7wta9z3msthws2r",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p64z38u5fenqxkkel500ats2e3xq234kte5r6ntpcysslx9tl7fqqv4eny6",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p6c2gpa4qjqp7mg564k9e6ksf4ajglc8qpltfvamj0f6mj4te4sasw4jrqd",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p6q837nukc8qxezdsy24sr0du4gdtxypvnt456ngeqkvkccag7jtskd56t9",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p7anj9t05fv5kdy6xcturacksxhmz4etrhtfcw2g62ptxpca6gsesamalz4",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p7gqzk6re3kssl7xd4pzpckkezv8mynpcm5wcy7lwp244zm3y6drqcjw060",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p83s0u9r94s2k7duc0e5mv5e2e7nq0wvgs63cl7a0mz3tc8er0d9sy49a2x",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p8g54qkphdu77n0ega9wt4vfg484a4s8kzqcc7rzzh9ccjxs74h5qjqc0ms",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p8n5geg2mvc9r47hxfxs86rdhwlmu99n93kgpka435r0k849sztgq0slg3j",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p985ncjf27a87u64mhqetual2g6upgracxu0c37782gunmezhalvscyk5sf",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p9cc0su8ek5kwqac2cj2une5gl8sr33f95yxf8j968yuh8sr7gmrqc9hyx4",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1p9e0efzuec2cs02qs3rvjyndpgypl2ms46efr5lrvqcq7mvuvkc9sjglc59",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p9hzh4s8me3etcvkn6tt3muwcxsq3wke3ytjw2zyrsm78gve6yctsupu5r6",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1p9nmd5p7upkzx3wr7syqkg2waxf3scsl3zce53n2y4mfymvszz58susmh55",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pazwufchux8uc84hc9n9xve8wncm9np0xjc4jf4h4xgy4zellatns23sta5",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pc4nj9nc8jswvlpmvyt2928rgsfp827lfk0m3u6e0hk9qhq5judjq6mtag8",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pc6qs63x6z3w9dc9prju49xkfxzxw54njdutm4l63udlcryfuyems2a3p2e",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pc9cjh4wwlnzsyg9jleg00qpkp3yqpjjc3e9sfjk042y0cgrgamksfj4gd3",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pcmhx04qfhvwlvwdp40wrgc32vgyww5yu3hqd30jf9hjf9zt0n0hqumtwds",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pd7ldmpmvkpw04p9agqdyw8cce6unzvpk6je8muaghywssdkvny7shtxzrk",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pd8l63esuwmdvd0lc3r74a0p7pksjee9eq6gryckctqgrzu6dsx2qlhktg4",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pdf9s44jecr3hnu20haew4sgm3mww7cgwr6hj8ea4hv20xe80d9nqw9g5n5",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pdsgfa3xqr22nph9cv2vve8lfch8lu6nxy30qlpg54nff409am0vsqgpkch",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pdycu8xuxrghcnva0xn2qky4guqdp6hlqc369enkxgrpns7276mcsj3n39k",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pdzyrunzyd04pca66msmp8nd70cex4j8hllqh4d9q3uy2jcw79xvschk7kr",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pe5p75eggrt3yw4p0xgncsg8j8wmycv6g3652vzfdgm4ry3z4v92scpcgs7",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pecxz2727chs3r2wxkfslw2yzh6zfac2dd292a3cwuf9qvjrs6hdq9qrwvh",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pefmd5qw0kmehlykxpjaasz6tkpr34xuqqk85kf7euprssmf38ecq04shps",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1peg076g6k2k0sv8qmta8e8grs4t9zfhce335hh8092uga5w4ept8q8xqscl",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1penwehhssyrwdpyg4sa2klaasspn33echspnd480wgef8g6x5s86q06a8qz",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pf4qw823jlep7wevkmgdz78pnryauxnsh2trx8ru4m6ta3neep54q4vttwr",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pf58eh6832rdwgye9hqgqt3gjran9rqtt3ksdmddywa708fp2m7zqm0rfly",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pfftjuflq74ay2l4j7w0cysgrga9nkudaq2hv5ecp26znrvth5y0slwtqg2",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pfgvdp2t2vxmklnxc3nsxp66pr7zjnuywfjccydjv7628uvpxst3s9wg309",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pfrv875dkqgyc9jzrkxwam07jujxhgrkxhjyvwu3psfzs9pkmz9zsn5mnf3",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pfxpqwuhmkj250m2l6r5d8hru59j4vxzgyffp7g8rmafc0x36h6kqa8fadc",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pfyhjqy0uvkvfx4femxdte4p6swg6nedpuulhevm2alj6caplzrqsazqxe9",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pgj2nvla9gt2ycsq5x8v35nusxt06pmpnc0twfadppns6r86c9mkshd3m33",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pgj5lkq0me34fldh9tyfdw970njke0u48jm7dhfrldqzrrndgz7wqcrrkwd",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pgq0ca5tczuucd2m8zde9u097ajlcayxul7sngyexmsjsvrwk7y5sesdare",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pgxr47u3n0zta6uvw3e02cppqzd5pkhmmqxmedu38kq88ugw050wsk9alfr",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1phjz4yfj0pe8x3v8wp94aj83p66he5c30t4n9fvewt7jhep4u2p3qnykplw",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1phnf57pjp7wp9fsejuls6ard87gtcrud26am6eg6zkrlmpxeqwd5qrpsdpv",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1phpqw0z3g7q47xrur5c8xltw8g7zxgp2g294cksyyvwywjzlt8k5qc9zz77",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1phzczfudnxqkddww94vwlygxaku0x098yue0ty8uv0slrfpt9n0vsudd3hw",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pja9jugl9y45h6dcrsp26ak0z7rddstt4g3nhghtpvs75jfjld0csdc4mxk",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pjjg34mtk4ykfm5zpuvh20kmlq0jvvd6hhahsj0hx63pezhuzn3hqnrk59h",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pjse9qezlzgm5vr8pxmdweu5q50s4ldytq6cfh5v729x7j3c6cxfsulkap3",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pk3j59khke3wy2ha4926wl49dg35g8ln0gd46mcvmz6rxyjm2v77qews8xm",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pke8h0cl27xl82hza80wyl48hc8t0m6x4yrn7yyr2ukyq0evp7ewq2huu6y",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pl9vflfpl8ejsdpgvv082zph5e5m9jy5696fcqa3z4wyln7ah6cjs07t30p",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1plapr93s9my3sy5h2han4jnn25yva6thrr9x0p2aj67ylajja0y9qtyy0u9",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1plfg4mhjdhcgx7tz8v36eaj0dlj94um9exrxt4r9y05rtw3xw942seaeqzt",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1plg5jatzxn756w53zne4gpx3vwltywhyfrswcrlqac5zqk83e6nvql32kcf",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pm94cxsxtk4kaury30zwcd4avc4mcdfkd5jln0h2a2p4w4ezty8tqv3ngdg",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pmche4fl93wgs8fem728t0q0d2ryl36yj2uddvmhzr98p80xlcats95ykjl",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pmf7u5mxayduayehwp34z8tardl0fgrztja999dpaxq9259eve99s3twca5",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pmk3kvxdhpf2uln8956v6et86503y03pszy8d8naqyvr9v9s4sqxql6v3jn",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pmp5grfnsnggmre3lhjq4a8cngcqjpht8f7pc7y7awawduu38jjvsqlg78r",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pmu0uwrdzakfuyyzzlrf9mn5nd64gf7exdz0r23h6kvlaqfg8u6pss3ks8v",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pmucmcydkwvmgj27786kjyeez43v0c35496z6smqteapfmaygx7xqp2ckf6",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pncadcframlp7eg0gg9acygk52slrgpjh78sfl6622smamtefczysfs6h5w",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pne38z5epgghyn7v553nx9kc8yd7xzcjmvy2h2zlnsqxx6wkeqdpswwkv2k",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pnfx4krcgxq8rsxmauk9yh99x77vvuuqln2ajmg84shghvzumxm4snvyu2v",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1ppckuvr2xcpcgpxdrjvtaa9scsgsjc7u6uvzvuukjmekxv0ah6fmq2tvaas",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1ppmttth8tuvp4lfndgmfp309kpvu0nr3ca2dxehvyytwm0k3jzvlq8866jx",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pppfgh3cdgta9vkweq6ztyfexm7swxqncem2c0fzgjz7xsyc9pfpsu2th9v",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1ppsjd5xn4j8cjjr3fh2kh2h5wa50qum43ssqsxhhfwef8rew6v79sl76fxs",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pq5fkaqn7m7nj6hsh2r4q3tzg95pnzz0y2wkddvlg6zj32t2vmd4qnth3te",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pq78hw2zstmmtzc7dyd3rp6xvtwfa3csgtnqzf49n3ls6jgjk9vhs8xpsrz",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pqfuvz5xxxaafry3xfspnnllma5c7n6ezx8y37mmnzj0pua6nvwaqcunps2",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pqgw2rsgxmvmx3cc5zxvwwpv0dhrzfmwvdv7e8m53pxgak8vx7q8qhmkqnk",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pqqs6p2z66wg3x9g8szrdnygj4kck3hp2pymc6g68cmu6ygtakq2swxsyak",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pqsk3x88urjnv5gjfvmna2nj3vepjy9hzuczy095p3yg79jp6ac6sdw8szj",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pqw7swhza95v6jjuxx4cfp7hhxvh0yl022340rf5el3jmujcqzexsn742x2",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pqzpe45ealrzqrs0jtkqyd9mj06r65jqvyn9ndz54ktacajmjkevqfwaypx",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pr26vm624yykhtj65slakl8lq6dw2xehe02mlujj88n5adw44wupqvk0l25",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1psh4m3teclx3dpyu2pfh0k3mq2nn9jk4l3yu9gn2x7yzkdxjeys0q8zzre6",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pskzr3ncdntlz27g5xk8gy3zk6me3ckk87562c2ar5wa222zhpr6qpemhfm",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1psshmw6mhlj4dyfzwsv0reqvcwf5k4fgnhz4vcgztlxcddulxe69s8jh3al",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pt480yd85zrzfvhdd65mmvsl8jmqqxlllfmcch8mja9krlendntfqtzps7q",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "19200000000000000000"
+        },
+        {
+          "to": "bc1pt4hewrx6l3e0gklxnhu48u3r2fm6h3eaxk8yfe0v9v9ncellrp9qmpar43",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pta0zd8jcfh67ewq2qegck3zqhdtg20f0z478wcp9v5dhphvwncfq0uzqum",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1ptjcg9cmqxcchufaf7fdf2xwha0hq3yvxj392k2emny5jy48zr58s5rd5sn",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pu4uejrpwcctewtev095kstc6ulrh6mtxdvn9hxjanu973ad7q7tq0nfznr",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pu928q3h3ngmd3meahrmxune3a8vktjz2pkgh2fwtdyltj6npykyq0jt95n",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pueadqq5upck6fwtae0hcss5p572pmqhavyemglcmdp5a0fqewafs255wd8",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1puhf0a2yteepsxun4l7z5xksu37429f7gv64fvxtlzyhu6tvrvtes8xr0pn",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "3200000000000000000"
+        },
+        {
+          "to": "bc1purv65tt3j4n6lasd3dajvreg9xjrd3lpk5jv5vunv2cxcps4vgesgv7wpx",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pv94mhzp7fv66xqcpaznlpztankn6m62wwrhxxpxydtdxuj6346kq4sczmx",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pvffqd8jj208uzw4dwe5fqjr7k8ml9cgz7fwwu0g9m98kyxmh2wvqdctjlz",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pvz96pr6qfdcakwrw0tzhp58y27xcafk236gkk6tz9z0ugztvayuqzg9m5n",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pw8y7xpa6sfzwtgvl72wx76lfarrpgmgvcp5x0f9dwp9wrjf0twmqmdzh4k",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pwja5qncq52alsy3nuvq4ac3fgx56zvnsdkwtmluyxtgwpz7q836q0zfzlj",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pwqc2e46dq8qzl8dpa06uqvlne9f7ytnt6cx5hmgnnsqz5ylcmnwqs9dkwf",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pwth033uq465sl45an2ff332zclcx3rvgldvsa6x2z0ete0urykeqcv29ne",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1px0zqt9gerpyyvj09sx8jw9gyr65kl0gvwtdq0gj0xw9xwyqujf2qmpwes4",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pxmgex4kujlzcmkn27k86pvpnqjs8g8e6e2ga4mh78mf8f6dalfvq5wl6xd",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pxmzw9ucr8ea7ec7zj3xqw39032xrmrdth45sf459jepmek8tr06qtrsuhp",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pxvp7df3crjzdscyzmultqjef4fz2sqyu8su2fvz0xhamju4m76qq5jd9ap",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1py3lh6fs2wh8zn6hz5vq28kkmrul07d7l795qzqkuy54nfj5lt8qqmxtq66",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1py3qr8j66k30thtxf2dm4ug6yz0eep8kwnf8dfzfr9lel2zpd5v8q2cxu07",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pyh906s40c92wshr588f4l6m0zqf20wu5pusgh67sl464az2a2l9qfxdc63",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pypcrw0qzk2aw7245y9yhthw5sgw057sxvhzgqx39xrtusvme99hse60ju6",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pzjul95khxff6hdhvfk22uzmt7qp3dhzhnqvfvljl6h5z9kkv6rqqlg792h",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        },
+        {
+          "to": "bc1pzqzjpfwuudaa5s3my8mqshqzhrlzpsgy4pm5zzwj5xhjkd9x4mysv7jzhn",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "300000000000000000"
+        },
+        {
+          "to": "bc1pzw2835mrmmp52dnyjhtxyyr2zaahkahhjdaqjxkrdxc3n4u6m97s898r49",
+          "ticker": "tap",
+          "tt": "a",
+          "amount": "150000000000000000"
+        }
+      ],
+      "custody": [],
+      "totalAmount": "192",
+      "grossFeeAtoms": "64000000000000000000",
+      "payableFeeAtoms": "64000000000000000000",
+      "settingsHash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "feeQuote": {
+        "network": "bulk-test",
+        "scope": "[\"mint-bulk-v1\",\"p2:123\",\"3333333333333333333333333333333333333333333333333333333333333333i0\",\"f55e94100b9f56dc0dea8231aece439cf981d76a81edca7da2b4a5277dfdde88\"]",
+        "revision": "6666666666666666666666666666666666666666666666666666666666666666",
+        "baseFee": "1000000000000000000",
+        "unit": {
+          "currency": "TAP",
+          "denomination": "atomic",
+          "decimals": 18
+        },
+        "feeSettings": {
+          "tierMultipliers": [
+            1,
+            3,
+            10,
+            30,
+            100
+          ],
+          "compoundMinimum": 10,
+          "link": 0
+        },
+        "settingsHash": "5555555555555555555555555555555555555555555555555555555555555555",
+        "issuedAt": 1793548800000,
+        "expiresAt": 1793549100000,
+        "validFrom": "974137",
+        "validUntil": "976153",
+        "deploymentId": "3333333333333333333333333333333333333333333333333333333333333333i0",
+        "mintOwnershipHash": "7777777777777777777777777777777777777777777777777777777777777777",
+        "signature": "88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888"
+      },
+      "until": "974139",
+      "expires": "974569",
+      "mintFunding": {
+        "address": "bc1pmfr3p9j00pfxjh0zmgp99y8zftmd3s5pmedqhyptwy6lm87hf5sspknck9",
+        "satoshis": 89930,
+        "feeRate": 1,
+        "feeRateCeiling": 2,
+        "maxFeeSats": "48440",
+        "postageSats": 546,
+        "returnReserveSats": 6000,
+        "label": "your bulk mint inscriptions"
+      },
+      "terminalPolicy": "hold-issued-credit-unissued-v1"
+    },
+    "feeManifest": [
+      {
+        "member": 0,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 73,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 47,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 1,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 108,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 79,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 2,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 64,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 37,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 3,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 39,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 127,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 4,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 91,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 78,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 5,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 48,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 42,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 6,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 13,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 81,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 7,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 112,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 35,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 8,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 122,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 110,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 9,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 9,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 123,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 10,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 63,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 100,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 11,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 97,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 45,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 12,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 82,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 66,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 13,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 114,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 27,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 14,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 50,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 62,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 15,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 20,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 4,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 16,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 52,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 12,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 17,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 61,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 16,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 18,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 14,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 80,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 19,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 11,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 55,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 20,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 89,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 69,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 21,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 116,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 72,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 22,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 75,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 65,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 23,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 94,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 33,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 24,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 32,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 56,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 25,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 96,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 15,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 26,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 107,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 38,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 27,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 26,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 8,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 28,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 6,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 29,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 29,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 70,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 128,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 30,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 44,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 2,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 31,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 117,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 74,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 32,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 76,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 130,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 33,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 86,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 60,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 34,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 31,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 118,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 35,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 103,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 36,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 36,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 41,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 124,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 37,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 49,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 119,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 38,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 51,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 46,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 39,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 57,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 71,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 40,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 95,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 25,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 41,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 22,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 43,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 42,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 129,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 87,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 43,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 98,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 92,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 44,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 34,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 54,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 45,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 67,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 24,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 46,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 113,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 109,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 47,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 19,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 102,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 48,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 53,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 3,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 49,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 30,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 90,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 50,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 99,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 21,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 51,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 7,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 59,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 52,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 126,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 10,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 53,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 85,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 58,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 54,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 5,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 28,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 55,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 83,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 106,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 56,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 101,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 88,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 57,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 125,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 115,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 58,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 84,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 17,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 59,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 105,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 18,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 60,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 1,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 121,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 61,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 68,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 120,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 62,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 40,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 93,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      },
+      {
+        "member": 63,
+        "grossFeeAtoms": "1000000000000000000",
+        "shares": [
+          {
+            "role": "finder",
+            "group": 23,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "landowner",
+            "group": 77,
+            "beneficiary": null,
+            "gross": "150000000000000000",
+            "payable": "150000000000000000"
+          },
+          {
+            "role": "discoverer",
+            "group": 111,
+            "beneficiary": null,
+            "gross": "50000000000000000",
+            "payable": "50000000000000000"
+          },
+          {
+            "role": "treasury",
+            "group": 104,
+            "beneficiary": null,
+            "gross": "300000000000000000",
+            "payable": "300000000000000000"
+          },
+          {
+            "role": "burn",
+            "group": 0,
+            "beneficiary": null,
+            "gross": "200000000000000000",
+            "payable": "200000000000000000"
+          }
+        ],
+        "deferred": {
+          "legacyDeploy": "0",
+          "deployer": "0"
+        }
+      }
+    ],
+    "orderId": "0360c024813b629df7a90cb9eb6fd19f867e3675d79dbf5b8a26ddbaf41519d5",
+    "termsHash": "3a53556ae355bf34c28625c9d73b9765341978d6619391ba94f0a16995139cf8",
+    "receiptRoot": "9999999999999999999999999999999999999999999999999999999999999999",
+    "permitRoot": "df9351514d31eecabd7ac56c901cc6ab0d1cedaa07a32a2b6cf29bbe27a36af1",
+    "wireBytes": {
+      "terms": 20765,
+      "feeManifest": 41995,
+      "signedRequest": 63311,
+      "reserve": 503,
+      "bulkOpen": 21007,
+      "walletItems": 25474
+    }
+  }
+}

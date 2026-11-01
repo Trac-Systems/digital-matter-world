@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { validRequestId } from './mint-sender-keys.mjs';
 import { check } from './util.mjs';
 import { REFUND_STATES } from './mint-refund-view.mjs';
-import { SENDER_STATES } from './mint-sender-view.mjs';
+import { SENDER_STATES, BULK_SENDER_STATES } from './mint-sender-view.mjs';
 
 export function senderJSON(path, value) {
   const temporary = path + '.tmp';
@@ -28,6 +28,9 @@ export class MintSenderJournal {
       // Only this process owns this database; the gateway reads atomic JSON projections.
       this.db.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;');
       this.db.exec('CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY, value TEXT NOT NULL);');
+      this.db.exec(`CREATE TABLE IF NOT EXISTS bulk_orders(id TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS bulk_due ON bulk_orders(COALESCE(json_extract(value,'$.nextAttempt'),0), id) WHERE json_extract(value,'$.state') NOT IN ('minted','returned');
+        CREATE INDEX IF NOT EXISTS bulk_coin ON bulk_orders(json_extract(value,'$.coin.txid'), json_extract(value,'$.coin.vout'));`);
       this.db.exec("CREATE INDEX IF NOT EXISTS requests_due ON requests(CASE json_extract(value,'$.state') WHEN 'waiting_funding' THEN 1 ELSE 0 END, COALESCE(json_extract(value,'$.nextAttempt'),0), id) WHERE json_extract(value,'$.state') NOT IN ('minted','returned');");
       this.db.exec(`CREATE TABLE IF NOT EXISTS refunds(id TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS refunds_due ON refunds(COALESCE(json_extract(value,'$.nextAttempt'),0), id) WHERE json_extract(value,'$.state') != 'refund_confirmed';
@@ -81,11 +84,40 @@ export class MintSenderJournal {
   }
   coinOwner(coin) {
     if (!coin) return null;
-    for (const [table, prefix, predicate] of [['requests', 'mint', "(json_extract(value,'$.plan') IS NOT NULL OR json_extract(value,'$.returnPlan') IS NOT NULL)"], ['refunds', 'refund', "json_extract(value,'$.plan') IS NOT NULL"]]) {
+    for (const [table, prefix, predicate] of [['requests', 'mint', "(json_extract(value,'$.plan') IS NOT NULL OR json_extract(value,'$.returnPlan') IS NOT NULL)"], ['refunds', 'refund', "json_extract(value,'$.plan') IS NOT NULL"], ['bulk_orders', 'bulk', "(json_extract(value,'$.plan') IS NOT NULL OR json_extract(value,'$.returnPlan') IS NOT NULL)"]]) {
       const row = this.db.prepare(`SELECT id FROM ${table} WHERE json_extract(value,'$.coin.txid')=? AND json_extract(value,'$.coin.vout')=? AND ${predicate} LIMIT 1`).get(coin.txid, coin.vout);
       if (row) return prefix + ':' + row.id;
     }
     return null;
+  }
+  bulk(id) { return JSON.parse(this.db.prepare('SELECT value FROM bulk_orders WHERE id=?').get(id)?.value ?? 'null'); }
+  bulkDue(limit) {
+    return this.db.prepare("SELECT value FROM bulk_orders WHERE COALESCE(json_extract(value,'$.nextAttempt'),0)<=? AND json_extract(value,'$.state') NOT IN ('minted','returned') ORDER BY COALESCE(json_extract(value,'$.nextAttempt'),0),id LIMIT ?")
+      .all(this.now(), limit).map(row => JSON.parse(row.value));
+  }
+  saveBulk(row) {
+    check(validRequestId(row.id) && validRequestId(row.termsHash) && BULK_SENDER_STATES.has(row.state), 'bulk_sender_record');
+    const prior = this.bulk(row.id), same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check(!prior || ['termsHash', 'payer', 'receiver', 'address', 'count', 'fundingSats'].every(k => prior[k] === row[k]), 'bulk_sender_binding_changed');
+    check(!prior?.paymentId || prior.paymentId === row.paymentId, 'bulk_sender_receipt_changed');
+    check(!prior?.permitRoot || prior.permitRoot === row.permitRoot, 'bulk_sender_permit_changed');
+    check(!(row.plan && row.returnPlan), 'mint_sender_spend_conflict');
+    check(!prior?.plan || same(prior.plan, row.plan), 'bulk_sender_plan_immutable');
+    check(!prior?.returnPlan || same(prior.returnPlan, row.returnPlan), 'bulk_sender_return_immutable');
+    check(!prior?.plan && !prior?.returnPlan || same(prior.coin, row.coin), 'bulk_sender_coin_immutable');
+    if (row.plan) check(row.plan.orderId === row.id && row.plan.termsHash === row.termsHash && row.plan.permitRoot === row.permitRoot && row.plan.funding.paymentId === row.paymentId &&
+      row.plan.funding.txid === row.coin?.txid && row.plan.funding.vout === row.coin?.vout && row.plan.funding.value === row.coin?.value && row.plan.reveals?.length === Math.ceil(row.count / 16), 'bulk_sender_plan_binding');
+    const owner = this.coinOwner(row.coin);
+    check(!(row.plan || row.returnPlan) || !owner || owner === 'bulk:' + row.id, 'mint_sender_spend_conflict');
+    row = { ...row, updatedAt: this.now() };
+    // SQLite synchronous=FULL commits the entire signed family to the WAL
+    // before returning. No broadcast is reachable before this durable write.
+    this.db.prepare('INSERT OR REPLACE INTO bulk_orders VALUES(?,?)').run(row.id, JSON.stringify(row));
+    senderJSON(join(this.directory, 'status', 'bulk-' + row.id + '.json'), { keyId: this.keyId, orderId: row.id, termsHash: row.termsHash,
+      mintSender: { state: row.state, sentBatches: row.sentBatches ?? 0, totalBatches: Math.ceil(row.count / 16),
+        ...(row.reason ? { reason: row.reason } : {}), ...(row.plan ? { commitTxid: row.plan.commit.txid } : {}),
+        ...(row.returnPlan ? { returnTxid: row.returnPlan.txid } : {}) } });
+    return row;
   }
   saveRefund(row) {
     check(validRequestId(row.id) && row.id === row.record?.refundId && REFUND_STATES.has(row.state), 'mint_refund_record');

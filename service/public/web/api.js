@@ -16,7 +16,7 @@ export async function api(path, options = {}) {
     }
   }
 }
-async function apiOnce(path, { method = 'GET', body, signal } = {}) {
+async function apiOnce(path, { method = 'GET', body, signal, wire = false } = {}) {
   const res = await fetch(path, {
     method, signal, credentials: 'same-origin',
     // Page routes and reads share paths; Accept selects the JSON read.
@@ -27,7 +27,7 @@ async function apiOnce(path, { method = 'GET', body, signal } = {}) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { error: 'request_failed' }; }
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `HTTP ${res.status}`, data);
-  return presentation(data);
+  return wire ? data : presentation(data);
 }
 export const get = (path, opts) => api(path, opts);
 export const post = (path, body = {}) => api(path, { method: 'POST', body });
@@ -210,3 +210,13 @@ export function presentation(value) {
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).filter(([key]) => !connectionFields.has(key)).map(([key, v]) => [Object.hasOwn(displayFields, key) ? displayFields[key] : key, key === 'meaning' ? meaning(v) : presentation(v)]));
 }
+
+// Bulk commitments are wire objects: presentation renaming must never touch them.
+const bulkId = id => { if (!/^[0-9a-f]{64}$/.test(id ?? '')) throw Error('invalid_bulk_order'); return id; };
+export const bulkApi = {
+  status: id => api('/web-api/mint/bulk/' + bulkId(id), { wire: true }),
+  terms: id => api('/web-api/mint/bulk/' + bulkId(id) + '/terms', { wire: true }),
+  members: (id, { offset = 0, limit = 64 } = {}) => api('/mint/bulk/' + bulkId(id) + '/members?' + new URLSearchParams({ offset, limit }), { wire: true }),
+  permit: (id, { offset = 0, limit = 16 } = {}) => api('/mint/bulk/' + bulkId(id) + '/permit?' + new URLSearchParams({ offset, limit }), { wire: true }),
+  payment: report => api('/mint/bulk/payment', { method: 'POST', body: report, wire: true })
+};

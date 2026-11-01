@@ -6,6 +6,8 @@ import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities 
 import { stableJSON, validatePayload, patternAmount, compound, patternProperties, patternAsset, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
 import { financialMintId as pendingId } from '../../rules/src/financial-mint.js';
 import { makeFinancialMint } from './financial-mint.mjs';
+import { quoteBulkMint, makeBulkMint, pollBulkMint, payBulkMint } from './bulk-mint.mjs';
+import { hashObject as hashBulkTerms } from '../../rules/src/core.js';
 import { craftNamed, refineCompoundNamed } from './craft-v2.mjs';
 import { transferNamed } from './transfer-v2.mjs';
 import { check, sha256, nonce, integer, hex32, gatewayOrigin } from './check.mjs';
@@ -121,6 +123,14 @@ export class Agent {
       const kind = row.id.split('/')[0], digest = { mint: pendingId, link: linkId }[kind];
       const evidence = this.journal.evidence(row.id);
       const savedMove = this.journal.get(row.id);
+      if (kind === 'bulk') {
+        const terms = savedMove.body.terms ?? savedMove.body.quote?.terms;
+        const orderId = savedMove.body.reserve?.id ?? savedMove.body.quote?.orderId ?? null;
+        return { ...row, ...evidence, orderId, quoteId: terms ? hashBulkTerms(terms) : null,
+          requestState: savedMove.result?.state ?? null,
+          ...(orderId ? { paymentLink: this.service.paymentLink(orderId, this.paymentOrigin, 'mint/bulk'),
+            statusTool: { name: 'poll_bulk_mint', arguments: { orderId } } } : {}) };
+      }
       if (kind === 'tnk') return { ...row, ...evidence, tx: savedMove.body.packet?.tx ?? null,
         statusTool: { name: 'tnk_transfer_status', arguments: { actionId: row.id.slice(4) } } };
       if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: (savedMove.body.v === 2 ? moveIdV2 : moveId)(savedMove.body),
@@ -150,6 +160,10 @@ export class Agent {
     }
     return this.service.mintStatus(id);
   }
+  quoteBulkMint(args) { return quoteBulkMint(this, args); }
+  makeBulkMint(args) { return makeBulkMint(this, args); }
+  pollBulkMint(args) { return pollBulkMint(this, args); }
+  payBulkMint(args) { return payBulkMint(this, args); }
   mintRights(options) { return this.service.mintRights(this.address, options); }
   mintQuote(args) { return this.service.mintQuote(args); }
   bindPayoutWallet({ actionId, rail, address }) {

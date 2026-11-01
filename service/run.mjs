@@ -130,6 +130,7 @@ async function startGateway(config, controller) {
       const settings = mintSenderSettings(config.mintSender);
       if (settings.seedFile) mints.mintSender = mintSender = new MintSenderView({ seed: await readMintSeed(settings.seedFile), network: config.mode === 'regtest' ? 'regtest' : 'mainnet', settings });
     }
+    if (v2?.bulkMints) v2.bulkMints.senderView = mintSender;
     const links = v2 ? v2.links : adapters.links;
     const publicIndex = new PublicIndex({ store, files, history, reads: adapters.reads });
     const publicViews = new PublicViews({ store, history, reads: adapters.reads, mints, network: config.network, claimsPerWindow: config.claimsPerWindow });
@@ -140,14 +141,14 @@ async function startGateway(config, controller) {
     if (operator.provisioner) { operator.provisioner.financial = v2?.financial; if (mintSender) operator.provisioner.mintSender = mintSender; }
     // Wallet-reported broadcasts, checked against the ord source and shown until the state moves on.
     const inflight = adapters.reads.client ? new Inflight({ store, provisioner: operator.provisioner, mints, links, bitcoin: ordInflightReads(adapters.reads.client, { mempoolTransaction: config.mode === 'regtest' ? null : mempoolTransaction }), settings: config.inflight }) : undefined;
-    const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, links, inflight,
+    const web = createWeb(new WebCheckout({ store, config, reads: adapters.reads, mints, bulkMints: v2?.bulkMints, links, inflight,
       post: (path, body) => { check(path === '/link/request' && links, 'link_adapter_unavailable'); return links.request(body); } }));
     const publicCache = cachePublicReads(publicViews, web.checkout);
     evidence = config.mode === 'prod' ? evidencePublisher({ config, store, reads: adapters.reads, secret,
       snapshotLifetimeMs: () => closureTimeouts(v2?.settings.document, config.v2?.resources)?.evidenceMs }) : undefined;
     const headers = new HeaderFiles({ history, files, network: config.mode === 'prod' ? 'mainnet' : 'regtest', chunkSettings: config.headerChunkSettings, secret, signingEpoch: config.headerSigningEpoch });
     controller.signal.throwIfAborted();
-    await serve({ listener: http, evidence, web, operator, inflight, intake, files, headers, mints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
+    await serve({ listener: http, evidence, web, operator, inflight, intake, files, headers, mints, bulkMints: v2?.bulkMints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
     await atomicWrite(join(config.data, 'process.json'), JSON.stringify({ pid: process.pid }));
     controller.signal.throwIfAborted();
     const workerStatus = new WorkerStatus(store), recordError = (e, worker) => workerStatus.failed(e, worker);
@@ -160,6 +161,7 @@ async function startGateway(config, controller) {
     scheduler.add('observations', poll);
     scheduler.add('header_chunks', () => headers.tick());
     scheduler.add('provisioning', () => operator?.provisioner?.tick());
+    scheduler.add('bulk_mints', () => v2?.bulkMints?.tick());
     scheduler.add('financial_deployments', () => mints?.deploymentTick?.());
     scheduler.add('receipt_recovery', () => v2?.recoverReceipts());
     for (const [name, task] of [['pipeline', () => pipeline.tick()], ['recovery', () => v2?.recovery?.tick()], ['outbox', () => outbox.tick()], ['mints', () => mints?.tick()], ['links', () => links?.tick?.()], ['custody', () => v2?.custody?.tick()],

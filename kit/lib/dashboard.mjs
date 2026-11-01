@@ -15,10 +15,10 @@ const files = new Map([
   ...['fraunces-latin-wght-normal', 'atkinson-hyperlegible-next-latin-wght-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal'].map(name =>
     ['/fonts/' + name + '.woff2', ['fonts/' + name + '.woff2', 'font/woff2']]),
 ]);
-async function body(req) {
+async function body(req, limit = 1500000) {
   dashboardCheck(req.headers['content-type']?.split(';')[0] === 'application/json', 'json_required', 415);
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; dashboardCheck(size <= 1500000, 'body_limit', 413); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; dashboardCheck(size <= limit, 'body_limit', 413); chunks.push(chunk); }
   let value; try { value = JSON.parse(Buffer.concat(chunks)); } catch { dashboardCheck(false, 'invalid_json'); }
   dashboardCheck(value && typeof value === 'object' && !Array.isArray(value), 'invalid_json');
   return value;
@@ -100,6 +100,21 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       }
       if (req.method === 'GET' && path === '/api/links') {
         keys(['offset', 'limit']); json(await state.links({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 10) })); return;
+      }
+      if (req.method === 'GET' && path === '/api/bulk') {
+        keys(['offset', 'limit']); json(await state.bulkOrders({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
+      }
+      const bulk = /^\/api\/bulk\/([0-9a-f]{64})(?:\/(terms|members|permit))?$/.exec(path);
+      if (req.method === 'GET' && bulk) {
+        keys(['members', 'permit'].includes(bulk[2]) ? ['offset', 'limit'] : []);
+        json(await (bulk[2] === 'terms' ? state.bulkTerms(bulk[1]) : bulk[2] ? state.bulkPage(bulk[1], bulk[2], {
+          offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? (bulk[2] === 'permit' ? 16 : 64))
+        }) : state.bulkStatus(bulk[1]))); return;
+      }
+      if (req.method === 'POST' && ['/api/bulk/quote', '/api/bulk/request', '/api/bulk/payment'].includes(path)) {
+        keys([]); const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+        const value = await body(req, path === '/api/bulk/quote' ? BULK_LIMITS.quoteInputBytes : BULK_LIMITS.requestBytes);
+        json(await (path === '/api/bulk/quote' ? state.bulkQuote(value) : path === '/api/bulk/request' ? state.bulkRequest(value) : state.bulkPayment(value))); return;
       }
       const mint = /^\/api\/requests\/([0-9a-f]{64})(\/plan)?$/.exec(path);
       if (req.method === 'GET' && mint) { keys([]); json(await (mint[2] ? state.plan(mint[1]) : state.status(mint[1]))); return; }

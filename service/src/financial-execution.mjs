@@ -1,8 +1,10 @@
 import { accountKey } from '../../contract/account-tree.js';
 import { AccountExecution } from './account-batch.mjs';
 import { creditActions } from '../../rules/src/account-batch.js';
-import { executeNonceReservations } from './nonce-reservations.mjs';
-import { financialPlan, nonceReservation } from '../../rules/src/financial-execution.js';
+import { executeNonceReservations, financialTransitionPlan } from './nonce-reservations.mjs';
+import { nonceReservation as singleNonceReservation } from '../../rules/src/financial-execution.js';
+import { isBulkTransition, bulkAdmissionWrites } from './bulk-mint-admission.mjs';
+import { bulkAcceptedWrites } from './bulk-mints.mjs';
 import { rules } from './rules.mjs';
 import { check, serial } from './util.mjs';
 import { assetResources } from './asset-resources.mjs';
@@ -10,6 +12,20 @@ import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { financialTerminalOperations, FinancialLinkReconciler } from './financial-lifecycle.mjs';
 import { publicMintAcceptedWrites } from './public-mints.mjs';
 import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
+const nonceReservation = t => t?.type === 'reserve-many' && t.action?.type === 'reserve-n' || singleNonceReservation(t);
+async function bulkWork(execution, operations) {
+  if (!operations.some(op => op.op === 'fp' && op.type.startsWith('bulk-'))) return;
+  const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+  let members = 0, groups = 0;
+  for (const op of operations) {
+    if (op.op !== 'fp' || !op.type.startsWith('bulk-')) continue;
+    const t = op.type === 'bulk-open' ? op.terms : (await execution.getAsync('fp/' + op.id))?.manifest;
+    check(t, 'bulk_work_terms');
+    members += ['bulk-open', 'bulk-consume'].includes(op.type) ? t.members.length : ['bulk-finish', 'bulk-release'].includes(op.type) ? op.members.length : 0;
+    groups += ['bulk-open', 'bulk-fund', 'bulk-consume', 'bulk-credit'].includes(op.type) ? t.groups.length : 0;
+  }
+  check(members <= BULK_LIMITS.memberWork && groups <= BULK_LIMITS.groupWork, 'bulk_batch_work');
+}
 
 // Explicit source adapter: it must reconstruct fees, rights, chain settlement,
 // permit recovery and exits from independent point reads. There is no fallback
@@ -51,6 +67,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
           check(!priorOperations.some(op => op.op === 'ar' && op.actions.some(a => a.type === 'reserve-n' && a.owner === owner)), 'financial_account_batch_full');
           const proposed = await executeNonceReservations({ execution, transitions: [...selected, candidate], sources, reads, document, height, at });
           const combined = [...priorOperations, ...execution.operations];
+          await bulkWork(execution, combined);
           check(combined.length + 2 <= document.values.batchOps && Buffer.byteLength(rules.stableJSON(combined)) +
             document.values.batchEnvelopeReserveBytes <= document.values.batchBytes, 'financial_batch_bytes');
           check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
@@ -81,7 +98,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     }
     const input = { transition, evidence };
     if (reads.financialChainAnchor && transition.type !== 'beacon-recovery' && !transition.action?.type?.startsWith('recovery-')) input.chainAnchor = await reads.financialChainAnchor({ at, prior: await execution.getAsync('fp/chain'), ethereum: evidence.ethereumAnchor });
-    const plan = await financialPlan(input, { read: key => execution.getAsync(key), height, document }), operations = [];
+    const plan = await financialTransitionPlan(input, { read: key => execution.getAsync(key), height, document }), operations = [];
     for (const op of plan) operations.push(op.op === 'ar' ? await execution.accounts(op.actions) : op.op === 'br' ?
       await execution.beacon(op, await reads.financialBeaconConfig()) : await execution.payment(op));
     input.recordCommitments = [];
@@ -91,6 +108,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     }
     input.recordCommitments.sort(([a], [b]) => a < b ? -1 : 1);
     const combined = [...priorOperations, ...execution.operations];
+    await bulkWork(execution, combined);
     check(combined.length + 2 <= document.values.batchOps && Buffer.byteLength(rules.stableJSON(combined)) +
       document.values.batchEnvelopeReserveBytes <= document.values.batchBytes, 'financial_batch_bytes');
     check(priorAssetTouches + execution.assetTouches <= document.values.batchAssets, 'financial_batch_assets');
@@ -118,8 +136,9 @@ export class FinancialExecution {
   existing(id) { return this.store.get('financialAccepted', id) ?? (this.store.get('financialQueue', id) ? { id, state: 'queued' } : null); }
   async submit(transition) {
     check(transition && rules.hex(transition.id, 32), 'financial_identity');
-    check(['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery', 'public-scan', 'public-payment'].includes(transition.type) &&
-      Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
+    const limit = isBulkTransition(transition) ? (await import('../../rules/src/bulk-mint.js')).BULK_LIMITS.transitionBytes : this.document.values.moveBytes;
+    check((isBulkTransition(transition) || ['reserve', 'fund', 'surplus', 'consume', 'refund', 'lifecycle', 'beacon-recovery', 'public-scan', 'public-payment'].includes(transition.type)) &&
+      Buffer.byteLength(rules.stableJSON(transition)) <= limit, 'financial_transition');
     const key = rules.hashObject(['dmw-financial-transition-v2', transition]);
     const old = this.existing(key); if (old) return old;
     const document = this.document;
@@ -136,11 +155,12 @@ export class FinancialExecution {
     const old = this.existing(id);
     if (old) return old;
     check(!this.admissionReady || await this.admissionReady(), 'financial_admission_fenced', 503);
-    check(transition.type === 'reserve' && this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
-    check(Buffer.byteLength(rules.stableJSON(transition)) <= this.document.values.moveBytes, 'financial_transition');
+    const bulk = transition.type === 'reserve-many';
+    check((transition.type === 'reserve' || bulk) && this.store.count('financialQueue') < this.resources.mintInputCapacity, 'financial_queue_capacity', 503);
+    check(Buffer.byteLength(rules.stableJSON(transition)) <= (bulk ? (await import('../../rules/src/bulk-mint.js')).BULK_LIMITS.transitionBytes : this.document.values.moveBytes), 'financial_transition');
     const revision = this.revision, acceptedRevision = this.acceptedRevision, document = this.document, parallel = nonceReservation(transition);
     const result = await buildFinancialExecution({ store: this.store, transitions: [transition], reads: this.reads, document, height: at.counted, at });
-    const owner = transition.action.owner, capacity = result.inputs[0].evidence.capacity;
+    const owner = transition.action.owner; let capacity = result.inputs[0].evidence.capacity;
     const imported = capacity ? BigInt(await this.reads.financialRecord('fi/deployment/' + capacity.deployment, at) ?? '0') : 0n;
     return this.gate(async () => {
     const existing = this.existing(id); if (existing) return existing;
@@ -170,7 +190,10 @@ export class FinancialExecution {
       check(count === 0, 'financial_account_reserved', 409);
       writes.push({ space: 'financialAdmissionOwner', id: owner, value: id });
     }
-    if (capacity) {
+    if (bulk) {
+      const held = bulkAdmissionWrites(this.store, transition, capacity, imported, this.resources, id, result.inputs[0].evidence.generationCapacity);
+      capacity = held.capacity; writes.push(...held.writes);
+    } else if (capacity) {
       const key = capacityKey(capacity.deployment), pending = BigInt(this.store.get('financialAdmissionCapacity', key) ?? '0');
       const accepted = BigInt(this.store.get('accountRecords', key) ?? '0') + imported;
       check(pending + accepted + BigInt(capacity.amount) <= BigInt(capacity.remaining), 'financial_capacity_reserved', 409);
@@ -203,12 +226,12 @@ export class FinancialExecution {
   async expire(id, at) {
     const transition = this.store.get('financialQueue', id);
     if (!transition) return !this.store.get('financialAccepted', id);
-    if (transition.type === 'refund') return false;
+    if (transition.type === 'refund' || transition.type.startsWith('bulk-')) return false;
     const revision = this.revision;
     if (transition.type === 'public-payment') {
       // Reveals account for actual payments and must remain recoverable.
       if (transition.action !== 'register' || rules.compareOrdinal(at.counted, transition.registration.validUntil) <= 0) return false;
-    } else if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
+    } else if (transition.type === 'reserve' || transition.type === 'reserve-many' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
     else {
       const exit = await this.reads.financialEvidence({ type: 'refund', id: transition.id, reason: 'credit' }, at);
       check(exit.state === 'credit' && rules.compareOrdinal(at.counted, exit.expiry) > 0, 'financial_exit_live');
@@ -242,6 +265,7 @@ export class FinancialExecution {
       const c = admission.capacity, key = capacityKey(c.deployment), n = (capacities.get(key) ?? BigInt(this.store.get('financialAdmissionCapacity', key))) - BigInt(c.amount);
       check(n >= 0n, 'financial_admission_accounting'); capacities.set(key, n);
       release.push({ space: 'financialAdmissionCapacity', id: key, value: n.toString() }, ...(c.block === null ? [] : [{ space: 'financialAdmissionPlot', id: plotKey(c.asset, c.block, c.supplyScope) }]));
+      if (c.plots) release.push(...c.plots.map(plot => ({ space: 'financialAdmissionPlot', id: plot })));
     }
     return release;
   }
@@ -276,8 +300,9 @@ export class FinancialExecution {
       // merely because a delayed scan remains queued without source evidence.
       const store = args.accountStore ?? this.store;
       const input = { settings: { document: this.document }, executionHeight: args.height };
+      const publicReads = (await import('../../committee/signer/bulk-mint.mjs')).bulkPublicReads(this.reads, store);
       const publicReaders = publicClaimReaders({ input, store, claimNodes: new Map(),
-        publicMintRead: (asset, block, deployment) => readPublicWinner({ store, reads: this.reads, at: args.at }, asset, block, deployment) });
+        publicMintRead: (asset, block, deployment) => readPublicWinner({ store, reads: publicReads, at: args.at }, asset, block, deployment) });
       args = { ...args, preparePublicMint: publicReaders.prepare,
         publicClaims: rules.publicClaimProjection({ state: store.get('meta', 'ruleState') }, input, publicReaders.readers) };
     }
@@ -293,7 +318,7 @@ export class FinancialExecution {
       const accepted = { get: (space, id) => space === 'accountRecords' && records.has(id) ? records.get(id) : view.get(space, id) };
       const localWrites = (item.output.file.financialOperations ?? []).flatMap(input => {
         const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
-        const local = [...this.releaseAdmission(id, capacities, owners, balances), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted)];
+        const local = [...this.releaseAdmission(id, capacities, owners, balances), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted), ...bulkAcceptedWrites(view, input, accepted)];
         for (const write of local) projected.set(write.space + '/' + write.id, write.value);
         return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
           request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },

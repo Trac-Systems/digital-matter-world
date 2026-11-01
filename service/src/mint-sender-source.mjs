@@ -3,6 +3,8 @@ import { readTapSourceURL } from './source-url.mjs';
 import { check } from './util.mjs';
 import { btc } from './mint-sender-keys.mjs';
 import { hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
+import { inscriptionContents } from './mint-payments.mjs';
+import { rules } from './rules.mjs';
 
 // Bounded Esplora calls. Endpoint contents and provider bodies never enter logs.
 export class SenderHTTP {
@@ -68,6 +70,61 @@ export class MintSenderBitcoin {
     check(Array.isArray(outs) && outs.length <= 64, 'mint_sender_outspends');
     return [...new Set(outs.map((o, vout) => vout !== except && o?.spent === true && /^[0-9a-f]{64}$/.test(o.txid ?? '') ? o.txid : null).filter(Boolean))];
   }
+  async bulkFunding({ terms, orderId, paymentId }) {
+    const { validateBulkTerms, bulkOrderId, bulkWalletItems, BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    validateBulkTerms(terms);
+    check(bulkOrderId(terms.network, terms.owner, terms.nonce) === orderId && terms.bitcoinNetwork === this.network &&
+      /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(paymentId), 'bulk_funding_binding');
+    check(this.tap?.at && this.tap?.cardinal, 'bulk_cardinal_unavailable');
+    return (await this.tap.at(async snapshot => {
+      const included = await this.transaction(paymentId.slice(0, 64));
+      if (!included?.confirmed || !Number.isSafeInteger(included.height) || BigInt(included.height) > BigInt(snapshot.height)) return null;
+      check(included.blockHash === await this.http.request('/block-height/' + included.height, { text: true }), 'bulk_funding_reorg');
+      const raw = await this.http.request('/tx/' + paymentId.slice(0, 64) + '/hex', { text: true });
+      check(typeof raw === 'string' && raw.length / 2 <= BULK_LIMITS.rawTransactionBytes, 'bulk_transaction_bytes');
+      const parsed = inscriptionContents(raw), target = Number(paymentId.slice(65)), payload = parsed.contents[target];
+      check(parsed.txid === paymentId.slice(0, 64) && payload?.p === 'tap' && payload.op === 'token-auth' &&
+        rules.stableJSON(payload.redeem?.items) === rules.stableJSON(bulkWalletItems(terms)), 'bulk_redeem_binding');
+      const payment = btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true, allowUnknownOutputs: true });
+      // Locate the actual inscription input, not an arbitrary fee-input parent.
+      let envelope = 0, parent = null, spentVout = null;
+      for (let i = 0; i < payment.inputsLength; i++) {
+        const input = payment.getInput(i), witness = input.finalScriptWitness;
+        if (!witness || witness.length < 2) continue;
+        // Reuse the exact envelope decoder for each input. Counting raw "ord"
+        // markers would let a malformed earlier envelope select a fee parent.
+        const isolated = new btc.Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true, disableScriptCheck: true });
+        isolated.addOutput({ script: Uint8Array.of(0x6a), amount: 0n }); isolated.addInput(input);
+        const count = inscriptionContents(isolated.hex).contents.length;
+        if (target >= envelope && target < envelope + count) { parent = hex(input.txid); spentVout = input.index; }
+        envelope += count;
+      }
+      check(parent, 'bulk_funding_parent');
+      const parentRaw = await this.http.request('/tx/' + parent + '/hex', { text: true });
+      check(typeof parentRaw === 'string' && parentRaw.length / 2 <= BULK_LIMITS.rawTransactionBytes, 'bulk_transaction_bytes');
+      const tx = btc.Transaction.fromRaw(unhex(parentRaw), { allowUnknownInputs: true, allowUnknownOutputs: true });
+      check(tx.id === parent, 'bulk_funding_parent');
+      const script = hex(btc.OutScript.encode(btc.Address(networkFor(this.network)).decode(terms.mintFunding.address))), matching = [];
+      for (let i = 0; i < tx.outputsLength; i++) if (hex(tx.getOutput(i).script) === script) matching.push(i);
+      check(matching.length === 1 && matching[0] !== spentVout && tx.getOutput(matching[0]).amount === BigInt(terms.mintFunding.satoshis), 'bulk_funding_output');
+      const vout = matching[0], value = String(tx.getOutput(vout).amount);
+      const status = await this.transaction(parent);
+      if (!status?.confirmed || !Number.isSafeInteger(status.height) || BigInt(status.height) > BigInt(snapshot.height)) return null;
+      check(status.blockHash === await this.http.request('/block-height/' + status.height, { text: true }), 'bulk_funding_reorg');
+      const coin = { txid: parent, vout, value, script, confirmed: true, cardinal: true };
+      const cardinal = await this.tap.cardinal([coin]);
+      if (cardinal.length !== 1) return null;
+      const spend = await this.outspend(coin);
+      check(spend?.spent === false, 'bulk_funding_spent');
+      return { ...coin, paymentId };
+    })).value;
+  }
+  async outspend(coin) {
+    check(/^[0-9a-f]{64}$/.test(coin.txid) && Number.isSafeInteger(coin.vout) && coin.vout >= 0, 'bulk_funding_outpoint');
+    const value = await this.http.request(`/tx/${coin.txid}/outspend/${coin.vout}`);
+    check(value && typeof value.spent === 'boolean' && (!value.spent || /^[0-9a-f]{64}$/.test(value.txid)), 'bulk_funding_spend_unknown');
+    return value;
+  }
   async feeRate() {
     const rates = await this.http.request('/fee-estimates'), rate = rates?.[String(this.settings.feeTargetBlocks)];
     check(Number.isFinite(rate) && rate > 0, 'mint_sender_fee_unavailable'); return Math.max(1, rate);
@@ -102,6 +159,22 @@ export async function createMintSenderBitcoin({ config, settings, network, signa
 }
 export class MintSenderGateway {
   constructor({ http, token }) { this.http = http; this.authorization = 'Bearer ' + token; }
+  async bulkPage({ after = '', limit = 50 } = {}) {
+    check((after === '' || /^[0-9a-f]{64}$/.test(after)) && Number.isSafeInteger(limit) && limit > 0 && limit <= 50, 'bulk_sender_page');
+    const page = await this.http.request('/internal/mint-sender/bulk?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
+    check(page && Array.isArray(page.rows) && page.rows.length <= limit, 'bulk_sender_unavailable'); return page;
+  }
+  async bulkItem(orderId) {
+    check(/^[0-9a-f]{64}$/.test(orderId), 'bulk_sender_id');
+    const value = await this.http.request('/internal/mint-sender/bulk/' + orderId, { authorization: this.authorization });
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    check(value?.item?.orderId === orderId && Buffer.byteLength(JSON.stringify(value)) <= BULK_LIMITS.permitBytes, 'bulk_sender_binding'); return value;
+  }
+  bulkStatus(orderId) {
+    check(/^[0-9a-f]{64}$/.test(orderId), 'bulk_sender_id');
+    return this.http.request('/mint/bulk/' + orderId);
+  }
+  reportBulkFinish(report) { return this.http.request('/mint/bulk/finish', { method: 'POST', body: report }); }
   payouts(after, limit) {
     return this.http.request('/internal/mint-sender/payouts?' + new URLSearchParams({ after, limit }), { authorization: this.authorization });
   }

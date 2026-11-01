@@ -508,3 +508,48 @@ refused. Each additional compound ticker can mint up to the total units ever
 produced of that compound. Its minted and reserved amounts both count toward
 that cap; later crafts raise it, while burns do not lower it. A merge leaves
 the old id’s cap in place and adds production to the new id.
+
+## Bulk found-block mints
+
+Bulk minting prepares up to 64 found blocks for one ledger asset, selected
+TAP deployment, receiver and payer. The payer can differ from the receiver.
+The quote can accept fewer blocks when the byte or Bitcoin funding bounds
+require it. Review its ascending accepted members, `skipped` reasons and
+`deferred` tail before submitting. Prices come from the pinned fee settings.
+
+1. `quote_bulk_mint({actionId,asset,deployment,blocks,receiver,payer})` saves
+   the nonce before requesting the unsigned quote. Blocks are decimal strings.
+   Reusing the action ID returns the same saved quote; changing its input is
+   refused. A quote with `terms:null` cannot be signed or paid.
+2. `mint_bulk_on_chain({actionId,quoteId,maxPayableFeeAtoms,maxSetAsideSats,dryRun})`
+   submits that exact quote. The TAP ceiling is an atomic decimal string; the
+   Bitcoin ceiling is a number of satoshis. `dryRun:true` never signs, submits,
+   reports or pays. The saved `reserve-n` packet and signature are reused after
+   a timeout; independent orders do not wait for a global mint turn.
+3. `pay_bulk_mint({orderId})` returns the payment page and exact wallet plan.
+   It never spends automatically. On the page, connect the quoted **payer**
+   and approve **Pay and mint N blocks**. TAP Wallet must already have 1-TX
+   Transfers active and support the Bitcoin set-aside. One call transfers all
+   groups and adds exactly one quoted Bitcoin funding output.
+4. `poll_bulk_mint({orderId,offset:0,limit:64})` reads payment, permit, sender
+   and per-member progress. A wallet callback or Bitcoin broadcast is not a
+   verified payment or a minted block. The server continues discovery and
+   minting with the page closed.
+
+The dashboard's **Mint all** keeps a durable claim cursor and order journal,
+groups claims by asset/deployment/payer/receiver, and prepares at most four live
+orders. Later orders prepare as slots free. Each order requires its own wallet
+approval. Issued unresolved orders retain their slots. Single **Mint** clicks
+continue independently. Reloading resumes exact saved orders and payment
+receipts; it does not create replacement nonces.
+
+An ambiguous wallet reply or cancellation stays recorded as an uncertain
+payment. Inspect TAP Wallet before an explicit retry; the browser also checks
+Bitcoin for the order's set-aside. An empty TAP index result alone never
+permits another payment. Partial payments cannot fund a subset or be topped up
+in this release. Expiry can release only unissued members. Recovery credits
+mean a payment is owed, not refunded, and are not automatically spent.
+
+Bulk is an additive protocol and requires coordinated service support. An
+ingress switch can stop new orders while accepted funded/issued work drains.
+No activation-height wait is part of a bulk action.

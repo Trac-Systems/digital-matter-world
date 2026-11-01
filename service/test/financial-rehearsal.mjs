@@ -39,6 +39,8 @@ import { Journal } from '../../kit/lib/journal.mjs';
 import { ServiceClient } from '../../kit/lib/service-client.mjs';
 import { createPublicAPI } from '../src/public-api.mjs';
 import { Feeds } from '../src/feeds.mjs';
+import { bulkRehearsalTransport, runBulkRehearsal } from './bulk-rehearsal.mjs';
+import { BULK_CAPACITY_VALUES } from '../../rules/src/bulk-mint.js';
 
 export async function probeLegacyLink({ service, store, network, request, secret, payer }) {
   const sig = r.signLink(network, request, secret), before = store.sequence;
@@ -50,13 +52,13 @@ export async function probeLegacyLink({ service, store, network, request, secret
 }
 
 export async function financialRehearsal({ stack, directory, tssPort, checkpoint = async () => {}, recordPID = () => {}, checkLegacyLink = fn => fn(),
-  createContract = deployment => harness(deployment), paidBatches = false }) {
+  createContract = deployment => harness(deployment), paidBatches = false, bulk = false }) {
 assert.equal(stack.bitcoin.network, 'regtest');
 assert.equal(await chainRPC(stack.ethereum.rpc, 'eth_chainId'), '0x7a69');
 const network = 'dmw-regtest', epoch = 1, secret = Buffer.alloc(32, 93), gateway = edPublic(secret);
 await mkdir(directory, { recursive: true, mode: 0o700 });
 const sourceFile = join(directory, 'source.url'); await writeFile(sourceFile, stack.ord.url, { mode: 0o600 });
-const children = [], services = [], readers = []; let store, pipeline, http, journal, contract;
+const children = [], services = [], readers = []; let store, pipeline, http, journal, contract, bulkTransport;
 const recorded = { readerBootstrap: [], signers: 5, readerClients: 0, rail: 'tap', notary: 'actual StateTransition with disposable legacy compound bootstrap', checks: [] };
 const pass = s => { recorded.checks.push(s); console.log('PASS', s); };
 try {
@@ -79,6 +81,16 @@ try {
   await inscription({ p: 'tap', op: 'token-mint', tick: 'tap', amt: '1000' });
   const payerKey = testKey(), authId = await inscription(authority(payerKey)); await sendInscription(stack, authId, payer); await mine(stack);
   const bitmapBlock = String((await bitcoin(stack, 'getblockcount')) - 1), bitmapId = await inscription(bitmapBlock + '.bitmap');
+  let bulkEntry;
+  if (bulk) {
+    const currentHeight = await bitcoin(stack, 'getblockcount');
+    if (currentHeight < 164) await mine(stack, 164 - currentHeight);
+    const tick = 'dmwbulk' + Date.now().toString(36), elementId = await inscription(tick + '.[0-9].4.element');
+    bulkEntry = { asset: 'p0', kind: 'dmt', tick, indexTick: 'dmt-' + tick, elementId, dt: 'n',
+      pattern: { pat: '[0-9]', fld: 4, dt: 'n' }, privilege: privilegeId, authorityKey: publicKey, options: {} };
+    bulkEntry.id = await inscription(deploymentPayload(bulkEntry));
+    bulkTransport = await bulkRehearsalTransport({ stack, directory, inscription });
+  }
   pass('real TAP fee supply, Bitmap and threshold-authorized compound deployment indexed');
   const raw = [], headers = [];
   const updateHeaders = async () => {
@@ -94,14 +106,19 @@ try {
     beacon: { params: REGTEST_PARAMS, checkpoint: { height: 0, hash: genesis.hash, bits: genesis.bits, time: genesis.time, chainwork: workFor(genesis.bits).toString() } } };
   const history = { get length() { return raw.length; }, raw: h => raw[h], get: h => headers[h], hashAt: h => headers[h]?.hash ?? null,
     field: (h, f, dt = 'n') => (f === 4 ? h : f === 10 ? headers[h].nonce : headers[h].bits).toString(dt === 'h' ? 16 : 10) };
+  if (bulk) for (let block = 100; block < 164; block++) assert.equal(history.field(block, 4).match(/[0-9]/g).length, 3);
   const legacy = harness(options);
   for (let h = 1; h <= height; h += 20) assert.equal(await legacy.run('hd', { headers: raw.slice(h, h + 20) }), null);
-  const initial = { v: 1, epoch: 0, n: 1, from: 1, to: height, deadline: height + 6, root: hash('legacy-bootstrap'), ops: [{ op: 'mk', to: alice.address, asset: 'c1', amount: '100' }] };
+  const initial = { v: 1, epoch: 0, n: 1, from: 1, to: height, deadline: height + 6, root: hash('legacy-bootstrap'), ops: [{ op: 'mk', to: alice.address, asset: 'c1', amount: '100' }, ...(bulk ? [
+    { op: 'mk', to: alice.address, asset: 'p0', amount: '192' },
+    ...Array.from({ length: 16 }, (_, page) => ({ op: 'kv', key: 'rehearsal/claims/' + page,
+      value: JSON.stringify({ asset: 'p0', finder: alice.address, blocks: Array.from({ length: 4 }, (_, i) => 100 + page * 4 + i), count: '3' }) }))
+  ] : [])] };
   initial.sig = (await sign(Buffer.from(batchDigest(network, initial)).toString('hex'))).compact;
   assert.equal(await legacy.run('bt', initial), null);
   const imported = prepareTerminalImport({ records: legacy.db, height });
-  const registry = { feePolicy: createFeePolicy('1000000000000000000'), assets: { c1: entry }, link: { treasury } };
-  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
+  const registry = { feePolicy: createFeePolicy('1000000000000000000', 0, bulk ? r.FEE_DEFAULTS : undefined), assets: { c1: entry, ...(bulk ? { p0: bulkEntry } : {}) }, link: { treasury } };
+  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, ...(bulk ? BULK_CAPACITY_VALUES : {}), puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
   const manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: initial.root,
     bitcoinAnchor: { height: String(height), hash: history.hashAt(height) }, settingsHash: r.hashObject(document), catalogRoot: r.namedStateRoot(r.emptyNamedDiscovery()),
     accountsRoot: imported.financialRoot, receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
@@ -131,6 +148,7 @@ try {
     const lookup = new TapLookupIndex({ indexer, filename: join(directory, label + '-lookups.sqlite') });
     readers.push({ close: () => lookup.close() });
     await lookup.advance(lookup.watch('privilege')); // Explicit bootstrap, before admitting player work.
+    if (bulk) await lookup.advance(lookup.watch('element'));
     const reads = installTapLookups({ registry: async () => registry, counted: async () => (await stamp()).counted, batchStamp: stamp, rulesContext,
       authority: async () => ({ network, committee: publicKey, epoch: 0 }), committeeEpoch: async () => 0,
       tip: async () => { const s = await stamp(); return { tip: s.tip, highestTip: s.tip }; }, batchLast: async () => (await stamp()).last,
@@ -138,6 +156,7 @@ try {
         const indexed = await indexer.inscription(bitmap.ins); assert.equal(indexed.address, bitmap.ownr); assert.equal(bitmap.ownr, payer); return { agent: alice.address, address: payer }; },
       link: async block => { const value = contract.db.get('k/link/' + BigInt(block).toString(36)); return value ? JSON.parse(value) : null; },
       settingsByHash: async hash => contract.db.get('v2/settings/' + hash),
+      bitcoinTransaction: id => client.transaction(id),
       batchRoot: async n => contract.db.get('bt/' + n) ?? null, tap: p => indexer.tap(p), content: id => indexer.content(id),
       included: async (id, at) => { at ??= await stamp(); return client.included(id, at, await views.view(at.tip, at.tipHash)); },
       receiptObservation: async (tip, h, segment) => store.get('receiptObservations', `${tip}/${h}/${segment}`),
@@ -147,7 +166,22 @@ try {
         last: draft.last, activation: draft.activation, previousRoot: draft.previousRoot }; },
       preflight: (batch, at) => preflightBatch(batch, at, { read: key => contract.db.get(key), deployment: contract.options }),
       feeQuotes: new FeeQuotes({ network, gateway, ...(label === 'gateway' ? { secret } : {}), registry: async () => registry }) }, lookup);
+    reads.isMinted = async (deployment, tick, block, at) => {
+      const d = await reads.tap('getDeployment/dmt-' + tick); assert.equal(d.ins, deployment);
+      const row = await reads.tap('getDmtMintHolderByBlock/dmt-' + tick + '/' + block);
+      if (!row) return false; assert.ok(await reads.included(row.ins, at)); return true;
+    };
     reads.assetContext = async (_asset, _block, at) => {
+      if (bulk && _asset === bulkEntry.asset) {
+        const { deployment } = await verifyDeployment(reads, bulkEntry, { view: at });
+        const block = String(_block), claim = JSON.parse(contract.db.get('n/rehearsal/claims/' + Math.floor((Number(block) - 100) / 4)));
+        assert.ok(claim.blocks.includes(Number(block)));
+        return { deployment: { ...bulkEntry, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec),
+          remaining: await reads.tap('getMintTokensLeft/' + bulkEntry.indexTick), limit: '0' }, tier: 1, treasury,
+          finderAddress: maker, beneficiaries: { finder: alice.address }, link: null, find: {
+            asset: bulkEntry.asset, block, count: claim.count, finder: claim.finder, findHeight: String(height),
+            finderUntil: String(height + 1000), settingsHash: r.hashObject(document) } };
+      }
       const { deployment } = await verifyDeployment(reads, entry, { view: typeof at === 'object' ? at : undefined });
       return { deployment: { ...entry, active: true, privilegePublicKey: publicKey, decimals: Number(deployment.dec), remaining: await reads.tap('getMintTokensLeft/' + entry.tick), limit: '0' },
         tier: 1, treasury, firstMakerAddress: maker, payouts: { firstMaker: null }, find: null, link: null };
@@ -182,16 +216,19 @@ try {
     clients.push({ id: member.id, url: 'http://127.0.0.1:' + server.address().port, token: secrets.apiToken, peer: descriptor(member) });
     services.push({ service, server });
   }
-  const reads = await makeReads('gateway'), committee = new Committee({ store, network, signers: clients, epoch, assetRecoveryVersion: 2 });
-  const config = { mode: 'regtest', network, committee: clients, assetRecoveryVersion: 2, assetResources: {}, v2: { manifest, manifestHash, document, resources: r.resourceRevision({ operator: 'mg3-local', values: { ...r.RESOURCE_PROFILE } }) } };
-  const runtime = await createV2Runtime({ config, store, secret, history, reads, committee });
-  const files = new Files(join(store.directory, 'static'));
-  pipeline = new Pipeline({ store, files, history, intake: runtime.intake, reads, committee, financial: runtime.financial, settings: runtime.settings,
+  const reads = await makeReads('gateway'); let committee = new Committee({ store, network, signers: clients, epoch, assetRecoveryVersion: 2 });
+  const config = { mode: 'regtest', network, committee: clients, assetRecoveryVersion: 2, assetResources: { bulkMintEnabled: bulk }, v2: { manifest, manifestHash, document, resources: r.resourceRevision({ operator: 'mg3-local', values: { ...r.RESOURCE_PROFILE } }) } };
+  let runtime = await createV2Runtime({ config, store, secret, history, reads, committee });
+  let files = new Files(join(store.directory, 'static'));
+  const makePipeline = () => new Pipeline({ store, files, history, intake: runtime.intake, reads, committee, financial: runtime.financial, settings: runtime.settings,
     outbox: new Outbox({ store, fallbackMs: contract.transport ? (paidBatches ? 0 : 5000) : 100000, retryMs: contract.transport ? 1000 : 0, transport: contract.transport ?? { prepareMessage: async (op, value) => ({ op, value }),
       sendMessage: async m => { assert.equal(await contract.run(m.op, m.value), null); },
       status: async job => ({ state: contract.db.get('bt/' + job.value.n) === job.value.root ? 'accepted' : 'pending' }) } }) });
+  pipeline = makePipeline();
+  const serveGateway = () => serve({ intake: runtime.intake, files, mints: runtime.mints, bulkMints: runtime.bulkMints, links: runtime.links, web: { handle: async () => false } });
+  if (bulk) runtime.bulkMints.senderView = bulkTransport.view;
   const observe = async () => { const s = await stamp(); await runtime.intake.observe({ tip: s.tip, hash: s.tipHash, counted: s.counted, confirmed: s.counted, revision: s.revision }); };
-  await observe(); http = await serve({ intake: runtime.intake, files, mints: runtime.mints, links: runtime.links, web: { handle: async () => false } });
+  await observe(); http = await serveGateway();
   journal = await Journal.open(join(directory, 'kit'), network, { intervalMs: 0 });
   const service = new ServiceClient({ origin: http.url, network, gateway, receiptSigners: group.map(descriptor) });
   const agent = new Agent({ wallet: { publicKey: alice.address, sign: bytes => ed25519.sign(bytes, alice.secret) }, network, service, journal, dryRun: false, bitcoinNetwork: 'regtest',
@@ -209,10 +246,10 @@ try {
       // Production schedules deployment registration separately from mint work.
       await runtime.mints.deploymentTick();
       await pipeline.tick(); if (await until()) return;
-      await runtime.mints.tick(); await runtime.links.tick(); if (await until()) return;
+      await runtime.mints.tick(); await runtime.links.tick(); if (bulk) { await bulkTransport.heartbeat(); await runtime.bulkMints.tick(); } if (await until()) return;
       await sleep(100);
     }
-    throw Error('financial_progress_timeout:' + store.get('mints', id)?.lastError + ':' + JSON.stringify(store.list('financialDeferred', { limit: 10 })));
+    throw Error('financial_progress_timeout:' + JSON.stringify(store.list('bulkFailures', { limit: 10 })) + ':' + JSON.stringify(store.list('financialDeploymentJobs', { limit: 10 })) + ':' + store.get('mints', id)?.lastError + ':' + JSON.stringify(store.list('financialDeferred', { limit: 10 })));
   };
   const pendingDeployment = await agent.makeReal(mintIntent);
   assert.equal(pendingDeployment.state, 'deployment_pending');
@@ -315,12 +352,73 @@ try {
   assert.equal(store.get('financialAdmissionHeld', alice.address + '/c1'), '0');
   recorded.parallelReservations = { requests: parallelIds.length, accountOperations: grouped.length, actions: grouped[0].actions.length };
   pass('three concurrent kit reservations share one account packet through five independent HTTP signers/TSS and the notary');
+  if (bulk) {
+    let synchronized = linkTip;
+    const sync = async () => {
+      const end = await updateHeaders();
+      for (let h = synchronized + 1; h <= end; h++) {
+        assert.equal(await contract.run('hd', { headers: [raw[h]] }), null); await observe();
+      }
+      synchronized = end; await runtime.refresh();
+    };
+    const restart = async () => {
+      // An orderly restart checkpoints the current threshold round. Closing a
+      // signer mid-round deliberately aborts it; do not bypass that safety rule.
+      // Keep the remaining member permits pending and all reveals unsent.
+      for (const { id: key, value } of store.list('ceremonies', { limit: 1000 }).filter(({ value }) =>
+        ['prepared', 'running'].includes(value.stage))) {
+        let signed;
+        for (let i = 0; i < 200 && !signed; i++) {
+          await checkpoint(); signed = await committee.signature(key, value.proposal); if (!signed) await sleep(100);
+        }
+        assert.ok(signed, 'threshold round must checkpoint before an orderly restart');
+        // Lose only the gateway result checkpoint. The restarted gateway must
+        // recover the actual detached signature from the restarted signers.
+        const { result: _result, ...pending } = store.get('ceremonies', key);
+        await store.put('ceremonies', key, { ...pending, stage: 'running' });
+      }
+      await http.close(); await pipeline.close(); await store.close();
+      for (const s of services) { s.server.closeAllConnections(); await new Promise(resolve => s.server.close(resolve)); await s.service.close(); }
+      for (const child of children) await stopChild(child);
+      children.length = 0;
+      for (const member of group) children.push(await startSidecar(member, async pid => { recordPID(pid); }));
+      store = await Store.open(join(directory, 'gateway'));
+      for (let i = 0; i < services.length; i++) {
+        const s = services[i], { config, secrets, reads } = configurations[i]; s.service = await createSigner(config, secrets, reads);
+        s.server = createServer(async (req, res) => { try {
+          assert.equal(req.headers.authorization, 'Bearer ' + secrets.apiToken); const chunks = []; for await (const c of req) chunks.push(c);
+          res.end(JSON.stringify(await s.service.handle(req.url, JSON.parse(Buffer.concat(chunks)))));
+        } catch (e) { res.writeHead(409); res.end(JSON.stringify({ error: e.message })); } });
+        await new Promise(resolve => s.server.listen(0, '127.0.0.1', resolve)); clients[i].url = 'http://127.0.0.1:' + s.server.address().port;
+      }
+      // Rotate the preferred threshold quorum so every independent signer
+      // verifies real bulk permits during this rehearsal.
+      committee = new Committee({ store, network, signers: [...clients.slice(2), ...clients.slice(0, 2)], epoch, assetRecoveryVersion: 2 });
+      runtime = await createV2Runtime({ config, store, secret, history, reads, committee }); runtime.bulkMints.senderView = bulkTransport.view;
+      files = new Files(join(store.directory, 'static')); pipeline = makePipeline(); await observe(); http = await serveGateway(); service.origin = http.url;
+    };
+    const pay = async (id, fees) => {
+      const payment = await inscription(redeem(authId, [], payerKey, { items: r.walletFeeItems(fees, 'regtest') }), payer);
+      await sync(); await service.reportMintPayment({ id, paymentId: payment });
+    };
+    // Complete the pre-existing parallel probe before the bulk interleaving.
+    for (const id of parallelIds) await pay(id, store.get('mints', id).quote.fees);
+    await progress(() => parallelIds.every(id => runtime.mints.public(id).state === 'permit_issued'));
+    const minted = [];
+    for (const id of parallelIds) minted.push(await inscription(runtime.mints.public(id).permit, receiver));
+    await sync();
+    for (const [i, id] of parallelIds.entries()) await service.reportMintPayment({ id, inscription: minted[i] });
+    await progress(() => parallelIds.every(id => runtime.mints.public(id).state === 'minted'));
+    recorded.bulk = await runBulkRehearsal({ stack, directory, transport: bulkTransport, entry: bulkEntry, receiver, agent, service,
+      getRuntime: () => runtime, getStore: () => store, contract, progress, sync, restart, parallelIntent: mintIntent, paySingle: pay, inscription, pass });
+  }
   recorded.acceptedV2Batches = String(BigInt((await contract.state().batchLast()).n) - 1n);
   recorded.request = id; recorded.payment = paymentId; recorded.mint = mintedId;
   recorded.link = { id: linkId, bitmap: bitmapId, block: bitmapBlock, payment: linkPaymentId };
 
 } finally {
   if (contract?.measure) { try { recorded.physicalTrac = await contract.measure(); } catch (error) { recorded.physicalTrac = { measured: false, error: error.message }; } }
+  await bulkTransport?.close();
   await http?.close(); await pipeline?.close(); journal?.close();
   for (const s of services) { s.server.closeAllConnections(); await new Promise(resolve => s.server.close(resolve)); await s.service.close(); }
   for (const r of readers.toReversed()) r.close(); await store?.close();

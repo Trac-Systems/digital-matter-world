@@ -1,6 +1,7 @@
 import { MintPayoutSender } from './mint-payout-sender.mjs';
 import { MintRefundSender } from './mint-refund-sender.mjs';
 import { TickerDeploySender } from './ticker-deploy-sender.mjs';
+import { BulkMintSender } from './bulk-mint-sender.mjs';
 import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
 import { mintSenderError } from './mint-sender-errors.mjs';
 import { join } from 'node:path';
@@ -37,6 +38,7 @@ export class MintSender {
     this.refunds = new MintRefundSender(this); this.refundJob = null;
     this.payouts = new MintPayoutSender(this); this.payoutJob = null;
     this.deploys = new TickerDeploySender(this);
+    this.bulk = new BulkMintSender(this);
   }
   async discover() {
     const page = await this.gateway.list(this.cursor, this.settings.pageSize);
@@ -228,8 +230,9 @@ export class MintSender {
       }
       try { await this.discover(); } catch (error) { this.log({ event: 'mint_sender_discovery_retry', code: mintSenderError(error) }); }
       try { await this.refunds.discover(); } catch (error) { this.log({ event: 'mint_refund_discovery_retry', code: mintSenderError(error) }); }
+      try { await this.bulk.discover(); } catch { this.log({ event: 'bulk_sender_discovery_retry', code: 'bulk_sender_unavailable' }); }
       if (this.sourceVerified) {
-        if (this.settings.refundsEnabled && this.settings.refundReserveMode === 'dynamic' &&
+        if ((this.gateway.bulkPage || this.settings.refundsEnabled && this.settings.refundReserveMode === 'dynamic') &&
             (this.lastFeeCheck === undefined || this.now() - this.lastFeeCheck >= this.settings.healthMs)) {
           try {
             const feeRate = await this.bitcoin.feeRate();
@@ -257,12 +260,23 @@ export class MintSender {
             this.refundJob = job; this.active.set(row.record.id, job);
           }
         }
-        const due = this.journal.due(this.settings.pageSize).filter(r => !this.active.has(r.id));
-        for (const row of due) {
+        const bulkDue = this.journal.bulkDue(this.settings.pageSize).filter(r => !this.active.has('bulk:' + r.id));
+        const singleDue = this.journal.due(this.settings.pageSize).filter(r => !this.active.has(r.id)), due = [];
+        // Persistent issued orders must not starve concurrent single mints.
+        // Alternate lanes, and alternate first choice when only one slot frees.
+        this.bulkFirst = !this.bulkFirst;
+        for (let i = 0; i < Math.max(singleDue.length, bulkDue.length); i++) {
+          const single = singleDue[i] && { row: singleDue[i], bulk: false }, bulk = bulkDue[i] && { row: bulkDue[i], bulk: true };
+          due.push(...(this.bulkFirst ? [bulk, single] : [single, bulk]).filter(Boolean));
+        }
+        for (const { row, bulk } of due) {
           if (this.active.size >= this.settings.concurrency) break;
-          const job = this.attempt(row.id).catch(() => this.log({ event: 'mint_sender_journal_error', requestId: row.id }))
-            .finally(() => this.active.delete(row.id));
-          this.active.set(row.id, job);
+          if (bulk && [...this.active.keys()].filter(k => k.startsWith('bulk:')).length >= 4) continue;
+          const key = bulk ? 'bulk:' + row.id : row.id;
+          const job = (bulk ? this.bulk.attempt(row.id) : this.attempt(row.id))
+            .catch(() => this.log(bulk ? { event: 'bulk_sender_journal_error', orderId: row.id } : { event: 'mint_sender_journal_error', requestId: row.id }))
+            .finally(() => this.active.delete(key));
+          this.active.set(key, job);
         }
       }
       this.health();

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { check } from './util.mjs';
 import { publicIdentities } from '../../rules/src/trac-address.js';
+import { handleBulkMintHTTP } from './bulk-mint-http.mjs';
 const root = new URL('../public/web/', import.meta.url);
 const consoleRoot = new URL('../../playground/console/', import.meta.url), tracAddress = new URL('../../rules/src/trac-address.js', import.meta.url);
 const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'connect.js', 'money.js', 'ticker-deploy.js'].map(name => ['/web/' + name, new URL(name, root)]));
@@ -9,6 +10,9 @@ assets.set('/web/trac-address.js', tracAddress);
 assets.set('/playground/console/js/requester-storage.js', new URL('js/requester-storage.js', consoleRoot));
 assets.set('/kit/lib/tap-wallet-actions.mjs', new URL('../../kit/lib/tap-wallet-actions.mjs', import.meta.url));
 assets.set('/kit/lib/wallet-funds.mjs', new URL('../../kit/lib/wallet-funds.mjs', import.meta.url));
+assets.set('/web/bulk-mint.js', new URL('bulk-mint.js', root));
+assets.set('/web/bulk-wallet.js', new URL('../../kit/dashboard/wallet.js', import.meta.url));
+assets.set('/kit/lib/tap-wallet-bulk-mint.mjs', new URL('../../kit/lib/tap-wallet-bulk-mint.mjs', import.meta.url));
 // The pages are the playground console's own CSS, components and views. Only its data module (api.js)
 // and its wallet flows (flows.js) are replaced by the public read adapter and the wallet-page links.
 for (const name of ['dom', 'paged', 'spiral', 'words', 'money', 'amount-format', 'wallet-errors', 'requester-storage', 'tickers', 'inscribe/wallet', 'inscribe/public', 'views/world', 'views/about', 'views/table', 'views/agents', 'views/feed', 'views/results'])
@@ -26,15 +30,18 @@ const pages = /^\/(?:about|explore|feed|blocks|patterns|table|compounds|agents(?
 export function createWeb(checkout) {
   return { checkout, async handle(req, res, readBody) {
     const u = new URL(req.url, 'http://localhost'), path = u.pathname;
-    if (path === '/' || pages.test(path)) res.setHeader('Vary', 'Accept');
+    const bulkPage = /^\/mint\/bulk\/[0-9a-f]{64}$/.test(path);
+    if (path === '/' || pages.test(path) || bulkPage) res.setHeader('Vary', 'Accept');
     const send = (type, value) => { res.setHeader('Content-Type', type); res.setHeader('Cache-Control', 'no-store'); res.end(req.method === 'HEAD' ? undefined : value); };
     if (['GET', 'HEAD'].includes(req.method) && assets.has(path)) { send('text/javascript; charset=utf-8', await readFile(assets.get(path))); return true; }
     if (['GET', 'HEAD'].includes(req.method) && styles.has(path)) { const [type, file] = styles.get(path); send(type, await readFile(file)); return true; }
-    if (['GET', 'HEAD'].includes(req.method) && (path === '/' || pages.test(path)) && (path === '/' || req.headers.accept?.includes('text/html'))) {
+    if (['GET', 'HEAD'].includes(req.method) && (path === '/' || pages.test(path) || bulkPage) && (path === '/' || req.headers.accept?.includes('text/html'))) {
       res.setHeader('Vary', 'Accept'); res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self' https://mempool.space https://reader.tapscope.io; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      send('text/html; charset=utf-8', await readFile(new URL('index.html', root))); return true;
+      const html = await readFile(new URL('index.html', root), 'utf8');
+      send('text/html; charset=utf-8', bulkPage ? html.replace('src="/web/app.js"', 'src="/web/bulk-mint.js"') : html); return true;
     }
+    if (path.startsWith('/web-api/mint/bulk/')) return handleBulkMintHTTP(req, res, readBody, checkout?.bulkMints);
     if (!path.startsWith('/web-api/') && path !== '/records/highlights') return false;
     check(checkout, 'web_checkout_unavailable', 503);
     let result;

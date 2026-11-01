@@ -1,3 +1,4 @@
+import { installBulkMintSources } from './bulk-mint-sources.mjs';
 import { installTickerPaymentSources } from './ticker-payment-sources.mjs';
 import { installLinkSources } from './financial-link-sources.mjs';
 import { installCreditSources } from './financial-credit-sources.mjs';
@@ -32,7 +33,8 @@ export async function acceptedFinancialReservation({ store, audits, id }) {
   const location = await store.get('financialAdmissions', id);
   check(location && Number.isSafeInteger(location.file) && location.file >= 0 && Number.isSafeInteger(location.index) && location.index >= 0, 'financial_admission_missing');
   const input = (await audits(location.n))[location.file]?.financialOperations?.[location.index];
-  check((input?.transition.type === 'reserve' || input?.transition.action?.type === 'link-reserve') && input.transition.id === id && input.transition.action.terms === rules.hashObject(input.evidence), 'financial_admission_binding');
+  check((input?.transition.type === 'reserve' || input?.transition.type === 'reserve-many' || input?.transition.action?.type === 'link-reserve') && input.transition.id === id &&
+    input.transition.action.terms === rules.hashObject(input.transition.type === 'reserve-many' ? input.evidence.terms : input.evidence), 'financial_admission_binding');
   return input.evidence;
 }
 
@@ -208,6 +210,7 @@ export function installFinancialSources(reads, options) {
   };
   reads.financialEvidence = async (transition, at) => {
     const t = transition;
+    if (t.type === 'reserve-many' || t.type.startsWith('bulk-')) return reads.bulkEvidence(t, at);
     if (t.type === 'public-scan') return reads.publicMintScan(t, at);
     if (t.type === 'public-payment') return reads.publicMintPayment(t, at);
     if (t.type === 'beacon-recovery') return reads.financialBeaconEvidence(t.operation, at);
@@ -263,6 +266,7 @@ export function installFinancialSources(reads, options) {
   // Normalize the execution anchor once and fence every independent read with
   // the same accepted notary revision and Bitcoin/TAP source snapshot.
   installPublicMintSources(reads, { network, bitcoinNetwork, lookupSettings });
+  installBulkMintSources(reads, { network, bitcoinNetwork, document, request, reservation, record });
   for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPayment', 'publicMintPermit']) {
     const original = reads[name], index = ['financialReceipts', 'financialEscrow'].includes(name) ? 2 : 1;
     reads[name] = async (...args) => {

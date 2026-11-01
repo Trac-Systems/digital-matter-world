@@ -14,6 +14,7 @@ export const senderKeyId = (seed, network) => {
   try { return hash(k.address); } finally { k.privateKey.fill(0); }
 };
 export const SENDER_STATES = new Set(['waiting_funding', 'funded', 'sending', 'sent', 'minted', 'needs_user', 'returning', 'returned']);
+export const BULK_SENDER_STATES = new Set(['waiting_funding', 'funded', 'waiting_permits', 'fee_wait', 'sending', 'sent', 'minted', 'needs_attention', 'returning', 'returned']);
 export function readSenderJSON(path) {
   let fd;
   try {
@@ -53,6 +54,22 @@ export class MintSenderView {
   feeObservation() {
     const h = readSenderJSON(join(this.settings.directory, 'health.json'));
     return h?.keyId === this.keyId && h.policy === this.policy ? { feeRate: h.feeRate, feeRateAt: h.feeRateAt, now: this.now() } : {};
+  }
+  async bulkFunding(args) {
+    check(this.settings.enabled && this.ready(), 'bulk_sender_unavailable', 503);
+    const observation = this.feeObservation();
+    check(Number.isFinite(observation.feeRate) && observation.feeRate >= 1 && Number.isSafeInteger(observation.feeRateAt) &&
+      observation.feeRateAt <= this.now() && this.now() - observation.feeRateAt <= this.settings.refundFeeRateMaxAgeMs, 'bulk_fee_unavailable', 503);
+    const { quoteBulkFunding } = await import('./bulk-mint-funding.mjs');
+    return quoteBulkFunding({ ...args, bitcoinNetwork: this.network, settings: this.settings, feeRate: observation.feeRate, address: this.address(args.orderId) });
+  }
+  bulkStatus(orderId) {
+    check(validRequestId(orderId), 'bulk_sender_id');
+    const row = readSenderJSON(join(this.settings.directory, 'status', 'bulk-' + orderId + '.json'));
+    const s = row?.mintSender;
+    return row?.keyId === this.keyId && row.orderId === orderId && BULK_SENDER_STATES.has(s?.state) && Number.isSafeInteger(s.sentBatches) &&
+      Number.isSafeInteger(s.totalBatches) && s.totalBatches >= 1 && s.totalBatches <= 4 && s.sentBatches >= 0 && s.sentBatches <= s.totalBatches
+      ? { state: s.state, sentBatches: s.sentBatches, totalBatches: s.totalBatches } : null;
   }
   bind(row) {
     if (row.mintFunding || !this.settings.enabled || row.kind !== 'tap' ||

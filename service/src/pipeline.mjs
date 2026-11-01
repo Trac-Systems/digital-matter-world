@@ -196,10 +196,11 @@ export class Pipeline {
         input.settingsDocuments = input.namedEvidence.settingsDocuments;
       }
       const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
-      const publicMintRead = (asset, block, deployment) => readPublicWinner({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, asset, block, deployment);
+      const publicReads = publicClaimsActive ? (await import('../../committee/signer/bulk-mint.mjs')).bulkPublicReads(this.reads, accountStore) : this.reads;
+      const publicMintRead = (asset, block, deployment) => readPublicWinner({ store: accountStore, reads: publicReads, at: { counted: execution, last } }, asset, block, deployment);
       const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes'),
         ...(publicClaimsActive ? { publicMintGet: publicMintRead,
-          publicMintBatch: pairs => readPublicWinnerBatch({ store: accountStore, reads: this.reads, at: { counted: execution, last } }, pairs) } : {}) } : undefined;
+          publicMintBatch: pairs => readPublicWinnerBatch({ store: accountStore, reads: publicReads, at: { counted: execution, last } }, pairs) } : {}) } : undefined;
       const replay = async () => {
         const { claimEvidence, namedEvidence, ...output } = await this.replay.run(input, history, claimReads);
         if (claimEvidence) input.claimEvidence = claimEvidence;
@@ -256,7 +257,7 @@ export class Pipeline {
           items.reduce((n, i) => n + (i.output.accountAssetTouches ?? 0), output.accountAssetTouches ?? 0) > s.maxAssets) break;
       }
       accountStore.apply([...(output.accountWrites ?? []), ...(output.namedWrites ?? [])]);
-      for (const input of output.file.financialOperations ?? []) if (input.transition.type === 'reserve' || input.transition.action?.type === 'link-reserve')
+      for (const input of output.file.financialOperations ?? []) if (input.transition.type === 'reserve' || input.transition.type === 'reserve-many' || input.transition.action?.type === 'link-reserve')
         accountStore.financialReservations.set(input.transition.id, input.evidence);
       for (const i of output.file.financialOperations ?? []) financialIncluded.add(rules.hashObject(['dmw-financial-transition-v2', i.transition]));
       items.push({ observation, input, output, originalEntries, missed: !!missed }); state = output.state; patterns = output.patterns;
@@ -417,7 +418,7 @@ export class Pipeline {
         const { file } = item.output;
         for (const [index, input] of (file.financialOperations ?? []).entries()) {
           const location = { n: draft.proposal.batch.n, file: fileIndex, index };
-          if (input.transition.type === 'reserve' || input.transition.action?.type === 'link-reserve') operations.push({ space: 'financialAdmissions', id: input.transition.id, value: location });
+          if (input.transition.type === 'reserve' || input.transition.type === 'reserve-many' || input.transition.action?.type === 'link-reserve') operations.push({ space: 'financialAdmissions', id: input.transition.id, value: location });
           for (const [key] of input.recordCommitments ?? []) operations.push({ space: 'financialRecordProvenance', id: key, value: location });
         }
         for (const [index, input] of (file.mintOperations ?? []).entries()) if (input.op === 'rq' && file.mintOutcomes?.[index]?.reason === 'accepted') {

@@ -182,7 +182,7 @@ test('local regtest HTTP stack: one click signs the mint and reservation, return
   assert.equal(f.calls.some(call => call.path.startsWith('/mint/deployment/')), false);
 });
 
-test('mint all returns promptly, keeps reads responsive, and signs sequentially without mining rounds', async t => {
+test('mint all returns promptly, keeps reads responsive, and signs a bulk order without mining rounds', async t => {
   const f = await dashboardFixture(t), { call, dashboard } = await start(t, f);
   let release; f.pause(new Promise(resolve => { release = resolve; }));
   const response = await call('/api/mint-all', {}); assert.equal(response.status, 202);
@@ -190,7 +190,8 @@ test('mint all returns promptly, keeps reads responsive, and signs sequentially 
   const repeated = await (await call('/api/mint-all', {})).json(); assert.equal(repeated.id, dashboard.state.batch.id);
   release(); await dashboard.state.batchTask;
   assert.equal(dashboard.state.batch.completed, 2); assert.equal(dashboard.state.batch.failed, 0);
-  assert.equal(f.packets.length, 4); assert.equal(f.packets[0].request.block, '12'); assert.equal(f.packets[2].request.block, '11');
+  assert.equal(f.packets.length, 1); assert.deepEqual(f.packets[0].terms.members.map(m => m.block), ['11', '12']);
+  assert.equal(f.packets[0].reserve.type, 'reserve-n');
 });
 
 test('unknown reservation retry preserves exact signatures and action identity', async t => {
@@ -226,10 +227,11 @@ test('untrusted remote failures expose only bounded codes, never signed packets 
   assert.deepEqual(await response.json(), { error: 'dashboard_request_failed' });
 });
 
-test('dashboard assets reuse the existing wallet implementation and stylesheet exactly', async () => {
-  for (const [kit, source] of [['wallet.js', 'js/inscribe/wallet.js'], ['console.css', 'console.css']]) {
-    assert.deepEqual(await readFile(new URL('../dashboard/' + kit, import.meta.url)), await readFile(new URL('../../playground/console/' + source, import.meta.url)));
-  }
+test('dashboard bundle preserves the existing wallet API, adds bulk and reuses the stylesheet exactly', async () => {
+  const legacy = await import('../../playground/console/js/inscribe/wallet.js'), current = await import('../dashboard/wallet.js');
+  for (const key of Object.keys(legacy)) assert.equal(typeof current[key], typeof legacy[key], key);
+  assert.equal(typeof current.TapWalletBulkMint, 'function');
+  assert.deepEqual(await readFile(new URL('../dashboard/console.css', import.meta.url)), await readFile(new URL('../../playground/console/console.css', import.meta.url)));
 });
 
 test('only one dashboard can own a signer journal; an occupied port does not leave a runtime lock', async t => {
@@ -269,7 +271,7 @@ test('dashboard resumes an existing numeric-block CLI action without changing it
 
 test('mint all reports deployment requirements without pretending a request was signed', async t => {
   const f = await dashboardFixture(t), { call, dashboard } = await start(t, f);
-  f.service.mintQuote = async ({ asset }) => ({ state: 'deployment_needed', asset, catalogAsset: asset, deploymentNeeded: true, payable: false });
+  f.service.deploymentState = async asset => ({ state: 'awaiting_player_deploy', asset, catalogAsset: asset });
   await call('/api/mint-all', {}); await dashboard.state.batchTask;
   assert.equal(dashboard.state.batch.completed, 0); assert.equal(dashboard.state.batch.deploymentNeeded.length, 2);
   assert.ok(dashboard.state.batch.deploymentNeeded[0].deploymentLink.startsWith(f.service.origin + '/mint/'));

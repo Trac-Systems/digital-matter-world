@@ -1,6 +1,7 @@
 import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
 import { financialFeeKey } from './financial-fee-identity.mjs';
+import { tapBurnAddress } from '../../rules/src/tap-burn.js';
 
 const sum = rows => rows.reduce((n, row) => n + BigInt(row.amount), 0n).toString();
 const clean = row => Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined));
@@ -29,6 +30,34 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
       const t = input.transition, a = t.action, e = input.evidence, id = t.id;
       const action = a?.type ?? t.type, provenance = { batch, observation: rules.decimalV2(file.observation), index,
         evidence: rules.hashObject(e) };
+      if (t.type === 'reserve-many' || t.type.startsWith('bulk-')) {
+        const manifest = t.terms ?? get('accountRecords', 'fp/' + id)?.manifest;
+        check(manifest, 'bulk_public_terms');
+        if (t.type === 'reserve-many') put('publicFinancialTerms', id, { id, owner: manifest.owner, asset: manifest.asset,
+          amount: manifest.totalAmount, block: null, kind: 'tap', receiver: manifest.receiver, payer: manifest.payer,
+          expiry: manifest.expires, deployment: manifest.deployment, price: manifest.payableFeeAtoms, bulk: true, count: manifest.members.length });
+        if (['bulk-fund', 'bulk-credit'].includes(t.type)) for (const [group, amount] of e.paid.entries()) {
+          if (amount === '0') continue;
+          const key = rules.hashObject(['dmw-public-bulk-payment-v1', id, e.reference, group]);
+          if (!get('publicResults/payments', key)) {
+            put('publicResults/payments', key, { id: key, requestId: id, owner: manifest.owner,
+              payer: manifest.payer, block: e.block.height, reference: e.reference, group, to: manifest.groups[group].to, ticker: 'tap',
+              kind: 'tap', amount, total: amount, allocated: amount, action: 'paid', final: true, confirmations: e.confirmations, provenance });
+            if (manifest.groups[group].to === tapBurnAddress(manifest.bitcoinNetwork)) {
+              const burn = get('publicSummaries', 'burn') ?? { tap: '0', ethereum: '0', meaning: 'verified_accepted_payment_receipts' };
+              put('publicSummaries', 'burn', { ...burn, tap: String(BigInt(burn.tap) + BigInt(amount)), batch });
+            }
+          }
+        }
+        if (t.type === 'bulk-finish') for (const m of e.members) {
+          put('publicMintReceipts', m.memberId, { inscription: m.inscription, provenance, orderId: id, index: m.index });
+          put('minted', rules.mintPlotKey(manifest.asset, m.block, manifest.supplyScope), { id: m.memberId, batch, evidence: rules.hashObject(e) });
+          put('feedBlockChanges', 'mint/' + m.memberId, { block: m.block, asset: manifest.asset });
+        }
+        financial.push({ id: rules.hashObject(['dmw-public-financial-event-v2', t]), type: 'financial_' + t.type.replaceAll('-', '_'),
+          data: { requestId: id, owner: manifest.owner, asset: manifest.asset, amount: manifest.totalAmount, action: t.type, state: e.state }, provenance });
+        continue;
+      }
       if (t.type === 'reserve' || action === 'link-reserve') put('publicFinancialTerms', id, publicFinancialTerms(id, e, a));
       const terms = get('publicFinancialTerms', id), owner = e.owner ?? a?.owner ?? terms?.owner ??
         get('accountRecords', 'bc/' + id)?.owner ?? get('accountRecords', 'fc/' + (a?.operation?.credit ?? id))?.owner;
@@ -101,11 +130,18 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
           role: 'custody', batch, source: 'accepted_custody_liability' });
       }
     }
+    if (id.startsWith('fp/bulk-credit/')) put('publicResults/bulkCredits', id.slice('fp/bulk-credit/'.length), row && { ...row, batch });
   }
   check(quarantined >= 0n, 'public_quarantine_count');
   put('publicFinancialHealth', 'quarantined', String(quarantined));
   for (const id of requests) {
     const terms = get('publicFinancialTerms', id), obligation = get('accountRecords', 'ao/' + id), funding = get('accountRecords', 'fp/' + id), capacity = get('accountRecords', 'dc/' + id);
+    if (funding?.kind === 'bulk-v1') {
+      put('publicResults/mints', id, { ...terms, id, requestId: id, state: funding.state,
+        funding: { state: funding.state, paid: funding.paid, receiptRoot: funding.receiptRoot }, issuedMask: funding.issuedMask,
+        finishedMask: funding.finishedMask, releasedMask: funding.releasedMask, permitRoot: funding.permitRoot, batch, source: 'accepted_bulk_delta' });
+      continue;
+    }
     if (obligation) {
       const state = capacity?.state === 'minted' ? 'minted' : obligation.state === 'consumed' ? 'permit_issued' :
         obligation.state === 'refunded' ? funding?.state ?? 'refunded' : funding?.paid.some(n => n !== '0') ?

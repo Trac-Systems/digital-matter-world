@@ -25,8 +25,8 @@ export const linkWalletMessage = (network, id, paymentHash) => `dmw-link-payment
 // Only public, bounded checkout projections. No whole row, registry, RPC URL,
 // agent signature, wallet journal or committee secret is sent to the browser.
 export class WebCheckout {
-  constructor({ store, intents = store, config, reads, post, mints, links, inflight }) {
-    Object.assign(this, { store, intents, reads, post, mints, links, inflight }); this.target = webTarget(config); this.gate = serial();
+  constructor({ store, intents = store, config, reads, post, mints, bulkMints, links, inflight }) {
+    Object.assign(this, { store, intents, reads, post, mints, bulkMints, links, inflight }); this.target = webTarget(config); this.gate = serial();
     this.records = createRecordHighlights(store);
   }
   enrollLink(input) { return this.gate(async () => {

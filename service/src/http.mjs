@@ -14,6 +14,7 @@ import { financialAsset } from '../../rules/src/financial-mint.js';
 import { deploymentAssetId } from './mint-assets.mjs';
 import { responseBudget } from './response-budget.mjs';
 import { publicMintClientIP } from './public-mint-admission.mjs';
+import { handleBulkMintHTTP } from './bulk-mint-http.mjs';
 async function body(req, maxBytes) {
   check(!req.headers['content-length'] || Number(req.headers['content-length']) <= maxBytes, 'body_limit', 413);
   check((req.headers['content-type'] ?? '').split(';')[0] === 'application/json', 'content_type', 415);
@@ -21,7 +22,7 @@ async function body(req, maxBytes) {
   for await (const chunk of req) { size += chunk.length; check(size <= maxBytes, 'body_limit', 413); chunks.push(chunk); }
   return Buffer.concat(chunks).toString('utf8');
 }
-export async function serve({ listener, intake, files, headers, mints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, inflight, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
+export async function serve({ listener, intake, files, headers, mints, bulkMints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, inflight, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond }) {
   check(Number.isSafeInteger(responseTimeoutMs) && responseTimeoutMs > 0 && responseTimeoutMs <= 2000, 'response_timeout');
   check(Number.isSafeInteger(bitmapSubmitBytes) && bitmapSubmitBytes > 0, 'bitmap_submit_bytes');
   check(host === '127.0.0.1', 'local_listener_required'); let inFlight = 0;
@@ -43,6 +44,7 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         res.end(JSON.stringify(result)); return;
       }
       if (await web.handle(req, res, body)) return;
+      if (await handleBulkMintHTTP(req, res, body, bulkMints)) return;
       if (headers && await headers.serve(req, res)) return;
       const operatorURL = new URL(req.url, 'http://127.0.0.1');
       if (['/internal/mint-sender/payouts', '/internal/mint-sender/payouts/prepare', '/internal/mint-sender/payouts/record'].includes(operatorURL.pathname)) {
@@ -272,7 +274,9 @@ export async function serve({ listener, intake, files, headers, mints, links, fi
         // Arbitrary upstream error strings may contain private endpoint details.
         const code = error.code === 'trac_address_required' ? TRAC_ADDRESS_ERROR : /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'request_failed';
         if (code === 'request_failed') console.error('http_request_failed', JSON.stringify(redactedError(error)));
-        res.end(JSON.stringify({ error: code, ...(code === 'someone_paid_first' ? error.publicRefund : {}), ...([429, 503].includes(res.statusCode) ? { retryable: true } : {}), ...(code === 'upgrade_required' ? {
+        res.end(JSON.stringify({ error: code, ...(req.url.startsWith('/mint/bulk/') || req.url.startsWith('/web-api/mint/bulk/') ?
+          { retryable: [429, 503].includes(res.statusCode), ...(error.details?.indices ? { details: { indices: error.details.indices } } : {}) } : {}),
+          ...(code === 'someone_paid_first' ? error.publicRefund : {}), ...([429, 503].includes(res.statusCode) ? { retryable: true } : {}), ...(code === 'upgrade_required' ? {
           code: KIT_UPGRADE_CODE, message: KIT_UPGRADE_MESSAGE, upgrade: { version: KIT_VERSION, url: KIT_DOWNLOAD_URL }
         } : error.code === 'trac_address_required' ? { code: error.code } : {}) }));
       } else res.destroy();

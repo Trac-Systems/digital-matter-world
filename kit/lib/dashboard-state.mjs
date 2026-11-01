@@ -1,9 +1,11 @@
+import { hashObject } from '../../rules/src/core.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runTool } from './tools.mjs';
 import { stableJSON, compoundIdentityV4Active, COMPOUND_IDENTITY_V4_MERGES, validateCompoundMerges } from '../../rules/src/index.js';
 import { nextCursor, isAsset } from './api-values.mjs';
 import { safeCode } from './errors.mjs';
 import { financialMintId } from '../../rules/src/financial-mint.js';
+import { quoteBulkMint, makeBulkMint } from './bulk-mint.mjs';
 import { wireIdentities, decodeTracAddress, encodeTracAddress } from '../../rules/src/trac-address.js';
 import { verifyBinding } from '../../rules/src/payout-bindings.mjs';
 import { compoundTickerMessage, validateOfficialTicker } from '../../rules/src/ticker-grammar.js';
@@ -17,6 +19,8 @@ export function dashboardCheck(ok, code, status = 400) {
 export const dashboardError = error => safeCode(error?.code ?? error?.message, 'dashboard_request_failed');
 
 const digest = value => createHash('sha256').update(value).digest('hex');
+// Open bulk orders per agent, as the gateway's bulkOrdersPerAgent default; later orders wait for a slot.
+const BULK_LIVE_ORDERS = 24;
 const assetId = asset => /^p2:(0|[1-9][0-9]{0,77})$/.test(asset ?? '') || /^p[0-9a-z]{1,23}$/.test(asset ?? '');
 const canonicalAsset = asset => /^p[0-9a-z]{1,23}$/.test(asset ?? '')
   ? 'p2:' + [...asset.slice(1)].reduce((n, c) => n * 36n + BigInt(parseInt(c, 36)), 0n) : asset;
@@ -125,6 +129,10 @@ export class DashboardState {
     this.tnkCache = null; this.tnkTail = Promise.resolve(); this.tnkSending = new Set(); this.tnkStatus = new Map();
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_crafts (scope TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,id))');
     this.craftTail = Promise.resolve(); this.crafting = new Set(); this.craftEvents = null; this.craftContext = null; this.craftReads = new Map();
+    this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_bulk (scope TEXT NOT NULL, action TEXT NOT NULL, order_id TEXT, live INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,action)); CREATE INDEX IF NOT EXISTS dashboard_bulk_live ON dashboard_bulk(scope,live); CREATE INDEX IF NOT EXISTS dashboard_bulk_order ON dashboard_bulk(scope,order_id); CREATE TABLE IF NOT EXISTS dashboard_bulk_planner (scope TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS dashboard_bulk_seen (scope TEXT NOT NULL, planner TEXT NOT NULL, slot TEXT NOT NULL, PRIMARY KEY(scope,planner,slot));');
+    const planner = this.journal.db.prepare('SELECT value FROM dashboard_bulk_planner WHERE scope=?').get(this.journal.scope);
+    this.batch = planner ? JSON.parse(planner.value) : null;
+
   }
   activate() {
     const db = this.journal.db;
@@ -139,6 +147,7 @@ export class DashboardState {
       }
       db.prepare('INSERT OR REPLACE INTO dashboard_runtime(scope,pid,instance) VALUES(?,?,?)').run(this.journal.scope, process.pid, this.instance);
       db.exec('COMMIT'); this.active = true;
+      if (this.batch && ['running', 'waiting_slots'].includes(this.batch.state)) this.bulkTimer = setTimeout(() => this.resumeBulkPlanner(), 0).unref();
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   savedMints() {
@@ -480,43 +489,223 @@ export class DashboardState {
     try { status = await this.status(id); } catch (error) { status = { state: 'unknown', error: dashboardError(error) }; }
     return { requestId: id, status, paymentLink: this.service.paymentLink(id, this.agent.paymentOrigin) };
   }
+  saveBulkPlanner() {
+    this.journal.db.prepare('INSERT INTO dashboard_bulk_planner(scope,value) VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET value=excluded.value')
+      .run(this.journal.scope, JSON.stringify(this.batch));
+  }
+  saveBulkOrder(row) {
+    this.journal.db.prepare('INSERT INTO dashboard_bulk(scope,action,order_id,live,value) VALUES(?,?,?,?,?) ON CONFLICT(scope,action) DO UPDATE SET order_id=excluded.order_id,live=excluded.live,value=excluded.value')
+      .run(this.journal.scope, row.actionId, row.orderId ?? null, row.terminal ? 0 : 1, JSON.stringify(row));
+  }
+  bulkOrder(id) {
+    const row = this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? AND order_id=?').get(this.journal.scope, id);
+    return row ? JSON.parse(row.value) : null;
+  }
+  bulkLive() {
+    return this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? AND live=1 ORDER BY rowid LIMIT 5').all(this.journal.scope).map(row => JSON.parse(row.value));
+  }
+  async bulkTerms(id) {
+    dashboardCheck(requestId(id), 'invalid_bulk_order');
+    const { validateBulkTerms, validateBulkFees, bulkOrderId } = await import('../../rules/src/bulk-mint.js');
+    const response = await this.service.bulkMintTerms(id), terms = validateBulkTerms(response.terms);
+    validateBulkFees(terms, response.feeManifest);
+    dashboardCheck(response.orderId === id && terms.owner === this.agent.owner && terms.network === this.agent.network &&
+      terms.bitcoinNetwork === this.agent.bitcoinNetwork && bulkOrderId(terms.network, terms.owner, terms.nonce) === id, 'not_your_request', 403);
+    const saved = this.bulkOrder(id);
+    dashboardCheck(!saved?.quote || hashObject(terms) === saved.quote.quoteId, 'bulk_terms_changed', 409);
+    return response;
+  }
+  async bulkStatus(id) {
+    dashboardCheck(requestId(id), 'invalid_bulk_order');
+    const [status, response] = await Promise.all([this.service.bulkMintStatus(id), this.bulkTerms(id)]);
+    dashboardCheck(status.orderId === id && status.termsHash === hashObject(response.terms), 'bulk_terms_changed', 409);
+    return status;
+  }
+  async bulkPage(id, kind, page) {
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    dashboardCheck(Number.isSafeInteger(page.offset) && page.offset >= 0 && page.offset < BULK_LIMITS.members &&
+      Number.isSafeInteger(page.limit) && page.limit >= 1 && page.limit <= (kind === 'permit' ? BULK_LIMITS.permitPage : BULK_LIMITS.members), 'invalid_bulk_page');
+    await this.bulkTerms(id);
+    return kind === 'members' ? this.service.bulkMintMembers(id, page) : this.service.bulkMintPermit(id, page);
+  }
+  async bulkQuote(value) {
+    const payout = await this.payout();
+    dashboardCheck(value && Object.keys(value).every(k => ['actionId', 'asset', 'deployment', 'blocks', 'payer', 'receiver'].includes(k)), 'invalid_bulk_quote');
+    try { return await runTool(this.context, 'quote_bulk_mint', { ...value, payer: value.payer ?? payout, receiver: value.receiver ?? payout }); }
+    catch (error) { if (!error.status) error.status = 400; throw error; }
+  }
+  async bulkRequest(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    // The kit validates the ceilings and signs only the saved quote.
+    dashboardCheck(typeof value?.actionId === 'string', 'invalid_bulk_request');
+    const saved = this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? AND action=?').get(this.journal.scope, value.actionId);
+    let result;
+    try { result = await runTool(this.context, 'mint_bulk_on_chain', value); }
+    catch (error) { if (!error.status) error.status = 400; throw error; }
+    if (saved && result.state !== 'dry-run') {
+      const row = JSON.parse(saved.value); this.completeBulkOrder(row, result);
+      if (this.batch?.state === 'needs_attention') { this.batch.state = 'running'; this.saveBulkPlanner(); this.resumeBulkPlanner(); }
+    }
+    return result;
+  }
+  async bulkPayment(value) {
+    dashboardCheck(value && Object.keys(value).sort().join(',') === 'commitTxid,orderId,paymentId,revealTxid' && requestId(value.orderId) &&
+      (value.paymentId === null || /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(value.paymentId)) &&
+      ['commitTxid', 'revealTxid'].every(k => value[k] === null || requestId(value[k])) &&
+      [value.paymentId, value.commitTxid, value.revealTxid].some(Boolean), 'invalid_bulk_payment');
+    await this.bulkTerms(value.orderId);
+    return this.service.reportBulkPayment(value);
+  }
+  async refreshBulkOrder(row) {
+    if (!row.orderId || !row.prepared) return row;
+    try {
+      const status = await this.bulkStatus(row.orderId); row.status = status; row.error = null;
+      // Issued unresolved orders retain a slot. No local inference from time,
+      // a Bitcoin broadcast, or an absent index row can free it.
+      row.terminal = ['minted', 'expired', 'credited'].includes(status.state) && status.progress?.unresolved === 0;
+      this.saveBulkOrder(row);
+    } catch (error) { row.error = dashboardError(error); this.saveBulkOrder(row); }
+    return row;
+  }
+  async bulkOrders({ offset = 0, limit = 25 } = {}) {
+    dashboardCheck(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
+    // Keep unresolved orders visible even after newer completed orders fill a page.
+    const rows = this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? ORDER BY live DESC, rowid DESC LIMIT ? OFFSET ?')
+      .all(this.journal.scope, limit + 1, offset).map(row => JSON.parse(row.value));
+    const orders = [];
+    for (let i = 0; i < Math.min(limit, rows.length); i += 4) orders.push(...await Promise.all(rows.slice(i, Math.min(i + 4, limit)).map(row => this.refreshBulkOrder(row))));
+    this.resumeBulkPlanner();
+    return { orders, next: rows.length > limit ? offset + limit : null, planner: this.batch };
+  }
   mintAll() {
     dashboardCheck(!this.closed, 'dashboard_stopping', 503);
     if (this.batchTask) return this.batch;
-    this.batch = { id: randomUUID(), state: 'running', completed: 0, failed: 0, deploymentNeeded: [], errors: [] };
-    this.batchTask = (async () => {
-      let cursor, restarts = 0; const seen = new Set(), cursors = new Set();
-      do {
-        if (this.closed) break;
+    if (!this.batch || this.batch.state === 'complete') {
+      this.batch = { id: randomUUID(), state: 'running', completed: 0, failed: 0, deploymentNeeded: [], errors: [], cursor: null,
+        sourceEnd: false, pending: [], restarts: 0, cursors: [] };
+      this.saveBulkPlanner();
+    } else if (['failed', 'needs_attention'].includes(this.batch.state)) {
+      // An explicit repeat resumes the same cursor, nonce and any signed packet.
+      // A transient quote/admission error never strands the planner or starts a new order.
+      for (const row of this.bulkLive()) if (!row.prepared) { row.error = null; this.saveBulkOrder(row); }
+      this.batch.state = 'running'; delete this.batch.error; this.saveBulkPlanner();
+    }
+    this.resumeBulkPlanner(); return this.batch;
+  }
+  resumeBulkPlanner() {
+    if (this.closed || this.batchTask || !this.batch || !['running', 'waiting_slots'].includes(this.batch.state)) return;
+    this.batchTask = this.runBulkPlanner().catch(error => {
+      this.batch.state = 'failed'; this.batch.error = dashboardError(error); this.saveBulkPlanner();
+    }).finally(() => {
+      this.batchTask = null;
+      if (!this.closed && ['running', 'waiting_slots'].includes(this.batch.state)) { clearTimeout(this.bulkTimer); this.bulkTimer = setTimeout(() => this.resumeBulkPlanner(), 5000).unref(); }
+    });
+  }
+  async runBulkPlanner() {
+    const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
+    const planner = this.batch; planner.state = 'running'; this.saveBulkPlanner();
+    await Promise.all(this.bulkLive().map(row => this.refreshBulkOrder(row)));
+    while (!this.closed) {
+      const live = this.bulkLive();
+      // Finish a saved preparation/submission before considering another nonce.
+      const unfinished = live.find(row => !row.prepared && !row.error);
+      if (unfinished) { await this.prepareBulkOrder(unfinished); continue; }
+      if (live.some(row => row.error && !row.prepared)) { planner.state = 'needs_attention'; break; }
+      if (live.length >= (this.bulkLiveOrders ?? BULK_LIVE_ORDERS)) { planner.state = 'waiting_slots'; break; }
+      // Read a bounded number of authenticated claim pages per turn. Cursor and
+      // deduplication survive stale snapshots and process restarts.
+      let pages = 0;
+      while (!planner.sourceEnd && planner.pending.length < BULK_LIMITS.members && pages++ < 3) {
         let page;
-        try { page = await this.claims({ cursor, limit: 25 }); }
+        try { page = await this.claims({ cursor: planner.cursor ?? undefined, limit: 50 }); }
         catch (error) {
-          if (['page_cursor_stale', 'claimed_cursor_stale'].includes(error.code) && restarts++ < 3) { cursor = undefined; cursors.clear(); continue; }
+          if (['page_cursor_stale', 'claimed_cursor_stale'].includes(error.code ?? error.message) && planner.restarts++ < 3) {
+            planner.cursor = null; planner.cursors = []; this.saveBulkPlanner(); continue;
+          }
           throw error;
         }
+        const payout = page.claims.some(row => row.canMint) ? await this.payout() : null;
+        const additions = [], seen = [];
         for (const row of page.claims) {
-          if (this.closed) break;
-          const key = canonicalAsset(row.asset) + '/' + row.block;
-          if (seen.has(key)) continue;
-          seen.add(key);
+          const slot = stableJSON([row.asset, row.deployment ?? null, row.block]);
+          if (this.journal.db.prepare('SELECT 1 FROM dashboard_bulk_seen WHERE scope=? AND planner=? AND slot=?').get(this.journal.scope, planner.id, slot)) continue;
+          seen.push(slot);
           if (!row.canMint) {
-            if (row.deploymentLink && this.batch.deploymentNeeded.length < 20)
-              this.batch.deploymentNeeded.push({ asset: row.asset, name: row.name, block: row.block, state: 'deployment_needed', deploymentLink: row.deploymentLink });
+            if (row.deploymentLink && planner.deploymentNeeded.length < 20) planner.deploymentNeeded.push(row);
             continue;
           }
-          try {
-            const result = await this.mint({ asset: row.asset, block: row.block });
-            if (result.requestId) this.batch.completed++;
-            else if (this.batch.deploymentNeeded.length < 20) this.batch.deploymentNeeded.push({ asset: row.asset, name: row.name, block: row.block, state: result.state, deploymentLink: result.deploymentLink });
+          const candidate = await this.candidate(row);
+          let deployment = row.deployment ?? candidate.deployment;
+          if (!deployment) {
+            const state = await this.service.deploymentState(row.asset);
+            deployment = state.entry?.id ?? state.deploymentId ?? state.deployment?.inscription ?? state.deployment?.id ?? state.inscription;
           }
-          catch (error) { this.batch.failed++; if (this.batch.errors.length < 20) this.batch.errors.push({ asset: row.asset, name: row.name, block: row.block, error: dashboardError(error) }); }
+          if (!/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment ?? '')) {
+            if (planner.deploymentNeeded.length < 20) planner.deploymentNeeded.push({ ...row, state: 'deployment_needed', deploymentLink: this.service.deploymentLink(row.asset, this.agent.address, this.agent.paymentOrigin) });
+            continue;
+          }
+          additions.push({ asset: candidate.find.asset, deployment, block: String(row.block), payer: payout, receiver: payout });
         }
-        cursor = page.next;
-        dashboardCheck(!cursor || !cursors.has(cursor), 'repeated_cursor', 502); cursors.add(cursor);
-      } while (cursor);
-      this.batch.state = this.closed ? 'stopped' : 'complete';
-    })().catch(error => { this.batch.state = 'failed'; this.batch.error = dashboardError(error); }).finally(() => { this.batchTask = null; });
-    return this.batch;
+        dashboardCheck(!page.next || !planner.cursors.includes(page.next), 'repeated_cursor', 502);
+        planner.cursor = page.next ?? null; planner.sourceEnd = !page.next;
+        if (page.next) planner.cursors.push(page.next);
+        planner.pending.push(...additions);
+        this.journal.db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const slot of seen) this.journal.db.prepare('INSERT OR IGNORE INTO dashboard_bulk_seen(scope,planner,slot) VALUES(?,?,?)').run(this.journal.scope, planner.id, slot);
+          this.saveBulkPlanner(); this.journal.db.exec('COMMIT');
+        } catch (error) { this.journal.db.exec('ROLLBACK'); throw error; }
+      }
+      if (!planner.pending.length) {
+        if (planner.sourceEnd) { planner.state = 'complete'; break; }
+        // Empty pages with a cursor are work pages, not the end of the list.
+        planner.state = 'waiting_slots'; break;
+      }
+      const first = planner.pending[0], group = row => stableJSON([row.asset, row.deployment, row.payer, row.receiver]);
+      const selected = planner.pending.filter(row => group(row) === group(first)).sort((a, b) => BigInt(a.block) < BigInt(b.block) ? -1 : 1).slice(0, BULK_LIMITS.members);
+      const chosen = new Set(selected);
+      const row = { actionId: 'bulk-' + randomUUID(), planner: planner.id, input: { asset: first.asset, deployment: first.deployment, payer: first.payer, receiver: first.receiver, blocks: selected.map(row => row.block) }, terminal: false };
+      planner.pending = planner.pending.filter(row => !chosen.has(row));
+      // Save the selected set and its action ID atomically before quoting.
+      this.journal.db.exec('BEGIN IMMEDIATE');
+      try { this.saveBulkOrder(row); this.saveBulkPlanner(); this.journal.db.exec('COMMIT'); }
+      catch (error) { this.journal.db.exec('ROLLBACK'); throw error; }
+      await this.prepareBulkOrder(row);
+    }
+    this.saveBulkPlanner();
+  }
+  completeBulkOrder(row, status) {
+    // Concurrent exact HTTP retries may both have loaded the pre-submit row.
+    // Use the latest durable row before advancing the cursor/counters once.
+    const persisted = this.journal.db.prepare('SELECT value FROM dashboard_bulk WHERE scope=? AND action=?').get(this.journal.scope, row.actionId);
+    if (persisted && JSON.parse(persisted.value).prepared) row = JSON.parse(persisted.value);
+    if (row.prepared) { row.status = status; row.error = null; this.saveBulkOrder(row); return; }
+    row.status = status; row.error = null; row.prepared = true;
+    if (this.batch?.id === row.planner) {
+      this.batch.completed += row.quote.terms.members.length;
+      const { blocks, ...input } = row.input;
+      for (const member of row.quote.deferred) this.batch.pending.push({ ...input, block: member.block });
+    }
+    this.journal.db.exec('BEGIN IMMEDIATE');
+    try { this.saveBulkOrder(row); if (this.batch) this.saveBulkPlanner(); this.journal.db.exec('COMMIT'); }
+    catch (error) { this.journal.db.exec('ROLLBACK'); throw error; }
+  }
+  async prepareBulkOrder(row) {
+    try {
+      row.quote ??= await quoteBulkMint(this.agent, { actionId: row.actionId, ...row.input });
+      row.orderId = row.quote.orderId; this.saveBulkOrder(row);
+      if (!row.quote.terms) { row.terminal = true; this.saveBulkOrder(row); return; }
+      // Admission signs a saved set. Each order still requires its own wallet
+      // approval; preparing later orders grants no wallet spending authority.
+      const status = await makeBulkMint(this.agent, { actionId: row.actionId, quoteId: row.quote.quoteId,
+        maxPayableFeeAtoms: row.quote.terms.payableFeeAtoms, maxSetAsideSats: row.quote.terms.mintFunding.satoshis });
+      this.completeBulkOrder(row, status);
+    } catch (error) {
+      row.error = dashboardError(error); this.saveBulkOrder(row);
+      this.batch.failed++; this.batch.state = 'needs_attention';
+      if (this.batch.errors.length < 20) this.batch.errors.push({ actionId: row.actionId, ...row.input, error: row.error });
+      this.saveBulkPlanner();
+    }
   }
   // Human label of a ledger key: pattern name, compound recipe or imported
   // pattern name. The key itself is only shown as a muted detail.
@@ -1223,7 +1412,7 @@ export class DashboardState {
     return { saved: true };
   }
   async close() {
-    this.closed = true; this.wakeSend?.();
+    this.closed = true; clearTimeout(this.bulkTimer); this.wakeSend?.();
     try { await this.batchTask; await Promise.allSettled([...this.inflight.values()]); await this.sendTail; await this.tnkTail; await this.craftTail; }
     finally {
       if (this.active) this.journal.db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance);

@@ -6,6 +6,7 @@ import { ordinalCodec } from '../rules/src/integers-v2.js';
 import { financialRecoveryKey } from './financial-records.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { canonicalJSON, sha256, utf8ToBytes, bytesToHex } from './signing.js';
+import { bulkCustodyBacking } from './bulk-mint.js';
 
 const check = (ok, reason) => { if (!ok) throw Error(reason); };
 const hex = x => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
@@ -39,6 +40,10 @@ export async function applyFinancialLifecycle(store, op, { network, height, exec
   const signed = owner => check(hex(owner) && clock.valid(a.until) && clock.compare(a.until, height) >= 0 &&
     typeof a.sig === 'string' && /^[0-9a-f]{128}$/.test(a.sig) && ed25519.verify(a.sig, lifecycleDigest(network, a), owner, { zip215: false }), 'lifecycle_signature');
   if (!a.type.startsWith('recovery-')) await financialUnfrozen(store, ['fp/' + a.id, 'fl/' + a.id, 'bc/' + a.id, 'dc/' + a.id]);
+  if (['custody-claim', 'custody-settle', 'custody-reopen'].includes(a.type)) {
+    const row = await get('bc/' + a.id), funding = row && await get('fp/' + row.request);
+    if (funding?.kind === 'bulk-v1') await bulkCustodyBacking(store, a.id, row, funding);
+  }
 
   if (a.type === 'ticker-refund') {
     exact(['request', 'reference', 'reason']);

@@ -6,6 +6,8 @@ import { financialLifecyclePlan, reserveCapacity, terminalCapacity } from './fin
 import { publicMintActive, publicPlotId, claimsNeverCloseActive } from './public-mint.js';
 import { validatePublicScanClaim } from './public-claims.js';
 import { publicPaymentV2Active, publicPaymentKey } from './public-payment.js';
+import { bulkFinancialPlan, bulkTransition, validateBulkTransition } from './bulk-execution.js';
+import { bulkBytes, BULK_LIMITS } from './bulk-mint.js';
 
 // Financial evidence is independently reconstructed by every signer. These
 // plans bind it to exact notary effects; a gateway cannot smuggle arbitrary
@@ -23,6 +25,7 @@ async function financialEffects(input, { read, height, document }) {
   const clock = ordinalCodec(typeof height === 'string');
   const t = input.transition, evidence = hashObject(input.evidence);
   assert(t && hex(t.id, 32), 'financial_identity');
+  if (bulkTransition(t)) return bulkFinancialPlan(input, { read, height, document });
   if (t.type === 'public-payment') {
     const e = input.evidence, register = t.action === 'register';
     assert(publicPaymentV2Active(document, height) && ['register', 'reveal'].includes(t.action) &&
@@ -121,6 +124,9 @@ export function financialBatchOperations(inputs, document) {
   financialReserveGroups(inputs);
   const operations = [];
   for (const input of inputs) {
+    if (bulkTransition(input.transition)) {
+      validateBulkTransition(input.transition); bulkBytes(input.evidence, BULK_LIMITS.evidenceBytes, 'bulk_evidence_bytes');
+    }
     assert(exactKeys(input, ['transition', 'evidence', 'operations', ...(input.chainAnchor ? ['chainAnchor'] : []), ...(input.recordCommitments ? ['recordCommitments'] : []), ...(input.reserveGroup !== undefined ? ['reserveGroup'] : [])]) && Array.isArray(input.operations) && input.operations.length > 0 &&
       input.operations.every(op => op.v === 2 && ['ar', 'fp', 'br'].includes(op.op)), 'financial_batch_input');
     operations.push(...input.operations);
@@ -130,7 +136,7 @@ export function financialBatchOperations(inputs, document) {
 
 // Only the new nonce-authorized path may share one account operation. Keep
 // individual inputs/identities so accepted evidence and recovery stay addressable.
-export const nonceReservation = t => t?.type === 'reserve' && t.action?.type === 'reserve-n';
+export const nonceReservation = t => (t?.type === 'reserve' || t?.type === 'reserve-many') && t.action?.type === 'reserve-n';
 export function financialReserveGroups(inputs) {
   const groups = [];
   for (let i = 0; i < inputs.length;) {

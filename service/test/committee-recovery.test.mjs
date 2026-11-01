@@ -71,3 +71,32 @@ test('a batch with operations but no new observation files asks signers for read
     assert.ok(asked.length >= 5 && asked.every(url => url === '/batch-ready'));
   } finally { for (const s of servers) { s.closeAllConnections(); await new Promise(resolve => s.close(resolve)); } await store.close(); }
 });
+
+for (const wrongMember of [false, true]) test(`bulk detached results ${wrongMember ? 'reject a different member' : 'recover by order and index after restart'}`, async () => {
+  const { bulkMemberId } = await import('../../rules/src/bulk-mint.js');
+  const store = await Store.open(await temp('committee-bulk-recovery-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const proposal = { network, kind: 'mint', version: 'bulk-v1', orderId: '12'.repeat(32), index: 63 };
+    const id = bulkMemberId(proposal.orderId, proposal.index), digest = '34'.repeat(32), key = 'mint/' + id;
+    const permit = { digest, payload: { p: 'tap', op: 'dmt-mint', dta: id }, address: 'receiver', salt: '56'.repeat(32) };
+    const details = { id: wrongMember ? bulkMemberId(proposal.orderId, 62) : id, orderId: proposal.orderId, index: proposal.index,
+      request: { asset: 'p0', block: '163', amount: '3' }, receiver: 'receiver', permit,
+      deployment: { id: '78'.repeat(32) + 'i0', kind: 'dmt', tick: 'bulk', privilegePublicKey: '02' + '90'.repeat(32) } };
+    const signature = { r: '1', s: '2', v: 0 }, result = { permit, details, attestation: {} }, recovered = [];
+    await store.put('ceremonies', key, { id: 'ab'.repeat(32), proposal, digest, peers: ['s0', 's1', 's2'], stage: 'running', started: Date.now() });
+    committee.request = async (signer, path, body) => {
+      if (path === '/recover-result') { recovered.push(signer.id); assert.equal(body.id, id); return { status: 'complete', signature, result }; }
+      assert.equal(path, '/status'); return { digest, status: signer.id === 's0' ? 'complete' : 'running', ...(signer.id === 's0' ? { signature, result } : {}) };
+    };
+    if (wrongMember) { await assert.rejects(committee.signature(key, proposal), /signature_disagreement/); assert.deepEqual(recovered, []); }
+    else {
+      const signed = await committee.signature(key, proposal); assert.equal(signed.payload.prv.hash, digest);
+      assert.equal(signed.authorization.id, id); assert.deepEqual(recovered, ['s1', 's2']);
+      const reopened = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+      reopened.request = () => assert.fail('completed result must be durable');
+      assert.deepEqual(await reopened.signature(key, proposal), signed);
+    }
+  } finally { await store.close(); }
+});

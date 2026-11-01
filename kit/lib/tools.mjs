@@ -26,7 +26,7 @@ const witnesses = z.object({ anchor: namedAnchor, matches: namedMatches }).stric
 
 export function gameTools({ agent, history, historySync, source, strategies = {}, candidates = async () => [], compounds = async () => [] }) {
   const tools = {};
-  const register = (name, description, shape, run, readOnly = true) => { tools[name] = { description, shape, schema: z.object(shape).strict(), run: async (...args) => publicIdentities(await run(...args)), readOnly }; };
+  const register = (name, description, shape, run, readOnly = true) => { tools[name] = { description, shape, schema: z.object(shape).strict(), run: async (...args) => { const result = await run(...args); return ['quote_bulk_mint', 'mint_bulk_on_chain', 'poll_bulk_mint', 'pay_bulk_mint'].includes(name) ? result : publicIdentities(result); }, readOnly }; };
   const currentHistory = () => historySync?.available() ?? history;
   const needHistory = () => { const value = currentHistory(); check(value, 'Configure a verified header history first'); return value; };
   const discovery = run => async (...args) => {
@@ -130,6 +130,19 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
     if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`mint timing: candidate ${Date.now() - started}ms\n`);
     return agent.makeReal({ ...args, ...addresses, candidate });
   }, false);
+  register('quote_bulk_mint', 'Save an exact bulk quote and nonce for up to 64 found blocks in one deployment. Review accepted, skipped and deferred blocks before submitting.', {
+    actionId, asset: mintAsset, deployment: z.string().regex(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/),
+    blocks: z.array(decimal).min(1).max(64), receiver: z.string().min(1).max(90), payer: z.string().min(1).max(90)
+  }, args => agent.quoteBulkMint(args), false);
+  register('mint_bulk_on_chain', 'Submit the exact saved bulk quote with explicit TAP and Bitcoin set-aside ceilings. Retry the same action ID after uncertainty. Never pays from a wallet.', {
+    actionId, quoteId: hex, maxPayableFeeAtoms: decimal, maxSetAsideSats: z.number().int().nonnegative().safe(), dryRun: z.boolean().default(false)
+  }, args => agent.makeBulkMint(args), false);
+  register('poll_bulk_mint', 'Read bulk payment, permits and per-member confirmation progress. A broadcast is not a completed mint.', {
+    orderId: hex, offset: z.number().int().min(0).max(63).default(0), limit: z.number().int().min(1).max(64).default(64)
+  }, args => agent.pollBulkMint(args));
+  register('pay_bulk_mint', 'Return the bulk payment page and exact wallet transfer/set-aside plan for human approval. Never spends or broadcasts.', {
+    orderId: hex
+  }, args => agent.payBulkMint(args));
   register('asset_tickers', 'List registered tickers, each with the full pattern supply. Omitted mint choices use its official ticker.',
     { asset: deploymentAsset, after: z.string().optional(), limit: z.number().int().positive().optional() }, ({ asset, ...page }) => agent.service.assetTickers(asset, page));
   register('report_ticker_payment', 'Report explicit confirmed TAP payment inscriptions for an additional ticker; never broadcasts a payment.',

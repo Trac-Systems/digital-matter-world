@@ -12,6 +12,7 @@ import { SegmentedIntake } from './segmented-intake.mjs';
 import { StoredSettingsHistory } from './settings-history.mjs';
 import { FinancialExecution } from './financial-execution.mjs';
 import { FinancialMints } from './financial-mints.mjs';
+import { BulkMints } from './bulk-mints.mjs';
 import { verifyPendingWork, pendingFinancialWork } from './pending-work.mjs';
 import { verifyFinancialMigration } from './pending-financial.mjs';
 import { reconcileLegacySignatures } from './pending-signatures.mjs';
@@ -82,7 +83,7 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   check(store.get('meta', 'v2Activation') === pin.manifestHash, 'activation_gateway_import_required');
   const historySettings = new StoredSettingsHistory(store);
   if (reads.feeQuotes) { reads.feeQuotes.settings = () => settings.document; reads.feeQuotes.settingsHistory = historySettings; }
-  let accepted, ready = false, intake, financial, mints, links, readyCheck = null, receiptRecovery = null;
+  let accepted, ready = false, intake, financial, mints, bulkMints, links, readyCheck = null, receiptRecovery = null;
   const receiptWork = new KeyedWork();
   const fenceReceipts = current => intake.fence({ document: current.settings, successor: current.scheduledSettings, predecessor: {
     n: rules.decimalV2(current.last.n), root: current.predecessorRoot,
@@ -143,6 +144,7 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
       if (mints) { mints.document = document; mints.pendingBlocks = document.values.pendingBlocks; }
     }
     if (financial) financial.document = document;
+    if (bulkMints) bulkMints.document = document;
     if (links) links.document = document;
     if (mints) { mints.document = document; mints.pendingBlocks = document.values.pendingBlocks; }
     const capability = rules.runtimeCapabilities(document, pin.resources);
@@ -180,6 +182,8 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   }
   mints = financial ? new FinancialMints({ store, network: config.network, reads, committee, financial, document: settings.document,
     bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', resources: config.assetResources }) : null;
+  bulkMints = financial ? new BulkMints({ store, network: config.network, reads, committee, financial, document: settings.document,
+    bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', resources: config.assetResources }) : null;
   links = financial ? new FinancialLinks({ store, network: config.network, reads, financial, document: settings.document, resources: config.assetResources }) : null;
   const financialActions = financial ? new FinancialActions({ financial, reads, store }) : null;
   const custody = financial ? new FinancialCustody({ financial, reads, store, network: config.network }) : null;
@@ -187,5 +191,5 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   // On reopen the persisted head may already be at the amendment boundary.
   // Resume its fence before making fresh admission available.
   await refresh();
-  return { intake, settings, refresh, recoverReceipts, financial, mints, links, financialActions, custody, recovery };
+  return { intake, settings, refresh, recoverReceipts, financial, mints, bulkMints, links, financialActions, custody, recovery };
 }

@@ -250,6 +250,10 @@ Unclaimed blocks use a separate website flow.
 | `deploy_ticker` | Prepare an additional chosen ticker, or inscribe with an explicit Bitcoin fee ceiling; dry-run sends nothing. |
 | `report_ticker_payment` | Report explicit fee inscription IDs or expire an unpaid request; dry-run sends nothing. |
 | `mint_quote` | POST quote preview; not available under a GET-only policy. |
+| `quote_bulk_mint` | Save one nonce and exact quote for up to 64 found blocks in one deployment; review accepted, skipped and deferred members. |
+| `mint_bulk_on_chain` | Sign and submit the saved quote with explicit TAP and Bitcoin ceilings; retry the same packet. Dry-run sends nothing. |
+| `poll_bulk_mint` | Read payment, permit and confirmed member progress without spending. |
+| `pay_bulk_mint` | Return the exact wallet plan and human payment page; never spends automatically. |
 | `events` | Cursor page of public events; save sequences durably. |
 | `event` | One event and provenance. |
 | `results` | Financial summary or mints/payments/ethereum/payouts/owed/paid/links/credits/custody/linkRequests/supply page. |

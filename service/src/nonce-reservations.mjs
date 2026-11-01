@@ -1,5 +1,15 @@
 import { financialPlan, mergedReservePlans } from '../../rules/src/financial-execution.js';
 import { rules } from './rules.mjs';
+import { isBulkTransition } from './bulk-mint-admission.mjs';
+
+export async function financialTransitionPlan(input, options) {
+  if (!isBulkTransition(input.transition)) return financialPlan(input, options);
+  const { bulkFinancialPlan } = await import('../../rules/src/bulk-execution.js');
+  const plan = await bulkFinancialPlan({ transition: input.transition, evidence: input.evidence }, options);
+  if (input.chainAnchor) plan.push({ op: 'fp', v: 2, type: 'checkpoint', id: input.transition.id,
+    previous: rules.hashObject(await options.read('fp/chain') ?? null), anchor: input.chainAnchor });
+  return plan;
+}
 
 // Derive every reservation independently at the same predecessor, then prove
 // all balances/nonces in one account change. Funding/capacity/checkpoints keep
@@ -12,7 +22,7 @@ export async function executeNonceReservations({ execution, transitions, sources
     inputs.push({ transition, evidence });
   }
   const plans = [];
-  for (const input of inputs) plans.push(await financialPlan(input, { read: key => execution.getAsync(key), height, document }));
+  for (const input of inputs) plans.push(await financialTransitionPlan(input, { read: key => execution.getAsync(key), height, document }));
   const merged = mergedReservePlans(plans);
   for (const [i, input] of inputs.entries()) {
     const before = new Map(execution.changed), plan = merged[i];

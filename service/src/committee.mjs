@@ -225,8 +225,14 @@ export class Committee {
       const complete = states.filter(s => s.status === 'fulfilled' && s.value.status === 'complete');
       if (complete.length) {
         const result = complete[0].value;
+        if (proposal.version === 'bulk-v1') {
+          const { bulkMemberId } = await import('../../rules/src/bulk-mint.js');
+          check(complete.every(s => rules.stableJSON(s.value.signature) === rules.stableJSON(result.signature)) &&
+            result.result?.permit?.digest === session.digest && result.result.details?.id === bulkMemberId(proposal.orderId, proposal.index), 'signature_disagreement', 503);
+        } else {
         check(complete.every(s => rules.stableJSON(s.value.signature) === rules.stableJSON(result.signature)) &&
           result.result?.permit?.digest === session.digest && result.result.details?.id === (proposal.version === 'public-v1' ? proposal.id : financialMintId(this.network, proposal.request)), 'signature_disagreement', 503);
+        }
         // Every recipient independently verifies the exact permit signature
         // against its durable reservation before adding its result attestation.
         states = await Promise.allSettled(selected.map((s, i) => states[i].status === 'fulfilled' && states[i].value.status === 'complete' ? states[i].value :

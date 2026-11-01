@@ -23,3 +23,9 @@ export async function tickerRequest(asset, ticker) {
 }
 export const tickerOpen = (asset, job) => go(`/mint/${asset}?` + new URLSearchParams({ ticker: job.id }));
 export function run() { return Promise.reject(new Error('read_only')); }
+
+// Bulk pages have a dedicated mount and keep their durable wallet journal on reload.
+export const bulkMintFlow = orderId => {
+  if (!/^[0-9a-f]{64}$/.test(orderId ?? '')) throw Error('invalid_bulk_order');
+  location.assign('/mint/bulk/' + orderId); return false;
+};

@@ -12,6 +12,7 @@ function publicPathForOwner(input, owner) {
     if (!/^\/[a-zA-Z0-9/_.-]+$/.test(target) || target.includes('..') || target.includes('//')) throw Object.assign(Error('gateway_read_path'), { status: 400 });
     return target + url.search;
   }
+  if (/^(?:web-api\/)?mint\/bulk\/[0-9a-f]{64}(?:\/(?:terms|members|permit))?$/.test(path)) return '/' + path + url.search;
   if (path === 'operator/status') return '/operator/status';
   if (path === 'list') {
     const source = url.searchParams.get('source');
