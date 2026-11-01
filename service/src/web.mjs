@@ -37,7 +37,7 @@ export function createWeb(checkout) {
     if (['GET', 'HEAD'].includes(req.method) && styles.has(path)) { const [type, file] = styles.get(path); send(type, await readFile(file)); return true; }
     if (['GET', 'HEAD'].includes(req.method) && (path === '/' || pages.test(path) || bulkPage) && (path === '/' || req.headers.accept?.includes('text/html'))) {
       res.setHeader('Vary', 'Accept'); res.setHeader('Referrer-Policy', 'no-referrer');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self' https://mempool.space https://reader.tapscope.io; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' https://openmayhem.ai; connect-src 'self' https://mempool.space https://reader.tapscope.io https://openmayhem.ai; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       const html = await readFile(new URL('index.html', root), 'utf8');
       send('text/html; charset=utf-8', html); return true;
     }

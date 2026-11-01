@@ -117,5 +117,5 @@ test('local balance reader routes are restricted to GET, known reads and regtest
   const asset = response(); await web.handle({ method: 'GET', url: '/kit/lib/wallet-funds.mjs', headers: {} }, asset);
   assert.match(asset.body.toString(), /checkTapFunds/);
   const html = response(); await web.handle({ method: 'GET', url: '/mint', headers: { accept: 'text/html' } }, html);
-  assert.match(html.headers['Content-Security-Policy'], /connect-src 'self' https:\/\/mempool.space https:\/\/reader.tapscope.io;/);
+  assert.match(html.headers['Content-Security-Policy'], /connect-src 'self' https:\/\/mempool.space https:\/\/reader.tapscope.io https:\/\/openmayhem.ai;/);
 });
