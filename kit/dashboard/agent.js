@@ -190,8 +190,12 @@ export function mount(el) {
     if (busy) return; busy = true; if (label) say(label, 'busy');
     try { await fn(); if (label && note.textContent === label) clear(note); } catch (error) { say(sendWords(error.message), 'bad'); } finally { busy = false; }
   };
-  // The clicked button and a toast both show progress; a mint takes seconds.
-  const mint = (row, button) => act('', async () => {
+  // The clicked button and a toast both show progress; a mint takes seconds. Each click runs on
+  // its own, so several blocks can be minted at once; only a lone mint opens its payment page.
+  const minting = new Set(); let mintClicks = 0;
+  const mint = async (row, button) => {
+    const key = row.asset + '/' + row.block; if (minting.has(key)) return;
+    const alone = !minting.size, click = ++mintClicks; minting.add(key);
     const label = `${nameOf(row.asset, row.name)} · block ${row.block}`;
     const status = toast({ what: 'Minting ' + label, detail: 'Your agent is signing the mint request…', state: 'queued' });
     const idle = button?.textContent;
@@ -200,13 +204,18 @@ export function mount(el) {
     let result;
     const deployment = row.requestId ? row.deployment : row.deployment ?? tickerPicks.get(row.asset)?.value();
     try { result = await api('/api/mint', { asset: row.asset, block: row.block, ...(deployment ? { deployment } : {}) }); }
-    catch (error) { status.set({ state: 'failed', detail: words(error.message) }); if (button) { button.disabled = false; button.textContent = idle; button.classList.remove('busy'); } throw error; }
-    if (result.requestId) { status.set({ state: 'complete', detail: 'Request ready. Pay and inscribe with your wallet.' }); go('/mint/' + result.requestId); return; }
+    catch (error) { status.set({ state: 'failed', detail: words(error.message) }); if (button) { button.disabled = false; button.textContent = idle; button.classList.remove('busy'); } say(sendWords(error.message), 'bad'); return; }
+    finally { minting.delete(key); }
+    if (result.requestId) {
+      status.set({ state: 'complete', detail: 'Request ready. Pay and inscribe with your wallet.' });
+      if (alone && click === mintClicks) { go('/mint/' + result.requestId); return; }
+      say(`${label}: request ready. Open request pays it.`); await load(); return;
+    }
     status.set({ state: 'complete', detail: words(result.state ?? 'Request saved; it appears under Open requests.') });
     if (result.deploymentLink) { say('This pattern needs its first token deployment before it can be minted. Opening the deployment page.'); go(localPath(result.deploymentLink)); return; }
     say(words(result.state ?? 'Request is being prepared. It appears under Open requests.'));
     await load();
-  });
+  };
   // Summary tiles: who the agent is, where its payouts go, and what waits on the pages shown below.
   const drawProfile = () => info && clear(profile,
     figures([
@@ -223,7 +232,9 @@ export function mount(el) {
       { key: 'name', label: 'Pattern · block', render: r => h('div', {}, h('strong', {}, matter(r.asset, r.name)), h('div.small.muted', {}, 'block ', blockLink(r.block))) },
       { key: 'count', label: 'Units / balance', num: true, render: r => h('div', {}, h('span.mono', {}, `${fmtInt(r.count)} / ${fmtInt(r.balance)}`), r.balanceCurrent ? null : h('div.small.faint', {}, 'unverified')) },
       { key: 'state', label: 'Who may mint', render: r => h('div', {}, pill(words(r.eligibility ?? r.state), r.canMint ? 'good' : r.reason ? 'warn' : ''), r.reason ? h('div.small.muted', {}, r.reason === 'insufficient_balance' ? `Needs ${fmtInt(r.count)} units, you hold ${fmtInt(r.balance)}` : words(r.reason)) : null) },
-      { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, tickerPicks.get(r.asset)?.label() ? 'Mint into ' + tickerPicks.get(r.asset).label() : 'Mint'))
+      { key: 'action', label: '', render: r => r.canMint ? h('div.stack', { style: { gap: '4px', alignItems: 'flex-start' } }, minting.has(r.asset + '/' + r.block)
+          ? h('button.btn.sm.primary.busy', { disabled: true }, 'Signing…')
+          : h('button.btn.sm.primary', { onclick: event => mint(r, event.currentTarget) }, tickerPicks.get(r.asset)?.label() ? 'Mint into ' + tickerPicks.get(r.asset).label() : 'Mint'))
         : r.requestId ? h('a.btn.sm.ghost', { href: '/mint/' + r.requestId }, 'Open request')
         : r.deploymentLink ? h('a.btn.sm.ghost', { href: localPath(r.deploymentLink) }, 'Deploy pattern') : null },
     ], { sortable: false }) : h('div.empty', {}, next ? 'Nothing mintable on this page. Try the next page.' : claimAsset ? 'No claimed blocks of this pattern your agent may mint right now.' : 'No claimed blocks your agent may mint right now.'));
