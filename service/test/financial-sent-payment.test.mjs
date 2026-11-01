@@ -36,3 +36,26 @@ test('a sent TAP fee payment is reported by the server itself, at most every 30 
   mints.sentPaymentChecks.set(waiting, Date.now() - 30000);
   await assert.doesNotReject(mints.tick(), 'a payment not yet confirmed waits for the next pass');
 });
+
+test('a mint the player inscribed with their own wallet is taken up by the server once, while its permit waits for it', async t => {
+  const issued = 'aa'.repeat(32), recorded = 'bb'.repeat(32), sending = 'cc'.repeat(32);
+  const sent = txid => ({ kind: 'mint', phase: 'mint', revealTxid: txid, inscriptionId: txid + 'i0' });
+  const mints = tickOnly([{ id: issued, state: 'permit_issued', permit: {} }, { id: recorded, state: 'permit_issued', permit: {}, mintInscription: '22'.repeat(32) + 'i0' },
+    { id: sending, state: 'awaiting_payment' }], { [`mint/${issued}/mint`]: sent('11'.repeat(32)), [`mint/${recorded}/mint`]: sent('22'.repeat(32)), [`mint/${sending}/mint`]: sent('33'.repeat(32)) });
+  await mints.tick();
+  assert.deepEqual(mints.paid, [{ id: issued, inscription: '11'.repeat(32) + 'i0' }], 'only the issued mint without a recorded inscription; a mint report never counts as a payment');
+});
+
+test('a Bitmap link fee payment its page reported as sent is counted by the server, at most every 30 seconds', async t => {
+  const { FinancialLinks } = await import('../src/financial-links.mjs');
+  const { serial } = await import('../src/util.mjs');
+  const id = 'ee'.repeat(32), sentId = '44'.repeat(32) + 'i0';
+  const spaces = { financialPendingLinks: new Map([[id, true]]), financialLinks: new Map([[id, { id, request: { until: '999', owner: 'ff'.repeat(32) } }]]),
+    accountRecords: new Map([['fp/' + id, { state: 'open' }]]), inflight: new Map([[`link/${id}/payment`, { inscriptionId: sentId }]]) };
+  const store = { get: (space, key) => spaces[space]?.get(key) ?? null, put: async () => {}, transact: async () => {},
+    list: (space, { after = '', limit }) => [...spaces[space].keys()].filter(k => k > after).slice(0, limit).map(k => ({ id: k })) };
+  const links = Object.create(FinancialLinks.prototype), pages = [];
+  Object.assign(links, { store, resources: { workPage: 32 }, gate: serial(), reads: { batchStamp: async () => ({ counted: '10' }) }, paymentPage: async (row, refs) => { pages.push(refs); } });
+  await links.tick(); await links.tick();
+  assert.deepEqual(pages, [[sentId]]);
+});

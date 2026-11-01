@@ -91,6 +91,15 @@ export class FinancialLinks {
             } else if (row.paymentReferences && await this.paymentPage(row, row.paymentReferences, at, { allowEmpty: true })) continue;
             else if (BigInt(at.counted) > BigInt(row.request.until)) await this.queue(row, { type: 'lifecycle', id, action: { type: 'legacy-link-exit', id } });
           } else if (row.paymentReferences) await this.paymentPage(row, row.paymentReferences, at);
+          else {
+            // A fee payment the link page reported as sent counts without that page open.
+            const sent = this.store.get('inflight', `link/${id}/payment`)?.inscriptionId;
+            this.sentPaymentChecks ??= new Map();
+            if (/^[0-9a-f]{64}i0$/.test(sent ?? '') && Date.now() - (this.sentPaymentChecks.get(id) ?? 0) >= 30000) {
+              this.sentPaymentChecks.set(id, Date.now());
+              await this.paymentPage(row, [sent], at);
+            }
+          }
         }
       } catch (error) { await this.store.put('financialLinkFailures', id, { reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' }); }
     }

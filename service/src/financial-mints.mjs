@@ -263,15 +263,17 @@ export class FinancialMints extends Mints {
             if (Date.now() - (this.authorizingChecks.get(id) ?? 0) < 60000) return;
             this.authorizingChecks.set(id, Date.now());
           }
-          // A TAP fee payment reported as sent is counted once Bitcoin confirms it,
-          // whether or not anyone still has the request page open.
-          const sent = ['awaiting_payment', 'partly_paid'].includes(waiting?.state) && !waiting.publicMint ? this.store.get('inflight', `mint/${id}/payment`) : null;
+          // A TAP fee payment, or a mint the player inscribed with their own wallet, that a page
+          // reported as sent is taken up by the server, whether or not anyone still has that page open.
+          const paying = ['awaiting_payment', 'partly_paid'].includes(waiting?.state) && !waiting.publicMint;
+          const minting = waiting?.state === 'permit_issued' && waiting.permit && !waiting.mintInscription;
+          const sent = paying ? this.store.get('inflight', `mint/${id}/payment`) : minting ? this.store.get('inflight', `mint/${id}/mint`) : null;
           if (/^[0-9a-f]{64}i0$/.test(sent?.inscriptionId ?? '')) {
             this.sentPaymentChecks ??= new Map();
             if (Date.now() - (this.sentPaymentChecks.get(id) ?? 0) >= 30000) {
               this.sentPaymentChecks.set(id, Date.now());
               // Not confirmed or not indexed yet: the next pass checks again.
-              await this.payment({ id, paymentIds: [sent.inscriptionId] }).catch(() => {});
+              await this.payment(paying ? { id, paymentIds: [sent.inscriptionId] } : { id, inscription: sent.inscriptionId }).catch(() => {});
             }
           }
           return this.mintWork.run(id, async () => {
