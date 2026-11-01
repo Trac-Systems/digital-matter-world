@@ -263,6 +263,17 @@ export class FinancialMints extends Mints {
             if (Date.now() - (this.authorizingChecks.get(id) ?? 0) < 60000) return;
             this.authorizingChecks.set(id, Date.now());
           }
+          // A TAP fee payment reported as sent is counted once Bitcoin confirms it,
+          // whether or not anyone still has the request page open.
+          const sent = ['awaiting_payment', 'partly_paid'].includes(waiting?.state) && !waiting.publicMint ? this.store.get('inflight', `mint/${id}/payment`) : null;
+          if (/^[0-9a-f]{64}i0$/.test(sent?.inscriptionId ?? '')) {
+            this.sentPaymentChecks ??= new Map();
+            if (Date.now() - (this.sentPaymentChecks.get(id) ?? 0) >= 30000) {
+              this.sentPaymentChecks.set(id, Date.now());
+              // Not confirmed or not indexed yet: the next pass checks again.
+              await this.payment({ id, paymentIds: [sent.inscriptionId] }).catch(() => {});
+            }
+          }
           return this.mintWork.run(id, async () => {
           try { await this.advance(this.store.get('mints', id)); }
           catch (error) { const row = this.store.get('mints', id); await this.store.put('mints', id, { ...row, lastError: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_source_unavailable' }); }
