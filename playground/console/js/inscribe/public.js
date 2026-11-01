@@ -2,7 +2,7 @@ import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, 
 import { tap, legacyDeployPaymentText } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities, discovererOnly } from './wallet.js';
 import { walletError, publicOpeningLabel, PAY_SOON, BEFORE_PAY } from '../wallet-errors.js';
-import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid, addressLink, setEthereumChain } from '../words.js';
+import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid, addressLink, assetLink, blockLink, setEthereumChain } from '../words.js';
 import { validateTracAddress } from '../../../../rules/src/trac-address.js';
 import { rememberRequester, requesterHeaders } from '../requester-storage.js';
 import { compoundTickerMessage } from '../../../../rules/src/ticker-grammar.js';
@@ -303,7 +303,8 @@ export function mount(root, { id, onPublicMint }) {
     if (fees && status.missing.length > 1) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(due.toString()))), h('td')));
     clear(body, fees ? panel('Remaining fees', fees, { flush: true }) : null, ms && !SENDER_STOPPED.includes(ms.state) && !failed ? panel('Your mint', senderSteps(status, ms), { flush: true }) : null);
     const aside = funding ?? (Number.isSafeInteger(ms?.satoshis) ? ms : null);
-    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], ['Receiver', addressLink(status.receiver)], ['Units', fmtInt(status.amount)],
+    clear(side, panel('Request', kv([['Request', hashEl(id)], ['State', pill(state === 'not_yet_public' ? publicOpeningLabel(status) ?? 'Not public yet' : PAYMENT_STATE[state] ?? state.replace(/_/g, ' '), kind)], status.asset ? ['Pattern', assetLink(status.asset)] : null, status.block != null ? ['Block', blockLink(status.block)] : null,
+      status.actualTicker ? ['Ticker', h('span.mono', {}, status.actualTicker)] : null, ['Receiver', addressLink(status.receiver)], ['Units', fmtInt(status.amount)],
       paymentSent ? ['Payment sent', inflightLine(paymentSent)] : null,
       aside ? ['Bitcoin for the mint inscription', sats(aside.satoshis)] : null,
       ms?.state === 'returning' ? ['Set-aside', 'Being returned to you'] : ms?.state === 'returned' ? ['Set-aside', txid(ms.returnTxid) ? h('span', {}, 'Returned to you: ', txLink(ms.returnTxid, ms.returnTxid.slice(0, 12) + '…')) : 'Returned to you'] : null,
