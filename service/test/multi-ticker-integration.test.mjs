@@ -353,3 +353,22 @@ test('one approval waits for a deploy the player already sent and never sends a 
   // The only Bitcoin sent is the untouched set-aside going back to the payer.
   assert.deepEqual(f.sent.map(s => s.txid), [f.sender.journal.rows().find(r => r.tickerReturn).returnPlan.txid]);
 });
+test('a paid ticker request finishes on the server with its page closed', async t => {
+  const f = await setup(t, 2);
+  let job = await f.operator.tickers.request('p2:2', { ticker: 'Closed', receiver: address });
+  assert.equal(job.state, 'awaiting_fee');
+  // The page reported the payment before TAP counted it, then closed.
+  const transfers = f.reads.paymentTransfers; f.reads.paymentTransfers = async () => [];
+  job = await f.pay(job); f.reads.paymentTransfers = transfers;
+  assert.equal(job.state, 'awaiting_fee'); assert.equal(job.fee.state, 'awaiting_payment');
+  await f.store.put('tickerReservations', 'dmt-closed', { requestId: job.id });
+  await f.operator.tickers.tick();
+  job = f.store.get('tickerProvisioning', job.id);
+  assert.equal(job.state, 'awaiting_player_deploy'); assert.equal(f.store.get('tickerPayments', job.id).state, 'paid');
+  // Its deploy was reported as sent; it registers once it is in a block.
+  const inscriptionId = f.index(job.content);
+  await f.store.put('inflight', `ticker/${job.id}/deployment`, { kind: 'ticker', ref: job.id, phase: 'deployment', attempt: 0, inscriptionId });
+  f.mine(); f.operator.tickers.checkedAt.clear(); await f.operator.tickers.tick();
+  assert.equal(f.store.get('tickerProvisioning', job.id).state, 'registered');
+  assert.equal((await f.operator.tickers.find('closed')).asset, 'p2:2');
+});

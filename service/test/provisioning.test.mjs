@@ -301,3 +301,16 @@ test('plain 3-character names validate in player element and deployment packages
   numeric.attempts.at(-1).text = content;
   assert.throws(() => deploymentContent(numeric), /ticker/);
 });
+
+test('a deploy the page reported as sent is registered once it is in a block, with the page closed', async t => {
+  const f = await provisioningFixture(t); f.funds(0n);
+  await f.store.put('meta', 'patterns', [f.pattern]);
+  const waiting = await f.operator.advanceAsset('p2', f.pattern);
+  assert.equal(waiting.state, 'awaiting_player_deploy');
+  const attempt = waiting.phase === 'element' ? waiting.elementAttempt : waiting.tickerAttempt;
+  const item = waiting.attempts.find(a => a.phase === waiting.phase && a.attempt === attempt);
+  const inscriptionId = f.index(item.text);
+  await f.store.put('inflight', `deployment/p2/${waiting.phase}`, { kind: 'deployment', ref: 'p2', phase: waiting.phase, attempt, inscriptionId });
+  f.mine(); await f.operator.tick();
+  assert.equal(f.store.get('provisioning', 'p2').attempts.find(a => a.id === item.id).inscription, inscriptionId);
+});

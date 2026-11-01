@@ -118,12 +118,15 @@ export class Provisioner {
       definitions.push(...compounds.filter(r => !r.value.retired).map(r => [r.id, r.value]));
       await parallelPage(definitions, async ([asset, definition]) => {
         const job = await this.enqueue(asset, definition);
-        // A job waiting for the player's inscription advances when the player submits it.
+        // A job waiting for the player's inscription advances when the player submits it, or once the
+        // inscription its page reported as sent is in a block, whether or not that page is still open.
         if (!waitsForPlayer(job) && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
+        else if (job.state === 'awaiting_player_deploy') await this.submitSent(job);
       }, this.concurrency);
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
         ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '', compound: compounds.length === 8 ? compounds.at(-1).id : '' } : {}) };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
+      await this.tickers.tick().catch(() => {});
     })().finally(() => { this.ticking = null; });
     return this.ticking;
   }
@@ -161,6 +164,17 @@ export class Provisioner {
       job = await this.save(job, { receiver, attempts: job.attempts.map(a => a.id === item.id ? { ...a, inscription } : a) });
       return this.advance(job);
     });
+  }
+  async submitSent(job) {
+    const sent = this.store.get('inflight', `deployment/${job.asset}/${job.phase}`), now = Date.now();
+    const attempt = job.phase === 'element' ? job.elementAttempt : job.tickerAttempt;
+    const item = job.attempts?.find(a => a.phase === job.phase && a.attempt === attempt);
+    if (sent?.attempt !== attempt || !item || item.inscription || !/^[0-9a-f]{64}i0$/.test(sent.inscriptionId ?? '')) return;
+    this.sentChecks ??= new Map();
+    if (now - (this.sentChecks.get(job.asset) ?? 0) < 30000) return;
+    this.sentChecks.set(job.asset, now);
+    // Not in a block yet, or not yet confirmed enough: the next pass checks again.
+    await this.submit(job.asset, { phase: job.phase, inscription: sent.inscriptionId }).catch(() => {});
   }
   async receiver(job, inscription) {
     const receiver = (await this.reads.inscription(inscription))?.address;

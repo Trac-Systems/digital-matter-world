@@ -13,6 +13,7 @@ function deployEntry(parent, job) {
     officialDeployment: parent.id, tickerRequestId: job.id, generation: 1, tick: job.ticker, indexTick: job.indexTick, suspended: false };
   delete entry.ordinal; return entry;
 }
+const RECHECK_MS = 30000;
 const deployBytes = entry => Buffer.byteLength(rules.stableJSON(deploymentPayload(entry)));
 
 // The coordinated release supplies these components. Lazy loading preserves existing paths
@@ -219,6 +220,30 @@ export class TickerProvisioning {
         check(store.get('accountRecords', 'fp/public-refund/' + action.id), 'ticker_refund_pending');
       } });
     return this.payments;
+  }
+  // Paid requests finish on the server whether or not their page is open: a reported fee payment is checked
+  // again until it is final, and a reported deploy is registered once it is in a block. Point reads of the
+  // open reservations only, a page per pass.
+  async tick() {
+    const { store, reads } = this.p, now = Date.now();
+    if (!rules.multiTickerActive(await reads.counted())) return;
+    const counted = BigInt(await reads.counted()), limit = 32;
+    const page = store.list('tickerReservations', { after: this.cursor ?? '', limit });
+    this.cursor = page.length === limit ? page.at(-1).id : '';
+    this.checkedAt ??= new Map();
+    for (const { value } of page) {
+      const id = value?.requestId, job = id && store.get('tickerProvisioning', id);
+      if (!job || now - (this.checkedAt.get(id) ?? 0) < RECHECK_MS) continue;
+      this.checkedAt.set(id, now);
+      const payment = store.get('tickerPayments', id), sent = store.get('inflight', `ticker/${id}/deployment`);
+      try {
+        if (job.state === 'awaiting_fee' && ['awaiting_payment', 'partly_paid'].includes(payment?.state) && !payment.reason &&
+          payment.paymentReferences?.length && counted <= BigInt(payment.until)) await this.payment({ id, paymentIds: [] });
+        else if (job.state === 'awaiting_player_deploy' && /^[0-9a-f]{64}i0$/.test(sent?.inscriptionId ?? ''))
+          await this.submit(job.catalogAsset ?? job.asset, { requestId: id, inscription: sent.inscriptionId, phase: 'deployment' });
+      } catch { /* not final or not in a block yet: the next pass checks again */ }
+    }
+    for (const [id, at] of this.checkedAt) if (now - at > 10 * RECHECK_MS) this.checkedAt.delete(id);
   }
   async payment({ id, paymentIds, expire = false }) {
     await this.active();
