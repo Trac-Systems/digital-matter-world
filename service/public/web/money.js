@@ -74,6 +74,17 @@ export function moneyPage(root, { type, id }) {
   }
   // The first maker's dashboard link (?owner=) opens the deployment steps; everyone else sees how it works.
   if (type === 'mint' && /^c2:[0-9a-f]{64}$/.test(id) && !new URLSearchParams(location.search).get('owner')) return compoundPage(root, id, back);
+  // A bulk order: one wallet payment for many blocks, on the same page design as a single request.
+  if (type === 'bulk') {
+    let closed = false, close = null;
+    clear(root, h('div.page', {}, h('div.empty', {}, 'Loading…')));
+    import('./bulk-mint.js').then(({ mountBulkMint }) => {
+      if (closed) return;
+      close = mountBulkMint(root, { orderId: id });
+      root.querySelector('.page-head').after(back);
+    }).catch(e => { if (!closed) clear(root, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${walletError(e)}`))); });
+    return () => { closed = true; close?.(); };
+  }
   if (type === 'mint') {
     const cleanup = mintPage(root, { id, onPublicMint: mintPublic });
     root.querySelector('.page-head').after(back);

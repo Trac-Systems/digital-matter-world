@@ -39,7 +39,7 @@ export function createWeb(checkout) {
       res.setHeader('Vary', 'Accept'); res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; connect-src 'self' https://mempool.space https://reader.tapscope.io; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       const html = await readFile(new URL('index.html', root), 'utf8');
-      send('text/html; charset=utf-8', bulkPage ? html.replace('src="/web/app.js"', 'src="/web/bulk-mint.js"') : html); return true;
+      send('text/html; charset=utf-8', html); return true;
     }
     if (path.startsWith('/web-api/mint/bulk/')) return handleBulkMintHTTP(req, res, readBody, checkout?.bulkMints);
     if (!path.startsWith('/web-api/') && path !== '/records/highlights') return false;

@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { hex } from '../lib/inscription-core.mjs';
 import { tapWallet1049 } from './tap-wallet-1049-fixture.mjs';
+import { walletFundsReply } from './wallet-funds-fixture.mjs';
 import { ed25519 } from '@noble/curves/ed25519';
 import fixture from '../../rules/test/fixtures/bulk-v1.json' with { type: 'json' };
 import { hashObject, stableJSON } from '../../rules/src/core.js';
@@ -17,15 +18,20 @@ import { ServiceClient } from '../lib/service-client.mjs';
 import { dashboardFixture } from './fixtures/dashboard-service.mjs';
 import { bitcoinAddress, cleanup } from './helpers.mjs';
 
+// Fee per block in TAP atoms; the site page tests use a realistic one.
+let memberFee = 100n;
 function prepared(f, input, count = input.blocks.length) {
   const terms = structuredClone(fixture.terms), feeManifest = [];
   Object.assign(terms, { network: f.agent.network, bitcoinNetwork: 'regtest', owner: input.owner, nonce: input.nonce, asset: input.asset,
     deployment: input.deployment, receiver: input.receiver, payer: input.payer });
   terms.members = input.blocks.slice(0, count).map(block => ({ block, amount: '3' }));
   terms.totalAmount = String(3 * count); terms.membersRoot = bulkMembersRoot(terms.members);
-  for (let i = 0; i < count; i++) feeManifest.push({ ...structuredClone(fixture.feeManifest[0]), member: i });
+  for (let i = 0; i < count; i++) {
+    const row = { ...structuredClone(fixture.feeManifest[0]), member: i, grossFeeAtoms: String(memberFee) };
+    row.shares = row.shares.map(share => ({ ...share, gross: String(memberFee), payable: String(memberFee) })); feeManifest.push(row);
+  }
   terms.feeRoot = bulkFeeRoot(feeManifest); terms.groups[0].to = bitcoinAddress();
-  terms.groups[0].amount = terms.grossFeeAtoms = terms.payableFeeAtoms = String(100 * count);
+  terms.groups[0].amount = terms.grossFeeAtoms = terms.payableFeeAtoms = String(memberFee * BigInt(count));
   Object.assign(terms.mintFunding, { address: bitcoinAddress('regtest', 2), satoshis: count * 546 + 6546 + Number(terms.mintFunding.maxFeeSats) });
   terms.feeQuote.network = terms.network; terms.feeQuote.deploymentId = terms.deployment;
   terms.feeQuote.scope = stableJSON(['mint-bulk-v1', terms.asset, terms.deployment, terms.membersRoot]);
@@ -230,7 +236,9 @@ async function browser(t, origin, address) {
   const browser = await chromium.launch({ headless: true }); cleanup(t, () => browser.close());
   const page = await browser.newPage(), errors = []; page.setDefaultTimeout(8000);
   page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => dialog.accept());
-  await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  // Only the page's own origin, plus the Bitcoin fee estimate the funds check reads (answered offline).
+  await page.route('**/*', route => { const url = new URL(route.request().url());
+    return url.origin === origin ? route.continue() : url.origin === 'https://mempool.space' ? route.fulfill({ json: walletFundsReply(url.href) }) : route.abort(); });
   const publicKey = hex(secp256k1.getPublicKey(new Uint8Array(32).fill(2), true)), wallet = tapWallet1049({ address, publicKey, network: 'regtest' });
   await page.exposeFunction('bulkFixtureWallet', (name, args) => wallet.provider[name](...args));
   await page.addInitScript(methods => { window.tapprotocol = Object.fromEntries(methods.map(name => [name, (...args) => window.bulkFixtureWallet(name, args)])); }, Object.keys(wallet.provider));
@@ -260,46 +268,127 @@ test('bulk dashboard browser pays one order once, resumes after reload, and dist
   assert.equal(wallet.state.calls.filter(row => row[0] === 'singleTxTransfer').length, 1); assert.deepEqual(errors, []);
 });
 
-test('public bulk payment entry and raw web API preserve terms and recover a receipt when the page closes', async t => {
-  const f = await setup(t, 2); f.state.mintAll(); await f.state.batchTask;
-  const id = [...f.records.keys()][0], row = f.records.get(id), files = new Map([
-    ['/web/bulk-mint.js', new URL('../../service/public/web/bulk-mint.js', import.meta.url)],
-    ['/web/bulk-wallet.js', new URL('../dashboard/wallet.js', import.meta.url)],
-    ['/web/console/js/api.js', new URL('../../service/public/web/api.js', import.meta.url)]
-  ]);
-  const reports = []; let origin;
+// The public site (service/src/web.mjs) over the fixture's bulk order: the real app shell, routes and views.
+async function bulkSite(t, f, id) {
+  const { createWeb } = await import('../../service/src/web.mjs');
+  const web = createWeb({ target: { network: f.agent.network, bitcoinNetwork: 'regtest' }, records: async () => ({}) });
+  const row = f.records.get(id), reports = [], site = { reports, failReports: 0, members: null }; let origin;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, origin); res.setHeader('cache-control', 'no-store');
-    if (files.has(url.pathname)) { res.setHeader('content-type', 'text/javascript'); res.end(await readFile(files.get(url.pathname))); return; }
-    if (url.pathname === '/mint/bulk/' + id && req.headers.accept?.includes('text/html')) {
-      res.setHeader('content-type', 'text/html'); res.end('<!doctype html><div id="app"></div><script type="module" src="/web/bulk-mint.js"></script>'); return;
-    }
-    const send = value => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value)); };
-    if (url.pathname === '/web-api/target') return send({ bitcoinNetwork: 'regtest' });
+    const send = (value, status = 200) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value)); };
     if (url.pathname === '/web-api/mint/bulk/' + id) return send(row.status);
     if (url.pathname === '/web-api/mint/bulk/' + id + '/terms') return send({ v: 1, orderId: id, terms: row.body.terms, feeManifest: row.body.feeManifest });
-    if (url.pathname.endsWith('/members')) return send({ v: 1, orderId: id, offset: 0, next: null, count: 2,
-      members: row.body.terms.members.map((m, index) => ({ ...m, index, memberId: bulkMemberId(id, index), state: 'reserved', inscription: null, reason: null })) });
+    if (url.pathname === '/mint/bulk/' + id + '/members') {
+      const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit')), all = row.body.terms.members;
+      return send({ v: 1, orderId: id, offset, next: offset + limit < all.length ? offset + limit : null, count: all.length,
+        members: all.slice(offset, offset + limit).map((m, n) => ({ ...m, index: offset + n, memberId: bulkMemberId(id, offset + n), state: site.members ?? 'reserved',
+          inscription: site.members === 'minted' ? 'ab'.repeat(32) + 'i' + (offset + n) : null, reason: null })) });
+    }
     if (url.pathname === '/mint/bulk/payment') {
       let text = ''; for await (const c of req) text += c; reports.push(JSON.parse(text));
-      if (reports.length <= 2) { res.statusCode = 503; return send({ error: 'bulk_report_temporarily_unavailable' }); }
+      if (reports.length <= site.failReports) return send({ error: 'bulk_report_temporarily_unavailable' }, 503);
       return send(row.status);
     }
-    res.statusCode = 404; send({ error: 'not_found' });
+    if (url.pathname.startsWith('/web-api/tap-reader/')) return send(walletFundsReply(url.href));
+    if (await web.handle(req, res, async () => '')) return;
+    send({ error: 'not_found' }, 404);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); origin = 'http://127.0.0.1:' + server.address().port;
   cleanup(t, () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  const { page, errors, wallet } = await browser(t, origin, f.binding.request.address);
+  return { origin, row, site };
+}
+const shots = process.env.DMW_BULK_SHOTS;
+const noSideScroll = page => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+
+test('public bulk payment page uses the site design, pays once through the confirmation, and recovers a receipt when the page closes', async t => {
+  memberFee = 3607500000000000000n; t.after(() => { memberFee = 100n; });
+  const f = await setup(t, 2); f.state.mintAll(); await f.state.batchTask;
+  const id = [...f.records.keys()][0], { origin, row, site } = await bulkSite(t, f, id); site.failReports = 2;
+  const { page, errors, wallet } = await browser(t, origin, f.binding.request.address), dialogs = [];
+  page.on('dialog', dialog => dialogs.push(dialog.message()));
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(origin + '/mint/bulk/' + id);
+  await page.getByRole('heading', { name: 'Mint 2 blocks · ' + row.status.ticker, exact: true }).waitFor();
+  await page.locator('header.topbar').getByRole('button', { name: 'Connect wallet' }).waitFor();
+  assert.equal(await page.locator('nav a.on').getAttribute('href'), '/mint');
+  assert.deepEqual(await page.locator('ol.stepper li .l').allInnerTexts(), ['Reserve', 'Pay', 'Permits', 'Mint sent', 'Minted']);
+  assert.equal(await page.locator('ol.stepper li[aria-current="step"] .l').innerText(), 'Pay');
+  await page.getByText('Remaining to pay', { exact: true }).waitFor();
+  assert.equal(await page.locator('.next-step .price').innerText(), '7.215 TAP');
+  const fees = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Remaining fees', exact: true }) });
+  assert.match(await fees.innerText(), /Treasury\s+7\.215 TAP[\s\S]*/);
+  const blocks = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Blocks in this order', exact: true }) });
+  assert.deepEqual(await blocks.locator('tbody a').allInnerTexts(), ['900,000', '900,001']);
+  assert.equal(await blocks.locator('tbody .pill').first().innerText(), 'reserved');
+  const order = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Order', exact: true }) });
+  assert.match(await order.innerText(), /Bitcoin for the mint inscriptions[\s\S]*Returned to you after the mint, minus the Bitcoin network fees and the 546 sats per block that stay with the inscriptions\./);
+  assert.doesNotMatch(await page.locator('main').innerText(), /unseen|Unresolved|Reveal batches|units ·|[0-9a-f]{64}/);
+  if (shots) await page.screenshot({ path: shots + '/bulk-awaiting-1280.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await noSideScroll(page), true);
+  if (shots) await page.screenshot({ path: shots + '/bulk-awaiting-390.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('button', { name: 'Pay and mint 2 blocks', exact: true }).click();
-  await page.getByText('bulk_report_temporarily_unavailable', { exact: true }).waitFor();
+  const modal = page.getByRole('dialog');
+  await modal.getByRole('heading', { name: 'Pay and mint 2 blocks?', exact: true }).waitFor();
+  assert.match(await modal.innerText(), /Bitcoin for the mint inscriptions/); assert.doesNotMatch(await modal.innerText(), /Returned to you/);
+  assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 0);
+  await modal.getByRole('button', { name: 'Pay and mint', exact: true }).click();
+  await page.getByText(/^The wallet or gateway request could not be completed \(bulk_report_temporarily_unavailable\)/).waitFor();
+  assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 1);
   await page.reload();
-  await page.getByText('Payment sent. Waiting for confirmed successful TAP transfers. You can close this page.', { exact: true }).waitFor();
-  await page.waitForResponse(response => new URL(response.url()).pathname === '/mint/bulk/payment' && response.status() === 200);
+  await page.getByText('Paid. It is counted once Bitcoin confirms it, and the mint goes out automatically. You can close this page.', { exact: true }).waitFor();
+  await page.waitForResponse(response => new URL(response.url()).pathname === '/mint/bulk/payment' && response.status() === 200, { timeout: 12000 });
   assert.equal(await page.getByRole('button', { name: 'Pay and mint 2 blocks', exact: true }).count(), 0);
-  assert.equal(wallet.state.calls.filter(row => row[0] === 'singleTxTransfer').length, 1);
-  assert.equal(reports.length, 3); assert.deepEqual(reports[0], reports[2]);
-  assert.equal(reports[0].commitTxid, wallet.funding); assert.equal(reports[0].paymentId, null); assert.deepEqual(errors, []);
+  assert.equal(wallet.state.calls.filter(call => call[0] === 'singleTxTransfer').length, 1);
+  assert.equal(site.reports.length, 3); assert.deepEqual(site.reports[0], site.reports[2]);
+  assert.equal(site.reports[0].commitTxid, wallet.funding); assert.equal(site.reports[0].paymentId, null);
+  // Paid, permits ready, mint sent, then minted: plain progress words and the last step done.
+  Object.assign(row.status, { state: 'minting', payable: false, payment: { ...row.status.payment, state: 'paid', reference: 'cd'.repeat(32) + 'i0' },
+    permit: { readyCount: 2, complete: true, root: 'f'.repeat(64) }, mintSender: { state: 'sent', sentBatches: 1, totalBatches: 1 } });
+  site.members = 'issued';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  const mint = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Your mint', exact: true }) });
+  await mint.getByText('Done: payment seen on Bitcoin.', { exact: true }).waitFor();
+  assert.match(await mint.innerText(), /permits ready 2 of 2\.[\s\S]*mint sent\.[\s\S]*minted 0 of 2\./);
+  assert.equal(await blocks.locator('tbody .pill').first().innerText(), 'mint sent');
+  row.status.state = 'minted'; row.status.progress = { ...row.status.progress, minted: 2, unresolved: 0, reserved: 0 }; site.members = 'minted';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByText('Minted 2 of 2. The tokens are in your TAP Wallet.', { exact: true }).waitFor();
+  assert.equal(await page.locator('ol.stepper li.done').count(), 5);
+  assert.equal(await blocks.locator('tbody .pill').first().innerText(), 'minted');
+  if (shots) await page.screenshot({ path: shots + '/bulk-minted-1280.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await noSideScroll(page), true);
+  if (shots) await page.screenshot({ path: shots + '/bulk-minted-390.png', fullPage: true });
+  assert.deepEqual(dialogs, []); assert.deepEqual(errors, []);
+});
+
+test('a bulk order with more than 25 blocks lists them 25 per page', async t => {
+  const f = await setup(t, 30); f.state.mintAll(); await f.state.batchTask;
+  const id = [...f.records.keys()][0], { origin } = await bulkSite(t, f, id);
+  const { page, errors } = await browser(t, origin, f.binding.request.address);
+  await page.goto(origin + '/mint/bulk/' + id);
+  const blocks = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Blocks in this order', exact: true }) });
+  await blocks.getByText('1–25 of 30', { exact: true }).waitFor();
+  assert.equal(await blocks.locator('tbody tr').count(), 25);
+  await blocks.getByRole('button', { name: 'Next ›' }).click();
+  await blocks.getByText('26–30 of 30', { exact: true }).waitFor();
+  assert.deepEqual(await blocks.locator('tbody a').allInnerTexts(), ['900,025', '900,026', '900,027', '900,028', '900,029']);
+  await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await noSideScroll(page), true);
+  assert.deepEqual(errors, []);
+});
+
+test('the agent dashboard opens a bulk order in the site shell through its proxy', async t => {
+  const f = await setup(t, 2); f.state.mintAll(); await f.state.batchTask;
+  const id = [...f.records.keys()][0], { origin } = await bulkSite(t, f, id);
+  f.state.agent.paymentOrigin = origin;
+  const dashboard = await serveDashboard(f.context, { state: f.state }); cleanup(t, () => dashboard.close());
+  const { page, errors } = await browser(t, dashboard.origin, f.binding.request.address);
+  await page.goto(dashboard.loginLink); await page.waitForURL(dashboard.origin + '/me');
+  await page.goto(dashboard.origin + '/mint/bulk/' + id);
+  await page.getByRole('heading', { name: /^Mint 2 blocks · / }).waitFor();
+  await page.locator('nav').getByRole('link', { name: 'My agent' }).waitFor();
+  await page.getByRole('button', { name: 'Pay and mint 2 blocks', exact: true }).waitFor();
+  assert.deepEqual(errors, []);
 });
 
 test('bulk concurrent exact dashboard retries advance deferred work and counters only once', async t => {

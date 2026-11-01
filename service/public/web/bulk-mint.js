@@ -1,57 +1,105 @@
+// A bulk mint order's payment page (/mint/bulk/<order>), in the site shell like a single mint request:
+// the same step indicator, next step, fee table and request panel. One TAP Wallet approval pays every
+// fee of the order and sets aside the Bitcoin for its mint inscriptions; the server sends the mints.
 import { TapWalletBulkMint, bulkPaymentPlan } from './bulk-wallet.js';
 import { bulkApi, api } from './console/js/api.js';
+import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from './console/js/dom.js';
+import { tap } from './console/js/money.js';
+import { walletError } from './console/js/wallet-errors.js';
+import { assetLink, addressLink, blockLink, setEthereumChain } from './console/js/words.js';
 
-const node = (tag, text, className) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (className) el.className = className; return el; };
-const tap = value => { const n = BigInt(value), tail = (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, ''); return String(n / 10n ** 18n) + (tail ? '.' + tail : ''); };
+const PAGE = 25;
+const sats = n => `${fmtInt(n)} sats`;
+const roleName = role => String(role).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+const plural = (n, one) => `${fmtInt(n)} ${one}${n === 1 ? '' : 's'}`;
+// The order's state in plain words, for the state pill.
+export const BULK_STATE = { reserving: ['reserving blocks', 'info'], awaiting_payment: ['waiting for wallet payment', 'warn'], partly_paid: ['partly paid', 'bad'],
+  paid: ['payment confirmed', 'info'], permit_pending: ['permits being prepared', 'info'], permit_issued: ['permits ready', 'info'], minting: ['being minted', 'info'],
+  partly_minted: ['being minted', 'info'], minted: ['minted', 'good'], needs_attention: ['needs attention', 'bad'], releasing: ['releasing blocks', 'warn'],
+  expired: ['expired', 'bad'], credited: ['expired, payment owed back', 'bad'] };
+const STOPPED = ['partly_paid', 'needs_attention', 'releasing', 'expired', 'credited'];
+const paidStates = ['paid', 'permit_pending', 'permit_issued', 'minting', 'partly_minted', 'minted'];
 
+// Where the order is, in one sentence for the next-step callout: [text, callout kind].
 export function bulkProgress(status, localState) {
-  if (status.state === 'minted') return 'Every member has a verified confirmed mint and completed accounting.';
-  if (status.creditReferences?.length) return 'Payment recovery is owed. This is not a refund confirmation.';
-  if (status.mintSender?.state === 'fee_wait') return 'Waiting for Bitcoin fees to fit the signed allowance. No second payment is requested.';
-  if (status.mintSender?.sentBatches > 0) return 'Inscription transactions were sent. Waiting for Bitcoin confirmation, TAP indexing and member completion.';
-  if (['permit_issued', 'minting', 'partly_minted'].includes(status.state)) return 'Permits are issued. The server is sending the saved mint transactions.';
-  if (status.state === 'permit_pending') return `Payment is verified. Recovering member signatures (${status.permit?.readyCount ?? 0}/${status.count}).`;
-  if (status.state === 'paid') return 'The full TAP payment is verified. Waiting for the mint permits.';
-  if (status.state === 'partly_paid') return 'Only part of the payment succeeded. This order cannot be paid again or mint a subset.';
-  if (status.state === 'needs_attention') return 'This order needs attention. Issued members remain held for recovery.';
-  if (['releasing', 'expired'].includes(status.state)) return 'Unissued members are being released or have expired. A payment may still need recovery.';
-  if (localState === 'payment_pending') return 'The wallet result is uncertain. Keep this order and inspect TAP Wallet before explicitly retrying.';
-  if (localState === 'payment_submitted') return 'Payment sent. Waiting for confirmed successful TAP transfers. You can close this page.';
-  if (status.state === 'reserving') return 'The reservation is being accepted. Payment will become available here after acceptance.';
-  return 'Review this order and approve its one wallet payment when ready.';
+  const n = status.count, ready = status.permit?.readyCount ?? 0, minted = status.progress?.minted ?? 0, sender = status.mintSender;
+  if (status.state === 'minted') return [`Minted ${minted} of ${n}. The tokens are in your TAP Wallet.`, 'good'];
+  if (status.creditReferences?.length) return ['Your payment is owed back to you. It has not been returned yet.', 'warn'];
+  if (status.state === 'partly_paid') return ['Only part of the payment arrived. This order cannot be paid again or mint only some of its blocks; it is held for recovery.', 'bad'];
+  if (status.state === 'needs_attention') return ['This order needs the operator’s attention. Blocks with a permit stay held for you.', 'bad'];
+  if (['releasing', 'expired'].includes(status.state)) return ['This order expired before it was paid in full. Its blocks are released; a payment that arrived is owed back to you.', 'warn'];
+  if (sender?.state === 'fee_wait') return ['Waiting for Bitcoin network fees to fall to the rate you approved. Nothing more to pay.', 'info'];
+  if (sender?.sentBatches > 0) return [`Mint sent. Waiting for Bitcoin to confirm it: minted ${minted} of ${n}. Nothing else to do.`, 'info'];
+  if (['permit_issued', 'minting', 'partly_minted'].includes(status.state)) return [`Permits ready ${ready} of ${n}. Our server is sending the mint.`, 'info'];
+  if (status.state === 'permit_pending') return [`Payment seen on Bitcoin. Permits ready ${ready} of ${n}; the mint goes out automatically.`, 'info'];
+  if (status.state === 'paid') return ['Payment seen on Bitcoin. The permits come with the next batch; the mint goes out automatically.', 'info'];
+  if (localState === 'payment_pending') return ['TAP Wallet returned no receipt for the last attempt. Retry only if TAP Wallet shows no sent payment for this order; Bitcoin is checked before another attempt.', 'warn'];
+  if (localState === 'payment_submitted') return ['Paid. It is counted once Bitcoin confirms it, and the mint goes out automatically. You can close this page.', 'good'];
+  if (status.state === 'reserving' || status.state === 'awaiting_payment' && !status.payable) return ['Your blocks are being reserved on Trac. The Pay button appears here by itself, usually within a minute.', 'busy'];
+  return null;
+}
+// One block of the order, in plain words.
+function memberState(member, status) {
+  if (member.state === 'minted') return ['minted', 'good'];
+  if (member.state === 'released') return ['released', ''];
+  if (member.state === 'issued') return status.mintSender?.totalBatches > 0 && status.mintSender.sentBatches >= status.mintSender.totalBatches ? ['mint sent', 'info'] : ['permit ready', 'info'];
+  if (member.state === 'reserved') return paidStates.includes(status.state) ? ['paid', 'info'] : ['reserved', ''];
+  return ['reserving', ''];
+}
+// Payment → permits → mint → minted, like a single request's "Your mint".
+function mintSteps(status, localState) {
+  const n = status.count, ready = status.permit?.readyCount ?? 0, minted = status.progress?.minted ?? 0, sender = status.mintSender ?? {};
+  const now = text => h('span', {}, h('strong', {}, 'Now: '), text), done = text => h('span', {}, h('strong', {}, 'Done: '), text);
+  const paid = paidStates.includes(status.state), sent = sender.sentBatches > 0, allSent = sent && sender.sentBatches >= sender.totalBatches;
+  return kv([
+    ['Payment', paid ? done('payment seen on Bitcoin.') : localState === 'payment_submitted' ? now('waiting for your payment to confirm on Bitcoin.') : 'One payment from TAP Wallet for every block.'],
+    ['Permits', ready >= n ? done(`permits ready ${ready} of ${n}.`) : paid ? now(`permits ready ${ready} of ${n}.`) : 'After the payment confirms.'],
+    ['Mint', allSent ? done('mint sent.') : sent ? now(`sending the mint (part ${sender.sentBatches} of ${sender.totalBatches}).`) : sender.state === 'fee_wait' ? now('waiting for Bitcoin network fees to fall.') : 'Sent by our server when the permits are ready.'],
+    ['Minted', minted >= n ? done(`minted ${minted} of ${n}.`) : sent ? now(`minted ${minted} of ${n}.`) : 'When Bitcoin confirms the mint.'],
+  ]);
 }
 
-// The gateway serves this module as the entry point for /mint/bulk/:id. It can
-// also be mounted by a site router; cleanup stops polling without touching the journal.
+// The site mounts this for /mint/bulk/<order>; cleanup stops polling without touching the journal.
 export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet, refreshMs = 5000 } = {}) {
   if (!/^[0-9a-f]{64}$/.test(orderId ?? '')) throw Error('invalid_bulk_order');
-  wallet ??= new TapWalletBulkMint({ network, readStatus: reads.status, readTerms: reads.terms, reportPayment: reads.payment });
-  let stopped = false, timer, busy = false, localState, reported = false, offset = 0;
-  const page = node('main', undefined, 'page'), heading = node('h1', 'Bulk mint order'), message = node('p', 'Loading accepted order…', 'note'), summary = node('section', undefined, 'panel'), members = node('section', undefined, 'panel');
-  message.role = 'status'; message.setAttribute('aria-live', 'polite');
-  page.append(heading, node('p', orderId, 'mono'), message, summary, members); root.replaceChildren(page);
-  const action = (label, fn) => {
-    const button = node('button', label, 'btn'); button.type = 'button';
-    button.addEventListener('click', async () => {
-      if (busy || stopped) return; busy = true; button.disabled = true;
-      try { await fn(); } catch (error) { message.textContent = error.message; }
-      finally { busy = false; button.disabled = false; }
-    }); return button;
+  const progress = h('div'), lead = h('div.section-gap'), body = h('div.stack'), side = h('div.stack');
+  const actions = h('div.row.actions'), extra = h('div.extra'), note = h('div.callout', { role: 'status', 'aria-live': 'polite' });
+  const say = (text, kind = '') => { note.className = 'callout' + (kind ? ' ' + kind : ''); clear(note, text); };
+  const heading = h('h1', {}, 'Mint blocks'), intro = h('p.lead-text', {}, 'Loading the order…');
+  clear(root, h('div.page', {}, h('div.page-head', {}, heading), intro, h('div.flow', {}, progress, h('div.grid.cols-main', {},
+    h('div.stack', {}, h('section.panel.next-step', {}, h('header', {}, h('h2', {}, 'Next step')), h('div.body', {}, lead, note, actions, extra)), body), side))));
+  let stopped = false, timer, busy = false, localState, reported = false, offset = 0, paymentDraft = '', plan, status;
+  const attempt = async (fn, clicked) => {
+    if (busy || stopped) return; busy = true;
+    for (const button of root.querySelectorAll('.next-step button, .paged button')) button.disabled = true;
+    clicked?.classList.add('busy');
+    say('Working…', 'busy');
+    try { await fn(); if (!stopped && note.textContent === 'Working…') say(''); }
+    catch (error) { if (!stopped) say(walletError(error), 'bad'); }
+    finally { busy = false; clicked?.classList.remove('busy'); if (note.classList.contains('busy')) note.className = 'callout info'; for (const button of root.querySelectorAll('.next-step button, .paged button')) button.disabled = false; }
   };
-  async function pay(retry = false) {
+  const button = (label, fn, kind = '') => h(`button.btn${kind === 'primary' ? '.primary.cta' : kind === 'quiet' ? '.ghost' : ''}`, { onclick: event => attempt(fn, event.currentTarget) }, label);
+  // The confirmation lists exactly what this one approval pays; the set-aside's return is explained on the page.
+  const confirmRows = terms => [
+    ...(terms.groups.length <= 6 ? terms.groups.map((g, i) => [groupRoles(i), tap(g.amount)]) : [['Fees', `${tap(terms.payableFeeAtoms)} to ${fmtInt(terms.groups.length)} recipients`]]),
+    ['Total', tap(terms.payableFeeAtoms)], ['Blocks', fmtInt(terms.members.length)], ['Bitcoin for the mint inscriptions', sats(terms.mintFunding.satoshis)]];
+  // A fee group's role names, from the fee manifest (one group can collect several roles of several blocks).
+  const groupRoles = i => [...new Set(plan.feeManifest.flatMap(m => m.shares.filter(s => s.group === i).map(s => roleName(s.role))))].join(' + ') || 'Fee';
+  async function pay(retry) {
     wallet.provider = globalThis.tapprotocol; await wallet.connect();
-    const fresh = await wallet.plan(orderId);
-    if (retry) {
-      if (!confirm('Retry only if TAP Wallet shows no sent payment for this exact order. Bitcoin will also be checked before another attempt.')) return;
-    } else if (!confirm(`Pay and mint ${fresh.status.count} blocks?\nPayable TAP: ${tap(fresh.terms.payableFeeAtoms)}\nBitcoin set aside: ${fresh.terms.mintFunding.satoshis} sats\nOnly this order is approved.`)) return;
+    const fresh = await wallet.plan(orderId), n = fresh.status.count;
+    if (!await confirmModal(retry
+      ? { title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if TAP Wallet shows no sent payment for this order. Bitcoin is checked before another attempt.', rows: confirmRows(fresh.terms), confirm: 'Retry payment' }
+      : { title: `Pay and mint ${plural(n, 'block')}?`, lead: `TAP Wallet asks once: the same payment pays the fees of all ${plural(n, 'block')} and sets aside the Bitcoin for their mint inscriptions, and our server sends the mint when the permits are ready. Only this order is approved.`, rows: confirmRows(fresh.terms), confirm: 'Pay and mint' })) return;
     const result = await wallet.pay(orderId, { retry }); localState = result.localState; reported = localState === 'payment_submitted';
     await refresh();
   }
   async function refresh() {
-    const [status, response, memberPage] = await Promise.all([reads.status(orderId), reads.terms(orderId), reads.members(orderId, { offset, limit: 64 })]);
+    const [nextStatus, response, memberPage] = await Promise.all([reads.status(orderId), reads.terms(orderId), reads.members(orderId, { offset, limit: PAGE })]);
     if (stopped) return;
-    const plan = bulkPaymentPlan(orderId, status, response, network);
+    const nextPlan = bulkPaymentPlan(orderId, nextStatus, response, network);
     if (memberPage.orderId !== orderId) throw Error('Bulk member page mismatch');
+    status = nextStatus; plan = nextPlan;
     // Redisplay saved receipt on reload, including a report whose HTTP reply was
     // lost. Connecting is unnecessary for this read-only recovery.
     if (wallet.journal) {
@@ -64,35 +112,86 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
       }
     }
     if (stopped) return;
-    heading.textContent = `Mint ${status.count} blocks · ${status.ticker}`;
-    message.textContent = bulkProgress(status, localState);
-    summary.replaceChildren(node('h2', 'Accepted order'), node('p', 'Blocks: ' + plan.terms.members.map(m => m.block).join(', ')),
-      node('p', `Gross fee: ${tap(plan.terms.grossFeeAtoms)} TAP · Payable fee: ${tap(plan.terms.payableFeeAtoms)} TAP`),
-      node('p', `Bitcoin set aside: ${plan.terms.mintFunding.satoshis} sats`), node('p', 'Returned to you after the mint, minus the Bitcoin network fees and the 546 sats per block that stay with the inscriptions.', 'small muted'), node('p', 'Payer: ' + plan.terms.payer, 'mono'), node('p', 'Receiver: ' + plan.terms.receiver, 'mono'));
-    const progress = status.progress, permit = status.permit, sender = status.mintSender;
-    summary.append(node('p', `Payment: ${status.payment?.state ?? status.state} · Permits ready: ${permit?.readyCount ?? 0}/${status.count} · Reveal batches sent: ${sender?.sentBatches ?? 0}/${sender?.totalBatches ?? 0}`),
-      node('p', `Confirmed mints: ${progress?.minted ?? 0}/${status.count} · Released: ${progress?.released ?? 0} · Unresolved: ${progress?.unresolved ?? status.count}`));
-    if (status.payable && status.state === 'awaiting_payment' && localState !== 'payment_submitted')
-      summary.append(action(localState === 'payment_pending' ? 'Check and retry this payment' : `Pay and mint ${status.count} blocks`, () => pay(localState === 'payment_pending')));
-    members.replaceChildren(node('h2', 'Member progress'));
-    for (const member of memberPage.members) members.append(node('p', `Block ${member.block} · ${member.amount} units · ${member.state}${member.inscription ? ' · ' + member.inscription : ''}${member.reason ? ' · ' + member.reason : ''}`));
-    if (memberPage.next !== null) members.append(action('Next members', async () => { offset = memberPage.next; await refresh(); }));
-    if (offset) members.append(action('First members', async () => { offset = 0; await refresh(); }));
+    draw(memberPage);
+  }
+  function draw(memberPage) {
+    const t = plan.terms, n = status.count, state = status.state, failed = STOPPED.includes(state);
+    heading.textContent = `Mint ${plural(n, 'block')} · ${status.ticker}`;
+    clear(intro, `Pay once for ${plural(n, 'block')} of `, assetLink(status.asset), '. TAP Wallet asks once: the same payment pays every fee of this order and sets aside the Bitcoin for its mint inscriptions, and our server sends the mint when the permits are ready.');
+    // Steps as on a single request: reserve → pay → permits → mint sent → minted.
+    const sent = status.mintSender?.sentBatches > 0;
+    const at = state === 'minted' ? 5 : ['minting', 'partly_minted'].includes(state) && sent ? 4 : ['permit_issued', 'minting', 'partly_minted'].includes(state) ? 3
+      : ['paid', 'permit_pending'].includes(state) || failed && status.payment?.state === 'paid' ? 2 : state === 'reserving' ? 0 : 1;
+    clear(progress, stepper(['Reserve', 'Pay', 'Permits', 'Mint sent', 'Minted'], at, { failed }));
+    const awaiting = state === 'awaiting_payment' && localState !== 'payment_submitted';
+    const told = bulkProgress(status, localState);
+    clear(lead, awaiting && status.payable ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(t.payableFeeAtoms))) : null,
+      told ? h(`div.callout.${told[1]}`, {}, told[0]) : null);
+    const fees = awaiting && status.payable ? table(t.groups.map((g, i) => ({ ...g, i })), [
+      { key: 'role', label: 'Fee', render: g => groupRoles(g.i) },
+      { key: 'amount', label: 'Amount', num: true, render: g => h('span.mono', {}, tap(g.amount)) },
+      { key: 'to', label: 'Paid to', render: g => addressLink(g.to) },
+    ], { sortable: false }) : null;
+    if (fees && t.groups.length > 1) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(t.payableFeeAtoms))), h('td')));
+    const waived = BigInt(t.grossFeeAtoms) - BigInt(t.payableFeeAtoms);
+    const waivedRoles = [...new Set(plan.feeManifest.flatMap(m => m.shares.filter(s => s.payable === '0').map(s => String(s.role).replace(/_/g, ' '))))].join(', ');
+    const feeNote = fees && waived > 0n ? h('p.small.muted', { style: { margin: '10px 14px' } }, `The fees of these blocks come to ${tap(t.grossFeeAtoms)}. ${tap(waived.toString())} of it${waivedRoles ? ` (${waivedRoles})` : ''} is not charged to you, so you pay ${tap(t.payableFeeAtoms)}.`) : null;
+    clear(body, fees ? panel('Remaining fees', [fees, feeNote], { flush: true }) : null,
+      failed ? null : panel('Your mint', mintSteps(status, localState), { flush: true }),
+      panel(`Blocks in this order`, members(memberPage), { flush: true }));
+    const [stateText, kind] = BULK_STATE[state] ?? [String(state).replace(/_/g, ' '), ''];
+    clear(side, panel('Order', kv([['Order', hashEl(orderId)], ['State', pill(stateText, kind)], ['Pattern', assetLink(status.asset)],
+      ['Ticker', h('span.mono', {}, status.ticker)], ['Receiver', addressLink(status.receiver)], status.payer !== status.receiver ? ['Paid from', addressLink(status.payer)] : null,
+      ['Blocks', fmtInt(n)], ['Units', fmtInt(status.totalAmount)],
+      awaiting ? ['Pay before block', fmtInt(status.payBy?.untilBlock)] : null,
+      status.payment?.reference ? ['Payment', hashEl(status.payment.reference)] : null,
+      ['Bitcoin for the mint inscriptions', h('span', {}, sats(t.mintFunding.satoshis), h('div.small.muted', {}, 'Returned to you after the mint, minus the Bitcoin network fees and the 546 sats per block that stay with the inscriptions.'))]]), { flush: true }));
+    const next = [], rest = [];
+    if (status.payable && state === 'awaiting_payment' && localState !== 'payment_submitted')
+      next.push(localState === 'payment_pending' ? button('Check and retry this payment', () => pay(true), 'primary') : button(`Pay and mint ${plural(n, 'block')}`, () => pay(false), 'primary'));
+    next.push(button('Refresh', refresh, 'quiet'));
+    // A payment made outside this page is reported by its redeem inscription; the gateway verifies it on Bitcoin.
+    if (awaiting && !status.payment?.reference) {
+      const paymentId = input({ value: paymentDraft, placeholder: 'Transaction ID followed by i0', 'aria-label': 'Payment inscription ID', oninput: event => { paymentDraft = event.target.value; } });
+      rest.push(h('div.row', { style: { alignItems: 'flex-end' } }, h('div', { style: { flex: '1 1 260px' } }, field('Already paid? Report the redeem inscription ID shown by your wallet', paymentId)), button('Report payment', async () => {
+        const value = paymentId.value.trim();
+        if (!/^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(value)) throw Error('Enter the redeem inscription ID, including i0. A funding transaction ID is not an inscription ID.');
+        await reads.payment({ orderId, paymentId: value, commitTxid: null, revealTxid: null });
+        await refresh(); say('Reported. The payment counts once it is found on Bitcoin.', 'good');
+      })));
+    }
+    clear(actions, ...next); clear(extra, ...rest);
+  }
+  // The order's blocks, 25 per page like other lists.
+  function members(memberPage) {
+    const rows = memberPage.members, from = offset + (rows.length ? 1 : 0), to = offset + rows.length;
+    const list = table(rows, [
+      { key: 'block', label: 'Block', render: m => blockLink(m.block) },
+      { key: 'amount', label: 'Units', num: true },
+      { key: 'state', label: 'State', render: m => { const [text, kind] = memberState(m, status); return pill(text, kind); } },
+      { key: 'inscription', label: 'Inscription', render: m => m.inscription ? hashEl(m.inscription) : null },
+    ], { sortable: false, empty: 'No blocks.' });
+    if (memberPage.count <= PAGE && offset === 0) return list;
+    const page = (label, to) => button(label, async () => { offset = to; await refresh(); });
+    const prev = page('‹ Prev', Math.max(0, offset - PAGE)), more = page('Next ›', memberPage.next ?? offset);
+    prev.className = more.className = 'btn sm ghost'; prev.disabled = offset === 0; more.disabled = memberPage.next === null;
+    return h('div.paged', {}, list, h('div.pager-foot', {}, h('span.small.muted', {}, `${fmtInt(from)}–${fmtInt(to)} of ${fmtInt(memberPage.count)}`), h('div.grow'), prev, more));
   }
   async function tick() {
-    try { if (!busy) await refresh(); } catch (error) { if (!stopped) message.textContent = error.message; }
-    if (!stopped) timer = setTimeout(tick, refreshMs);
+    try { if (!busy) await refresh(); } catch (error) { if (!stopped) say(walletError(error), 'bad'); }
+    if (!stopped && status?.state !== 'minted') timer = setTimeout(tick, refreshMs);
   }
-  void tick();
+  void (async () => {
+    try {
+      if (!network) {
+        const target = await api('/web-api/target', { wire: true });
+        setEthereumChain(target.ethereum?.chainId);
+        network = target.bitcoinNetwork;
+      }
+      if (!['mainnet', 'regtest'].includes(network)) throw Error('Invalid Bitcoin network');
+      wallet ??= new TapWalletBulkMint({ network, readStatus: reads.status, readTerms: reads.terms, reportPayment: reads.payment });
+    } catch (error) { if (!stopped) say(walletError(error), 'bad'); return; }
+    await tick();
+  })();
   return () => { stopped = true; clearTimeout(timer); };
-}
-
-if (typeof document !== 'undefined' && document.querySelector('script[src="/web/bulk-mint.js"]')) {
-  const orderId = /^\/mint\/bulk\/([0-9a-f]{64})\/?$/.exec(location.pathname)?.[1];
-  const root = document.getElementById('app');
-  try {
-    const target = await api('/web-api/target', { wire: true });
-    const close = mountBulkMint(root, { orderId, network: target.bitcoinNetwork });
-    addEventListener('pagehide', close, { once: true });
-  } catch (error) { root.replaceChildren(node('p', error.message, 'note')); }
 }

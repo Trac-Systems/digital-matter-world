@@ -11,6 +11,9 @@ const id = 'ab'.repeat(32);
 test('page routes cover explorer and payment links without interpreting hex keys as agents', () => {
   for (const path of ['/', '/explore', '/block/7', '/plot/7', '/pattern/p0', '/compound/c1', '/table', '/agents', '/records', '/results/payouts', '/mint/'+id, '/link/'+id, '/bind-payout/'+id]) assert.notEqual(route(path).kind, 'missing', path);
   assert.equal(route('/agents/'+id).kind, 'missing');
+  // A bulk order opens in the same Mint page as a single request.
+  assert.deepEqual(route('/mint/bulk/'+id), { kind: 'money', type: 'bulk', id });
+  assert.equal(route('/mint/bulk/xyz').kind, 'missing');
 });
 test('mint, link and payout wallets are one page; request links keep their own flow', () => {
   for (const type of ['mint', 'link', 'bind-payout']) {

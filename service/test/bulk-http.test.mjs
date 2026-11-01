@@ -26,7 +26,8 @@ test('bulk loopback routes preserve hex wire identities, exact retry and no-stor
   assert.equal((await fetch(http.url + '/mint/bulk/' + q.orderId + '?unknown=1')).status, 400);
   const html = await fetch(http.url + '/mint/bulk/' + q.orderId, { headers: { accept: 'text/html' } });
   assert.match(html.headers.get('content-type'), /text\/html/);
-  assert.match(await html.text(), /src="\/web\/bulk-mint.js"/);
+  // The site app renders the order (its route is /mint/bulk/<order>); no page-specific entry script.
+  assert.match(await html.text(), /src="\/web\/app.js"/);
   const json = await fetch(http.url + '/mint/bulk/' + q.orderId, { headers: { accept: 'application/json' } });
   assert.equal((await json.json()).orderId, q.orderId);
 });
