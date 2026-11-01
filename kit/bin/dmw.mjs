@@ -198,15 +198,14 @@ async function main() {
       let stop = false;
       // Local CLI and MCP calls share this process's stores through control.
       const hunt = hunting && (async () => {
-        // A new tip's claim window opens once its publication is out, which can trail the
-        // tip itself; retry within the same tip until it claims (passes are idempotent).
-        let done = null, seen = null, tries = 0;
+        // A block's claim window opens with its publication, which can trail the tip.
+        // Poll only the small publication pointer; one full pass per new publication.
+        let done = null;
         while (!stop) {
           let tip = null;
-          try { tip = readInteger((await agent.service.health()).tip); } catch {}
-          if (tip !== seen) { seen = tip; tries = 0; }
+          try { tip = readInteger((await agent.service.latest()).tip); } catch {}
           if (tip !== null && tip !== done) {
-            try { const r = await runTool(context, 'mine_once', {}); if (Array.isArray(r?.plots) || ++tries >= 6) done = tip;
+            try { const r = await runTool(context, 'mine_once', {}); done = tip;
               process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${huntSummary(r)}\n`); }
             catch (error) { process.stdout.write(`${new Date().toISOString()} hunt tip ${tip} failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
             // The agent's own saved pattern proposals are revealed as soon as their window opens.
