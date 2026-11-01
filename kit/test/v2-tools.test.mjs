@@ -5,7 +5,7 @@ import { ServiceClient } from '../lib/service-client.mjs';
 import { Agent } from '../lib/agent.mjs';
 import { Journal } from '../lib/journal.mjs';
 import { gameTools, runTool } from '../lib/tools.mjs';
-import { presentRead, publicRoute } from '../lib/reads.mjs';
+import { presentRead, publicRoute, readQuery } from '../lib/reads.mjs';
 import { chooseClaims, chooseCompound, chooseMint } from '../strategies/default.mjs';
 import { temp, testWallet, fakeTrac, history, cleanup } from './helpers.mjs';
 import { encodeTracAddress } from '../../rules/src/trac-address.js';
@@ -120,4 +120,10 @@ test('v2 journal hunting recognizes header-v2 and claim-v2 without treating them
   assert.equal(hunt.items[1].phase, 'check_settlement');
   assert.equal(hunt.items[1].settlesAt, null);
   assert.equal(journal.evidence('claim/21').settlement, null, 'A partial projection must not freeze the final settlement');
+});
+
+test('a mint rights read can name the chosen ticker by its deploy inscription', () => {
+  const deployment = 'd6972af9d2fe7c7a8cf7a2885c8d1fe5db38ffb22461310a779dbb9f6285abfbi0';
+  assert.deepEqual(readQuery({ asset: 'p2:2', deployment, limit: 50 }), { asset: 'p2:2', deployment, limit: '50' });
+  assert.throws(() => readQuery({ deployment: 'lolooosdsf' }), /Invalid deployment/);
 });

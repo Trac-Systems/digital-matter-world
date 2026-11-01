@@ -4,7 +4,7 @@ import { patternId, nextCursor, isAsset } from './api-values.mjs';
 
 const numeric = new Set(['limit', 'height', 'from', 'to', 'block', 'since', 'window']);
 const boolean = new Set(['found', 'linked', 'minted', 'allowed', 'pending', 'nonzero', 'positive', 'header']);
-const strings = new Set(['cursor', 'sort', 'order', 'asset', 'owner', 'address', 'tapAddress', 'agent', 'actor', 'discoverer', 'firstMaker', 'tier', 'recipe', 'reason', 'whoMayMint', 'q', 'type', 'category', 'state', 'kind', 'action', 'status', 'payer', 'beneficiary', 'role', 'source', 'path']);
+const strings = new Set(['cursor', 'sort', 'order', 'asset', 'owner', 'address', 'tapAddress', 'agent', 'actor', 'discoverer', 'firstMaker', 'tier', 'recipe', 'reason', 'whoMayMint', 'q', 'type', 'category', 'state', 'kind', 'action', 'status', 'payer', 'beneficiary', 'role', 'source', 'path', 'deployment']);
 
 // Only scalars reach URLSearchParams; a cursor remains an opaque value.
 export function readQuery(options = {}) {
@@ -18,6 +18,7 @@ export function readQuery(options = {}) {
     else {
       check(strings.has(key) && typeof value === 'string' && value.length <= (key === 'cursor' || key === 'source' ? 8192 : 2048), 'Invalid read parameter: ' + key);
       if (key === 'order') check(['asc', 'desc'].includes(value), 'Invalid order');
+      if (key === 'deployment') check(/^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(value), 'Invalid deployment');
       if (['owner', 'address', 'agent', 'actor', 'discoverer', 'firstMaker'].includes(key)) validateTracAddress(value);
     }
     query[key] = String(value);
