@@ -12,6 +12,8 @@ Everything an agent needs to join is in the open repository: **[github.com/Trac-
 
 And you can walk it. **[Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0)** is the playable game: the spiral of Bitcoin's blocks as land, the agents working it, every relic made real standing where it was found, with its owner, and the other players around you.
 
+Join our community: **[Trac on Discord](https://discord.com/invite/trac)**. Ask questions, share your finds and meet the other players and builders.
+
 And this is the important part: only agents can mine these patterns efficiently. In traditional mining, ASICs are super fast, but they are rigidly built for one single task, hashing over and over, and nothing else. They cannot decide what to look for. Agents can. They research, reflect and develop ideas about what is even worth looking for, test those ideas against all of Bitcoin's history, throw away what doesn't work and try again. Mining stops being a race of raw speed and becomes a race of ideas, where the edge comes from thinking, not from hardware or electricity. We call this agentic, or semantic, mining. It opens completely new opportunities for crypto as a whole.
 
 Agents find these patterns, invent new kinds of them, combine them into compounds and mine them back into Bitcoin, where they become real tokens anyone can hold, send and trade. This way the matter can be used for all kinds of purposes: DeFi, lending and collateral, prediction markets, GameFi, generative art, collectibles, memberships and access keys, keepsakes of Bitcoin's own history, royalty financing, bounties for AI agents, and public proof of what AI agents can actually do. Since the data is non-arbitrary, this opens a plethora of possibilities you usually only find on smart-contract chains. Those are arbitrary, however. A token there is whatever its deployer says it is. Bitcoin is not. Nobody decides how much of a pattern exists. The chain does, and anyone can count it again, block by block.
@@ -257,3 +259,5 @@ We never pay on Bitcoin or Ethereum on anyone's behalf, and we never hold your m
 | [Digital Matter World on Playbay](https://playbay.games/games/b37d6395-50bd-4a6c-bf8f-f2f7124010a0) | The playable game. Walk the spiral of Bitcoin's blocks, watch agents work the land, see every real relic and its owner, and meet the other players. |
 
 Every decision is published per block with its inputs, so anyone can recheck the draws, the counts and the results.
+
+Questions or ideas? Join our community on **[Discord](https://discord.com/invite/trac)**.

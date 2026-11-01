@@ -10,6 +10,7 @@ import { createInterface } from 'node:readline';
 import { ReadStream, WriteStream } from 'node:tty';
 import { init, unlock, wipeWallet, publicAddress, publicKey, defaultDirectory, Agent, ServiceClient, Journal, loadHistory, historyProof, headerSource, regtestSource, downloadHeaders, backtest } from '../lib/index.mjs';
 import { check } from '../lib/check.mjs';
+import { readInteger } from '../lib/api-values.mjs';
 import { serveMcp } from '../lib/mcp.mjs';
 import { serveDashboard } from '../lib/dashboard.mjs';
 import { dashboardJournal } from '../lib/dashboard-state.mjs';
@@ -29,7 +30,7 @@ const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, 
   headers: { type: 'string' }, source: { type: 'string' }, independent: { type: 'string' }, output: { type: 'string' },
   start: { type: 'string' }, end: { type: 'string' }, patterns: { type: 'string' }, strategy: { type: 'string' }, help: { type: 'boolean' },
   'max-fee-sats': { type: 'string' }, retry: { type: 'boolean' }, 'fee-rate': { type: 'string' },
-  cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }
+  cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }, hunt: { type: 'boolean', default: false }
 } });
 const print = value => process.stdout.write(JSON.stringify(publicIdentities(value)) + '\n');
 async function secret(name, prompt) {
@@ -61,7 +62,7 @@ async function main() {
   const live = opts.live || command === 'dashboard';
   if (command === 'dashboard') check(opts.port === undefined || /^(0|[1-9][0-9]{0,4})$/.test(opts.port) && Number(opts.port) <= 65535, 'Invalid dashboard port');
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT] [--hunt]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\n--hunt keeps the agent claiming once per new Bitcoin block while the dashboard runs.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
@@ -131,7 +132,7 @@ async function main() {
     }
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
     const historyTool = ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
-    const session = ['mcp', 'once'].includes(command);
+    const hunting = command === 'dashboard' && opts.hunt, session = ['mcp', 'once'].includes(command) || hunting;
     const source = adapter.source ?? (config.headerCookie ? regtestSource({ origin: opts.source ?? config.headerSource, cookiePath: config.headerCookie }) : headerSource(opts.source ?? config.headerSource, config.headerHTTPSettings));
     let history = adapter.history;
     if (!history && (session || historyTool)) {
@@ -139,7 +140,7 @@ async function main() {
         historySync = new HistorySync({ output: opts.headers ?? config.headers ?? join(directory, 'headers.bin'), source,
           network: agent.bitcoinNetwork, manifestTrust: config.headerManifestTrust ?? manifestTrust(config.gatewayKey), chunkLimits: config.headerChunkLimits, independent: agent.bitcoinNetwork === 'mainnet' ? headerSource('https://blockstream.info') : null });
         historySync.start();
-        if (command !== 'mcp') { await historySync.pending; history = historySync.available(); }
+        if (command !== 'mcp' && !hunting) { await historySync.pending; history = historySync.available(); }
       } else if (opts.headers ?? config.headers) history = await (agent.bitcoinNetwork === 'regtest' ? loadRegtestHistory : loadHistory)(opts.headers ?? config.headers);
     }
     const strategies = (session || strategyTool) && (opts.strategy ?? config.strategy) ? await import(pathToFileURL(resolve(opts.strategy ?? config.strategy))) : {};
@@ -153,7 +154,23 @@ async function main() {
     else if (command === 'dashboard') {
       server = await serveDashboard(context, { port: Number(opts.port ?? 0) });
       process.stdout.write(server.loginLink + '\n');
+      let stop = false;
+      // The dashboard holds the agent's stores, so a separate `once` process cannot run beside it.
+      const hunt = hunting && (async () => {
+        let done = null;
+        while (!stop) {
+          let tip = null;
+          try { tip = readInteger((await agent.service.health()).tip); } catch {}
+          if (tip !== null && tip !== done) {
+            try { const r = await runTool(context, 'mine_once', {}); done = tip;
+              process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${JSON.stringify(publicIdentities(r)).slice(0, 300)}\n`); }
+            catch (error) { process.stdout.write(`${new Date().toISOString()} hunt tip ${tip} failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
+          }
+          for (let i = 0; i < 20 && !stop; i++) await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      })();
       await new Promise(resolve => { process.once('SIGTERM', resolve); process.once('SIGINT', resolve); });
+      stop = true; await hunt;
     } else if (command === 'mcp') {
       server = await serveMcp(context);
       await new Promise(resolve => { const end = () => resolve(); process.once('SIGTERM', end); process.once('SIGINT', end); process.stdin.once('end', end); server.server.onclose = end; });
