@@ -126,6 +126,15 @@ export class MintSender {
     if (this.settings.refundsEnabled && status.publicMint && status.winner?.id !== row.id && (reason || status.refunds?.length || ['claimed', 'already_minted', 'claimed_first'].includes(status.state)))
       return this.save(row, { message: 'Bitcoin set-aside held for automatic TAP refund settlement.' });
     if (reason) return this.returnFunding(row, reason);
+    // The set-aside arrives in the TAP fee payment's own commit transaction. If no page reported that payment
+    // (closed right after paying, or the report was lost), report it here, so the gateway counts it on confirmation.
+    if (['awaiting_payment', 'partly_paid'].includes(status.state) && !status.publicMint && !status.inflight && this.now() - (row.paymentReportAt ?? 0) >= 60000) {
+      row = this.save(row, { paymentReportAt: this.now() });
+      try {
+        for (const revealTxid of await this.bitcoin.spenders(row.coin.txid, row.coin.vout))
+          if (await this.gateway.reportPayment(id, { commitTxid: row.coin.txid, revealTxid }).then(() => true, () => false)) break;
+      } catch (error) { this.log({ event: 'mint_sender_payment_report_retry', requestId: id, code: mintSenderError(error) }); }
+    }
     if (status.state !== 'permit_issued') return row;
     // The client may have broadcast its own inscription before discovering the
     // set-aside. Let the gateway verify it, then return the untouched set-aside.

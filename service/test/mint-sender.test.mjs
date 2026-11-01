@@ -187,3 +187,18 @@ test('successful ticker registration returns each fee payment set-aside with the
   f.transactions.set(tx.id, { confirmed: true }); await f.restart(); await f.tick();
   assert.equal(f.sender.journal.get(id).state, 'returned'); assert.equal(f.reports.length, 0);
 });
+
+test('a fee payment no page reported is reported by the minter from its set-aside, once a minute, until the gateway shows it', async t => {
+  const f = await fixture(t, { state: 'awaiting_payment' }), reported = [];
+  f.bitcoin.spenders = async (txid, except) => { assert.equal(txid, f.coins[0].txid); assert.equal(except, f.coins[0].vout); return ['ee'.repeat(32)]; };
+  f.gateway.reportPayment = async (requestId, sent) => { reported.push({ requestId, ...sent }); };
+  await f.tick();
+  assert.deepEqual(reported, [{ requestId: f.id, commitTxid: f.coins[0].txid, revealTxid: 'ee'.repeat(32) }]);
+  assert.equal(f.sent.length, 0, 'nothing is spent before the permit');
+  await f.tick(); assert.equal(reported.length, 1, 'not again within a minute');
+  f.advance(60000); await f.tick(); assert.equal(reported.length, 2);
+  f.status.inflight = { phase: 'payment', revealTxid: 'ee'.repeat(32) }; f.advance(60000); await f.tick();
+  assert.equal(reported.length, 2, 'a payment the gateway already shows is not reported again');
+  f.status.inflight = null; f.status.publicMint = true; f.advance(60000); await f.tick();
+  assert.equal(reported.length, 2, 'public wallet mints are found by the gateway itself');
+});

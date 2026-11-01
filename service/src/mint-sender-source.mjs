@@ -61,6 +61,13 @@ export class MintSenderBitcoin {
     // Never charge another payment's set-aside, even for the same request id.
     return (await this.utxos(address)).filter(coin => parents.has(coin.txid));
   }
+  // Transactions spending the other outputs of `txid` (a payment's reveal spends its commit output).
+  async spenders(txid, except) {
+    check(/^[0-9a-f]{64}$/.test(txid), 'mint_sender_txid');
+    const outs = await this.http.request('/tx/' + txid + '/outspends');
+    check(Array.isArray(outs) && outs.length <= 64, 'mint_sender_outspends');
+    return [...new Set(outs.map((o, vout) => vout !== except && o?.spent === true && /^[0-9a-f]{64}$/.test(o.txid ?? '') ? o.txid : null).filter(Boolean))];
+  }
   async feeRate() {
     const rates = await this.http.request('/fee-estimates'), rate = rates?.[String(this.settings.feeTargetBlocks)];
     check(Number.isFinite(rate) && rate > 0, 'mint_sender_fee_unavailable'); return Math.max(1, rate);
@@ -140,5 +147,10 @@ export class MintSenderGateway {
   }
   async report(id, inscription) {
     return this.http.request('/mint/payment', { method: 'POST', body: { id, inscription } });
+  }
+  // The same in-flight report the request page makes after TAP Wallet sends the fee payment.
+  reportPayment(id, { commitTxid, revealTxid }) {
+    return this.http.request('/mint/inflight', { method: 'POST', body: { kind: 'mint', ref: id, phase: 'payment', attempt: 0,
+      commitTxid, revealTxid, inscriptionId: revealTxid + 'i0' } });
   }
 }
