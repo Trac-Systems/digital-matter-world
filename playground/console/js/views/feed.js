@@ -77,9 +77,14 @@ export function mount(root) {
   }
   // After a restart the public index backfills; say so rather than look out of date.
   function indexLag() {
-    const p = store.status?.publicIndex;
-    return typeof p?.caughtUp === 'boolean' ? h(`span.pill.${p.caughtUp ? 'good' : 'warn'}`, { 'data-tip': `Publications ${fmtInt(p.processedObservation)} / ${fmtInt(p.latestObservation)}; accepted batches ${fmtInt(p.processedBatch)} / ${fmtInt(p.latestBatch)}. Chain progress is separate.` },
-      p.caughtUp ? `Index caught up · counted block ${fmtInt(p.indexedHeight)}` : `Index catching up · ${fmtInt(p.observationLag)} publications, ${fmtInt(p.batchLag)} batches behind`) : null;
+    const p = store.status?.publicIndex, lag = (a, b) => Math.max(0, Number(a ?? 0) - Number(b ?? 0));
+    // A batch or two in progress is normal while the network is busy; only a longer backlog is a warning.
+    const batchLag = p?.batchLag ?? lag(p?.latestBatch, p?.processedBatch), observationLag = p?.observationLag ?? lag(p?.latestObservation, p?.processedObservation);
+    const busy = p && !p.caughtUp && batchLag <= 2;
+    return typeof p?.caughtUp === 'boolean' ? h(`span.pill.${p.caughtUp || busy ? 'good' : 'warn'}`, { 'data-tip': `Publications ${fmtInt(p.processedObservation)} / ${fmtInt(p.latestObservation)}; accepted batches ${fmtInt(p.processedBatch)} / ${fmtInt(p.latestBatch)}. Chain progress is separate.` },
+      p.caughtUp ? `Index caught up · counted block ${fmtInt(p.indexedHeight ?? store.status?.counted)}`
+        : busy ? `Index updating · ${fmtInt(batchLag)} new batch${batchLag === 1 ? '' : 'es'} in progress`
+        : `Index catching up · ${fmtInt(observationLag)} publications, ${fmtInt(batchLag)} batches behind`) : null;
   }
   function drawLiveFoot() {
     clear(liveFoot, h('span.small.muted', {}, `Newest ${fmtInt(rowsEl.querySelectorAll('tr.feed-row, tr.blockrow').length)} events${retained !== null ? ` · ${fmtInt(retained)} on the server` : ''}`), indexLag(),

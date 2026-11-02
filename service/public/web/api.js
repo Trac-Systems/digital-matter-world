@@ -11,8 +11,9 @@ export async function api(path, options = {}) {
   for (let attempt = 0; ; attempt++) {
     try { return await apiOnce(path, options); }
     catch (error) {
-      if ((options.method ?? 'GET') !== 'GET' || error.status !== 503 || !PASSING.has(error.message) || attempt >= 5 || options.signal?.aborted) throw error;
-      await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+      // An index update after a batch takes seconds; a steady 1 s retry shows the list as soon as it is done.
+      if ((options.method ?? 'GET') !== 'GET' || error.status !== 503 || !PASSING.has(error.message) || attempt >= 20 || options.signal?.aborted) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 }

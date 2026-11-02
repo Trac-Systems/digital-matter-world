@@ -147,7 +147,8 @@ test('a failed record transaction cannot reserve a symbol', async t => {
 test('discovery chunks allocate in pattern-number order and preserve source records', async t => {
   const f = await fixture(t), discoveries = [pattern(10, names[2]), pattern(2, names[1]), pattern(0, names[0])].map(record => ({ record }));
   await f.store.put('feedEvents', '1', { height: '0', tip: '0', discoveries });
-  const feed = () => ({ store: f.store, history: { get() { throw Error('history_scan'); } }, settings: { feedEventRows: 1 } });
+  // Stop after one unit of work so reopening still tests a partial discovery phase.
+  const feed = () => ({ store: f.store, history: { get() { throw Error('history_scan'); } }, settings: { feedEventRows: 1, feedEventsPerTick: 1 } });
   while (assignments(f.store).length < 1) await claimedEventsV2(feed());
   assert.deepEqual(assignments(f.store), [['p2:0', 'Mu']]);
   assert.deepEqual(f.store.get('feedEvents', '1').discoveries, discoveries);

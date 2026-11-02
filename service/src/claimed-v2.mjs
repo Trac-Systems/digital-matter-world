@@ -56,8 +56,14 @@ export function claimedPageV2(store, asset, params, settings = {}) {
 // with its cursor; no catalog, history or prior event is loaded on restart.
 export async function claimedEventsV2(feeds) {
   const { store, history } = feeds, s = { ...R3_RESOURCES, ...feeds.settings };
-  for (const { id, value: event } of store.list('feedEvents', { limit: s.feedEventsPerTick })) {
-    if (store.get('feedEventComplete', id)) { await store.put('feedEvents', id); continue; }
+  const events = store.list('feedEvents', { limit: s.feedEventsPerTick });
+  // Spend the existing per-tick row allowance across chunks/phases without
+  // sleeping between them. Empty phases and completed-event cleanup cost one
+  // row of work too, so even an empty queue entry makes bounded progress.
+  let remaining = s.feedEventRows * s.feedEventsPerTick, eventIndex = 0;
+  while (eventIndex < events.length && remaining > 0) {
+    const { id, value: event } = events[eventIndex];
+    if (store.get('feedEventComplete', id)) { await store.put('feedEvents', id); remaining--; eventIndex++; continue; }
     const phases = ['occurrences', 'finds', 'discoveries', 'types', 'agents', 'links', 'refinements', 'crafts', 'financial', 'transfers'];
     const cursor = store.get('feedEventCursor', id) ?? { phase: 0, offset: 0 }, phase = phases[cursor.phase];
     const source = event[phase] ?? [], rows = Array.isArray(source) ? source : Object.values(source);
@@ -90,7 +96,7 @@ export async function claimedEventsV2(feeds) {
       put('catalogTypes', asset, { ...row, supply: get('publicSupply', asset)?.outstanding ?? row.supply ?? '0',
         madeReal: String(BigInt(row.madeReal ?? '0') + BigInt(minted)) });
     };
-    const chunk = rows.slice(cursor.offset, cursor.offset + s.feedEventRows);
+    const chunk = rows.slice(cursor.offset, cursor.offset + Math.min(s.feedEventRows, remaining));
     for (const row of chunk) {
       if (phase === 'occurrences' || phase === 'finds') {
         // Patterns imported from v1 keep their ledger asset (e.g. "p0") in finds and occurrences;
@@ -170,9 +176,10 @@ export async function claimedEventsV2(feeds) {
     else put('feedEventCursor', id, next);
     put('meta', 'claimedProjectionRevision', hash(`${id}/${cursor.phase}/${cursor.offset}`));
     await store.transact([...operations.values()]);
+    remaining -= Math.max(1, chunk.length);
     // A later small event must not publish its catalog/attribution changes
     // ahead of an earlier event whose occurrence phase needs more pages.
-    if (next.phase < phases.length) break;
+    if (next.phase === phases.length) eventIndex++;
   }
   // Compounds projected before units and made real were kept: fill them once, one page per tick.
   const fill = store.get('meta', 'compoundTotalsFill') ?? { after: '' };
