@@ -5,6 +5,8 @@ export const ASSET_RESOURCES = Object.freeze({
   mintInputCapacity: 2000, workPage: 128, creditPage: 128,
   creditSources: 32, outboxPage: 128,
   bulkOrdersPerAgent: 24, activeBulkOrders: 512, bulkMintEnabled: true, bulkQuoteAttempts: 3,
+  // How long a move waits for admission to reopen while a batch is signed, and how often it checks.
+  admissionWaitMs: 8000, admissionPollMs: 200,
 });
 export function assetResources(overrides = {}) {
   const settings = { ...ASSET_RESOURCES, ...overrides };

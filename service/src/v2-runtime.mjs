@@ -22,6 +22,7 @@ import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { requireProductionRelease } from './production-release.mjs';
 import { phase } from './lifecycle.mjs';
 import { KeyedWork } from './keyed-work.mjs';
+import { assetResources } from './asset-resources.mjs';
 
 // Explicit offline step on a reconciled copy, before starting the new gateway.
 // Pending work is reconciled before the manifest/import roots are pinned.
@@ -170,7 +171,8 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   const refresh = () => refreshing ??= refreshOnce().finally(() => { refreshing = null; });
   await refresh();
   intake = new SegmentedIntake({ store, network: config.network, secret, hashAt: history.hashAt, settings, rulesContext: context, resources: pin.resources });
-  intake.namedAdmission = new NamedAdmission({ store, secret, context, history: { get: h => history.get(h) }, hashAt: h => history.hashAt(h), resources: pin.resources, committee });
+  intake.namedAdmission = new NamedAdmission({ store, secret, context, history: { get: h => history.get(h) }, hashAt: h => history.hashAt(h), resources: pin.resources, committee,
+    wait: assetResources(config.assetResources) });
   intake.prepareBatch = refresh;
   financial = typeof reads.financialEvidence === 'function' && typeof reads.financialRecord === 'function'
     ? new FinancialExecution({ store, reads, document: settings.document, resources: config.assetResources }) : null;

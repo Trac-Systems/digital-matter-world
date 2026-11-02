@@ -8,20 +8,27 @@ import { buildCreditAccounts } from './account-batch.mjs';
 // and healthy capable quorum checks. It pins the next batch and accepted state.
 // R3's sequencer must include all entries in this reserved batch or produce an
 // explicit rejection. Switching a batch with admitted entries is not allowed.
+const CLOSED = new Set(['reserved_batch_pending', 'ruleset_not_ready', 'reservation_context_changed']);
+
 export class NamedAdmission {
-  constructor({ store, secret, context, history, hashAt, resources, limiter, committee }) {
+  constructor({ store, secret, context, history, hashAt, resources, limiter, committee, wait = { admissionWaitMs: 1, admissionPollMs: 1 } }) {
     rules.validateResourceDocument(resources);
-    Object.assign(this, { store, secret, context, history, hashAt, resources, limiter, committee });
+    Object.assign(this, { store, secret, context, history, hashAt, resources, limiter, committee, wait });
     this.limiter ??= new Limiter({ capacity: resources.values.senderCapacity, burst: resources.values.senderBurst,
       perSecond: resources.values.senderPerSecond, ttl: resources.values.senderTtlMs });
     this.persistence = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: resources.values.namedNodeCache });
     this.tail = Promise.resolve();
   }
   accept(text) {
-    return this.exclusive(() => this.admit(text)).catch(error => {
+    const until = Date.now() + this.wait.admissionWaitMs, poll = this.wait.admissionPollMs;
+    const attempt = () => this.exclusive(() => this.admit(text)).catch(async error => {
+      // Admission closes for a few seconds while each batch is signed. Hold the request and admit it
+      // as soon as the gateway reopens, instead of sending the agent away to guess when to retry.
+      if (CLOSED.has(error.message) && Date.now() + poll < until) { await new Promise(resolve => setTimeout(resolve, poll)); return attempt(); }
       if ([429, 503].includes(error.status)) error.retryAfterMs ??= this.resources.values.outboxRetryMs;
       throw error;
     });
+    return attempt();
   }
   exclusive(fn) { const result = this.tail.then(fn); this.tail = result.catch(() => {}); return result; }
   async acknowledge(id, record) {
