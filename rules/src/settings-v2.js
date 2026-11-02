@@ -73,7 +73,9 @@ export function validateSettings(values, capabilities = SETTINGS_CAPABILITIES, e
   const legacyDeploy = Object.hasOwn(values, 'legacyDeployShareBps');
   const deployer = Object.hasOwn(values, 'deployerShareBps');
   const tickerDeploy = Object.hasOwn(values, 'tickerDeployMultiplier');
+  const paymentTiming = Object.hasOwn(values, 'lateConfirmBlocks');
   assert(exactKeys(values, [...Object.keys(SETTINGS_PROFILE).filter(k => bounded || !closureKeys.includes(k)),
+    ...(paymentTiming ? ['lateConfirmBlocks'] : []),
     ...(publicMint ? Object.keys(PUBLIC_MINT_SETTINGS) : []), ...(neverClose ? ['claimsNeverCloseHeight'] : []), ...(bitmapOpen ? ['bitmapMintOpenHeight'] : []), ...(paymentV2 ? ['publicPaymentV2Height'] : []), ...(legacyDeploy ? Object.keys(LEGACY_DEPLOY_SETTINGS) : []), ...(tickerDeploy ? Object.keys(TICKER_DEPLOY_SETTINGS) : []), ...(deployer ? Object.keys(DEPLOYER_SETTINGS) : [])]), 'settings_keys');
   if (neverClose) assert(publicMint && compareUint(uintV2(values.claimsNeverCloseHeight), values.publicMintActivationHeight) >= 0, 'settings_claims_never_close');
   if (paymentV2) assert(publicMint && compareUint(uintV2(values.publicPaymentV2Height), values.publicMintActivationHeight) >= 0, 'settings_public_payment_activation');

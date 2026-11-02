@@ -42,7 +42,8 @@ test('opening retries changed Trac state and signs one coherent paged snapshot',
     return structuredClone(f.stamp);
   };
   const request = f.request(), result = await f.publish(request), p = result.payload;
-  assert.equal(stamps, 4); assert.equal(p.result.revision, f.store.sequence); assert.equal(p.result.stamp.revision, 2);
+  // The retry opens with the stamp that closed the failed attempt.
+  assert.equal(stamps, 3); assert.equal(p.result.revision, f.store.sequence); assert.equal(p.result.stamp.revision, 2);
   assert.ok(verifyEvidence(p, result.signature, edPublic(f.secret)));
   const page = await f.publish(f.request({ op: 'get', snapshot: p.result.id, space: 'types', id: 'one' }));
   assert.deepEqual(page.payload.result.rows[0].value, ['after']);
@@ -60,8 +61,9 @@ test('gateway writes after snapshot open preserve earlier pages without global r
 test('persistent Trac churn exhausts bounded retries and consumes the nonce', async t => {
   const f = await fixture(t, { retries: 2, backoffMs: 0 }); let stamps = 0;
   f.reads.trac = async () => { stamps++; return { ...f.stamp, revision: ++f.stamp.revision }; };
-  const request = f.request(); await assert.rejects(f.publish(request), /evidence_snapshot_changed/); assert.equal(stamps, 6);
-  await assert.rejects(f.publish(request), /evidence_replay/); assert.equal(stamps, 6);
+  // Three attempts: one opening stamp, then each attempt's closing stamp opens the next.
+  const request = f.request(); await assert.rejects(f.publish(request), /evidence_snapshot_changed/); assert.equal(stamps, 4);
+  await assert.rejects(f.publish(request), /evidence_replay/); assert.equal(stamps, 4);
 });
 
 test('independent reader snapshot errors retry; unrelated failures never retry', async t => {
@@ -82,4 +84,17 @@ test('snapshot policy has bounded operator settings and is validated at startup'
   const config = { version: 1, mode: 'prod', network: 'evidence-test', listen: { host: '127.0.0.1', port: 12345 },
     adapter: new URL('../prod/adapter.mjs', import.meta.url).pathname, prod: { evidenceSnapshot: { retries: -1 } } };
   await assert.rejects(validateConfig(config), /evidence_snapshot_policy/);
+});
+
+test('a later open takes one fresh stamp and still refuses a Trac change around its snapshot', async t => {
+  const f = await fixture(t); let stamps = 0;
+  f.reads.trac = async () => { stamps++; return structuredClone(f.stamp); };
+  await f.publish(f.request()); assert.equal(stamps, 2);
+  const second = await f.publish(f.request()); assert.equal(stamps, 3); assert.equal(second.payload.result.stamp.revision, 1);
+  f.stamp.revision++;
+  const policy = await fixture(t, { retries: 0, backoffMs: 0 });
+  policy.reads.trac = async () => structuredClone(policy.stamp);
+  await policy.publish(policy.request());
+  policy.stamp.revision++;
+  await assert.rejects(policy.publish(policy.request()), /evidence_snapshot_changed/);
 });

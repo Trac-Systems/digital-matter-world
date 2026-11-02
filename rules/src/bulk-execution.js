@@ -4,17 +4,17 @@ import { BULK_LIMITS, validateBulkTerms, validateBulkFees, bulkReserveAction, bu
 import { mintRetainsUnits } from './per-ticker-supply-activation.js';
 
 const same = (a, b) => stableJSON(a) === stableJSON(b);
-export const bulkTransition = t => t?.type === 'reserve-many' || ['bulk-fund', 'bulk-consume', 'bulk-finish', 'bulk-release', 'bulk-credit'].includes(t?.type);
+export const bulkTransition = t => t?.type === 'reserve-many' || ['bulk-fund', 'bulk-fund-held', 'bulk-consume', 'bulk-consume-held', 'bulk-finish', 'bulk-release', 'bulk-credit'].includes(t?.type);
 export function validateBulkTransition(t) {
   bulkBytes(t, BULK_LIMITS.transitionBytes);
-  const fields = { 'reserve-many': ['action', 'terms'], 'bulk-fund': ['reference'], 'bulk-credit': ['reference'],
-    'bulk-consume': ['permitRoot'], 'bulk-finish': ['members'], 'bulk-release': ['members', 'reason'] }[t?.type];
+  const fields = { 'reserve-many': ['action', 'terms'], 'bulk-fund': ['reference'], 'bulk-fund-held': ['reference'], 'bulk-credit': ['reference'],
+    'bulk-consume': ['permitRoot'], 'bulk-consume-held': ['permitRoot'], 'bulk-finish': ['members'], 'bulk-release': ['members', 'reason'] }[t?.type];
   assert(fields && exactKeys(t, ['type', 'id', ...fields]) && hex(t.id, 32), 'bulk_transition');
   if (t.type === 'reserve-many') {
     const { sig, ...unsigned } = t.action ?? {};
     assert(hex(sig, 64) && same(unsigned, bulkReserveAction(t.terms)) && t.action.id === t.id, 'bulk_reservation');
-  } else if (t.type === 'bulk-fund' || t.type === 'bulk-credit') assert(bulkInscription(t.reference), 'bulk_payment_reference');
-  else if (t.type === 'bulk-consume') assert(hex(t.permitRoot, 32), 'bulk_permit_root');
+  } else if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) assert(bulkInscription(t.reference), 'bulk_payment_reference');
+  else if (['bulk-consume', 'bulk-consume-held'].includes(t.type)) assert(hex(t.permitRoot, 32), 'bulk_permit_root');
   else { bulkIndices(t.members, BULK_LIMITS.members, t.type === 'bulk-finish'); if (t.type === 'bulk-release') assert(t.reason === 'expired', 'bulk_release_reason'); }
   return t;
 }
@@ -29,9 +29,9 @@ export async function bulkBatchWork(inputs, { read }) {
     validateBulkTransition(t); bulkBytes(input.evidence, BULK_LIMITS.evidenceBytes, 'bulk_evidence_bytes');
     const terms = t.type === 'reserve-many' ? t.terms : manifests.get(t.id) ?? (await read('fp/' + t.id))?.manifest;
     validateBulkTerms(terms); manifests.set(t.id, terms);
-    if (t.type === 'reserve-many' || t.type === 'bulk-consume') members += terms.members.length;
+    if (t.type === 'reserve-many' || ['bulk-consume', 'bulk-consume-held'].includes(t.type)) members += terms.members.length;
     if (t.type === 'bulk-finish' || t.type === 'bulk-release') members += t.members.length;
-    if (['reserve-many', 'bulk-fund', 'bulk-consume', 'bulk-credit'].includes(t.type)) groups += terms.groups.length;
+    if (['reserve-many', 'bulk-fund', 'bulk-fund-held', 'bulk-consume', 'bulk-consume-held', 'bulk-credit'].includes(t.type)) groups += terms.groups.length;
     assert(members <= BULK_LIMITS.memberWork && groups <= BULK_LIMITS.groupWork, 'bulk_batch_work');
   }
   return { members, groups };
@@ -74,7 +74,7 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
   const funding = await read('fp/' + t.id), terms = validateBulkTerms(funding?.manifest);
   assert(funding.kind === 'bulk-v1' && e.owner === terms.owner && e.terms === funding.terms && funding.terms === hashObject(terms), 'bulk_evidence_binding');
   const bound = { type: t.type, terms: funding.terms };
-  if (t.type === 'bulk-fund' || t.type === 'bulk-credit') {
+  if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) {
     assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'reference', 'confirmations', 'block', 'paid', 'receiptRoot', 'transfers', ...(e.feeManifest ? ['feeManifest'] : [])]) &&
       e.state === 'settled' && e.reference === t.reference && integer(e.confirmations) && e.confirmations >= 1 &&
       exactKeys(e.block, ['height', 'hash']) && bulkUint(e.block.height) && hex(e.block.hash, 32) &&
@@ -93,7 +93,7 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
     if (e.feeManifest) { assert(t.type === 'bulk-credit', 'bulk_credit_manifest'); validateBulkFees(terms, e.feeManifest); }
     return [fp({ ...bound, reference: t.reference, block: e.block, paid: e.paid, receiptRoot: e.receiptRoot, ...(e.feeManifest ? { feeManifest: e.feeManifest } : {}) })];
   }
-  if (t.type === 'bulk-consume') {
+  if (['bulk-consume', 'bulk-consume-held'].includes(t.type)) {
     assert(exactKeys(e, ['requestId', 'owner', 'terms', 'state', 'receiptRoot', 'permitRoot']) &&
       e.state === 'authorized' && e.receiptRoot === funding.receiptRoot && e.permitRoot === t.permitRoot &&
       t.permitRoot === bulkPermitPlans(terms, e.receiptRoot).permitRoot, 'bulk_authorization');

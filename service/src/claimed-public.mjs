@@ -2,7 +2,7 @@ import { payoutBalance, payoutPolicyHash } from './payout-values.mjs';
 import { check, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { claimedPage } from './claimed-feeds.mjs';
-import { encodeTracAddress } from '../../rules/src/trac-address.js';
+import { encodeTracAddress } from './public-identities.mjs';
 import { rules } from './rules.mjs';
 import { projectionReady } from './claimed-v2.mjs';
 import { AccountAvailability } from './account-availability.mjs';

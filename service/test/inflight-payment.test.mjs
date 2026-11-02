@@ -106,3 +106,23 @@ test('a sent Bitmap link payment shows on the link status and the payment page; 
   assert.equal((await call('/mint/inflight', { kind: 'link', ref: free, phase: 'payment', revealTxid: paid.revealTxid })).body.error, 'inflight_not_waiting');
   assert.equal((await call('/link-status/' + free)).body.inflight, undefined);
 });
+
+test('a timely payment report is saved before a slow reveal lookup crosses the deadline', async t => {
+  const { f, txs, mints, inflight } = await setup(t);
+  const id = 'ac'.repeat(32), fees = [fee('treasury', 'bcrt1ptreasury', '1000000000000000000', `dmw-pay-v2|${id}|treasury`)];
+  const paid = reveal(redeem([item(fees[0], '1')]));
+  mints.rows.set(id, { requestId: id, state: 'awaiting_payment', kind: 'tap', price: fees[0].amount, missing: fees, payment: [] });
+  let counted = '106'; const reports = [];
+  mints.reads = { counted: async () => counted };
+  mints.paymentBroadcast = async (...args) => reports.push(args);
+  inflight.bitcoin.transaction = async txid => {
+    assert.deepEqual(reports, [[id, paid.inscriptionId, '106']]);
+    counted = '107'; return txs.get(txid) ?? null;
+  };
+  const report = { kind: 'mint', ref: id, phase: 'payment', revealTxid: paid.revealTxid };
+  await assert.rejects(inflight.report(report), /inflight_transaction_unknown/);
+  assert.equal(f.store.get('inflight', `mint/${id}/payment`), null, 'a hint is not verified inflight content');
+  txs.set(paid.revealTxid, paid.revealHex); counted = '106'; reports.length = 0;
+  await inflight.report(report);
+  assert.equal(f.store.get('inflight', `mint/${id}/payment`).seenAtBlock, '106');
+});

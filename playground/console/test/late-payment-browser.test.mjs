@@ -55,6 +55,7 @@ async function shoot(page, name, { local = false } = {}) {
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 const lead = page => page.locator('.next-step .body');
+const steps = page => page.locator('ol.stepper li').evaluateAll(items => items.map(li => li.className + ' ' + li.querySelector('.l').textContent));
 const side = page => page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Request', exact: true }) });
 
 test('time-window words and the wallet refusal stay plain', () => {
@@ -72,7 +73,9 @@ test('time-window words and the wallet refusal stay plain', () => {
 test('a payment page shows the time left, a late payment as a fee credit, and an unpaid expiry in plain words', async t => {
   const { origin, page, errors, state } = await site(t);
   await page.goto(origin + '/mint/' + id);
-  await page.getByText('Pay within about 1 hour (by block 900,006).', { exact: true }).waitFor();
+  await lead(page).locator('.callout.warn').getByText('Needs your payment.', { exact: false }).waitFor();
+  assert.match(await lead(page).locator('.callout.warn').innerText(), /^Needs your payment\. Pay within about 1 hour \(by block 900,006\)\. Your permit then follows by itself; then you inscribe the mint here\./);
+  assert.deepEqual(await steps(page), ['on You: pay', 'todo Automatic: permit', 'todo You: inscribe', 'todo Minted']);
   assert.match(await side(page).innerText(), /Pay by\s+block 900,006/);
   await shoot(page, 'single-awaiting');
 
@@ -80,11 +83,12 @@ test('a payment page shows the time left, a late payment as a fee credit, and an
   state.status = record({ state: 'expired', payable: false, reason: 'credited', creditedAmount: '10000000000000000000', creditId: credit, credits: [{ id: credit, amount: '10000000000000000000' }], creditsCount: 1 });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   const late = lead(page).locator('.callout.warn');
-  await late.getByText('Your payment arrived after this request expired.', { exact: false }).waitFor();
-  assert.match(await late.innerText(), /It became a fee credit of 10 TAP\. It belongs to the agent that made this request, .+\. That agent uses it for a new mint from its own dashboard, under My agent\./);
+  await late.getByText('Paid too late: your payment became a fee credit of', { exact: false }).waitFor();
+  assert.match(await late.innerText(), /^Paid too late: your payment became a fee credit of 10 TAP\. This request expired before Bitcoin confirmed your payment, so no mint was made from it\. It belongs to the agent that made this request, .+\. That agent uses it for a new mint from its own dashboard, under My agent\.$/);
   assert.match(await late.locator('a').getAttribute('href'), /agents/);
-  assert.equal(await page.locator('ol.stepper li.bad .l').innerText(), 'Permit');
-  assert.match(await side(page).innerText(), /State\s+expired, paid late[\s\S]*Fee credit\s+10 TAP/);
+  assert.equal(await lead(page).locator('.callout').filter({ hasText: /./ }).count(), 1);
+  assert.deepEqual(await steps(page), ['done Request', 'done Paid late', 'done Fee credit']);
+  assert.match(await side(page).innerText(), /State\s+Paid late · fee credit[\s\S]*Fee credit\s+10 TAP/);
   assert.equal(await page.getByText(/nothing was paid/i).count(), 0);
   assert.equal(await page.getByRole('button', { name: /^Pay/ }).count(), 0);
   assert.doesNotMatch(await page.locator('main').innerText(), /credited|[0-9a-f]{64}/);
@@ -93,8 +97,9 @@ test('a payment page shows the time left, a late payment as a fee credit, and an
   // Unpaid: nothing was paid; mint again.
   state.status = record({ state: 'expired', payable: false });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await lead(page).getByText('This request expired before it was paid, so nothing was paid. Mint the block again from My agent.', { exact: true }).waitFor();
-  assert.equal(await page.locator('ol.stepper li.bad .l').innerText(), 'Pay');
+  await lead(page).getByText('This request expired before it was paid. Nothing was paid. The agent that made it can mint the block again from My agent for a fresh request.', { exact: true }).waitFor();
+  assert.deepEqual(await steps(page), ['done Request', 'bad Expired']);
+  assert.match(await side(page).innerText(), /State\s+Expired · nothing paid[\s\S]*Units\s+3\s+Reserved for this request, now back with the agent\./);
   await shoot(page, 'single-expired-unpaid');
   assert.deepEqual(errors, []);
 });
@@ -116,7 +121,7 @@ test('on the agent dashboard a credited request leads to a new mint, and a match
   const { origin, page, errors, state } = await site(t, { local: true });
   state.status = record({ state: 'expired', payable: false, reason: 'credited', creditedAmount: '10000000000000000000', creditId: credit, credits: [{ id: credit, amount: '10000000000000000000' }], creditsCount: 1 });
   await page.goto(origin + '/mint/' + id);
-  await lead(page).getByText('Your agent can use it for the fees of a new mint, such as this block minted again.', { exact: false }).waitFor();
+  await lead(page).getByText('Your agent can use it for the fees of a new mint, such as this block minted again; you then pay only what it does not cover.', { exact: false }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Use it for a new mint', exact: true }).getAttribute('href'), '/me?pattern=p2%3A1');
   assert.equal(await page.getByRole('link', { name: 'Your fee credits', exact: true }).getAttribute('href'), '/me#fee-credits');
   await shoot(page, 'single-credited-dashboard', { local: true });
@@ -130,21 +135,104 @@ test('on the agent dashboard a credited request leads to a new mint, and a match
   const use = page.getByRole('button', { name: 'Use credit (10 TAP)', exact: true });
   await use.waitFor();
   assert.equal(await use.evaluate(el => el.classList.contains('primary')), true);
-  assert.equal(await page.getByRole('button', { name: 'Pay missing items', exact: true }).evaluate(el => el.classList.contains('primary')), false);
+  // The credit is the first path: it covers every fee here, so nothing is asked from the wallet.
+  assert.match(await lead(page).locator('.callout.good').innerText(), /^You have a fee credit of 10 TAP from an earlier request\. Use it: it pays the fees of this request, and nothing is paid from your wallet\.\s+From Mint request a7a7a7a7$/);
+  assert.equal(await page.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
   await shoot(page, 'single-use-credit', { local: true });
   await use.click();
   const modal = page.getByRole('dialog');
   await modal.getByRole('heading', { name: 'Use your fee credit?', exact: true }).waitFor();
   assert.match(await modal.innerText(), /pays the remaining fees of this request[\s\S]*Fee credit\s+10 TAP[\s\S]*From\s+Mint request a7a7a7a7/);
   await modal.getByRole('button', { name: 'Use credit', exact: true }).click();
-  await lead(page).getByText('Your fee credit was used for this request. It counts with the next Trac batch and this page updates by itself. Do not pay these fees again.', { exact: true }).waitFor();
+  await lead(page).getByText('Your fee credit is being used for this request. It counts with the next Trac batch, usually within a few minutes, and this page updates by itself. Do not pay these fees again.', { exact: true }).waitFor();
   assert.deepEqual(state.uses, [{ actionId: 'use-' + credit.slice(0, 24) + '-' + id.slice(0, 24), credit, request: id }]);
   assert.equal(await page.getByRole('button', { name: 'Pay missing items', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: /^Use credit/ }).count(), 0);
   // Once the credit counts, the request is paid as usual.
   state.status = record({ state: 'paid', payable: false, missing: [] });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await page.locator('ol.stepper li[aria-current="step"] .l').getByText('Permit', { exact: true }).waitFor();
+  await page.locator('ol.stepper li[aria-current="step"] .l').getByText('Automatic: permit', { exact: true }).waitFor();
   assert.equal(state.uses.length, 1);
+
+  // A credit smaller than the fees: it is offered first, and Pay asks only the rest once it counts.
+  const larger = [{ ...fees[0], amount: '25000000000000000000' }];
+  state.status = record({ state: 'awaiting_payment', payable: true, fees: larger, missing: larger });
+  state.credits = [{ ...state.credits[0], id: 'c3'.repeat(32) }];
+  await page.reload();
+  await page.getByRole('button', { name: 'Use credit (10 TAP)', exact: true }).waitFor();
+  assert.match(await lead(page).innerText(), /You have a fee credit of 10 TAP from an earlier request\. Use it first: then you pay only the remaining 15 TAP with your wallet\.[\s\S]*Remaining to pay\s+25 TAP\s+After your fee credit: 15 TAP/);
+  assert.equal(await page.getByRole('button', { name: /^Pay/ }).count(), 0);
+  await shoot(page, 'single-use-credit-part', { local: true });
+  assert.deepEqual(errors, []);
+});
+
+test('a payment still waiting for Bitcoin when the request expires reads as one outcome, a payment sent in time waits for Bitcoin, and a pending credit says so', async t => {
+  const { origin, page, errors, state } = await site(t);
+  const inflight = { kind: 'mint', ref: id, phase: 'payment', attempt: 0, revealTxid: 'b4'.repeat(32), inscriptionId: 'b4'.repeat(32) + 'i0', confirmations: 0 };
+  state.status = record({ state: 'awaiting_payment', payable: true, inflight });
+  await page.goto(origin + '/mint/' + id);
+  await lead(page).getByText('Payment sent — waiting for Bitcoin confirmation', { exact: false }).waitFor();
+  assert.match(await lead(page).innerText(), /If it confirms after block 900,006, it becomes a fee credit instead\. Nothing to do; do not pay again\./);
+  assert.deepEqual(await steps(page), ['done You: pay', 'on Automatic: permit', 'todo You: inscribe', 'todo Minted']);
+  assert.equal(await page.getByRole('button', { name: /^Pay/ }).count(), 0);
+  await shoot(page, 'single-payment-sent');
+
+  // The fee spike: the request ends while the payment sits in the mempool. One outcome; no "permit follows", no "Pay !".
+  state.status = record({ state: 'expired', payable: false, inflight, mintSender: { state: 'returned', satoshis: 2000 } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('This request expired while your payment was still waiting for Bitcoin.', { exact: false }).waitFor();
+  const shown = lead(page).locator('.callout').filter({ hasText: /./ });
+  assert.equal(await shown.count(), 1);
+  assert.match(await shown.innerText(), /Once Bitcoin confirms it, it becomes a fee credit for a new mint and shows here\. Nothing to do now; do not pay again\./);
+  assert.doesNotMatch(await page.locator('main').innerText(), /permit follows|units returned|Set-aside/i);
+  assert.deepEqual(await steps(page), ['done Request', 'done Paid late', 'on Becomes a fee credit']);
+  assert.match(await side(page).innerText(), /State\s+Expired · payment on its way[\s\S]*Payment sent\s+TAP fee payment/);
+  await shoot(page, 'single-expired-payment-waiting');
+
+  // A payment reported before the deadline: the gateway holds the request until Bitcoin confirms it (by confirmByBlock).
+  const timing = { payByBlock: '900006', seenAtBlock: '900004', confirmByBlock: '900150', held: true };
+  state.status = record({ state: 'confirming_payment', payable: false, paymentTiming: timing, mintSender: { state: 'funded', satoshis: 2184 } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('Payment sent in time — waiting for Bitcoin. Your mint continues once it confirms (by block 900,150). Nothing to do; do not pay again.', { exact: true }).waitFor();
+  assert.deepEqual(await steps(page), ['done You: sign & pay', 'on Automatic: permit & mint', 'todo Minted']);
+  assert.match(await side(page).innerText(), /State\s+Payment sent · confirming[\s\S]*Confirms by\s+block 900,150/);
+  assert.equal(await page.getByRole('button', { name: /^Pay/ }).count(), 0);
+  assert.equal(await page.getByText('Already paid?', { exact: false }).count(), 0);
+  assert.doesNotMatch(await page.locator('main').innerText(), /payment confirmed on Bitcoin/);
+  await shoot(page, 'single-confirming-payment');
+  // Still before the deadline (payable): the reported payment is not paid twice from this page.
+  state.status = record({ state: 'confirming_payment', payable: true, paymentTiming: timing });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('Payment sent in time — waiting for Bitcoin.', { exact: false }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^Pay/ }).count(), 0);
+  // Older names for the same outcome still render it.
+  state.status = record({ state: 'late_payment_minting', payable: false, latePayment: { seen: true, completes: true } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('Payment sent in time — waiting for Bitcoin. Your mint continues once it confirms. Nothing to do; do not pay again.', { exact: true }).waitFor();
+  state.status = record({ state: 'expired', payable: false, latePayment: { seen: true, completes: true } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('ol.stepper li.bad').waitFor({ state: 'detached' }).catch(() => {});
+  await lead(page).getByText('Payment sent in time — waiting for Bitcoin.', { exact: false }).waitFor();
+  assert.equal(await page.getByText(/expired/i).count(), 0);
+
+  // Expired with the payment being turned into a fee credit: not "nothing paid", and no second payment.
+  state.status = record({ state: 'expired', payable: false, reason: 'credit_pending', creditRecovery: { state: 'pending', reason: null } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('Your payment is being turned into a fee credit.', { exact: false }).waitFor();
+  assert.doesNotMatch(await lead(page).innerText(), /Nothing was paid/);
+  assert.deepEqual(await steps(page), ['done Request', 'done Paid late', 'on Fee credit']);
+  assert.match(await side(page).innerText(), /State\s+Paid late · credit coming/);
+  assert.equal(await page.getByText('Already paid?', { exact: false }).count(), 0);
+  await shoot(page, 'single-credit-pending');
+  // Zero-value funding that expired (payment_expired): nothing was paid.
+  state.status = record({ state: 'expired', payable: false, reason: 'payment_expired', creditRecovery: { state: 'none', reason: null } });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).getByText('This request expired before it was paid. Nothing was paid.', { exact: false }).waitFor();
+
+  // Minted: one good line.
+  state.status = record({ state: 'minted', payable: false, missing: [], inscription: 'c5'.repeat(32) + 'i0' });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await lead(page).locator('.callout.good').getByText('Minted. Your tokens are in your TAP Wallet.', { exact: false }).waitFor();
+  assert.deepEqual(await steps(page), ['done You: pay', 'done Automatic: permit', 'done You: inscribe', 'done Minted']);
   assert.deepEqual(errors, []);
 });

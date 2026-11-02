@@ -395,7 +395,7 @@ test('a payment disappearing before acceptance cannot strand the reserved accoun
   await f.mints.payment({ id: p.id, paymentId: payment }); f.confirmations(0);
   const result = await f.financial.build({ height: 100, at: await f.stamp() });
   assert.equal(result.inputs.length, 0); assert.equal(result.deferred.length, 1);
-  f.counted(533); await f.mints.tick();
+  f.counted(677); await f.mints.tick();
   assert.equal(f.store.list('financialQueue', { limit: 10 })[0].value.type, 'refund');
   await f.mints.tick(); assert.equal(f.store.count('financialQueue'), 1);
   await f.execute(); await f.mints.tick();
@@ -713,7 +713,7 @@ test('legacy credit hints become canonical backed transferable credit exactly on
   await f.mints.tick(); assert.equal(f.financial.pending(), false);
 });
 
-for (const rail of ['tap', 'ethereum']) test(`native six-block ${rail} broadcast survives restart and becomes credit automatically after expiry`, async t => {
+for (const rail of ['tap', 'ethereum']) test(`native six-block ${rail} broadcast survives restart and mints after confirmation past expiry`, async t => {
   const f = await setup(t, { pendingBlocks: 6 }, '100'), p = await f.prepare('native-late-' + rail, rail);
   await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
   const row = f.store.get('mints', p.id), reference = rail === 'tap' ? r.hash('native-late-tap') + 'i0' : '0x' + r.hash('native-late-eth');
@@ -721,11 +721,11 @@ for (const rail of ['tap', 'ethereum']) test(`native six-block ${rail} broadcast
   f.confirmations(0);
   await assert.rejects(f.mints.payment({ id: p.id, paymentId: reference }));
   await f.reopen(); f.counted('107');
-  await f.mints.tick(); await f.execute(); await f.mints.tick();
-  assert.equal(f.mints.public(p.id).state, 'expired');
-  assert.equal(f.store.get('accountRecords', 'ao/' + p.id).state, 'refunded');
-  assert.equal(f.store.count('financialActiveMints'), 0);
-  assert.equal(f.store.get('accountRecords', capacityKey(row.context.deployment.id)), '0');
+  await f.mints.tick();
+  assert.equal(f.mints.public(p.id).state, 'confirming_payment');
+  assert.equal(f.store.get('accountRecords', 'ao/' + p.id).state, 'reserved');
+  assert.equal(f.store.count('financialActiveMints'), 1);
+  assert.equal(f.store.get('accountRecords', capacityKey(row.context.deployment.id)), '3');
   f.counted('108'); f.confirmations(1); f.paymentHeight('108');
   if (rail === 'ethereum') {
     f.ethereum.snapshot = { ...f.escrow, payer: row.payer, requestId: p.id, confirmations: 1,
@@ -734,19 +734,50 @@ for (const rail of ['tap', 'ethereum']) test(`native six-block ${rail} broadcast
       blockHash: '0x' + r.hash('native-eth-block'), blockNumber: 108 };
   }
   // No second report: persisted references drive independent receipt verification.
-  await f.mints.tick(); await f.execute(); await f.mints.tick(); await f.mints.tick();
-  const [{ id: credit }] = f.store.list('legacyCreditResults/' + p.id, { limit: 10 });
-  assert.deepEqual(f.store.get('accountRecords', 'fc/' + credit).fees, f.store.get('accountRecords', 'fp/' + p.id).fees);
+  await f.mints.tick(); await f.execute(); await f.mints.tick(); await f.execute(); await f.mints.tick();
+  assert.equal(f.mints.public(p.id).state, 'permit_issued');
+  assert.equal(f.store.get('accountRecords', 'ao/' + p.id).state, 'consumed');
+  assert.equal(f.store.count('financialLegacyCredits'), 0);
+  assert.equal(f.store.get('accountRecords', 'fc/' + p.id), null);
   assert.equal(f.financial.pending(), false);
 });
 
-test('expired legacy paid hold accounts known payments before crediting and returning its units', async t => {
+for (const dropped of [false, true]) test(`a confirmed single payment waiting past grace ${dropped ? 'expires when confirmation disappears' : 'survives a delayed batch'}`, async t => {
+  const f = await setup(t, { pendingBlocks: 6, lateConfirmBlocks: 2 }, '100'), p = await f.prepare('slow-batch');
+  await f.mints.request({ ...p.body, reserve: p.action }); await f.execute();
+  const row = f.store.get('mints', p.id), reference = r.hash('slow-batch-payment') + 'i0';
+  f.transfers.set(reference, row.quote.fees.map(fee => ({ ins: reference, fail: false, int: true, addr: row.payer,
+    taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  await f.mints.payment({ id: p.id, paymentId: reference });
+  const work = f.store.get('mints', p.id).work;
+  assert.equal(f.store.get('mints', p.id).confirmedPayment.work, work);
+  await f.reopen(); f.counted('109');
+  if (dropped) {
+    f.confirmations(0);
+    const deferred = await f.financial.build({ height: '109', at: await f.stamp() });
+    assert.equal(deferred.deferred[0].reason, 'financial_receipt_binding');
+  }
+  await f.mints.tick();
+  if (dropped) {
+    assert.equal(f.store.get('financialRejected', work).reason, 'reservation_expired');
+    await f.execute(); await f.mints.tick(); assert.equal(f.mints.public(p.id).state, 'expired');
+  } else {
+    assert.ok(f.store.get('financialQueue', work));
+    await f.execute(); await f.mints.tick(); await f.execute(); await f.mints.tick();
+    assert.equal(f.mints.public(p.id).state, 'permit_issued');
+    assert.equal(f.store.count('financialLegacyCredits'), 0);
+  }
+});
+
+test('expired legacy paid hold releases first, then recovers known payments as surplus credit', async t => {
   const f = await importLegacyMint(t);
   f.transfers.set(f.payment, f.row.quote.fees.map(fee => ({ ins: f.payment, fail: false, int: true, addr: f.row.payer, taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
   await f.store.put('mints', f.id, { ...f.row, paymentReferences: [f.payment] });
   f.counted(533); await f.mints.tick(); await f.execute(); await f.mints.tick(); await f.execute();
   assert.equal(f.store.get('accountRecords', 'ao/' + f.id).state, 'refunded');
-  assert.deepEqual(f.store.get('accountRecords', 'fc/' + f.id).fees, f.store.get('accountRecords', 'fp/' + f.id).fees);
+  await f.mints.tick();
+  const [{ id: credit }] = f.store.list('legacyCreditResults/' + f.id, { limit: 10 });
+  assert.deepEqual(f.store.get('accountRecords', 'fc/' + credit).fees, f.store.get('accountRecords', 'fp/' + f.id).fees);
 });
 
 test('an unconfirmed original link payment does not prevent expiry; later settlement produces credit once', async t => {
@@ -1297,4 +1328,71 @@ test('new admission verification overlaps queue writes but is fenced by accepted
   f.reads.financialScope = scope;
   await f.mints.request({ ...p.body, reserve: p.action });
   assert.equal(f.store.get('financialAdmissionCount', f.owner.address), 1);
+});
+
+test('late native credit survives timeout, restart and a missing work entry, projects and funds a new request once', async t => {
+  const { publicFinancialOperations } = await import('../src/public-financial.mjs');
+  const { matchingCreditItems } = await import('../../kit/lib/financial-credit.mjs');
+  const f = await setup(t, { pendingBlocks: 6 }, '100'), p = await f.prepare('credit-timeout');
+  await f.mints.request({ ...p.body, reserve: p.action });
+  const reserve = await f.execute();
+  const project = async result => {
+    const draft = { proposal: { batch: { n: '1' } }, items: [{ output: { file: { observation: '1', financialOperations: result.inputs } } }] };
+    await f.store.transact(publicFinancialOperations(f.store, draft, result.writes));
+  };
+  await project(reserve);
+  f.counted('107'); await f.mints.tick(); await project(await f.execute()); await f.mints.tick();
+  assert.equal(f.mints.public(p.id).reason, 'payment_expired', 'zero-paid credited funding is not a usable credit');
+  const row = f.store.get('mints', p.id), reference = r.hash('late-credit') + 'i0';
+  f.transfers.set(reference, row.quote.fees.map(fee => ({ ins: reference, fail: false, int: true, addr: row.payer,
+    taddr: fee.to, tick: fee.ticker, amt: fee.amount, dta: fee.dta })));
+  f.paymentHeight('107');
+  const receiptRead = f.reads.financialReceipts;
+  f.reads.financialReceipts = async () => { throw Error('http_timeout'); };
+  await assert.rejects(f.mints.payment({ id: p.id, paymentId: reference }), /http_timeout/);
+  await f.mints.tick();
+  assert.equal(f.store.get('financialLegacyCreditFailures', p.id).reason, 'http_timeout');
+  await f.reopen(); f.reads.financialReceipts = receiptRead;
+  await f.mints.tick();
+  const pending = f.store.get('financialLegacyCredits', p.id);
+  assert.ok(pending.work);
+  const scope = f.reads.financialScope;
+  f.reads.financialScope = options => {
+    const scoped = scope(options), evidence = scoped.financialEvidence;
+    scoped.financialEvidence = async (transition, at) => {
+      if (transition.type === 'surplus') throw Error('http_timeout');
+      return evidence(transition, at);
+    };
+    return scoped;
+  };
+  const deferred = await f.financial.build({ height: '107', at: await f.reads.batchStamp() });
+  assert.equal(deferred.inputs.length, 0);
+  assert.equal(f.store.get('financialDeferred', pending.work).reason, 'http_timeout');
+  await f.mints.tick();
+  assert.equal(f.store.get('financialLegacyCredits', p.id).work, pending.work, 'queued work is retained for a pipeline retry');
+  assert.equal(f.mints.public(p.id).creditRecovery.reason, 'http_timeout');
+  f.reads.financialScope = scope;
+  await f.store.transact([{ space: 'financialQueue', id: pending.work }]);
+  await f.mints.tick(); assert.ok(f.store.get('financialQueue', pending.work), 'orphan work is resubmitted');
+  await f.store.put('financialLegacyCredits', p.id, { ...f.store.get('financialLegacyCredits', p.id), credit: r.hash('stale-sequence-guess') });
+  const recovered = await f.execute(); await project(recovered); await f.mints.tick(); await f.mints.tick();
+  assert.equal(f.store.get('financialLegacyCreditFailures', p.id), null);
+  assert.equal(f.store.get('financialLegacyCredits', p.id), null);
+  const status = f.mints.public(p.id), credit = f.store.get('accountRecords', 'fc/' + status.creditId);
+  assert.equal(status.creditedAmount, row.quote.payableAmount);
+  assert.equal(f.store.get('financialCreditTotals', p.id).count, 1);
+  assert.equal(f.store.count('financialRequestCredits/' + p.id), 1);
+  assert.equal(f.store.get('publicResults/credits', status.creditId).state, 'available');
+  assert.deepEqual(f.store.list('legacyCreditResults/' + p.id, { limit: 10 }).map(r => r.id), [status.creditId], 'completion uses the accepted operation sequence');
+  const next = await f.prepare('use-recovered-credit');
+  await f.mints.request({ ...next.body, reserve: next.action }); await f.execute();
+  const target = f.store.get('accountRecords', 'fp/' + next.id), items = matchingCreditItems(credit, target);
+  assert.equal(items.reduce((n, i) => n + BigInt(i.amount), 0n).toString(), row.quote.payableAmount);
+  const op = { op: 'fp', v: 2, type: 'use', id: next.id, credit: status.creditId, revision: credit.revision, until: '113', items };
+  op.sig = Buffer.from(ed25519.sign(paymentCreditDigest(network, op), f.owner.secret)).toString('hex');
+  await f.financial.submit({ type: 'lifecycle', id: next.id, action: { type: 'credit-use', id: next.id, operation: op } });
+  await f.execute(); await f.mints.tick(); await f.execute(); await f.mints.tick();
+  assert.equal(f.mints.public(next.id).state, 'permit_issued');
+  assert.ok(f.store.get('accountRecords', 'fc/' + status.creditId).fees.every(f => f.amount === '0'));
+  await f.mints.tick(); assert.equal(f.financial.pending(), false);
 });

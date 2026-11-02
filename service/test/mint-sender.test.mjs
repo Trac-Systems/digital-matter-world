@@ -78,6 +78,12 @@ test('public expiry without a terminal public state returns unspent funding', as
   const f = await fixture(t, { state: 'awaiting_payment' }); f.status.publicMint = true; delete f.status.mintContent; f.status.counted = 101;
   await f.tick(); assert.equal(f.row.state, 'returning'); assert.equal(f.row.returnReason, 'expired');
 });
+test('public bulk delayed settlement keeps its set-aside after the checkout deadline without signing a mint', async t => {
+  const f = await fixture(t, { state: 'awaiting_payment' });
+  f.status.publicMint = true; f.status.publicBulkOrderId = 'dd'.repeat(32); delete f.status.mintContent; f.status.counted = 101;
+  await f.tick(); assert.equal(f.row.state, 'funded'); assert.equal(f.sent.length, 0);
+  assert.equal(f.row.returnPlan, undefined); assert.equal(f.row.plan, undefined);
+});
 test('payment-first: funded requests cannot inscribe before a permit; wallet report waits for verification', async t => {
   const f = await fixture(t, { state: 'awaiting_payment' }); await f.tick(); assert.equal(f.row.state, 'funded'); assert.equal(f.sent.length, 0);
   f.status.state = 'permit_issued'; f.status.sentInscription = '22'.repeat(32) + 'i0'; await f.tick(); assert.equal(f.sent.length, 0);

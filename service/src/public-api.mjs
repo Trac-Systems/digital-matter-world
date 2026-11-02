@@ -1,4 +1,4 @@
-import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
+import { publicIdentities, tracReadRoute } from './public-identities.mjs';
 import { readFile } from 'node:fs/promises';
 import { check, hash } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';

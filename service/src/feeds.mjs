@@ -1,5 +1,5 @@
 import { patternCatalogId, patternMint } from './mint-assets.mjs';
-import { publicIdentities, encodeTracAddress } from '../../rules/src/trac-address.js';
+import { publicIdentities, encodeTracAddress } from './public-identities.mjs';
 import { collectFiles, recoverFeedVersions } from './retention.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';

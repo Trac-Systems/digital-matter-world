@@ -61,3 +61,56 @@ test('a payment reported during another queued transition is saved for the next 
   await m.payment({ id, paymentId: reference });
   assert.deepEqual(store.get('mints', id).paymentReferences, [reference]);
 });
+
+test('expiry cancels queued funding and queues refund while every remote snapshot moves', async () => {
+  const { FinancialExecution } = await import('../src/financial-execution.mjs');
+  const { m, store, row, funding } = fixture();
+  let stamp = 0;
+  m.reads = { counted: async () => '107', batchStamp: async () => ({ counted: '107', revision: ++stamp }),
+    financialRecord: async () => { throw Error('trac_snapshot_changed'); },
+    financialEvidence: async () => { throw Error('read_snapshot_changed'); } };
+  await store.put('accountRecords', 'fp/' + id, funding);
+  row.work = 'pending-fund'; await store.put('mints', id, row);
+  await store.put('financialQueue', row.work, { type: 'fund', id, items: [] });
+  m.financial = new FinancialExecution({ store, reads: m.reads, document: m.document });
+  await m.advance(row);
+  assert.equal(store.get('financialQueue', row.work), undefined);
+  assert.deepEqual(m.queued, [{ type: 'refund', id, reason: 'credit' }]);
+  assert.deepEqual(store.get('financialLegacyCredits', id).references, [reference]);
+  assert.equal(stamp, 0, 'local cancellation needs no remote snapshot');
+});
+
+test('expiry retains work already included in a signed draft', async () => {
+  const { FinancialExecution } = await import('../src/financial-execution.mjs');
+  const { m, store, row, funding } = fixture();
+  m.reads.counted = async () => '107'; row.work = 'pending-fund';
+  await store.put('mints', id, row); await store.put('accountRecords', 'fp/' + id, funding);
+  await store.put('financialQueue', row.work, { type: 'fund', id });
+  await store.put('meta', 'draft', { proposal: { batch: { ops: [{ op: 'fp', id }] } } });
+  m.financial = new FinancialExecution({ store, reads: m.reads, document: m.document });
+  await m.advance(row); assert.deepEqual(m.queued, []);
+  assert.ok(store.get('financialQueue', row.work));
+});
+
+test('a missing surplus work entry is retried instead of waiting forever', async () => {
+  const { m, store, funding } = fixture(); funding.state = 'credited';
+  await store.put('financialLegacyCredits', id, { references: [reference], offset: 0, work: 'missing', credit: 'unknown' });
+  await assert.rejects(m.advanceLegacyCredit(id), /pending_credit_unconfirmed/);
+  assert.equal(store.get('financialLegacyCredits', id).work, undefined);
+});
+
+test('reported payment survives transient reads until its fixed bound, then unpaid expiry still runs locally', async () => {
+  const { m, row, store, funding } = fixture();
+  m.document = { ...m.document, values: { ...m.document.values, lateConfirmBlocks: 3 } };
+  await store.put('mints', id, row); await store.put('accountRecords', 'fp/' + id, funding);
+  await m.paymentBroadcast(id, reference, '106');
+  let counted = '109'; m.reads.counted = async () => counted;
+  m.reads.batchStamp = async () => { throw Error('read_snapshot_changed'); };
+  await assert.rejects(m.advance(store.get('mints', id)), /read_snapshot_changed/);
+  assert.deepEqual(m.queued, []);
+  await m.paymentBroadcast(id, '66'.repeat(32) + 'i0', counted);
+  assert.equal(store.get('mints', id).paymentSeen.confirmByBlock, '109');
+  counted = '110'; await m.advance(store.get('mints', id));
+  assert.deepEqual(m.queued, [{ type: 'refund', id, reason: 'credit' }]);
+  assert.equal(store.get('financialLegacyCredits', id).references.length, 2);
+});

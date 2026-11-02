@@ -293,6 +293,8 @@ async function bulkSite(t, f, id) {
     if (url.pathname === '/web-api/tap-reader/getCurrentBlock' && site.tipFail > 0) { site.tipFail--; return send({ error: 'unavailable' }, 503); }
     if (url.pathname === '/web-api/tap-reader/getCurrentBlock' && site.tip) return send({ result: site.tip });
     if (url.pathname.startsWith('/web-api/tap-reader/')) return send(walletFundsReply(url.href));
+    // The page first asks whether the order is a public one; this gateway has none (as an older gateway answers).
+    if (url.pathname.startsWith('/web-api/public-mints/bulk/')) return send({ error: 'not_found' }, 404);
     if (await web.handle(req, res, async () => '')) return;
     send({ error: 'not_found' }, 404);
   });

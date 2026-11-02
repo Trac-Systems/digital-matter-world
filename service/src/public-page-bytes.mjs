@@ -1,4 +1,4 @@
-import { publicIdentities } from '../../rules/src/trac-address.js';
+import { publicIdentities } from './public-identities.mjs';
 
 // The envelope starts with an empty array and two null cursors. JSON arrays
 // add only row encodings and commas; a cursor replaces each four-byte null.

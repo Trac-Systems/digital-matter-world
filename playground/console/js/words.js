@@ -267,7 +267,7 @@ export function jobName(t) {
   return JOB_NAMES[t] ?? JOB_NAMES[k] ?? k.replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 
-export const PAYMENT_STATE = { requested: 'requested', reserving: 'reserving matter', enrolling: 'preparing payment', awaiting_payment: 'waiting for wallet payment', partly_paid: 'partly paid', waiting_payment: 'waiting for payment', paid: 'Payment confirmed', permit_issued: 'Being minted', minted: 'Minted', already_minted: 'Minted', public: 'Public', claimed: 'Claimed', complete: 'done', expired: 'expired, units returned', refunded: 'refunded', cancelled: 'cancelled', failed: 'failed' };
+export const PAYMENT_STATE = { requested: 'requested', reserving: 'reserving matter', enrolling: 'preparing payment', awaiting_payment: 'waiting for wallet payment', partly_paid: 'partly paid', confirming_payment: 'payment sent, confirming', waiting_payment: 'waiting for payment', paid: 'Payment confirmed', permit_issued: 'Being minted', minted: 'Minted', already_minted: 'Minted', public: 'Public', claimed: 'Claimed', complete: 'done', expired: 'expired, units returned', refunded: 'refunded', cancelled: 'cancelled', failed: 'failed' };
 // One feed line per event: actor, sentence, block.
 export function actorName(d) {
   const key = d.actor ?? d.agent ?? d.owner ?? d.address;

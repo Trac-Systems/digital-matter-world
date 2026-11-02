@@ -7,8 +7,8 @@ import { check, hash, serial } from './util.mjs';
 const compress = promisify(gzip);
 export const HEADER_CHUNK_DEFAULTS = Object.freeze({ chunkRows: 4096, chunksPerTick: 4, manifestRetention: 3, garbagePerTick: 64, cacheSeconds: 5, immutableCacheSeconds: 31536000, manifestBytes: 60000 });
 export class HeaderChunks {
-  constructor({ store, history, files, network, settings = {}, secret, signingEpoch = '0' }) {
-    Object.assign(this, { store, history, files, network }); this.settings = { ...HEADER_CHUNK_DEFAULTS, ...settings }; this.gate = serial(); this.signer = headerManifestSigner(secret, signingEpoch);
+  constructor({ store, history, files, network, settings = {}, secret, signingEpoch = '0', readOnly = false }) {
+    Object.assign(this, { store, history, files, network }); this.settings = { ...HEADER_CHUNK_DEFAULTS, ...settings }; this.gate = serial(); this.signer = readOnly ? null : headerManifestSigner(secret, signingEpoch);
     check(['mainnet', 'regtest'].includes(network) && Object.entries(this.settings).every(([k, v]) => Object.hasOwn(HEADER_CHUNK_DEFAULTS, k) && Number.isSafeInteger(v) && v > 0), 'header_chunk_settings');
   }
   node(ref) {
@@ -61,6 +61,7 @@ export class HeaderChunks {
     }
   }
   async tick() { return this.gate(async () => {
+    check(this.signer, 'header_read_only', 503);
     const saved = this.store.get('meta', 'headerChunks'), { history } = this;
     if (!history.length) return;
     let root = await this.canonicalPrefix(saved?.root), start = root?.end ?? 0;

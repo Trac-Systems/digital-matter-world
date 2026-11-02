@@ -15,10 +15,10 @@ const archiveName = /^headers\/(mainnet|regtest)-(0|[1-9][0-9]*)-([0-9a-f]{64})\
 // checked this history against Core and the contract beacon. Clients must still
 // verify the archive from genesis and check its tip independently.
 export class HeaderFiles {
-  constructor({ history, files, network, store = history.store, chunkSettings, secret, signingEpoch }) {
+  constructor({ history, files, network, store = history.store, chunkSettings, secret, signingEpoch, readOnly = false }) {
     check(['mainnet', 'regtest'].includes(network), 'header_network');
-    Object.assign(this, { history, files, network });
-    if (store?.get('meta', 'ruleState')?.batchVersion === 2) this.chunks = new HeaderChunks({ store, history, files, network, settings: chunkSettings, secret, signingEpoch });
+    Object.assign(this, { history, files, network, readOnly });
+    if (store?.get('meta', 'ruleState')?.batchVersion === 2) this.chunks = new HeaderChunks({ store, history, files, network, settings: chunkSettings, secret, signingEpoch, readOnly });
   }
   tick() { return this.chunks?.tick(); }
   async manifest() {
@@ -28,6 +28,7 @@ export class HeaderFiles {
     try { return await this.building; } finally { this.building = null; }
   }
   async snapshot() {
+    check(!this.readOnly, 'header_snapshot_unavailable', 503);
     const { history, files, network } = this, height = history.length - 1;
     check(Number.isSafeInteger(height) && height >= 0 && Number.isSafeInteger((height + 1) * 80), 'header_history_unavailable', 503);
     const tip = history.hashAt(height);

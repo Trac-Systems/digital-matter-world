@@ -12,7 +12,7 @@ export const R3_RESOURCES = Object.freeze({
   publicCachePages: 64,
 });
 export function runtimeResources(document, consensus) {
-  if (![2, 3, 4, 5].includes(document?.version)) throw Error('resource_upgrade_required');
+  if (![2, 3, 4, 5, 6].includes(document?.version)) throw Error('resource_upgrade_required');
   const v = validateResourceDocument(document).values;
   const timing = closureTimeouts(consensus, document);
   return {
@@ -35,6 +35,7 @@ export function runtimeResources(document, consensus) {
       // unpaid requests don't stop an agent minting in parallel.
       assets: { activeMints: v.assetActiveMints, activeLinks: v.assetActiveLinks, mintsPerAgent: Math.max(v.assetMintsPerAgent, ASSET_RESOURCES.mintsPerAgent), linksPerAgent: v.assetLinksPerAgent,
         ...(document.version >= 5 ? { publicMintsPerPayer: v.assetPublicMintsPerPayer, publicMintsPerIP: v.assetPublicMintsPerIP, publicMintStartsPerMinute: v.assetPublicMintStartsPerMinute } : {}),
+        ...(document.version >= 6 ? { publicBulkMintBlocks: v.assetPublicBulkMintBlocks, publicBulkInputBytes: v.assetPublicBulkInputBytes, publicBulkResponseBytes: v.assetPublicBulkResponseBytes } : {}),
         mintInputCapacity: v.assetInputCapacity, workPage: v.assetWorkPage, creditPage: v.assetCreditPage, outboxPage: v.outboxCapacity },
       lookups: { headerPageRows: v.headerPageSize, headerCachePages: v.headerCachePages, headerCacheKiB: v.sqliteCacheKiB, seedChunkRows: v.archiveWritePage },
       readers: { auditFileBytes: v.archiveObjectBytes, auditTotalBytes: v.archiveObjectBytes,

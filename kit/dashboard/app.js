@@ -4,9 +4,10 @@ const formatUnits = n => String(n ?? '–').replace(/\B(?=(\d{3})+(?!\d))/g, ','
 const assetLabel = row => row.name ?? (/^c2:[0-9a-f]{64}$/.test(row.asset ?? '') ? 'Compound #' + row.asset.slice(3, 11) : /^p2:(0|[1-9][0-9]*)$/.test(row.asset ?? '') ? 'Pattern #' + row.asset.slice(3) : row.asset);
 
 // One approval (TAP Wallet 1.0.49): the payment sets aside Bitcoin and the gateway sends the mint; same words as the site.
-const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
+const PAY_SOON = 'Your request is being recorded on Trac. Nothing to do yet: the Pay button appears here by itself, usually within a minute.';
+const REPORTED = 'Your payment was found on Bitcoin and reported. It counts once Bitcoin confirms it; nothing else to do.';
 const PAID_ONCE = 'Paid. Your mint goes out automatically when the permit arrives. You can close this page.';
-const NEEDS_USER = 'The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.';
+const NEEDS_USER = 'Bitcoin fees rose above the Bitcoin your payment set aside, so our server cannot send your mint. Inscribe it from your TAP Wallet; the Bitcoin set aside is sent back to you.';
 const SENDER_STATES = ['waiting_funding', 'funded', 'sending', 'sent', 'minted', 'needs_user', 'returning', 'returned'], SENDER_STOPPED = ['needs_user', 'returning', 'returned'];
 const txid = value => /^[0-9a-f]{64}$/.test(value ?? '') ? value : null;
 function senderWords(status, ms) {
@@ -56,7 +57,7 @@ const rows = el('tbody'), requests = el('div', undefined, 'stack'), payment = el
 const table = el('table'), head = el('tr');
 for (const label of ['Pattern', 'Block', 'Units / balance', 'Eligibility / state', '']) head.append(el('th', label));
 append(table, append(el('thead'), head), rows);
-const mintState = state => ({ public: 'Public', claimed: 'Claimed', already_minted: 'Minted', minted: 'Minted', paid: 'Payment confirmed', permit_issued: 'Being minted' })[state] ?? state.replaceAll('_', ' ');
+const mintState = state => ({ public: 'Public', claimed: 'Claimed', already_minted: 'Minted', minted: 'Minted', paid: 'Payment confirmed', permit_issued: 'Being minted', confirming_payment: 'Payment sent, confirming' })[state] ?? state.replaceAll('_', ' ');
 const mintReason = reason => ({ public_minted: 'This block was already taken by a public TAP Wallet mint.', claimed_first: 'An agent claimed this block before your payment was confirmed. Your payment is refunded.' })[reason] ?? reason?.replaceAll('_', ' ');
 let info, cursor, next, busy = false, activeId, wallet, bulkWallet, timer, requestOffset = 0;
 const paymentDrafts = new Map();
@@ -183,10 +184,21 @@ async function refreshPayment() {
     if (paymentId) {
       try { await api('/api/payment', { id, paymentId }); reportedPayments.add(id); }
       catch (error) { if (/financial_transition_pending/.test(error.message)) reportedPayments.add(id); }
-      if (reportedPayments.has(id)) note.textContent = 'Your payment was found on Bitcoin and reported. The permit follows with the next batch.';
+      if (reportedPayments.has(id)) note.textContent = REPORTED;
     }
   }
+  // The reported-payment note belongs to an open request: once it ends, the request's own line says what happened.
+  if (!['awaiting_payment', 'partly_paid', 'confirming_payment'].includes(status.state) && note.textContent === REPORTED) note.textContent = '';
   payment.replaceChildren(el('h2', 'Mint payment'), append(el('p'), pageLink(activeId, '/mint/' + activeId, 'mono')), el('p', 'State: ' + mintState(status.state)), append(el('p', 'Receiver: ', 'mono'), addressLink(status.receiver)));
+  const credited = status.state === 'expired' && status.reason === 'credited' && /^[1-9][0-9]*$/.test(status.creditedAmount ?? '') ? status.creditedAmount : null;
+  // A payment reported in time holds the request until Bitcoin confirms it (paymentTiming); late_payment_minting is an older name.
+  const confirmBy = /^(0|[1-9][0-9]*)$/.test(String(status.paymentTiming?.confirmByBlock ?? '')) ? Number(status.paymentTiming.confirmByBlock).toLocaleString('en-US') : null;
+  if (!['paid', 'permit_issued', 'minted'].includes(status.state) && (['confirming_payment', 'late_payment_minting'].includes(status.state) || status.paymentTiming?.held === true && ['awaiting_payment', 'partly_paid'].includes(status.state) || status.latePayment?.completes === true))
+    payment.append(el('p', `Payment sent in time — waiting for Bitcoin. Your mint continues once it confirms${confirmBy ? ` (by block ${confirmBy})` : ''}. Nothing to do; do not pay again.`));
+  else if (credited) payment.append(el('p', `Paid too late: this request expired before Bitcoin confirmed your payment, so it became a fee credit of ${formatTap(credited)} TAP. Use it for a new mint under My agent → Fee credits.`));
+  else if (status.state === 'expired' && (status.reason === 'credit_pending' || ['pending', 'queued'].includes(status.creditRecovery?.state))) payment.append(el('p', 'This request expired before Bitcoin confirmed your payment. Your payment is being turned into a fee credit; it shows under My agent → Fee credits once it is ready. Do not pay again.'));
+  else if (status.state === 'expired' && (status.inflight?.phase === 'payment' || reportedPayments.has(activeId) || status.latePayment?.seen === true)) payment.append(el('p', 'This request expired while your payment was still waiting for Bitcoin. Once it confirms, it becomes a fee credit for a new mint. Do not pay again.'));
+  else if (status.state === 'expired') payment.append(el('p', 'This request expired before it was paid. Nothing was paid; mint the block again for a fresh request.'));
   for (const item of status.missing) payment.append(append(el('p', `${item.role}: ${formatTap(item.amount)} TAP → `), addressLink(item.to), item.role === 'treasury' && status.split?.legacyDeploy ? ` (includes ${formatTap(status.split.legacyDeploy)} TAP from burn for older deploy holders, paid through the payout ledger)` : ''));
   const funding = status.payBy?.rail === 'tap' && Number.isSafeInteger(status.mintFunding?.satoshis) ? status.mintFunding : null;
   const ms = SENDER_STATES.includes(status.mintSender?.state) ? status.mintSender : null, senderStopped = SENDER_STOPPED.includes(ms?.state);

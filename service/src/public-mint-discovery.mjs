@@ -44,14 +44,24 @@ export async function discoverPublicMintPayments(mints, at) {
           intents.set(rules.publicRequestId(signed.network, intent), intent);
         } catch { /* An unsigned payload cannot add work to the paid queue. */ }
       }
-      if (intents.size !== 1) continue;
-      const [id, intent] = [...intents][0], reference = parsed.txid + 'i' + ii;
-      const row = { id, payer: intent.tapAddress, quote: { fees: intent.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) })) } };
-      try {
-        const receipts = await publicPaymentReceipts(reads, row, [reference], at);
-        if (receipts.length) await mints.queuePlot(intent.asset, intent.block, from.height, [], rules.perTickerSupplyActive(at.executionHeight ?? at.counted) ? intent.supplyScope : null);
-      } catch (error) {
-        if (!['payment_redeem', 'payment_item_binding'].includes(error.message)) throw error;
+      // Distinct plots share one wallet payment. Keep the scanner's existing
+      // rule of exactly one intent per plot at a given inscription position.
+      const plots = new Map();
+      for (const [id, intent] of intents) {
+        const scope = rules.perTickerSupplyActive(at.executionHeight ?? at.counted) ? intent.supplyScope : null;
+        const plot = rules.publicPlotId(intent.asset, intent.block, scope);
+        plots.set(plot, plots.has(plot) ? null : { id, intent, scope });
+      }
+      for (const entry of plots.values()) {
+        if (!entry) continue;
+        const { id, intent, scope } = entry, reference = parsed.txid + 'i' + ii;
+        const row = { id, payer: intent.tapAddress, quote: { fees: intent.fees.map(f => ({ ...f, dta: publicPaymentData(intent, f.role) })) } };
+        try {
+          const receipts = await publicPaymentReceipts(reads, row, [reference], at);
+          if (receipts.length) await mints.queuePlot(intent.asset, intent.block, from.height, [], scope);
+        } catch (error) {
+          if (!['payment_redeem', 'payment_item_binding'].includes(error.message)) throw error;
+        }
       }
     }
     if (ii < parsed.contents.length) break;

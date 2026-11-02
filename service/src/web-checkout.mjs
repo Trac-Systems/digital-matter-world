@@ -1,7 +1,7 @@
 import { createPublicKey, verify } from 'node:crypto';
 import { check, serial } from './util.mjs';
 import { rules } from './rules.mjs';
-import { publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
+import { publicIdentities, wireIdentities } from './public-identities.mjs';
 import { verifyTapMessage, payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { calldata, TYPES, expectedEscrowSplit, escrowSplitForItems } from '../../committee/signer/escrow.mjs';
 import { publicMint } from './mints.mjs';

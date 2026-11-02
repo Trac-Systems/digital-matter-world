@@ -78,7 +78,8 @@ test('public admission settings are operator controlled with preserved v4 resour
   const next = rules.resourceRevision({ operator: 'test', values });
   const mapped = runtimeResources(next).assets;
   assert.equal(mapped.publicMintsPerPayer, 3); assert.equal(mapped.publicMintsPerIP, 9); assert.equal(mapped.publicMintStartsPerMinute, 4);
-  const { assetPublicMintsPerPayer, assetPublicMintsPerIP, assetPublicMintStartsPerMinute, ...oldValues } = rules.RESOURCE_PROFILE;
+  const { assetPublicMintsPerPayer, assetPublicMintsPerIP, assetPublicMintStartsPerMinute,
+    assetPublicBulkMintBlocks, assetPublicBulkInputBytes, assetPublicBulkResponseBytes, ...oldValues } = rules.RESOURCE_PROFILE;
   const previous = { version: 4, operator: 'test', revision: '0', previousHash: null, values: oldValues };
   const pin = rules.hashObject(previous);
   assert.equal(rules.validateResourceDocument(previous), previous);
@@ -87,4 +88,32 @@ test('public admission settings are operator controlled with preserved v4 resour
   for (const name of ['assetPublicMintsPerPayer', 'assetPublicMintsPerIP', 'assetPublicMintStartsPerMinute']) {
     assert.throws(() => rules.resourceRevision({ operator: 'test', values: { ...values, [name]: 0 } }), /resource_value/);
   }
+});
+
+test('public bulk admission is atomic, counts one payer slot and all member work', async t => {
+  const f = await fixture(t, { activeMints: 4, publicMintsPerPayer: 1 });
+  const rows = ['1', '2', '3'].map(id => ({ id, payer: 'wallet', publicMint: true, publicBulkOrderId: 'order',
+    request: { asset: 'p2:0', block: id }, expiry: '10' }));
+  const write = admitted => f.store.transact(admitted.flatMap(row => [
+    { space: 'mints', id: row.id, value: row }, { space: 'publicMintRequests', id: row.id, value: true }]));
+  await f.admission.admitMany(rows, hash('ip'), write);
+  assert.equal(f.store.count('mints'), 3);
+  assert.equal((await f.admission.admitMany(rows, hash('ip'), write)).created, false);
+  await assert.rejects(f.add('4'), /public_mint_payer_capacity/);
+  const other = rows.slice(0, 2).map(r => ({ ...r, id: 'other-' + r.id, payer: 'other', publicBulkOrderId: 'other-order' }));
+  await assert.rejects(f.admission.admitMany(other, hash('ip'), write), /mint_capacity/);
+  assert.equal(f.store.count('mints'), 3);
+});
+
+test('operator resource v6 controls public bulk bounds and still reads v5 documents', () => {
+  const values = { ...rules.RESOURCE_PROFILE, assetPublicBulkMintBlocks: 7, assetPublicBulkInputBytes: 4096, assetPublicBulkResponseBytes: 100000 };
+  const next = rules.resourceRevision({ operator: 'test', values });
+  assert.equal(next.version, 6);
+  assert.equal(runtimeResources(next).assets.publicBulkMintBlocks, 7);
+  const { assetPublicBulkMintBlocks, assetPublicBulkInputBytes, assetPublicBulkResponseBytes, ...oldValues } = rules.RESOURCE_PROFILE;
+  const previous = { version: 5, operator: 'test', revision: '0', previousHash: null, values: oldValues };
+  assert.equal(rules.validateResourceDocument(previous), previous);
+  assert.equal(assetResources(runtimeResources(previous).assets).publicBulkMintBlocks, 64);
+  assert.equal(rules.resourceRevision({ operator: 'test', previous, values }).previousHash, rules.hashObject(previous));
+  assert.throws(() => rules.resourceRevision({ operator: 'test', values: { ...values, assetPublicBulkMintBlocks: 0 } }), /resource_value/);
 });

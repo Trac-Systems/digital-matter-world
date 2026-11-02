@@ -80,7 +80,108 @@ export class Committee {
     check(rules.verifyRootAttestations(seal, attestations, this.signers.map(s => s.peer)), 'receipt_quorum_unavailable', 503);
     await this.store.put('receiptCertificates', key, { seal, attestations }); return attestations;
   }
-  signature(key, proposal) { return this.signatureGate(() => this.sign(key, proposal)); }
+  signature(key, proposal, at) { return this.signatureGate(() => this.sign(key, proposal, at)); }
+  batchAttempts(key, candidates = []) {
+    const attempts = new Map();
+    const add = session => {
+      if (!session?.id || session.peers?.length !== 3) return;
+      const batch = session.proposal?.batch;
+      check(batch && key === `batch/${batch.epoch}/${batch.n}`, 'ceremony_proposal_changed', 409);
+      const digest = Buffer.from(rules.batchDigest(this.network, batch)).toString('hex');
+      check(!session.digest || session.digest === digest, 'signature_disagreement', 503);
+      const prior = attempts.get(session.id);
+      check(!prior || prior.digest === digest, 'signature_disagreement', 503);
+      attempts.set(session.id, { ...session, digest });
+    };
+    for (const candidate of candidates) if (candidate.ceremony) add({ ...candidate.ceremony, proposal: candidate.proposal });
+    let after = key + '/';
+    scan: for (;;) {
+      const page = this.store.list('batchCeremonyAttempts', { after, limit: this.historyPage });
+      for (const row of page) { if (!row.id.startsWith(key + '/')) break scan; add(row.value); }
+      if (page.length < this.historyPage) break; after = page.at(-1).id;
+    }
+    return [...attempts.values()];
+  }
+  batchAt(proposal, counted = proposal.batch.execution?.height ?? proposal.batch.to) {
+    const clock = rules.ordinalCodec(!!proposal.batch.settingsHash);
+    return { counted: clock.max(counted, proposal.batch.to), tip: (proposal.files ?? []).map(f => rules.decodeBinary(Buffer.from(f, 'hex')).tip)
+      .reduce((a, b) => clock.max(a, b), proposal.batch.to), ...(proposal.batch.settingsHash ? { settingsHash: proposal.batch.settingsHash } : {}) };
+  }
+  async batchReservationPlan(key, candidates, at) {
+    const current = this.store.get('ceremonies', key);
+    const attempts = this.batchAttempts(key, [...candidates, ...(current ? [{ ceremony: current, proposal: current.proposal }] : [])]);
+    const live = batch => rules.compareOrdinal(at.epoch, batch.epoch) === 0 &&
+      (!validClock(at.counted) || !validClock(batch.deadline) || rules.compareOrdinal(at.counted, batch.deadline) <= 0);
+    const pending = attempts.filter(a => live(a.proposal.batch));
+    if (!pending.length) return { unreserved: true, retired: true, attempts };
+    // The existing API inventories a ceremony, not a batch slot. Ask about
+    // every saved attempt (including archives), never infer emptiness from a
+    // refusal for only the newest ID. Unknown replies cannot count as empty.
+    const inventory = await Promise.all(this.signers.map(async signer => {
+      const held = new Set(); let unknown = false;
+      for (const attempt of pending) {
+        try {
+          const state = await this.request(signer, '/preparation-state', { id: attempt.id });
+          if (state.id !== attempt.id || typeof state.reserved !== 'boolean' || typeof state.retired !== 'boolean') { unknown = true; continue; }
+          if (state.reserved) held.add(attempt.digest);
+        } catch { unknown = true; break; }
+      }
+      return { signer, held: [...held], unknown: unknown || held.size > 1 };
+    }));
+    const reservations = inventory.map(row => ({ signer: row.signer.id, digests: row.held, unknown: row.unknown }));
+    const deadlines = pending.map(a => a.proposal.batch.deadline).filter(validClock).sort(rules.compareOrdinal);
+    const recovery = { checkedAt: Date.now(), counted: at.counted ?? null, waitUntil: deadlines[0] ?? null, reservations };
+    const unreserved = inventory.every(row => !row.unknown && !row.held.length), choices = [], readiness = new Map();
+    for (const candidate of candidates) {
+      if (!live(candidate.proposal.batch)) continue;
+      const digest = Buffer.from(rules.batchDigest(this.network, candidate.proposal.batch)).toString('hex');
+      const snapshot = this.batchAt(candidate.proposal, at.counted), snapshotKey = JSON.stringify(snapshot);
+      if (!readiness.has(snapshotKey)) readiness.set(snapshotKey, new Set((await this.healthy(snapshot)).map(s => s.id)));
+      const healthy = readiness.get(snapshotKey);
+      const compatible = inventory.filter(row => !row.unknown && healthy.has(row.signer.id) &&
+        (!row.held.length || row.held.every(d => d === digest)) && !current?.busy?.includes(row.signer.id) &&
+        !current?.recovery?.fenceFailures?.includes(row.signer.id));
+      const holders = compatible.filter(row => row.held.includes(digest)), empty = compatible.filter(row => !row.held.length);
+      if (compatible.length >= 3) choices.push({ candidate, digest, peers: [...holders, ...empty].slice(0, 3).map(row => row.signer.id), holders: holders.length });
+    }
+    choices.sort((a, b) => b.holders - a.holders);
+    return { ...choices[0], attempts, recovery, unreserved, waiting: !choices.length };
+  }
+  async fenceBatchAttempts(attempts, peers, at, digest) {
+    const selected = this.signers.filter(s => peers.includes(s.id));
+    const replies = await Promise.allSettled(selected.map(async signer => {
+      for (const attempt of attempts) {
+        const reply = await this.request(signer, '/retire-batch-attempt', { network: this.network, id: attempt.id, batch: attempt.proposal.batch });
+        check(reply.id === attempt.id && reply.status === 'batch-attempt-retired' && reply.batchHash === hash(JSON.stringify(attempt.proposal.batch)) &&
+          (reply.digest === null || reply.digest === attempt.digest), 'batch_attempt_fence', 503);
+        const batch = attempt.proposal.batch;
+        // A timed-out prepare can reserve AFTER inventory but BEFORE its
+        // fence. The fence's digest is authoritative; replan instead of
+        // replacing that newly discovered, still-live reservation.
+        check(reply.digest === null || reply.digest === digest || rules.compareOrdinal(at.epoch, batch.epoch) > 0 ||
+          validClock(at.counted) && validClock(batch.deadline) && rules.compareOrdinal(at.counted, batch.deadline) > 0, 'batch_reservation_changed', 503);
+      }
+    }));
+    return { ok: replies.every(r => r.status === 'fulfilled'),
+      unavailable: selected.filter((s, i) => replies[i].status === 'rejected' && replies[i].reason.message !== 'batch_reservation_changed').map(s => s.id) };
+  }
+  async waitForBatch(key, proposal, recovery, reason = 'batch_reservation_wait') {
+    const session = this.store.get('ceremonies', key);
+    await this.store.put('ceremonies', key, { ...(session ?? { id: randomBytes(32).toString('hex'), proposal, peers: [], started: Date.now() }),
+      stage: 'blocked', reason, busy: [], recovery: { ...recovery, checkedAt: Date.now(), waiting: true } });
+    this.activeSigning?.delete(key);
+  }
+  async resumeBatch(key, plan) {
+    const session = this.store.get('ceremonies', key), proposal = plan.candidate.proposal;
+    const renewed = { id: randomBytes(32).toString('hex'), proposal, peers: plan.peers, digest: plan.digest,
+      stage: 'blocked', reason: 'prepare_incomplete', retry: 'same-batch', retryPrepare: true, fresh: true,
+      unreserved: plan.peers, started: Date.now(), recovery: { ...plan.recovery, waiting: false, restored: true } };
+    await this.store.transact([...plan.attempts.filter(a => !this.store.get('batchCeremonyAttempts', key + '/' + a.id))
+      .map(a => ({ space: 'batchCeremonyAttempts', id: key + '/' + a.id, value: a })),
+      ...(session?.id && session.peers?.length === 3 ? [{ space: 'batchCeremonyAttempts', id: key + '/' + session.id, value: session }] : []),
+      { space: 'ceremonies', id: key, value: renewed }]);
+    this.activeSigning?.delete(key);
+  }
   retireUnprepared(key) { return this.signatureGate(async () => {
     const session = this.store.get('ceremonies', key);
     if (session?.stage !== 'blocked' || session.reason !== 'prepare_incomplete') return null;
@@ -130,8 +231,9 @@ export class Committee {
     await this.store.transact([{ space: 'batchCeremonyAttempts', id: key + '/' + session.id, value: session }, { space: 'ceremonies', id: key, value: renewed }]);
     this.activeSigning?.delete(key); return null;
   }
-  async sign(key, proposal) {
+  async sign(key, proposal, snapshot) {
     let session = this.store.get('ceremonies', key);
+    if (session?.recovery?.waiting) return null;
     if (!this.activeSigning) {
       this.activeSigning = new Set(); let after = '';
       for (;;) {
@@ -143,8 +245,18 @@ export class Committee {
     for (const id of this.activeSigning) if (!['prepared', 'running'].includes(this.store.get('ceremonies', id)?.stage)) this.activeSigning.delete(id);
     if (session?.stage !== 'complete' && [...this.activeSigning].some(id => id !== key)) return null;
     if (!session) {
-      const at = proposal.kind === 'batch' ? { counted: proposal.batch.to, tip: proposal.files.map(f => rules.decodeBinary(Buffer.from(f, 'hex')).tip).reduce((a, b) => rules.ordinalCodec(!!proposal.batch.settingsHash).max(a, b), proposal.batch.to) } : undefined;
-      const quorum = (await this.healthy(at)).slice(0, 3);
+      const at = proposal.kind === 'batch' ? this.batchAt(proposal, snapshot?.counted) : undefined;
+      let quorum;
+      if (at && this.batchAttempts(key).length) {
+        const plan = await this.batchReservationPlan(key, [{ proposal }], { counted: at.counted, epoch: proposal.batch.epoch });
+        const fence = plan.retired ? { ok: true, unavailable: [] } : plan.waiting ? { ok: false, unavailable: [] } : await this.fenceBatchAttempts(plan.attempts,
+          plan.peers ?? this.signers.map(s => s.id), { counted: at.counted, epoch: proposal.batch.epoch }, plan.digest);
+        if (!fence.ok) {
+          await this.waitForBatch(key, proposal, { ...plan.recovery, fenceFailures: fence.unavailable }); return null;
+        }
+        if (plan.peers) quorum = plan.peers.map(id => this.signers.find(s => s.id === id));
+      }
+      quorum ??= (await this.healthy(at)).slice(0, 3);
       if (at && quorum.length < 3) return null;
       check(quorum.length === 3, 'committee_quorum_unavailable', 503);
       session = { id: randomBytes(32).toString('hex'), stage: 'prepared', proposal, peers: quorum.map(s => s.id), started: Date.now() };
@@ -156,9 +268,10 @@ export class Committee {
       if (responses.some(r => r.status === 'rejected') || disagreement) {
         const unreserved = selected.filter((s, i) => responses[i].status === 'rejected' && (responses[i].reason.unreserved || responses[i].reason.message === 'committee_signer_busy')).map(s => s.id);
         const failures = responses.filter(r => r.status === 'rejected').map(r => r.reason.message);
+        const busy = selected.filter((s, i) => responses[i].status === 'rejected' && responses[i].reason.message === 'committee_signer_busy').map(s => s.id);
         const retryPrepare = !disagreement && failures.length === unreserved.length;
         await this.store.put('ceremonies', key, { ...session, stage: 'blocked', reason: disagreement ? 'signature_disagreement' : 'prepare_incomplete', failures,
-          retryPrepare, unreserved, ...(!disagreement && digests.length ? { digest: digests[0] } : {}) });
+          retryPrepare, unreserved, busy, ...(!disagreement && digests.length ? { digest: digests[0] } : {}) });
         if (retryPrepare) return null;
         throw Error('committee_prepare_incomplete');
       }
@@ -201,6 +314,7 @@ export class Committee {
         throw Error('signature_disagreement');
       }
       const unreserved = selected.filter((s, i) => responses[i].status === 'rejected' && (responses[i].reason.unreserved || responses[i].reason.message === 'committee_signer_busy')).map(s => s.id);
+      const busy = selected.filter((s, i) => responses[i].status === 'rejected' && responses[i].reason.message === 'committee_signer_busy').map(s => s.id);
       const resultSources = { ...session.resultSources };
       if (this.assetRecoveryVersion === 2 && proposal.kind === 'mint') for (const [i, response] of responses.entries()) {
         if (response.status === 'fulfilled' && response.value?.recovered) {
@@ -208,7 +322,7 @@ export class Committee {
           resultSources[selected[i].id] = response.value.id;
         }
       }
-      session = { ...session, retryBusy: false, retryPrepare: failures.length === unreserved.length, unreserved, failures,
+      session = { ...session, retryBusy: false, retryPrepare: failures.length === unreserved.length, unreserved, failures, busy,
         ...(digests.length ? { digest: digests[0] } : {}), ...(Object.keys(resultSources).length ? { resultSources } : {}) };
       await this.store.put('ceremonies', key, session);
       if (failures.length) { check(session.retryPrepare, 'ceremony_requires_recovery', 503); return null; }

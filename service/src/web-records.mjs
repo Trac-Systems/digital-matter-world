@@ -1,6 +1,6 @@
 import { rules } from './rules.mjs';
 import { heightKey } from './util.mjs';
-import { publicIdentities } from '../../rules/src/trac-address.js';
+import { publicIdentities } from './public-identities.mjs';
 const fraction = r => ({ n: BigInt(r.n ?? r.numerator), d: BigInt(r.d ?? r.denominator) });
 const rarer = (a, b) => {
   if (!b) return true;

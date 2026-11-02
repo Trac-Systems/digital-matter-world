@@ -15,7 +15,7 @@ const returnStates = new Set(['expired', 'refunded', 'refundable', 'credited', '
 function terminal(status) {
   if (returnStates.has(status.state)) return status.state;
   if (status.state === 'minted') return 'user_minted';
-  if (!status.mintContent && status.publicMint && !status.winner && status.counted !== null && status.counted !== undefined &&
+  if (!status.mintContent && status.publicMint && !status.publicBulkOrderId && !status.winner && status.counted !== null && status.counted !== undefined &&
       BigInt(status.counted) > BigInt(status.payBy.untilBlock)) return 'expired';
   return null;
 }
@@ -130,7 +130,7 @@ export class MintSender {
     if (reason) return this.returnFunding(row, reason);
     // The set-aside arrives in the TAP fee payment's own commit transaction. If no page reported that payment
     // (closed right after paying, or the report was lost), report it here, so the gateway counts it on confirmation.
-    if (['awaiting_payment', 'partly_paid'].includes(status.state) && !status.publicMint && !status.inflight && this.now() - (row.paymentReportAt ?? 0) >= 60000) {
+    if (['awaiting_payment', 'partly_paid', 'confirming_payment'].includes(status.state) && !status.publicMint && !status.inflight && this.now() - (row.paymentReportAt ?? 0) >= 60000) {
       row = this.save(row, { paymentReportAt: this.now() });
       try {
         for (const revealTxid of await this.bitcoin.spenders(row.coin.txid, row.coin.vout))

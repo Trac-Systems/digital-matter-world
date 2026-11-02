@@ -1,6 +1,6 @@
 // Request states before the wallet can pay; the page shows a spinner until the Pay button appears.
 export const BEFORE_PAY = ['requested', 'authorizing', 'reserving', 'enrolling', 'awaiting_payment', 'partly_paid'];
-export const PAY_SOON = 'Your request is being recorded on Trac. The Pay button appears here by itself, usually within a minute.';
+export const PAY_SOON = 'Your request is being recorded on Trac. Nothing to do yet: the Pay button appears here by itself, usually within a minute.';
 export const publicOpeningLabel = row => typeof row?.publicFrom === 'string' && /^(0|[1-9][0-9]*)$/.test(row.publicFrom)
   ? `Opens at block ${row.publicFrom}` : null;
 export const publicMintMessages = {
@@ -83,6 +83,8 @@ const messages = {
   web_target_unavailable: 'Wallet payments are temporarily unavailable. Try again shortly.',
   payment_window_short: WINDOW_SHORT,
 };
+// The plain words for a known reason code, or null: a stopped request names an unknown one only as "(code)".
+export const knownReason = code => typeof code === 'string' && Object.hasOwn(messages, code) ? messages[code] : null;
 // Keep existing plain wallet guidance, but never put a bare protocol code on a
 // payment page. Unknown codes get a retry message without implying a new send.
 export function walletError(error, details = error) {

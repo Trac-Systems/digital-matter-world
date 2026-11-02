@@ -80,6 +80,13 @@ test('retention preserves live drafts and audits, keeps sixteen feed versions, a
     const current = JSON.parse(await readFile(files.path('patterns/p0/0.json'), 'utf8'));
     const garbage = '/patterns/p0/0-' + 'ef'.repeat(32) + '.json'; await files.immutable(garbage.slice(1), Buffer.from('old view'));
     await store.put('fileGarbage', garbage, true); await collectFiles(store, files); await collectFiles(store, files);
+    // v2 pattern ids carry a colon; their superseded pages are collected too.
+    const v2 = '/patterns/p2:444/3805-' + 'ab'.repeat(32) + '.json'; await files.immutable(v2.slice(1), Buffer.from('old v2 view'));
+    await store.put('fileGarbage', v2, true); await collectFiles(store, files);
+    await assert.rejects(readFile(files.path(v2.slice(1)))); assert.equal(store.get('fileGarbage', v2), null);
+    await store.put('fileGarbage', '/patterns/p2:x/1-' + 'ab'.repeat(32) + '.json', true);
+    await assert.rejects(collectFiles(store, files), /retention_path/);
+    await store.put('fileGarbage', '/patterns/p2:x/1-' + 'ab'.repeat(32) + '.json');
     const orphan = '/patterns/p0/0-' + 'ed'.repeat(32) + '.json'; await files.immutable(orphan.slice(1), Buffer.from('interrupted publication'));
     await recoverFeedVersions(store, files);
     assert.equal((await readdir(files.path('patterns/p0'))).filter(n => n.includes('-')).length, 16);

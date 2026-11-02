@@ -46,7 +46,7 @@ export function publicFinancialOperations(store, draft, acceptedWrites) {
         if (t.type === 'reserve-many') put('publicFinancialTerms', id, { id, owner: manifest.owner, asset: manifest.asset,
           amount: manifest.totalAmount, block: null, kind: 'tap', receiver: manifest.receiver, payer: manifest.payer,
           expiry: manifest.expires, deployment: manifest.deployment, price: manifest.payableFeeAtoms, bulk: true, count: manifest.members.length });
-        if (['bulk-fund', 'bulk-credit'].includes(t.type)) for (const [group, amount] of e.paid.entries()) {
+        if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) for (const [group, amount] of e.paid.entries()) {
           if (amount === '0') continue;
           const key = rules.hashObject(['dmw-public-bulk-payment-v1', id, e.reference, group]);
           if (!get('publicResults/payments', key)) {

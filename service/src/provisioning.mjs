@@ -6,7 +6,7 @@ import { rules } from './rules.mjs';
 import { candidate, same, generationDigest, deploymentPayload, deploymentOptions, verifyDeployment, elementByDefinition, elementByName } from './deployments.mjs';
 import { updateRegistryAsset } from './registry.mjs';
 import { mintAssetDefinition, patternCatalogId } from './mint-assets.mjs';
-import { encodeTracAddress, isTracAddress } from '../../rules/src/trac-address.js';
+import { encodeTracAddress, isTracAddress } from './public-identities.mjs';
 import { lifecycleSignal } from './lifecycle.mjs';
 import { verifyTickerChoice, TICKER_CHOICE_KEYS, TICKER_CHOICE_MS } from './compound-ticker.mjs';
 import { tickerAvailable, reserveTicker, releaseTicker } from './ticker-availability.mjs';

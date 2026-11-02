@@ -2,6 +2,7 @@
 export const ASSET_RESOURCES = Object.freeze({
   activeMints: 2000, activeLinks: 2000, mintsPerAgent: 32, linksPerAgent: 8, pendingMintsPerAgent: 8,
   publicMintsPerPayer: 8, publicMintsPerIP: 32, publicMintStartsPerMinute: 12,
+  publicBulkMintBlocks: 64, publicBulkInputBytes: 16384, publicBulkResponseBytes: 1048576,
   mintInputCapacity: 2000, workPage: 128, creditPage: 128,
   creditSources: 32, outboxPage: 128,
   bulkOrdersPerAgent: 24, activeBulkOrders: 512, bulkMintEnabled: true, bulkQuoteAttempts: 3,

@@ -3,6 +3,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { rules, processObservation } from './rules.mjs';
 import { NodeEvidence } from './node-evidence.mjs';
 import { PublicMintPrefetch } from '../../rules/src/public-mint-prefetch.js';
+import { ClaimStorage } from '../../rules/src/claim-state.js';
+import { recordGet } from '../../rules/src/record-index.js';
+const CLOSURE_LOOKAHEAD = 1500, CLOSURE_HINTS = 3000;
 parentPort.on('message', ({ id, input, headers, length, database, branch, shared, publicMintShared, headerPageSize, claimDatabase, claimCacheKiB, claimNodes, namedNodes, headerCachePages = 8, cacheKiB = 4096 }) => {
   let db, claimDb;
   try {
@@ -84,6 +87,34 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
         claimProof.add(id, row); publicMints.node(row);
         return row;
       };
+      // A closing round checks its groups one at a time, so the main thread would
+      // read one plot per round trip. Look ahead over the next groups with a
+      // separate reader that records no evidence and charges no budget; hints
+      // only schedule reads in pages and never supply answers.
+      if (input.settings?.document) try {
+        const look = new ClaimStorage({ get: id => staged.get(id) ?? (raw => raw ? JSON.parse(raw.value) : undefined)(staged.has(id) ? null : query.get(id)),
+          cacheSize: input.settings.document.values.proofDepth });
+        const state = look.load(input.state, { decimal: true });
+        let budget = CLOSURE_LOOKAHEAD;
+        for (const round of state.rounds ?? []) {
+          const c = round.closing; if (!c || round.closed) continue;
+          const prefix = `closure/${round.window}/`;
+          // The winners phase checks every slot once more; outcomes runs right before it.
+          if (['headers', 'headerPages', 'outcomes', 'winners'].includes(c.phase)) {
+            for (let n = BigInt(c.phase === 'winners' ? c.slot ?? '0' : '0'), end = BigInt(c.slots ?? '0'); n < end && budget > 0 && publicMints.hints.size < CLOSURE_HINTS; n++, budget--) {
+              const id = recordGet(state.claimInputs, prefix + 'slots/' + n), slot = id && recordGet(state.claimSlots, `${round.window}/${id}`);
+              if (slot?.asset !== undefined && slot.block !== undefined) publicMints.hint(slot.asset, String(slot.block));
+            }
+            continue;
+          }
+          if (!['groups', 'validate', 'tickets', 'groupDone'].includes(c.phase)) continue;
+          // The hint cache drops its oldest entries first; stop before the next groups' hints are evicted.
+          for (let g = BigInt(c.group ?? '0'), end = BigInt(c.groups ?? '0'); g < end && budget > 0 && publicMints.hints.size < CLOSURE_HINTS; g++, budget--) {
+            const key = recordGet(state.claimInputs, prefix + 'groups/' + g), group = key && recordGet(state.claimInputs, prefix + 'group/' + key);
+            if (group?.claim) publicMints.plot(group.claim);
+          }
+        }
+      } catch { /* Hints are optional; the closure reads everything it needs on demand. */ }
     }
     const publicMintGet = (asset, block, deployment) => publicMints.get(asset, block, deployment);
     const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet, publicMintGet });

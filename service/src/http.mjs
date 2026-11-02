@@ -1,6 +1,6 @@
 import { Payouts } from './payouts.mjs';
 import { redactedError } from './error-log.mjs';
-import { publicIdentities, TRAC_ADDRESS_ERROR } from '../../rules/src/trac-address.js';
+import { publicIdentities, TRAC_ADDRESS_ERROR } from './public-identities.mjs';
 import { createServer } from 'node:http';
 import { check, hash } from './util.mjs';
 import { Limiter } from './limiter.mjs';
@@ -15,6 +15,7 @@ import { deploymentAssetId } from './mint-assets.mjs';
 import { responseBudget } from './response-budget.mjs';
 import { publicMintClientIP } from './public-mint-admission.mjs';
 import { handleBulkMintHTTP } from './bulk-mint-http.mjs';
+import { handlePublicBulkMintHTTP } from './public-bulk-mint-http.mjs';
 import { httpReadBudget } from './http-read-budget.mjs';
 async function body(req, maxBytes) {
   check(!req.headers['content-length'] || Number(req.headers['content-length']) <= maxBytes, 'body_limit', 413);
@@ -23,7 +24,7 @@ async function body(req, maxBytes) {
   for await (const chunk of req) { size += chunk.length; check(size <= maxBytes, 'body_limit', 413); chunks.push(chunk); }
   return Buffer.concat(chunks).toString('utf8');
 }
-export async function serve({ listener, intake, files, headers, mints, bulkMints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, inflight, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond, readBudget = {} }) {
+export function createHTTPHandler({ readPool, manageResponseBudget = true, listener, intake, files, headers, mints, bulkMints, links, financialActions, custody, publicAPI, bindings, submittedBitmaps, operator, evidence, inflight, web = createWeb(), host = '127.0.0.1', port = 0, responseTimeoutMs = 2000, maxInFlight = rules.RESOURCE_PROFILE.httpInFlight, maxConnections = rules.RESOURCE_PROFILE.httpConnections, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs, bitmapSubmitBytes = 4096, headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs, rateCapacity = rules.RESOURCE_PROFILE.httpRateCapacity, rateBurst = rules.RESOURCE_PROFILE.httpRateBurst, ratePerSecond = rules.RESOURCE_PROFILE.httpRatePerSecond, readBudget = {} }) {
   check(Number.isSafeInteger(responseTimeoutMs) && responseTimeoutMs > 0 && responseTimeoutMs <= 2000, 'response_timeout');
   check(Number.isSafeInteger(bitmapSubmitBytes) && bitmapSubmitBytes > 0, 'bitmap_submit_bytes');
   check(host === '127.0.0.1', 'local_listener_required'); let inFlight = 0;
@@ -37,9 +38,10 @@ export async function serve({ listener, intake, files, headers, mints, bulkMints
       res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '1' });
       res.end(JSON.stringify({ error: 'service_busy', retryable: true })); return;
     } inFlight++;
-    const finishBudget = ['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/') ? responseBudget(req, res, responseTimeoutMs) : () => {};
+    const finishBudget = manageResponseBudget && (['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/')) ? responseBudget(req, res, responseTimeoutMs) : () => {};
     try {
       admitRead(req);
+      if (readPool?.handles(req)) { await readPool.serve(req, res); return; }
       if (req.method === 'POST') check(unauthenticated.take(req.socket.remoteAddress), 'request_rate', 429);
       if (evidence && req.method === 'POST' && req.url === '/operator-evidence') {
         const result = await evidence(JSON.parse(await body(req, evidence.requestBytes ?? 4096)));
@@ -47,6 +49,7 @@ export async function serve({ listener, intake, files, headers, mints, bulkMints
         res.end(JSON.stringify(result)); return;
       }
       if (await web.handle(req, res, body)) return;
+      if (await handlePublicBulkMintHTTP(req, res, body, mints?.publicMints?.bulk)) return;
       if (await handleBulkMintHTTP(req, res, body, bulkMints)) return;
       if (headers && await headers.serve(req, res)) return;
       const operatorURL = new URL(req.url, 'http://127.0.0.1');
@@ -285,6 +288,14 @@ export async function serve({ listener, intake, files, headers, mints, bulkMints
       } else res.destroy();
     } finally { finishBudget(); inFlight--; }
   };
+  return handler;
+}
+export async function serve(options) {
+  const { listener, host = '127.0.0.1', port = 0,
+    headerTimeoutMs = rules.RESOURCE_PROFILE.httpHeaderTimeoutMs, requestTimeoutMs = rules.RESOURCE_PROFILE.requestTimeoutMs,
+    socketTimeoutMs = rules.RESOURCE_PROFILE.httpSocketTimeoutMs, maxConnections = rules.RESOURCE_PROFILE.httpConnections,
+    keepAliveMs = rules.RESOURCE_PROFILE.httpKeepAliveMs } = options;
+  const handler = createHTTPHandler(options);
   const server = listener?.server ?? createServer(handler);
   server.headersTimeout = Math.min(headerTimeoutMs, requestTimeoutMs); server.requestTimeout = requestTimeoutMs; server.timeout = socketTimeoutMs; server.maxConnections = maxConnections; server.keepAliveTimeout = keepAliveMs;
   if (listener) { listener.install(handler); return listener; }

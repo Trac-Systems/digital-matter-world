@@ -101,9 +101,15 @@ export class Inflight {
     check(TXID.test(revealTxid ?? '') && (input.inscriptionId ?? revealTxid + 'i0') === revealTxid + 'i0', 'inflight_payload');
     check(input.commitTxid === undefined || TXID.test(input.commitTxid), 'inflight_payload');
     return this.work.run(Inflight.key({ kind, ref, phase }), async () => {
+      const seenAtBlock = kind === 'mint' && phase === 'payment' ? await this.mints?.reads?.counted?.() : undefined;
       const expected = await this.expected({ kind, ref, phase, attempt });
       // A deployment is kept under its job's asset, whichever catalog or legacy id the page used.
       const key = Inflight.key({ kind, ref: expected.asset, phase }), known = this.store.get('inflight', key);
+      // The report itself grants only a bounded hold. Save it before remote
+      // reveal validation can cross the deadline or fail temporarily. Only
+      // verified content below may create the displayed inflight record.
+      if (seenAtBlock !== undefined) await this.mints?.paymentBroadcast?.(ref, revealTxid + 'i0',
+        known?.revealTxid === revealTxid && known.attempt === attempt ? known.seenAtBlock ?? seenAtBlock : seenAtBlock);
       if (known && known.attempt === attempt && known.revealTxid === revealTxid && known.progress === expected.progress && this.now() - known.checkedAt < this.settings.recheckMs) return { inflight: view(known) };
       const hex = await this.bitcoin.transaction(revealTxid);
       check(typeof hex === 'string', 'inflight_transaction_unknown', 404);
@@ -113,6 +119,7 @@ export class Inflight {
       check(input.commitTxid === undefined || input.commitTxid === commitTxid, 'inflight_commit');
       const confirmations = await this.bitcoin.confirmations(revealTxid + 'i0').catch(() => null);
       const row = { kind, ref: expected.asset, phase, attempt, commitTxid, revealTxid, inscriptionId: revealTxid + 'i0',
+        ...(seenAtBlock === undefined ? {} : { seenAtBlock: known?.revealTxid === revealTxid && known.attempt === attempt ? known.seenAtBlock ?? seenAtBlock : seenAtBlock }),
         seenAt: known?.revealTxid === revealTxid && known.attempt === attempt ? known.seenAt : this.now(), checkedAt: this.now(),
         confirmations: Number.isSafeInteger(confirmations) && confirmations > 0 ? confirmations : null,
         ...(expected.progress ? { progress: expected.progress } : {}) };
@@ -148,7 +155,7 @@ export class Inflight {
 }
 const view = row => ({ phase: row.phase, commitTxid: row.commitTxid, revealTxid: row.revealTxid, inscriptionId: row.inscriptionId, seenAt: row.seenAt, confirmations: row.confirmations });
 // A request waits for a TAP payment while fee items remain; a free link (price 0) has none, so nothing is in flight.
-const paymentWaits = status => ['awaiting_payment', 'partly_paid'].includes(status?.state) && (status.payBy?.rail ?? status.kind) === 'tap' &&
+const paymentWaits = status => ['awaiting_payment', 'partly_paid', 'confirming_payment'].includes(status?.state) && (status.payBy?.rail ?? status.kind) === 'tap' &&
   status.price !== '0' && Array.isArray(status.missing) && status.missing.length > 0 && !status.payment?.length;
 const paymentProgress = status => rules.stableJSON({ paid: status.funding?.paid ?? null, missing: status.missing.map(fee => [fee.dta ?? null, fee.amount]) });
 // TAP Wallet's one-transaction transfer is a token-auth redeem. It pays this request when every item is one of the

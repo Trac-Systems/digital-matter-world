@@ -1,13 +1,16 @@
-import { publicIdentities, tracReadRoute } from '../../rules/src/trac-address.js';
+import { publicIdentities, tracReadRoute } from './public-identities.mjs';
 import { bindingId, bindingKey, bindingNonceKey, bindingBarrier, BINDING_V2_DEFAULTS, verifyAgentBinding, verifyWalletBinding, verifyBinding, payoutAddress } from '../../rules/src/payout-bindings.mjs';
-import { check, serial } from './util.mjs';
+import { BoundedLRU, PUBLIC_READ_DEFAULTS } from './public-read-settings.mjs';
+import { check, serial, hash } from './util.mjs';
 import { pageRows } from './paging.mjs';
 
 const WALLET_PLAYERS = 16;
 export class Bindings {
-  constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now, freshnessMs = BINDING_V2_DEFAULTS.freshnessMs }) {
+  constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now, freshnessMs = BINDING_V2_DEFAULTS.freshnessMs, bindingCacheEntries = PUBLIC_READ_DEFAULTS.bindingCacheEntries }) {
     check(Number.isSafeInteger(freshnessMs) && freshnessMs > 0, 'binding_settings');
     Object.assign(this, { store, network, bitcoinNetwork, members, committee, rosterHistory, now, freshnessMs }); this.gate = serial();
+    check(Number.isSafeInteger(bindingCacheEntries) && bindingCacheEntries >= 0, 'binding_cache_settings');
+    this.verifiedBindings = new BoundedLRU(bindingCacheEntries);
   }
   options() { return { network: this.network, bitcoinNetwork: this.bitcoinNetwork, members: this.members, rosterHistory: this.rosterHistory, now: this.now() }; }
   current(agent, rail) {
@@ -17,12 +20,21 @@ export class Bindings {
     check(proof.request.agent === agent && proof.request.rail === rail, 'binding_index');
     return proof;
   }
-  proof(id) { const row = this.store.get('payoutBindings', id); check(row, 'binding_missing'); return verifyBinding(row, this.options()); }
+  verify(record) {
+    const options = this.options();
+    // Include the full certificate and trust context: altered signatures or a
+    // changed roster must never inherit verification from an old binding ID.
+    const key = hash(JSON.stringify([record, options.network, options.bitcoinNetwork, options.members, options.rosterHistory]));
+    if (this.verifiedBindings.get(key)) return record;
+    const verified = verifyBinding(record, options);
+    this.verifiedBindings.set(key, true); return verified;
+  }
+  proof(id) { const row = this.store.get('payoutBindings', id); check(row, 'binding_missing'); return this.verify(row); }
   validProof(id) {
     const row = this.store.get('payoutBindings', id);
     // Only fully verified certificates establish a current public binding.
     // Explicit proof/quote lookups remain strict and reject invalid records.
-    try { return verifyBinding(row, this.options()); } catch { return null; }
+    try { return this.verify(row); } catch { return null; }
   }
   resolve(agent, rail, snapshot, role) {
     if (!agent) { check(!snapshot?.payouts?.[role], 'binding_role'); return null; }

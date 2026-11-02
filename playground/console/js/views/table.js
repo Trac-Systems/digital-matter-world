@@ -107,7 +107,7 @@ export function mount(root, params = {}) {
         site.token ? ['On Bitcoin', tokenStatus(p.asset, { owner: p.discoverer }), 'During its first week only its discoverer can inscribe it and deploy its token, once, from their own TAP Wallet. After that anyone can. Whoever deploys holds the deploy inscription and can add art to it later.'] : null,
       ]),
       tickerList(p.asset), ownTicker(p.asset),
-      h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), blocks));
+      h('div.section-label', {}, site.words?.patternBlocks ?? 'Blocks where it occurs'), mintSeveral(p.asset), blocks));
     if (seq !== rowsSeq) return;
     // Each ticker mints every block once: with several tickers, Minted is shown for the chosen one (Official first).
     const choice = p.asset.startsWith('p2:') ? tickerChoice(p.asset, { onChange: () => list.reset() }) : null;
@@ -128,6 +128,17 @@ export function mount(root, params = {}) {
     });
     clear(blocks, list.el);
     if (choice) tickers(p.asset).then(rows => { if (rows?.length > 1 && seq === rowsSeq) { choice.el.style.padding = '8px 14px 0'; blocks.prepend(choice.el); } });
+  }
+  // Public pages: the way to mint several blocks of this pattern in one order. The agent dashboard opens
+  // its own claimed blocks of the pattern (My agent) or the public ones; on the site, Mint's public list
+  // takes picks for one TAP Wallet payment when the server offers that.
+  function mintSeveral(asset) {
+    if (!site.public || !/^p2:(0|[1-9][0-9]*)$/.test(asset)) return null;
+    const pub = h('a.btn.sm.ghost', { href: '/mint?' + new URLSearchParams({ asset }) + '#mint' }, 'Public blocks');
+    return h('div.row', { style: { padding: '10px 14px', borderBottom: '1px solid var(--rule-2)' } }, globalThis.DMW_LOCAL_AGENT === true
+      ? [h('a.btn.sm.primary', { href: '/me?' + new URLSearchParams({ pattern: asset }) }, 'Mint several'), pub,
+        h('span.small.muted', {}, 'Pick blocks your agent may mint, up to 64 in one order: one total, one payment.')]
+      : [pub, h('span.small.muted', {}, 'Mint them with TAP Wallet alone, no agent needed.')]);
   }
   function compoundPanel(c) {
     rememberCompound(c);

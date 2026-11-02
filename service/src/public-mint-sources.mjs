@@ -1,4 +1,5 @@
 import { rules } from './rules.mjs';
+import { PAYMENT_TIMING_DEFAULTS } from '../../rules/src/payment-timing.js';
 import { check } from './util.mjs';
 import { mintFeeScope } from './fees.mjs';
 import { financialFees } from './financial-sources.mjs';
@@ -99,10 +100,12 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const plan = reads.financialFeePlan({ split, destinations, beneficiaries: c.beneficiaries, id: null, payer: tapAddress, rail: 'tap' });
     return { ...resolved, feeQuote: q, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}), destinations, beneficiaries: c.beneficiaries, plan };
   };
-  reads.publicMintQuote = async (input, at) => {
+  reads.publicMintQuote = async (input, at, { publicBulkOrderId } = {}) => {
     const result = await terms(input, at), { context: c, amount, feeQuote, price, split, plan, claimDeadline, document, height } = result;
+    check(publicBulkOrderId === undefined || rules.hex(publicBulkOrderId, 32) && rules.publicPaymentV2Active(document, height), 'public_bulk_payment_version');
     const scope = rules.tickerSupplyScope(c.deployment, at?.executionHeight ?? height);
     const body = { network, ...(scope ? { supplyScope: scope } : {}), ...(input.deployment ? { deployment: c.deployment.id } : {}), asset: input.asset, block: rules.decimalV2(input.block), tapAddress: input.tapAddress, amount, feeQuote,
+      ...(publicBulkOrderId ? { publicBulkOrderId } : {}),
       price, split, fees: plan.fees, custody: plan.custody, ...(claimDeadline === undefined ? {} : { claimDeadline }), settingsHash: rules.hashObject(document),
       ...(rules.publicPaymentV2Active(document, height) ? { paymentVersion: 2, paymentSalt: randomBytes(32).toString('hex') } : {}) };
     const intent = reads.feeQuotes.sign(DOMAIN, body), id = rules.publicRequestId(network, intent);
@@ -120,6 +123,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const signed = reads.feeQuotes.verify(DOMAIN, intent), id = rules.publicRequestId(network, intent);
     check(signed.network === network && signed.block === rules.decimalV2(signed.block), 'public_quote_binding');
     const { document, height } = await active(at), v2 = signed.paymentVersion === 2;
+    check(signed.publicBulkOrderId === undefined || v2 && rules.hex(signed.publicBulkOrderId, 32), 'public_quote_binding');
     check(v2 === rules.publicPaymentV2Active(document, signed.feeQuote.validFrom) &&
       (!v2 || rules.publicPaymentV2Active(document, position.height)), 'public_payment_activation');
     const original = await reads.financialSettings(signed.settingsHash);
@@ -131,7 +135,13 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
         rules.tickerSupplyScope(result.context.deployment, at?.executionHeight ?? height), 'public_quote_changed');
       check(result.amount === signed.amount && result.price === signed.price && same(result.split, signed.split) &&
         same(result.plan.fees, signed.fees) && same(result.plan.custody, signed.custody), 'public_quote_changed');
-      check(BigInt(position.height) >= BigInt(signed.feeQuote.validFrom) && BigInt(position.height) <= BigInt(signed.feeQuote.validUntil), 'quote_expired');
+      // Public checkout has no reservation. Single intents get a deterministic
+      // confirmation allowance from the signed quote's settings; bulk intents
+      // never expire on confirmation delay alone (mempool send times cannot be
+      // proven) and still compete in canonical payment order.
+      const confirmBy = BigInt(signed.feeQuote.validUntil) + BigInt(original.values.lateConfirmBlocks ?? PAYMENT_TIMING_DEFAULTS.lateConfirmBlocks);
+      check(BigInt(position.height) >= BigInt(signed.feeQuote.validFrom) &&
+        (signed.publicBulkOrderId || BigInt(position.height) <= confirmBy), 'quote_expired');
     } catch (error) {
       if (!['already_minted', 'finder_only', 'bitmap_holder_only', 'claimed', 'claimed_first', 'quote_expired', 'public_quote_changed'].includes(error.message)) throw error;
       refusal = error.message;

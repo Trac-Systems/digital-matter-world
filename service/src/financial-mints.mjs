@@ -15,6 +15,7 @@ import { deploymentAssetId, mintAssetDefinition } from './mint-assets.mjs';
 import { PublicMints } from './public-mints.mjs';
 import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { timedReads, timeReads, timingLog } from './read-timing.mjs';
+import { notePaymentSeen, paymentTiming, PAYMENT_TIMING_DEFAULTS } from '../../rules/src/payment-timing.js';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const ownerSpace = owner => 'financialMintOwner/' + owner;
@@ -108,7 +109,14 @@ export class FinancialMints extends Mints {
     const credits = this.store.list('financialRequestCredits/' + id, { limit: this.document.values.paymentPage }).map(r => r.value);
     const creditTotal = this.store.get('financialCreditTotals', id);
     const creditedAmount = creditTotal?.amount ?? credits.reduce((n, c) => n + BigInt(c.amount), 0n).toString();
+    const recovering = this.store.get('financialLegacyCredits', id);
+    const timing = paymentTiming(row, row.expiry, this.store.get('meta', 'ruleState')?.counted ?? row.created ?? row.expiry);
     const status = { ...publicMint(row), financialVersion: 2, state: row.state,
+      paymentTiming: { ...timing, held: timing.held && funding?.state === 'open' && !row.permit },
+      creditRecovery: { state: recovering ? recovering.work ? 'queued' : 'pending' : creditedAmount !== '0' ? 'credited' : 'none',
+        reason: recovering?.work ? this.store.get('financialDeferred', recovering.work)?.reason ?? null :
+          this.store.get('financialLegacyCreditFailures', id)?.reason ?? null },
+      ...(row.reason === 'credited' && creditedAmount === '0' ? { reason: recovering ? 'credit_pending' : 'payment_expired' } : {}),
       ...(row.state === 'expired' && creditedAmount !== '0' ? { reason: 'credited', creditedAmount,
         creditId: creditTotal?.firstCreditId ?? credits[0].id, credits, creditsCount: creditTotal?.count ?? credits.length } : {}),
       payable: !blocked && row.state !== 'expired' && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
@@ -209,8 +217,15 @@ export class FinancialMints extends Mints {
       for (;;) {
         const transition = { type: 'fund', id: row.id, items: [...items], references };
         try {
-          await buildFinancialExecution({ store: this.store, reads: this.reads, document: this.document, transitions: [transition], height: at.counted, at });
-          return this.queue({ ...row, [row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences']: [...new Set([...(row[row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences'] ?? []), ...references])] }, transition);
+          const preview = await buildFinancialExecution({ store: this.store, reads: this.reads, document: this.document, transitions: [transition], height: at.counted, at });
+          const planned = preview.writes.find(w => w.space === 'accountRecords' && w.id === 'fp/' + row.id)?.value;
+          const work = rules.hashObject(['dmw-financial-transition-v2', transition]);
+          const full = planned?.fees.every((fee, i) => fee.amount === planned.paid[i]);
+          // Confirmation ends the waiting deadline even if the batch queue is
+          // slow. A later source check can invalidate this local observation.
+          if (full) await this.store.transact([{ space: 'financialDeferred', id: work }]);
+          return this.queue({ ...row, ...(full ? { confirmedPayment: { work, height: String(at.counted) } } : {}),
+            [row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences']: [...new Set([...(row[row.kind === 'ethereum' ? 'ethereumReferences' : 'paymentReferences'] ?? []), ...references])] }, transition);
         } catch (error) {
           if (items.length === 1 || !['account_operation_bytes', 'account_proof_budget', 'financial_batch_bytes', 'funding_operation'].includes(error.message)) throw error;
           items.length = Math.max(1, Math.floor(items.length / 2));
@@ -219,6 +234,15 @@ export class FinancialMints extends Mints {
     }
     check(allowEmpty || receipts.length > 0, 'payment_unconfirmed'); return null;
   }
+  // A report holds the reservation for a bounded time; it is not payment
+  // evidence. Persist before remote reads or a background tick can run late.
+  paymentBroadcast(id, reference, counted) { return this.mintWork.run(id, async () => {
+    const row = this.store.get('mints', id);
+    if (!row || row.permit || row.state === 'expired') return;
+    const values = row.publicMint ? { lateConfirmBlocks: row.quote.lateConfirmBlocks ?? PAYMENT_TIMING_DEFAULTS.lateConfirmBlocks } : this.document.values;
+    const next = notePaymentSeen(row, [reference], row.expiry, counted, values);
+    await this.store.put('mints', id, { ...next, paymentReferences: [...new Set([...(row.paymentReferences ?? []), reference])] });
+  }, { after: true }); }
   payment({ id, requestId, paymentId, paymentIds = [], inscription }, requesterSecret) { return this.mintWork.run(id ?? requestId, async () => {
     id ??= requestId; let row = this.store.get('mints', id); check(row, 'request_not_found', 404);
     if (row.publicMint) return this.publicMints.payment({ id, paymentId, paymentIds, inscription }, requesterSecret);
@@ -227,8 +251,8 @@ export class FinancialMints extends Mints {
       await this.store.put('mints', id, { ...row, mintInscription: inscription }); return this.public(id);
     }
     const references = [...new Set([...(paymentId ? [paymentId] : []), ...paymentIds])];
-    const at = await this.reads.batchStamp();
-    const settingsHash = row.request.settingsHash ?? (await this.reads.financialRecord('fi/source/' + id, at))?.settingsHash;
+    const counted = await (this.reads.counted ? this.reads.counted() : this.reads.batchStamp().then(at => at.counted));
+    const settingsHash = row.request.settingsHash ?? (await this.reads.financialRecord('fi/source/' + id))?.settingsHash;
     const original = this.reads.financialSettings ? await this.reads.financialSettings(settingsHash) : this.document;
     check(rules.hashObject(original) === settingsHash, 'financial_settings_history');
     check(references.length > 0 && references.length <= original.values.paymentPage, 'financial_receipt_references');
@@ -236,8 +260,10 @@ export class FinancialMints extends Mints {
     check(references.every(r => typeof r === 'string' && (row.kind === 'ethereum' ? /^0x[0-9a-f]{64}$/.test(r) : /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(r))), 'financial_receipt_references');
     // Persist broadcast hints before a source read can fail or return unconfirmed.
     row = { ...row, [field]: [...new Set([...(row[field] ?? []), ...references])] };
+    row = notePaymentSeen(row, references, row.expiry, counted, this.document.values);
     await this.store.put('mints', id, row);
     if (row.work && !this.store.get('financialAccepted', row.work)) return this.public(id);
+    const at = await this.reads.batchStamp();
     const funding = await this.reads.financialRecord('fp/' + id, at);
     if (['credited', 'refunded'].includes(funding?.state)) {
       await this.recoverPayments(row);
@@ -276,7 +302,7 @@ export class FinancialMints extends Mints {
           }
           // A TAP fee payment, or a mint the player inscribed with their own wallet, that a page
           // reported as sent is taken up by the server, whether or not anyone still has that page open.
-          const paying = ['awaiting_payment', 'partly_paid'].includes(waiting?.state) && !waiting.publicMint;
+          const paying = ['awaiting_payment', 'partly_paid', 'confirming_payment'].includes(waiting?.state) && !waiting.publicMint;
           const minting = waiting?.state === 'permit_issued' && waiting.permit && !waiting.mintInscription;
           const sent = paying ? this.store.get('inflight', `mint/${id}/payment`) : minting ? this.store.get('inflight', `mint/${id}/mint`) : null;
           if (/^[0-9a-f]{64}i0$/.test(sent?.inscriptionId ?? '')) {
@@ -315,11 +341,18 @@ export class FinancialMints extends Mints {
   async advanceLegacyCredit(id) {
     let pending = this.store.get('financialLegacyCredits', id);
     if (!pending) return;
-    if (pending.work && !this.store.get('financialAccepted', pending.work)) return;
-    if (pending.work) {
-      await this.store.put('legacyCreditResults/' + id, pending.credit, { state: 'accepted', transition: pending.work });
+    if (pending.work && !this.store.get('financialAccepted', pending.work)) {
+      if (this.store.get('financialQueue', pending.work)) return;
+      // Interrupted/rejected work is rebuilt from remaining receipt usage.
+      // Never treat the journal's work id as proof that a credit exists.
       const { work, credit, ...rest } = pending; pending = rest;
       await this.store.put('financialLegacyCredits', id, pending);
+    }
+    if (pending.work) {
+      const accepted = this.store.get('financialAccepted', pending.work);
+      await this.store.put('legacyCreditResults/' + id, accepted.creditId ?? pending.credit, { state: 'accepted', transition: pending.work });
+      const { work, credit, ...rest } = pending; pending = rest;
+      await this.store.transact([{ space: 'financialLegacyCredits', id, value: pending }, { space: 'financialLegacyCreditFailures', id }]);
     }
     const at = await this.reads.batchStamp(), funding = await this.reads.financialRecord('fp/' + id, at);
     check(['credited', 'refunded', 'consumed'].includes(funding?.state), 'pending_credit_live');
@@ -342,11 +375,36 @@ export class FinancialMints extends Mints {
       await this.store.put('financialLegacyCredits', id, { ...pending, references: pending.references.filter(r => r !== references[0]), offset: 0 }); return;
     }
     const transition = { type: 'surplus', id, items, references };
-    await buildFinancialExecution({ store: this.store, reads: this.reads, document: this.document, transitions: [transition], height: at.counted, at });
+    // Queue the durable intent after the receipt read. The batch and every
+    // signer rebuild its evidence/proof; duplicating that expensive build here
+    // makes a late payment depend on two consecutive remote snapshots.
     const admitted = await this.financial.submit(transition);
     await this.store.put('financialLegacyCredits', id, { ...pending, work: admitted.id, credit: surplusCreditId(id, funding.sequence) });
   }
   async advance(row) {
+    // Expiry only schedules a refund. It must not require a stable TAP/Trac
+    // snapshot while batches are continuously moving. Accepted records are
+    // mirrored atomically with the batch; actual effects remain verified.
+    const counted = await (this.reads.counted ? this.reads.counted() : this.reads.batchStamp().then(at => at.counted));
+    const local = this.store.get('accountRecords', 'fp/' + row.id);
+    const sent = this.store.get('inflight', `mint/${row.id}/payment`);
+    if (row.paymentSeen?.firstSeenBlock === undefined && sent?.seenAtBlock !== undefined) {
+      row = notePaymentSeen(row, [sent.inscriptionId], row.expiry, sent.seenAtBlock, this.document.values);
+      row = { ...row, paymentReferences: [...new Set([...(row.paymentReferences ?? []), sent.inscriptionId])] };
+      await this.store.put('mints', row.id, row);
+    }
+    if (['credited', 'refunded'].includes(local?.state)) {
+      await this.recoverPayments(row);
+      await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, state: 'expired', reason: local.state } },
+        { space: 'financialActiveMints', id: row.id }, { space: ownerSpace(row.request.owner), id: row.id }]); return;
+    }
+    const held = paymentTiming(row, row.expiry, counted).held;
+    const fullyPaid = funding => funding?.fees.every((f, i) => f.amount === funding.paid[i]);
+    if (local?.state === 'open' && !row.permit && !fullyPaid(local) && !held && rules.compareOrdinal(counted, row.expiry) > 0) {
+      if (row.work && !this.store.get('financialAccepted', row.work) && !await this.financial.expire(row.work, { counted })) return;
+      await this.recoverPayments(row);
+      await this.queue(row, { type: 'refund', id: row.id, reason: 'credit' }); return;
+    }
     const at = await this.reads.batchStamp(), funding = await this.reads.financialRecord('fp/' + row.id, at);
     if (!funding) {
       if (rules.compareOrdinal(at.counted, row.request.until) > 0 && (!row.work || await this.financial.expire(row.work, at))) {
@@ -383,7 +441,7 @@ export class FinancialMints extends Mints {
         { space: 'financialPermitDelivery', id: row.id, value: { digest: p.permit.digest, session: signed.session } },
         { space: 'financialActiveMints', id: row.id }, { space: ownerSpace(row.request.owner), id: row.id }, { space: 'financialIssuedMints', id: row.id, value: true }]); return;
     }
-    if (rules.compareOrdinal(at.counted, row.expiry) > 0) {
+    if (rules.compareOrdinal(at.counted, row.expiry) > 0 && !held && !fullyPaid(funding)) {
       if (row.work && !this.store.get('financialAccepted', row.work) && !await this.financial.expire(row.work, at)) return;
       // Release the slot even when the reported transaction is still unseen.
       // Once the refund is accepted the existing surplus worker owns every hint.
@@ -406,7 +464,7 @@ export class FinancialMints extends Mints {
       await this.queue(row, { type: 'refund', id: row.id, reason: 'credit' }); return;
     }
     if (row.work && !this.store.get('financialAccepted', row.work)) return;
-    row = { ...row, state: funding.paid.some(n => n !== '0') ? 'partly_paid' : 'awaiting_payment',
+    row = { ...row, state: held && !fullyPaid(funding) ? 'confirming_payment' : funding.paid.some(n => n !== '0') ? 'partly_paid' : 'awaiting_payment',
       missing: row.quote.fees.map((f, i) => ({ ...f, amount: (BigInt(f.amount) - BigInt(funding.paid[i])).toString() })).filter(f => f.amount !== '0') };
     await this.store.put('mints', row.id, row);
     if (funding.fees.every((f, i) => f.amount === funding.paid[i])) {

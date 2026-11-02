@@ -106,7 +106,7 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
       tick: lock.tick, lockKind: lock.kind, conditionType: lock.condition.type, hash: lock.condition.hash, refund: lock.refund, claim: lock.claim, base: lock.amt,
       allocations: lock.al ?? [], refundAfter: Number(lock.refund_after) };
   };
-  const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: 'regtest', rosterHistory: config.rosterHistory, members: config.committee?.map(s => s.peer) });
+  const bindings = new Bindings({ store, bindingCacheEntries: config.listen?.publicReads?.bindingCacheEntries, network: config.network, bitcoinNetwork: 'regtest', rosterHistory: config.rosterHistory, members: config.committee?.map(s => s.peer) });
   const reads = {
     claimNode: id => store.get('claimNodes', id),
     bindings,

@@ -26,7 +26,7 @@ export function privatePublicRefundView(row) {
 export function privatePublicMintView(status) {
   const view = pick(status, ['id', 'requestId', 'receiver', 'payer', 'kind', 'state', 'publicMint', 'reservation', 'unitsConsumed',
     'payableAmount', 'price', 'baseFee', 'unit', 'payBy', 'created', 'expiry', 'networkFeeSats', 'payment', 'reason', 'paymentPage',
-    'mintFunding', 'mintSender', 'sentInscription']);
+    'mintFunding', 'mintSender', 'sentInscription', 'publicBulkOrderId']);
   return { ...view, fees: feeAmounts(status.fees), fullFees: feeAmounts(status.fullFees), missing: feeAmounts(status.missing),
     refunds: (status.refunds ?? []).map(row => pick(row, ['requestId', 'paymentId', 'reason', 'state', 'refundId', 'refundDelivery'])), winner: null,
     // Legacy payment dta embeds the target. Only the requester may obtain those

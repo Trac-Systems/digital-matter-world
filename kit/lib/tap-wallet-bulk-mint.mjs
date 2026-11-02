@@ -2,7 +2,7 @@ import { checkPaymentWindow, PAYMENT_MIN_BLOCKS } from './payment-window.mjs';
 import { hashObject, stableJSON } from '../../rules/src/core.js';
 import { validateBulkTerms, validateBulkFees, bulkOrderId, bulkWalletItems } from '../../rules/src/bulk-mint.js';
 import { ensure, fundingAddress } from './inscription-core.mjs';
-import { BrowserMintJournal, mintFundingOutput } from './tap-wallet-mint.mjs';
+import { BrowserMintJournal, TapWalletMint, mintFundingOutput } from './tap-wallet-mint.mjs';
 import { tapWalletCapabilities, ensureTapAuthority } from './tap-wallet-actions.mjs';
 import { checkTapFunds } from './wallet-funds.mjs';
 
@@ -127,5 +127,107 @@ export class TapWalletBulkMint {
     ensure(stats.chain_stats.tx_count === 0 && stats.mempool_stats.tx_count === 0, 'This payment was already sent; wait for confirmation');
     const mempool = await read('/txs/mempool'), chain = await read('/txs/chain');
     ensure(Array.isArray(mempool) && Array.isArray(chain) && mempool.length === 0 && chain.length === 0, 'This payment was already sent; wait for confirmation');
+  }
+}
+
+// A public bulk order (/public-mints/bulk/<order>): no agent, one TAP Wallet payment. The server's
+// authorized status names every fee item (redeem.items) and one Bitcoin set-aside per block
+// (extraOutputs). Each is checked here before any wallet call, funds are checked so the wallet never
+// opens for a payment it cannot make, and the same journal rules as single mints apply: an uncertain
+// send is never repeated blindly. The receipt is reported by its redeem inscription.
+const publicPayable = status => status?.payable === true && status.state === 'awaiting_payment' && status.payBy?.rail === 'tap' && !status.paymentIds?.length;
+const tapItem = item => item && typeof item === 'object' && typeof item.tick === 'string' && item.tick.length > 0 && item.tick.length <= 32 &&
+  typeof item.amt === 'string' && /^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(item.amt) && typeof item.address === 'string' && item.address.length > 0 &&
+  (item.dta === undefined || typeof item.dta === 'string');
+export function publicBulkPaymentPlan(orderId, status, network) {
+  ensure(hex(orderId) && status?.publicBulk === true && status.orderId === orderId && !status.requesterRequired, 'Public bulk order ID mismatch');
+  ensure(status.bitcoinNetwork === undefined || status.bitcoinNetwork === network, 'Public bulk order network mismatch');
+  const items = status.redeem?.items, outputs = status.extraOutputs;
+  ensure(Array.isArray(items) && items.length > 0 && items.every(tapItem), 'This order’s fee items are not valid. Nothing was paid. Refresh the order and try again.');
+  ensure(Array.isArray(outputs) && outputs.length === status.members?.length, 'This order’s Bitcoin set-aside is not valid. Nothing was paid. Refresh the order and try again.');
+  const extraOutputs = outputs.map(output => mintFundingOutput(output, network));
+  ensure(String(extraOutputs.reduce((n, o) => n + o.satoshis, 0)) === String(status.mintFundingSatoshis), 'This order’s Bitcoin set-aside does not add up. Nothing was paid. Refresh the order and try again.');
+  return { items: items.map(({ tick, amt, address, dta }) => ({ tick, amt, address, ...(dta === undefined ? {} : { dta }) })), extraOutputs };
+}
+export class TapWalletPublicBulkMint extends TapWalletBulkMint {
+  constructor({ readStatus, reportPayment, journal = new BrowserMintJournal('dmw-public-bulk-payments-v1'), ...options }) {
+    super({ ...options, journal, readStatus, reportPayment });
+    // Called as a method below: keep fetch unbound from this wallet object.
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch; this.fetchImpl = (...args) => fetchImpl(...args);
+  }
+  key(id) { return `${this.network}/${this.address}/public-bulk/${id}`; }
+  async plan(id) {
+    const status = await this.readStatus(id);
+    return { status, ...publicBulkPaymentPlan(id, status, this.network) };
+  }
+  result(id, payment) {
+    const receipt = payment?.receipt ?? {};
+    return { orderId: id, localState: payment?.state === 'submitted' ? 'payment_submitted' : 'payment_pending', paymentId: receipt.paymentId ?? null, commitTxid: receipt.commitTxid ?? null };
+  }
+  // The server takes only the redeem inscription; a wallet that answers with its funding txid is
+  // followed on Bitcoin to the reveal (the same lookup as single mints). Null until it is revealed.
+  async paymentId(payment) {
+    const receipt = payment?.receipt ?? {};
+    if (inscription(receipt.paymentId)) return receipt.paymentId;
+    if (!hex(receipt.commitTxid) || this.network === 'regtest') return null;
+    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/tx/';
+    const read = async path => { const r = await this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) }).catch(() => null); return r?.ok ? r.json() : null; };
+    if ((await read(receipt.commitTxid))?.vin?.[0]?.witness?.length >= 3) return receipt.commitTxid + 'i0';
+    const spend = await read(receipt.commitTxid + '/outspend/0');
+    return spend?.spent && hex(spend.txid) ? spend.txid + 'i0' : null;
+  }
+  async report(id, payment) {
+    const result = this.result(id, payment), paymentId = payment?.state === 'submitted' ? await this.paymentId(payment) : null;
+    // A failed report leaves the saved wallet receipt available on reload.
+    if (paymentId && this.reportPayment) { await this.reportPayment(id, paymentId); result.reported = true; }
+    return { ...result, paymentId };
+  }
+  // The saved receipt of this browser's payment for the order (any connected account), for reload.
+  async saved(id, address) { return address ? (await this.journal.get(`${this.network}/${address}/public-bulk/${id}`))?.payment ?? null : null; }
+  async pay(orderId, { retry = false } = {}) {
+    ensure(hex(orderId), 'Invalid order ID');
+    const capabilities = await tapWalletCapabilities(this.provider);
+    ensure(capabilities.singleTxTransferExtraOutputs === true, 'TAP Wallet must support the Bitcoin set-aside');
+    await this.checkAccount();
+    return this.journal.lock(this.key(orderId), async () => {
+      const first = await this.plan(orderId), key = this.key(orderId), saved = await this.journal.get(key) ?? {};
+      ensure(first.status.payer === this.address, 'Select the TAP Wallet account this order was started with');
+      if (saved.payment) {
+        if (saved.payment.state === 'submitted') return this.report(orderId, saved.payment);
+        if (!retry) return this.result(orderId, saved.payment);
+        // The set-aside address of the first block is this payment's own witness on Bitcoin.
+        await TapWalletMint.prototype.checkNothingSent.call(this, saved.payment.at, saved.payment.extraOutputs);
+      }
+      ensure(publicPayable(first.status), 'This order is not accepting a new payment');
+      await checkPaymentWindow({ ...this, status: first.status });
+      await ensureTapAuthority(this.provider, this.address, null, { checkAccount: () => this.checkAccount() });
+      const latest = await this.plan(orderId);
+      ensure(publicPayable(latest.status) && stableJSON(latest.items) === stableJSON(first.items) && stableJSON(latest.extraOutputs) === stableJSON(first.extraOutputs),
+        'The order changed while checking the wallet. Refresh it before paying.');
+      await this.checkAccount();
+      // Never open the wallet for a payment it cannot make: TAP for every fee, Bitcoin for the fees and the set-asides.
+      await checkTapFunds({ provider: this.provider, address: this.address, network: this.network, readerPath: this.readerPath,
+        items: first.items, extraOutputs: first.extraOutputs, fetchImpl: this.fetchImpl });
+      await this.checkAccount();
+      await checkPaymentWindow({ ...this, status: latest.status });
+      const payment = { state: 'sending', items: first.items, extraOutputs: first.extraOutputs, at: Date.now() };
+      await this.journal.put(key, { ...saved, payment });
+      let result;
+      try { result = await this.provider.singleTxTransfer(first.items, { extraOutputs: first.extraOutputs }); }
+      catch (error) {
+        // TAP Wallet refuses some payments before anything is signed; nothing was sent then.
+        if (typeof error?.message === 'string' && (error.message.startsWith('Transaction cannot be processed') || ['Invalid items', 'Error processing items', 'Error checking token balances'].includes(error.message))) {
+          await this.journal.put(key, saved);
+          throw new Error(`TAP Wallet refused the payment before signing: ${/Insufficient amount for tokens/.test(error.message) ? 'your wallet does not have enough spendable TAP for these fees' : error.message.replace(/\s+/g, ' ').trim()}. Nothing was sent.`);
+        }
+        throw new Error('TAP Wallet returned no payment receipt. If your wallet shows no sent payment for this order, press Check and retry; another payment is never sent automatically.', { cause: error });
+      }
+      const receipt = { paymentId: inscription(result?.inscriptionId) ? result.inscriptionId : inscription(result) ? result : null,
+        commitTxid: hex(result?.commitTxid) ? result.commitTxid : hex(result?.txid) ? result.txid : hex(result) ? result : null };
+      if (!Object.values(receipt).some(Boolean)) return this.result(orderId, payment);
+      const submitted = { ...payment, state: 'submitted', receipt };
+      await this.journal.put(key, { ...saved, payment: submitted });
+      return this.report(orderId, submitted);
+    });
   }
 }

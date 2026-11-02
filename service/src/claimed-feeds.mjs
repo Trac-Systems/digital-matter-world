@@ -1,5 +1,5 @@
 import { patternMint } from './mint-assets.mjs';
-import { publicIdentities } from '../../rules/src/trac-address.js';
+import { publicIdentities } from './public-identities.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';

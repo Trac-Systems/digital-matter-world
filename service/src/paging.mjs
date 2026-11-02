@@ -1,7 +1,13 @@
-import { publicCursorAnchor, wireCursorAnchor, publicIdentities } from '../../rules/src/trac-address.js';
+import { publicCursorAnchor, wireCursorAnchor, publicIdentities } from './public-identities.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-const secret = randomBytes(32);
+// All HTTP workers use the gateway process's existing ephemeral cursor key.
+// Otherwise /list and binding-history cursors change bytes between threads and
+// become invalid when the next request lands on another worker or a replacement.
+import { getEnvironmentData, setEnvironmentData, isMainThread } from 'node:worker_threads';
+const cursorKeyName = 'dmw.public-page-cursor';
+const secret = getEnvironmentData(cursorKeyName) ?? randomBytes(32);
+if (isMainThread) setEnvironmentData(cursorKeyName, secret);
 const fail = message => { throw Object.assign(Error(message), { status: 400 }); };
 const json = value => JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v);
 const digest = value => createHash('sha256').update(json(value)).digest('hex');

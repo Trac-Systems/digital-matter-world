@@ -15,6 +15,21 @@ const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 export const tracBinding = (config, deployment) => hash(rules.stableJSON({ config: {
   bootstrap: config.bootstrap, msbBootstrap: config.msbBootstrap, networkId: config.networkId }, deployment }));
 
+// Point-read pages read one immutable checkout, so they need one recent stamp,
+// not a fresh Trac update before and after every page. A closing round reads
+// thousands of single plots in a row; share one stamp briefly and take a fresh
+// one whenever a caller needs a newer batch clock.
+export function sharedStamp(stamp, reuseMs = 10000, now = Date.now) {
+  let saved = null;
+  return fresh => {
+    // The window starts when the stamp arrives: a slow Trac update must not expire it before use.
+    if (fresh || !saved || saved.at !== null && now() - saved.at > reuseMs) {
+      const entry = { at: null, value: stamp() };
+      saved = entry; entry.value.then(() => { entry.at = now(); }, () => { if (saved === entry) saved = null; });
+    }
+    return saved.value;
+  };
+}
 export async function openRuntime(config) {
   const module = await import(config.runtimeModule ? pathToFileURL(config.runtimeModule).href : './runtime.mjs');
   check(typeof module.openRuntime === 'function', 'trac_runtime_interface');
@@ -69,6 +84,11 @@ export async function createTrac({ runtime, config, deployment, store, network }
     const before = await snapshot(); if (at) check(clock.compare(before.counted, rules.decimalV2(at.counted)) >= 0 && same(before.last, at.last), 'trac_snapshot_changed');
     const result = await read(before); check(same(batchClock(before), batchClock(await snapshot())), 'trac_snapshot_changed'); return result;
   };
+  // A hung Trac update must fail and be retried, not hold every shared page read forever.
+  const pageStamp = sharedStamp(() => {
+    let timer;
+    return Promise.race([stamp(), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('trac_stamp_timeout')), 60000); timer.unref(); })]).finally(() => clearTimeout(timer));
+  });
   const sync = () => gate(async () => {
     await abortable(peer.base.update(), signal); signal?.throwIfAborted();
     const end = sourceVersion(), cursor = clock.value(rules.decimalV2(store.get(progressSpace, 'cursor') ?? 0));
@@ -114,15 +134,21 @@ export async function createTrac({ runtime, config, deployment, store, network }
     renewalSlice: n => api.dmwReceiptRenewalSlice(n),
     settingsByHash: hash => api.dmwSettingsByHash(hash),
     read: (key, at) => pinned(at, () => raw(key)),
-    readMany: (keys, at) => {
+    readMany: async (keys, at) => {
       pointBatch(keys);
-      return pinned(at, async before => {
+      const many = async before => {
         const view = peer.base.view.checkout(sourceSeek(before.revision));
         try {
           const rows = await pointResults(keys, async key => (await view.get(key))?.value ?? null);
           return rows.map(row => { if (row.error) throw Error(row.error); return row.value; });
         } finally { await view.close(); }
-      });
+      };
+      if (at?.revision === undefined && at?.admissionPolicy) return pinned(at, many);
+      // The checkout is immutable at the stamp's revision, so no closing stamp is needed.
+      const fits = s => !at || clock.compare(s.counted, rules.decimalV2(at.counted)) >= 0 && same(s.last, at.last);
+      let before = await pageStamp(); if (!fits(before)) before = await pageStamp(true);
+      check(fits(before), 'trac_snapshot_changed');
+      return many(before);
     },
     financialPage: (range, at) => pinned(at, async () => {
       const view = peer.base.view.checkout(sourceSeek(at.revision));

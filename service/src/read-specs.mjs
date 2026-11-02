@@ -1,4 +1,4 @@
-import { encodeTracAddress } from '../../rules/src/trac-address.js';
+import { encodeTracAddress } from './public-identities.mjs';
 import { booleanFilter, enumFilter, field, numberFilter } from './paging.mjs';
 
 const strings = keys => Object.fromEntries(keys.split(' ').filter(Boolean).map(key => [key, String]));

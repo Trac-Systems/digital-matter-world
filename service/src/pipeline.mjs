@@ -14,7 +14,7 @@ import { namedBatchEvidence } from './named-batch.mjs';
 import { buildCreditAccounts, AccountBatchOverlay } from './account-batch.mjs';
 import { publicFinancialOperations } from './public-financial.mjs';
 import { publishReceiptRenewal } from './receipt-renewal.mjs';
-import { readPublicWinner, readPublicWinnerBatch, publicClaimReaders } from './public-claim-readers.mjs';
+import { readPublicWinner, prefetchingWinnerBatch, publicClaimReaders } from './public-claim-readers.mjs';
 export class Pipeline {
   constructor({ store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns = [], settings = {}, limits = {}, replay = new Replay(), archiveWritePage = 256, pipelineDepth = 1 }) {
     Object.assign(this, { store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns, settings, limits, replay, archiveWritePage });
@@ -42,16 +42,99 @@ export class Pipeline {
   }
   async archiveDraft(draft, proof) {
     const batch = draft.proposal.batch, key = `batch/${batch.epoch}/${batch.n}`, id = hash(rules.stableJSON(batch));
-    const evidence = JSON.stringify({ draft, ceremony: this.store.get('ceremonies', key), outbox: this.store.get('outbox', key), sent: this.store.get('sent', key) });
+    const ceremony = this.store.get('ceremonies', key);
+    const evidence = JSON.stringify({ draft, ceremony, outbox: this.store.get('outbox', key), sent: this.store.get('sent', key) });
     const directory = join(this.store.directory, 'retired-drafts'); await mkdir(directory, { recursive: true, mode: 0o700 });
     await atomicWrite(join(directory, id + '.json'), evidence);
     await this.store.transact([
       { space: 'supersededDrafts', id, value: { state: 'RETIRED', proof, batch, evidence: { id, hash: hash(evidence) } } },
+      ...(ceremony?.id ? [{ space: 'batchCeremonyAttempts', id: key + '/' + ceremony.id, value: ceremony }] : []),
       ...['ceremonies', 'outbox', 'sent'].map(space => ({ space, id: key })), { space: 'meta', id: 'draft' }
     ]);
   }
+  async retiredBatchDrafts(batch, { counted } = {}) {
+    const candidates = []; let after = '';
+    for (;;) {
+      const page = this.store.list('supersededDrafts', { after, limit: this.archiveWritePage });
+      for (const { value: row } of page) {
+        if (String(row.batch?.n) !== String(batch.n) || String(row.batch?.epoch) !== String(batch.epoch)) continue;
+        if (counted !== undefined && rules.compareOrdinal(counted, row.batch.deadline) > 0) continue;
+        check(/^[0-9a-f]{64}$/.test(row.evidence?.id), 'draft_reference');
+        const text = await readFile(join(this.store.directory, 'retired-drafts', row.evidence.id + '.json'), 'utf8');
+        check(hash(text) === row.evidence.hash, 'draft_checksum');
+        const saved = JSON.parse(text);
+        check(rules.stableJSON(saved.draft?.proposal?.batch) === rules.stableJSON(row.batch), 'draft_batch_conflict');
+        candidates.push(saved);
+      }
+      if (page.length < this.archiveWritePage) break; after = page.at(-1).id;
+    }
+    return candidates;
+  }
+  async recoverReservedDraft(draft, { epoch, counted, last, root = null }) {
+    const batch = draft?.proposal.batch ?? { epoch, n: rules.ordinalCodec(typeof last.n === 'string').add(last.n) };
+    const key = `batch/${batch.epoch}/${batch.n}`, ceremony = this.store.get('ceremonies', key);
+    const expired = draft && counted !== undefined && rules.compareOrdinal(counted, batch.deadline) > 0;
+    // Let a live ceremony finish, and give a fresh attempt time to prepare.
+    // Waiting polls use the existing retry setting; a new committed height
+    // bypasses that delay so strict deadline expiry can unblock immediately.
+    if (draft && ceremony?.recovery?.waiting && String(ceremony.recovery.counted) === String(counted) &&
+      Date.now() - ceremony.recovery.checkedAt < this.committee.batchRetryMs) return { draft, accepted: false, waiting: true };
+    if (draft && !expired && ceremony?.proposal?.batch && rules.stableJSON(ceremony.proposal.batch) === rules.stableJSON(batch) && (['prepared', 'running', 'complete'].includes(ceremony.stage) ||
+      !ceremony.recovery?.waiting && Date.now() - (ceremony.recovery?.checkedAt ?? ceremony.lastReset ?? ceremony.started ?? 0) < this.committee.batchRetryMs))
+      return { draft, accepted: false, waiting: !!ceremony.recovery?.waiting };
+    check(ceremony?.reason !== 'signature_disagreement', 'signature_disagreement', 503);
+    const archived = await this.retiredBatchDrafts(batch, { counted });
+    const candidates = [...(draft ? [{ draft, proposal: draft.proposal }] : []), ...archived.map(row => ({ ...row, proposal: row.draft.proposal }))];
+    if (!candidates.length) return { draft, accepted: false };
+    const plan = await this.committee.batchReservationPlan(key, candidates, { epoch, counted });
+    const checkSnapshot = async () => check(rules.stableJSON(last) === rules.stableJSON(await this.reads.batchLast()) &&
+      rules.compareOrdinal(epoch, await this.reads.committeeEpoch()) === 0, 'draft_snapshot_changed', 503);
+    const activation = this.settings.batchVersion === 2 && this.settings.activation;
+    const anchored = draft && activation && String(batch.n) === String(activation.sequence) && String(draft.execution) === String(activation.height);
+    const changed = draft && !anchored && counted !== undefined && rules.compareOrdinal(draft.execution, counted) !== 0;
+    const rejected = ceremony?.stage === 'blocked' && ceremony.reason === 'prepare_incomplete' &&
+      !ceremony.resetting && !ceremony.retry && !ceremony.retryPrepare && !ceremony.retryBusy && !ceremony.unreserved?.length &&
+      !ceremony.failures?.every(e => e === 'committee_signer_busy');
+    let fence = { ok: true, unavailable: [] };
+    if (plan.unreserved && (!draft || expired || changed || rejected)) {
+      // Absence is only provisional until late preparations are fenced. Once
+      // every old deadline has passed, signers prove retirement themselves.
+      fence = plan.retired ? fence : await this.committee.fenceBatchAttempts(plan.attempts, this.committee.signers.map(s => s.id), { epoch, counted });
+      if (fence.ok) {
+        await checkSnapshot();
+        if (draft) await this.archiveDraft(draft, { reason: expired ? 'deadline_expired' : changed ? 'execution_snapshot_changed' : 'preparation_unreserved', epoch, counted, last, root });
+        return { draft: null, accepted: false };
+      }
+    }
+    if (plan.candidate) {
+      fence = await this.committee.fenceBatchAttempts(plan.attempts, plan.peers, { epoch, counted }, plan.digest);
+      if (fence.ok) {
+        await checkSnapshot();
+        const restored = plan.candidate.draft;
+        if (draft && rules.stableJSON(batch) !== rules.stableJSON(restored.proposal.batch))
+          await this.archiveDraft(draft, { reason: 'reserved_version_restored', epoch, counted, last, root, digest: plan.digest });
+        if (restored !== draft) await this.saveDraft(restored);
+        await this.committee.resumeBatch(key, plan);
+        return { draft: restored, accepted: false };
+      }
+    } else if (plan.retired && draft && !expired) {
+      if (ceremony) await this.store.transact([
+        ...(ceremony.id && ceremony.peers?.length === 3 ? [{ space: 'batchCeremonyAttempts', id: key + '/' + ceremony.id, value: ceremony }] : []),
+        { space: 'ceremonies', id: key }
+      ]);
+      return { draft, accepted: false };
+    }
+    draft ??= candidates[0].draft;
+    if (!this.store.get('meta', 'draft')) await this.saveDraft(draft);
+    await this.committee.waitForBatch(key, draft.proposal, { ...plan.recovery, fenceFailures: fence.unavailable }, plan.waiting ? 'batch_reservation_wait' : 'batch_recovery_fencing');
+    return { draft, accepted: false, waiting: true };
+  }
   async reconcileDraft(draft) {
-    if (!draft) return { draft: null, accepted: false };
+    if (!draft) {
+      if (!this.committee?.batchReservationPlan) return { draft: null, accepted: false };
+      const last = await this.reads.batchLast(), epoch = await this.reads.committeeEpoch(), counted = await this.reads.counted?.();
+      return this.committee.signatureGate(() => this.recoverReservedDraft(null, { last, epoch, counted }));
+    }
     const batch = draft.proposal.batch, key = `batch/${batch.epoch}/${batch.n}`, clock = rules.ordinalCodec(!!draft.settings?.document);
     const last = await this.reads.batchLast(), epoch = await this.reads.committeeEpoch(), counted = await this.reads.counted?.();
     const root = this.reads.batchRoot ? await this.reads.batchRoot(batch.n) : clock.compare(last.n, batch.n) < 0 ? null :
@@ -62,6 +145,10 @@ export class Pipeline {
     // crashed before saving its transport receipt or local replay checkpoint.
     if (root === batch.root) return { draft, accepted: true };
     check(root === null && clock.compare(last.n, batch.n) < 0, 'draft_batch_conflict', 503);
+    const expired = counted !== undefined && clock.valid(batch.deadline) && clock.compare(counted, batch.deadline) > 0;
+    if (this.committee?.batchReservationPlan && clock.compare(epoch, batch.epoch) === 0 &&
+      (expired || !draft.signature && !this.store.get('outbox', key) && !this.store.get('sent', key)))
+      return this.committee.signatureGate(() => this.recoverReservedDraft(draft, { epoch, counted, last, root }));
     if (!draft.signature && !this.store.get('outbox', key) && !this.store.get('sent', key)) {
       const retirement = await this.committee?.retireUnprepared?.(key);
       if (retirement) {
@@ -69,7 +156,6 @@ export class Pipeline {
         return { draft: null, accepted: false };
       }
     }
-    const expired = counted !== undefined && clock.valid(batch.deadline) && clock.compare(counted, batch.deadline) > 0;
     const superseded = clock.compare(epoch, batch.epoch) > 0;
     // A blocked preparation in which every member answered that it holds no
     // reservation for this proposal can never be signed; treat it as unreserved.
@@ -85,6 +171,17 @@ export class Pipeline {
       return { draft: null, accepted: false };
     }
     return { draft, accepted: false };
+  }
+  // While batches stall, a forced seal can land behind a tip a later batch already
+  // counted. An empty one carries no receipts and can never pass the block clock;
+  // retire it instead of retrying the same batch forever. Entries with moves stay.
+  async retireStaleEmpty(clock) {
+    const counted = this.store.get('meta', 'ruleState')?.counted;
+    if (counted === undefined || counted === null) return;
+    for (const { id, value: o } of this.store.list('observations', { limit: 64 })) {
+      if (clock.compare(o.counted, counted) >= 0 || Number(o.receiptRoot?.count) !== 0 || this.store.hasRows('intake/' + id)) return;
+      await this.store.transact([{ space: 'observationRecovery', id, value: { reason: 'stale_empty_observation', counted: o.counted, tip: o.tip } }, { space: 'observations', id }]);
+    }
   }
   async reduceStalled(last) {
     const cap = this.limits.maxObservations ?? 512;
@@ -111,8 +208,10 @@ export class Pipeline {
     if (this.recovery?.active()) return null;
     // Reconciliation may have retired an old unsigned draft since the poller
     // last refreshed policy. Fence its acknowledged receipts before rebuilding.
+    this.step = ['prepareBatch', Date.now()];
     if (!this.speculative) await this.intake.prepareBatch?.();
     const clock = rules.ordinalCodec(!!this.settings.document);
+    this.step = ['batchLast', Date.now()];
     const last = await this.reads.batchLast(), epoch = clock.value(await this.reads.committeeEpoch());
     check(clock.valid(epoch), 'committee_epoch_unavailable', 503);
     const version2 = this.settings.batchVersion === 2;
@@ -121,13 +220,18 @@ export class Pipeline {
     if (fence && !renewal) return this.buildReceiptRenewal(fence);
     if (version2 && this.financial) this.financial.document = this.settings.document;
     if (!version2) await this.reduceStalled(last);
+    this.step = ['retireStale', Date.now()];
+    if (version2 && !renewal && !this.speculative) await this.retireStaleEmpty(clock);
     if (version2 && !renewal && BigInt(this.store.countUint('observations')) < BigInt(rules.batchSettings(this.settings).observationsPerBatch)) {
       const free = this.intake.count || this.store.get('meta', 'namedReservedBatch') || this.store.get('meta', 'ruleState')?.rounds?.some(r => r.closed || r.closing);
+      this.step = ['financialReady', Date.now()];
       const financial = !free && !this.store.hasRows('observations') && await this.financial?.ready({ height: this.intake.head?.counted, at: { counted: this.intake.head?.counted, last } });
+      this.step = ['seal', Date.now()];
       if (free || financial) await this.intake.seal({ financial: !!financial });
     }
     let observations = this.store.list('observations', { limit: renewal ? Math.min(Number(BigInt(renewal.cutoff.segmentCount) - BigInt(renewal.cursor.segment)), rules.batchSettings(this.settings).maxObservations) : version2 ? rules.batchSettings(this.settings).observationsPerBatch : this.limits.maxObservations ?? 512 }).map(r => r.value);
     if (!observations.length || (!version2 && observations.at(-1).counted <= last.to)) return null;
+    this.step = ['counted', Date.now()];
     let execution = clock.value(await this.reads.counted?.() ?? observations.at(-1).counted);
     // The contract pins the first v2 batch to the activation anchor. If headers were
     // counted while the gateway started, execute that batch at the anchor and treat its
@@ -139,7 +243,9 @@ export class Pipeline {
       execution = clock.value(activation.height);
       observations = observations.map(o => clock.compare(o.counted, execution) > 0 ? { ...o, counted: execution, confirmed: clock.min(o.confirmed, execution) } : o);
     }
+    this.step = ['committeeReady', Date.now()];
     if (this.committee.ready && !await this.committee.ready({ counted: execution, tip: observations.reduce((n, o) => clock.max(n, o.tip), clock.zero) })) return null;
+    this.step = ['settings', Date.now()];
     const contract = await this.reads.settings?.();
     const policy = version2 && this.settings.document?.values;
     const limits = { ...this.limits, ...(policy ? { maxBytes: policy.batchBytes, maxOps: policy.batchOps, maxAssets: policy.batchAssets, maxKv: policy.batchKv, maxAuditBytes: policy.auditTotalBytes } :
@@ -152,6 +258,7 @@ export class Pipeline {
     let patterns = this.store.get('meta', 'patterns') ?? this.patterns;
     for (const observation of observations) for (const { value: { move } } of this.store.list('intake/' + observation.id, { limit: 1000 })) if (move.t === 'craft') {
       state.balances[move.a] ??= {};
+      this.step = ['balances', Date.now()];
       for (const [asset] of move.p.request.in) state.balances[move.a][asset] ??= await this.reads.balance(move.a, asset);
       state.usedNonces[`${move.a}:${move.p.request.nonce}`] ??= await this.reads.nonceUsed(move.a, move.p.request.nonce);
     }
@@ -167,6 +274,7 @@ export class Pipeline {
       const originalEntries = this.store.list('intake/' + observation.id, { limit: 1000 }).map(r => r.value);
       let entries = originalEntries, receiptRoot = observation.receiptRoot, rootAttestations = [], missed = null;
       if (entries.length || version2) {
+        this.step = ['attestRoot', Date.now()];
         try { if (this.store.get('missedReceipts', observation.id)) throw Error('receipt_quorum_unavailable'); rootAttestations = await this.committee.attestRoot(receiptRoot); }
         catch (e) {
           if (version2 || e.message !== 'receipt_quorum_unavailable' || (this.intake.head?.highestTip ?? 0) < observation.tip + 2) throw e;
@@ -196,11 +304,12 @@ export class Pipeline {
         input.settingsDocuments = input.namedEvidence.settingsDocuments;
       }
       const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
+      this.step = ['publicReads', Date.now()];
       const publicReads = publicClaimsActive ? (await import('../../committee/signer/bulk-mint.mjs')).bulkPublicReads(this.reads, accountStore) : this.reads;
       const publicMintRead = (asset, block, deployment) => readPublicWinner({ store: accountStore, reads: publicReads, at: { counted: execution, last } }, asset, block, deployment);
       const claimReads = settings.document ? { store: this.store, staged: claimNodes, namedStaged: accountStore.spaces.get('namedNodes'),
         ...(publicClaimsActive ? { publicMintGet: publicMintRead,
-          publicMintBatch: pairs => readPublicWinnerBatch({ store: accountStore, reads: publicReads, at: { counted: execution, last } }, pairs) } : {}) } : undefined;
+          publicMintBatch: prefetchingWinnerBatch({ store: accountStore, reads: publicReads, at: { counted: execution, last }, claims: this.speculative ? null : this.store }) } : {}) } : undefined;
       const replay = async () => {
         const { claimEvidence, namedEvidence, ...output } = await this.replay.run(input, history, claimReads);
         if (claimEvidence) input.claimEvidence = claimEvidence;
@@ -210,6 +319,7 @@ export class Pipeline {
         // full copy into every persisted output/draft.
         return output;
       };
+      this.step = ['replay', Date.now()];
       let output = await replay();
       if (settings.document) {
         for (;;) {
@@ -379,23 +489,30 @@ export class Pipeline {
     let speculative = this.speculation?.promise, signingEnded;
     try {
       if (!this.reconciled) { await pruneDrafts(this.store); const latest = this.store.get('meta', 'latest'); if (latest) await this.files.json('latest.json', latest); this.reconciled = true; }
-      let { draft, accepted } = await this.reconcileDraft(await this.loadDraft());
+      this.step = ['reconcile', Date.now()];
+      let { draft, accepted, waiting } = await this.reconcileDraft(await this.loadDraft());
+      if (waiting) { this.step = ['batchReservationWait', Date.now()]; return; }
       if (speculative && (!draft || this.speculation.proposalHash !== hash(JSON.stringify(draft.proposal)))) {
         if (await speculative) this.overlap.discarded++; this.speculation = null; speculative = null;
       }
+      this.step = ['build', Date.now()];
       draft ??= await this.build(); if (!draft) return;
       const key = `batch/${draft.proposal.batch.epoch}/${draft.proposal.batch.n}`;
       if (!accepted) {
+        this.step = ['publishContext', Date.now()];
         await this.reads.publishContext?.(draft.proposal.batch.n, draft);
         if (!draft.signature) {
+          this.step = ['successor', Date.now()];
           const buildNext = await this.prepareSuccessor(draft).catch(() => { this.overlap.failed++; return null; });
           const started = performance.now();
           if (buildNext) speculative = buildNext().then(next => { this.overlap.overlapMs += Math.max(0, Math.min(performance.now(), signingEnded ?? Infinity) - started); return next; })
             .catch(() => { this.overlap.failed++; return null; });
-          const signed = await this.committee.signature(key, draft.proposal); signingEnded = performance.now(); if (!signed) return;
+          this.step = ['sign', Date.now()];
+          const signed = await this.committee.signature(key, draft.proposal, { counted: draft.execution }); signingEnded = performance.now(); if (!signed) return;
           draft.signature = signed.signature.compact; await this.saveDraft(draft);
           if (speculative) this.speculation = { proposalHash: hash(JSON.stringify(draft.proposal)), promise: speculative };
         }
+        this.step = ['outbox', Date.now()];
         await this.outbox.enqueue(key, 'bt', { ...draft.proposal.batch, sig: draft.signature }); await this.outbox.tick();
         if (!this.store.get('sent', key)) return;
       } else if (this.store.get('outbox', key)) {
@@ -465,6 +582,7 @@ export class Pipeline {
       }
       // The contract already accepted this draft. Cold-index pages can be
       // repeated after a crash before the atomic local acceptance checkpoint.
+      this.step = ['archive', Date.now()];
       if (draft.settings.document) for (const item of draft.items) await archiveState(this.store, item.output.state, this.archiveWritePage);
       else await archiveState(this.store, state, this.archiveWritePage);
       operations.push({ space: 'meta', id: 'ruleState', value: hotState(state) }, { space: 'meta', id: 'patterns', value: patterns },
@@ -489,12 +607,19 @@ export class Pipeline {
           return this.store.transact([...accepted, ...publicFinancialOperations(this.store, draft, accepted)]);
         }) : this.store.transact(accrued);
       });
+      this.step = ['commit', Date.now()];
       if (this.intake.namedAdmission) await this.intake.namedAdmission.exclusive(commit); else await commit();
+      this.step = ['prune', Date.now()];
       await pruneDrafts(this.store);
+      this.step = ['retireContexts', Date.now()];
       await this.reads.retireContexts?.(draft.proposal.batch.n);
+      this.step = ['payouts', Date.now()];
       await new Payouts(this).publish();
+      this.step = ['latest', Date.now()];
       await this.files.json('latest.json', final.publication);
+      this.step = ['promote', Date.now()];
       if (speculative) { const next = await speculative; speculative = null; this.speculation = null; await this.promoteSuccessor(draft, next); }
+      this.step = ['compact', Date.now()];
       if (await this.store.bytes() > this.store.checkpointBytes) await this.store.compact(); return final.publication;
     } catch (error) { this.speculation = null; throw error; }
     finally { if (speculative && this.speculation?.promise !== speculative) { if (await speculative) this.overlap.discarded++; } this.running = false; }

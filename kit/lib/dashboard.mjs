@@ -27,7 +27,9 @@ async function body(req, limit = 1500000) {
 async function proxy(req, res, url, upstream) {
   const headers = { accept: req.headers.accept ?? '*/*' };
   const requester = req.headers['x-mint-requester-secret'];
-  if (/^\/(?:web-api\/)?mint\/[0-9a-f]{64}$/.test(url.pathname) || req.method === 'POST' && url.pathname === '/mint/payment') {
+  // A public mint request or public bulk order is read and paid with the secret of the browser that started it.
+  if (/^\/(?:web-api\/)?mint\/[0-9a-f]{64}$/.test(url.pathname) || req.method === 'POST' && url.pathname === '/mint/payment' ||
+    /^\/web-api\/public-mints\/bulk\/(?:start|[0-9a-f]{64}(?:\/(?:payment|inscriptions))?)$/.test(url.pathname)) {
     if (typeof requester === 'string' && /^[0-9a-f]{64}$/.test(requester)) headers['x-mint-requester-secret'] = requester;
   }
   const init = { method: req.method, redirect: 'manual', headers, signal: AbortSignal.timeout(url.pathname.startsWith('/events') ? 3600000 : 30000) };

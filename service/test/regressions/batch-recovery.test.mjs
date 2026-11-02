@@ -5,7 +5,7 @@ import { Store } from '../../src/store.mjs';
 import { Outbox } from '../../src/transport.mjs';
 import { MintOperations } from '../../src/operations.mjs';
 import { rules } from '../../src/rules.mjs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { heightKey, hash } from '../../src/util.mjs';
 import { temp } from '../helpers.mjs';
@@ -20,6 +20,24 @@ const history = length => ({ length, hashAt, get: h => ({ height: h, nonce: h, b
 const archivedEvidence = async (store, row) => { const text = await readFile(join(store.directory, 'retired-drafts', row.evidence.id + '.json'), 'utf8'); assert.equal(hash(text), row.evidence.hash); return JSON.parse(text); };
 const readsFor = h => ({ batchLast: () => h.state().batchLast(), committeeEpoch: () => h.state().committeeEpoch(),
   counted: async () => (await h.state().head()).counted, batchRoot: async n => h.db.get('bt/' + n) ?? null });
+
+test('archiving a draft preserves its attempted ceremony and loads only checksum-bound versions of that slot', async () => {
+  const directory = await temp('batch-archive-'), store = await Store.open(directory);
+  const p = new Pipeline({ store, replay, archiveWritePage: 1 });
+  try {
+    const { sig, ...batch } = signedBatch({ n: 1, from: 1, to: 2, deadline: 8, ops: [] });
+    const draft = { execution: 2, proposal: { batch } }, key = 'batch/0/1';
+    const ceremony = { id: 'ab'.repeat(32), stage: 'blocked', proposal: draft.proposal, peers: ['s0', 's1', 's2'] };
+    await p.saveDraft(draft); await store.put('ceremonies', key, ceremony);
+    await p.archiveDraft(draft, { reason: 'execution_snapshot_changed' });
+    assert.deepEqual(store.get('batchCeremonyAttempts', key + '/' + ceremony.id), ceremony);
+    assert.deepEqual((await p.retiredBatchDrafts(batch)).map(row => row.draft), [draft]);
+    assert.deepEqual(await p.retiredBatchDrafts({ ...batch, n: 2 }), []);
+    const archived = store.list('supersededDrafts')[0].value, path = join(directory, 'retired-drafts', archived.evidence.id + '.json');
+    await writeFile(path, (await readFile(path, 'utf8')) + '\n');
+    await assert.rejects(p.retiredBatchDrafts(batch), /draft_checksum/);
+  } finally { await store.close(); await rm(directory, { recursive: true }); }
+});
 
 for (const stage of ['unsigned', 'prepared', 'signed']) test(`same-key epoch rotation reconciles a ${stage} draft after restart`, async () => {
   const directory = await temp('epoch-recovery-'), h = harness(); await h.mint(['a']); await h.advance(1);

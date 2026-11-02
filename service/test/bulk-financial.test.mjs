@@ -74,7 +74,7 @@ test('bulk partial primary cannot combine another redeem; expiry creates receipt
   await f.bulk.payment({ orderId: id, paymentId: extra, commitTxid: null, revealTxid: null }); await f.execute();
   assert.equal(f.store.get('accountRecords', 'fp/' + id).reference, partial);
   assert.equal(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, extra)).state, 'credited');
-  f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick(); await f.execute();
+  f.height(String(BigInt(f.bulk.row(id).paymentSeen.confirmByBlock) + 1n)); await f.bulk.tick(); await f.execute();
   const liability = f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, partial));
   assert.equal(liability.groups.length, q.terms.groups.length - 1);
   assert.equal(balance(f).held, '0'); assert.equal(balance(f).available, '100000');
@@ -326,9 +326,9 @@ test('late bulk receipt is recovered automatically once and projects a spendable
   const reference = f.payment(quote, 'delayed'), tx = f.transactions.get(reference.slice(0, 64));
   f.transactions.delete(reference.slice(0, 64));
   await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
-  f.height(String(BigInt(quote.terms.expires) + 1n)); await f.bulk.tick(); await f.execute();
+  f.height(String(BigInt(f.bulk.row(id).paymentSeen.confirmByBlock) + 1n)); await f.bulk.tick(); await f.execute();
   assert.equal((await f.bulk.status(id)).state, 'expired'); assert.equal(balance(f).held, '0');
-  tx.inclusion.height = String(BigInt(quote.terms.expires) + 2n); f.height(tx.inclusion.height);
+  tx.inclusion.height = String(BigInt(f.bulk.row(id).paymentSeen.confirmByBlock) + 2n); f.height(tx.inclusion.height);
   f.payment(quote, 'delayed', [], tx.inclusion.height); await f.bulk.tick();
   assert.equal(f.store.get('bulkFailures', id), null);
   const recovered = await f.execute();
@@ -345,23 +345,52 @@ test('late bulk receipt is recovered automatically once and projects a spendable
   assert.deepEqual(f.store.get('accountRecords', 'fc/' + creditId), credit, 'repeated recovery never duplicates value');
 });
 
-for (const pending of ['bulk-fund', 'bulk-consume']) test(`expired ${pending} preserves a signed draft and recovers payment after unsigned work retires`, async t => {
-  const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+test('a dropped bulk payment retires unsigned work after grace, retaining signed drafts and recovering credit', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6, lateConfirmBlocks: 2 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); await f.execute();
-  const reference = f.payment(q, 'queued-' + pending);
+  const reference = f.payment(q, 'queued-dropped');
   await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
-  if (pending === 'bulk-consume') { await f.execute(); await f.bulk.tick(); }
   const work = f.bulk.row(id).work;
-  assert.equal(f.store.get('financialQueue', work).type, pending);
+  assert.equal(f.store.get('financialQueue', work).type, 'bulk-fund-held');
+  const transaction = f.transactions.get(reference.slice(0, 64)); f.transactions.delete(reference.slice(0, 64));
+  const deferred = await f.financial.build({ height: f.stamp().counted, at: f.stamp() });
+  assert.equal(deferred.deferred[0].reason, 'bulk_payment_unknown');
   await f.store.put('meta', 'draft', { proposal: { batch: { ops: [{ op: 'fp', id }] } } });
-  f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
+  f.height(String(BigInt(q.terms.expires) + 3n)); await f.bulk.tick();
   assert.equal(f.bulk.row(id).work, work); assert.equal(f.store.get('financialRejected', work), null);
   assert.equal(balance(f).held, '6');
   await f.store.transact([{ space: 'meta', id: 'draft' }]); await f.bulk.tick();
   assert.equal(f.store.get('financialRejected', work).reason, 'reservation_expired');
-  await f.execute(); await f.bulk.tick();
-  if (pending === 'bulk-fund') await f.execute();
+  await f.execute(); f.transactions.set(reference.slice(0, 64), transaction); await f.bulk.tick(); await f.execute();
   const credit = f.store.get('accountRecords', 'fc/' + b.bulkReceiptKey(f.bitcoinNetwork, reference));
   assert.equal(credit.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), q.terms.payableFeeAtoms);
   assert.equal(balance(f).held, '0'); assert.equal(balance(f).available, '100000');
+});
+
+test('on-time bulk report survives restart, confirms after expiry and passes independent signer replay', async t => {
+  const { verifyFinancialExecution } = await import('../../committee/signer/financial-execution.mjs');
+  const f = await fixture(t, { values: { pendingBlocks: 6, lateConfirmBlocks: 3 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  await f.bulk.request(f.sign(q)); await f.execute();
+  const reference = f.payment(q, 'slow-confirm'), tx = f.transactions.get(reference.slice(0, 64));
+  f.transactions.delete(reference.slice(0, 64));
+  await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
+  const timing = (await f.bulk.status(id)).paymentTiming;
+  assert.equal(timing.confirmByBlock, String(BigInt(q.terms.expires) + 3n));
+  await f.restart(); f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
+  assert.equal((await f.bulk.status(id)).state, 'confirming_payment'); assert.equal(balance(f).held, '6');
+  tx.inclusion.height = f.stamp().counted; f.transactions.set(reference.slice(0, 64), tx);
+  await f.bulk.tick();
+  f.height(String(BigInt(q.terms.expires) + 99n)); await f.bulk.tick();
+  assert.equal(f.store.get('financialQueue', f.bulk.row(id).work).type, 'bulk-fund-held', 'confirmed funding survives a delayed batch past grace');
+  const verify = async () => {
+    const built = await f.financial.build({ height: f.stamp().counted, at: f.stamp() });
+    await verifyFinancialExecution({ files: [{ ops: built.operations, financialOperations: built.inputs }],
+      reads: f.independent, document: f.document, network: q.terms.network, height: f.stamp().counted, at: f.stamp() });
+  };
+  await verify(); await f.execute(); await f.bulk.tick();
+  // A signing delay past even the grace bound cannot discard full payment.
+  f.height(String(BigInt(q.terms.expires) + 100n)); await f.bulk.tick(); await verify(); await f.execute(); await f.bulk.tick();
+  assert.equal((await f.bulk.status(id)).state, 'permit_issued');
+  assert.equal(f.store.get('accountRecords', 'fp/' + id).state, 'bulk-consumed');
+  assert.equal(f.store.get('accountRecords', 'fc/' + b.bulkReceiptKey(f.bitcoinNetwork, reference)), null);
 });

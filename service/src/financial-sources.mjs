@@ -61,9 +61,9 @@ export function installFinancialSources(reads, options) {
     return rules.validateSettingsDocument(selected);
   };
   reads.feeQuotes.settingsHistory ??= { get: reads.financialSettings };
-  const signedRequest = async id => {
+  const signedRequest = async (id, imported = undefined) => {
     const row = await request(id), r = row?.request;
-    const imported = await record('fi/source/' + id);
+    if (imported === undefined) imported = await record('fi/source/' + id);
     if (imported?.legacy?.kind === 'link') {
       check(same(imported.legacy.binding, legacyLinkBinding(row)), 'financial_legacy_link_binding'); return row;
     }
@@ -143,8 +143,8 @@ export function installFinancialSources(reads, options) {
       const { source, funding } = await reads.publicMintPermit(id, at);
       return { source, funding, row: { ...await request(id), id, request: source.request, payer: source.payer, receiver: source.receiver, kind: 'tap', quote: { fees: source.feeItems } } };
     }
-    const row = await signedRequest(id), funding = await reads.financialRecord('fp/' + id, at);
-    const source = await reads.financialRecord('fi/source/' + id, at) ?? await reservation(id, at);
+    const row = await signedRequest(id, publicSource), funding = await reads.financialRecord('fp/' + id, at);
+    const source = publicSource ?? await reservation(id, at);
     check(funding && source?.requestId === id && rules.hashObject(source) === funding.terms && same(source.request, row.request) &&
       source.receiver === row.receiver && source.payer === row.payer && source.rail === row.kind &&
       same(source.quote, source.legacy ? row.quote.feeQuote : row.requestedFeeQuote) &&
@@ -158,8 +158,8 @@ export function installFinancialSources(reads, options) {
   installRecoverySources(reads);
   installLinkSources(reads, { network, bitcoinNetwork, financialFees, accepted });
   installLegacyLinkSources(reads, { network, accepted });
-  reads.financialEscrow = async (id, references, at) => {
-    const { row, source } = await accepted(id, at);
+  const escrowSnapshot = async (id, references, at, context) => {
+    const { row, source } = context ?? await accepted(id, at);
     check(row.kind === 'ethereum' && escrow && Array.isArray(references) && references.length > 0 && references.length <= (await reads.financialSettings(source.settingsHash)).values.paymentPage && new Set(references).size === references.length &&
       references.every(r => /^0x[0-9a-f]{64}$/.test(r)), 'financial_payment_rail');
     const s = await reads.escrowDeposit(row.payer, id, { transactionIds: references }), d = s.deposit;
@@ -168,14 +168,15 @@ export function installFinancialSources(reads, options) {
       same(d.split, escrowSplitForItems(source.feeItems)) && d.amount === source.feeItems.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), 'financial_escrow_domain');
     return s;
   };
-  reads.financialReceipts = async (id, references, at) => {
-    const { row, source } = await accepted(id, at);
+  reads.financialEscrow = (id, references, at) => escrowSnapshot(id, references, at);
+  const receiptSnapshot = async (id, references, at, context) => {
+    const { row, source } = context ?? await accepted(id, at);
     check(Array.isArray(references) && references.length > 0 && references.length <= (await reads.financialSettings(source.settingsHash)).values.paymentPage && new Set(references).size === references.length, 'financial_receipt_references');
     if (source.legacy?.kind === 'link') return reads.financialLegacyLinkReceipts(id, references, at);
     const candidate = { ...row, quote: { ...row.quote, fees: source.feeItems } };
     if (row.kind === 'tap') return tapReceipts(reads, candidate, references, lookupSettings, { at, confirmedOnly: true });
     check(row.kind === 'ethereum' && escrow, 'financial_payment_rail');
-    const hint = { transactionIds: references }, s = await reads.financialEscrow(id, references, at), d = s.deposit;
+    const hint = { transactionIds: references }, s = await escrowSnapshot(id, references, at, { row, source }), d = s.deposit;
     check(s.chainId === escrow.chainId && s.address === escrow.address.toLowerCase() && s.token === escrow.token.toLowerCase() &&
       s.requestId === id && s.payer === row.payer.toLowerCase() && d.payer === row.payer.toLowerCase(), 'financial_escrow_domain');
     check(d.status === 2 && s.confirmations >= 1 && same(d.split, escrowSplitForItems(source.feeItems)) &&
@@ -186,6 +187,7 @@ export function installFinancialSources(reads, options) {
       amount: f.amount, accepted: true, confirmations: 1, origin: id, reference: event.transactionHash,
       ethereumAnchor: { chainId: escrow.chainId, height: BigInt(event.blockNumber).toString(), hash: event.blockHash.toLowerCase() } }));
   };
+  reads.financialReceipts = (id, references, at) => receiptSnapshot(id, references, at);
   reads.financialPermit = async (id, at, { consumed = false } = {}) => {
     if (reads.financialChainAnchor) await reads.financialChainAnchor({ at, prior: await reads.financialRecord('fp/chain', at) });
     check(recoveryVersion === 2, 'financial_permit_recovery_required');
@@ -226,7 +228,10 @@ export function installFinancialSources(reads, options) {
     const { row, funding, source } = await accepted(t.id, at), base = { requestId: t.id, owner: funding.owner, terms: funding.terms };
     if (['fund', 'surplus'].includes(t.type)) {
       check(Array.isArray(t.items) && t.items.length > 0, 'financial_payment_items');
-      const receipts = await reads.financialReceipts(t.id, t.references, at), byKey = new Map(receipts.map(r => [r.key, r]));
+      // Reuse only this call's verified context. Re-fetching the same request,
+      // accepted audit and fp/source records per nested receipt check turns a
+      // bounded credit page into repeated HTTP work and snapshot fences.
+      const receipts = await receiptSnapshot(t.id, t.references, at, { row, funding, source }), byKey = new Map(receipts.map(r => [r.key, r]));
       for (const item of t.items) {
         const receipt = byKey.get(item.key);
         check(receipt?.accepted && receipt.confirmations >= 1 && receipt.origin === t.id && receipt.amount === item.total && feeKey(receipt) === item.fee &&

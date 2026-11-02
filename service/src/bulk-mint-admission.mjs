@@ -2,7 +2,7 @@ import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { check } from './util.mjs';
 
 export const bulkOwnerSpace = owner => 'activeBulkOrdersByOwner/' + owner;
-export const isBulkTransition = t => t?.type === 'reserve-many' || /^bulk-(fund|consume|finish|release|credit)$/.test(t?.type);
+export const isBulkTransition = t => t?.type === 'reserve-many' || /^bulk-(fund(?:-held)?|consume(?:-held)?|finish|release|credit)$/.test(t?.type);
 
 // Called only inside the nonce-reservation admission gate, after independent source verification.
 // All plot keys share the single-mint namespace and the aggregate amount is

@@ -186,6 +186,9 @@ export async function connectRuntime(c, { create = false } = {}) {
     const peerWallet = await wallet(Wallet, c.peerWallet); signal?.throwIfAborted();
     peer = new Peer({ config: pc, msb: bus, wallet: peerWallet, protocol: Protocol, contract: Contract });
     await phase('trac.peer_open', () => abortable(peer.ready(), signal));
+    // trac-peer builds its swarm with Hyperswarm's default of 3 parallel connection attempts;
+    // match the MSB's 64 (setting peerMaxParallel). Hyperswarm reads it on every attempt.
+    if (peer.swarm) peer.swarm.maxParallel = c.peerMaxParallel ?? 64;
     if (c.dmw.v2) barrier = installTerminalBarrier(peer);
     return { peer, bus, barrier, close };
   } catch { await close(); throw Error('trac_runtime_unavailable'); }

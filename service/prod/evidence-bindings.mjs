@@ -1,10 +1,10 @@
-import { bindingKey, verifyBinding } from '../../rules/src/payout-bindings.mjs';
+import { bindingKey } from '../../rules/src/payout-bindings.mjs';
 import { Bindings } from '../src/bindings.mjs';
 import { check, hash } from '../src/util.mjs';
 
 // Read-only asynchronous counterpart; gateway writes keep the existing API.
 export class EvidenceBindings extends Bindings {
-  async proof(id) { const row = await this.store.get('payoutBindings', id); check(row, 'binding_missing'); return verifyBinding(row, this.options()); }
+  async proof(id) { const row = await this.store.get('payoutBindings', id); check(row, 'binding_missing'); return this.verify(row); }
   async current(agent, rail) {
     const id = await this.store.get('payoutCurrent', bindingKey(agent, rail));
     if (!id) return null;

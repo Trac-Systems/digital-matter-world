@@ -2,7 +2,7 @@ import { patternMint, selectedMintScope } from './mint-assets.mjs';
 import { findRankRecord } from './public-rankings.mjs';
 import { rules } from './rules.mjs';
 import { check, hash, heightKey } from './util.mjs';
-import { publicIdentities } from '../../rules/src/trac-address.js';
+import { publicIdentities } from './public-identities.mjs';
 import { R3_RESOURCES } from './r3-settings.mjs';
 import { projectionReady, projectionRevision } from './projection-state.mjs';
 export { projectionReady } from './projection-state.mjs';

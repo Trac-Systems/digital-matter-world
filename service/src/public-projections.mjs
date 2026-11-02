@@ -8,6 +8,9 @@ import { bitmapFresh } from './submitted-bitmaps.mjs';
 import { publicPageBytes } from './public-page-bytes.mjs';
 import { PUBLIC_SORTS } from './public-projection-index.mjs';
 import { financialBlock } from './financial-status.mjs';
+import { encodeTracAddress } from './public-identities.mjs';
+
+const tracAddress = key => { try { return /^[0-9a-f]{64}$/.test(key ?? '') ? encodeTracAddress(key) : null; } catch { return null; } };
 import { patternCatalogId } from './mint-assets.mjs';
 
 const encode = x => Buffer.from(JSON.stringify(x)).toString('base64url');
@@ -94,7 +97,8 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
       const expected = params.get(k);
       if (k === 'nonzero') { check(['true', 'false'].includes(expected), 'page_filter'); return (BigInt(value.amount ?? '0') !== 0n) === (expected === 'true'); }
       if (['minted', 'pending', 'linked', 'header'].includes(k)) { check(['true', 'false'].includes(expected), 'page_filter'); return !!value[k] === (expected === 'true'); }
-      if (k === 'q') return [value.name, value.asset, value.id, value.address].some(v => String(v ?? '').toLowerCase().includes(expected.toLowerCase()));
+      // People search with the trac1… address they see; rows keep the hex key.
+      if (k === 'q') return [value.name, value.asset, value.id, value.address, tracAddress(value.address)].some(v => String(v ?? '').toLowerCase().includes(expected.toLowerCase()));
       if (k === 'actor') return Object.values(value.data ?? {}).includes(expected);
       if (k === 'category') return (value.type?.startsWith('financial_') || ['mint_request', 'mint_permit', 'mint_complete', 'transfer', 'link'].includes(value.type) ? 'money' : 'chain') === expected;
       if (k === 'tier') return String(value.tier?.value ?? value.tier ?? '') === expected;

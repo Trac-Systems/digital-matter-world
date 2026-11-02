@@ -1,4 +1,5 @@
 import { rules } from './rules.mjs';
+import { notePaymentSeen, paymentTiming, PAYMENT_TIMING_DEFAULTS } from '../../rules/src/payment-timing.js';
 import { check, heightKey, serial } from './util.mjs';
 import { Mints, publicMint } from './mints.mjs';
 import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
@@ -10,13 +11,14 @@ import { plotKey } from '../../contract/financial-capacity.js';
 import { PublicMintAdmission, openPublicMint } from './public-mint-admission.mjs';
 import { discoverPublicMintPayments, publicPaymentReceipts } from './public-mint-discovery.mjs';
 import { newRequesterSecret, requesterSecretHash, publicMintTargetVisible, privatePublicMintView, privatePublicRefundView } from './public-mint-privacy.mjs';
+import { PublicBulkMints } from './public-bulk-mints.mjs';
 
 const registrationTransition = row => ({ type: 'public-payment', id: row.paymentRegistration.commitment,
   action: 'register', registration: row.paymentRegistration });
 const refundView = row => ({ ...row, requestId: row.id, paymentId: row.reference });
 
 export class PublicMints {
-  constructor(parent) { this.parent = parent; this.admission = new PublicMintAdmission(parent); this.queueGate = serial(); }
+  constructor(parent) { this.parent = parent; this.admission = new PublicMintAdmission(parent); this.queueGate = serial(); this.bulk = new PublicBulkMints(this); }
   get store() { return this.parent.store; }
   get reads() { return this.parent.reads; }
   get document() { return this.parent.document; }
@@ -61,11 +63,11 @@ export class PublicMints {
     const rows = page.rows.map(row => this.state(asset, row.block, claims, params.get('deployment'))).filter(row => row.state === 'public');
     return { v: 3, asset, rows, mintRights: rows, total: null, next: page.nextCursor, nextCursor: page.nextCursor };
   }
-  async quote(input, start = false, { clientIP, requesterSecret } = {}) {
+  async quote(input, start = false, { clientIP, requesterSecret, prepareOnly = false, publicBulkOrderId, at } = {}) {
     this.active(); check(rules.exactKeys(input, ['asset', 'block', 'tapAddress', ...(input.deployment === undefined ? [] : ['deployment'])]), 'public_mint_input');
     const ipHash = start ? await this.admission.start(clientIP) : null;
     const resolved = await mintAssetDefinition(this.store, input.asset), block = rules.decimalV2(input.block);
-    const choice = input.deployment && await this.reads.financialDeploymentState(resolved.asset, await this.reads.batchStamp(), input.deployment);
+    const choice = input.deployment && await this.reads.financialDeploymentState(resolved.asset, at ?? await this.reads.batchStamp(), input.deployment);
     const state = this.state(resolved.catalogAsset, block, undefined, choice?.entry?.id);
     if (!['public', 'finder'].includes(state.state)) throw Object.assign(Error(state.state === 'minted' ? 'already_minted' : state.winner ? 'someone_paid_first' : state.state),
       { status: 409, ...(state.winner ? { publicRefund: { refunds: state.refunds, winner: state.winner } } : {}) });
@@ -73,19 +75,23 @@ export class PublicMints {
     payoutAddress('tap', input.tapAddress, this.parent.bitcoinNetwork);
     const needed = await Mints.prototype.deploymentNeeded.call(this.parent, resolved.asset, { block, receiver: input.tapAddress, kind: 'tap' });
     if (needed) return { ...needed, publicMint: true, reservation: 'none' };
-    const generation = await this.reads.financialDeployment(resolved.asset, await this.reads.batchStamp(), input.deployment);
+    const generation = await this.reads.financialDeployment(resolved.asset, at ?? await this.reads.batchStamp(), input.deployment);
     if (!generation.existing) {
+      check(!prepareOnly, 'public_bulk_deployment_pending', 409);
       await this.parent.financial.submit({ type: 'lifecycle', id: generation.id, action: generation.action });
       return { id: null, requestId: null, asset: resolved.catalogAsset, block, receiver: input.tapAddress, kind: 'tap', publicMint: true,
         state: 'deployment_pending', payable: false, reservation: 'none', fees: [], missing: [] };
     }
-    const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress, ...(input.deployment ? { deployment: input.deployment } : {}) }, await this.reads.batchStamp());
+    const q = await this.reads.publicMintQuote({ asset: resolved.asset, block, tapAddress: input.tapAddress, ...(input.deployment ? { deployment: input.deployment } : {}) }, at ?? await this.reads.batchStamp(), { publicBulkOrderId });
     const row = { id: q.id, publicMint: true, catalogAsset: resolved.catalogAsset, intent: q.intent, receiver: input.tapAddress, payer: input.tapAddress, kind: 'tap',
+      ...(publicBulkOrderId ? { publicBulkOrderId } : {}),
       ...(q.registration ? { paymentRegistration: q.registration } : {}),
       request: { asset: resolved.asset, block, ...(q.intent.supplyScope ? { supplyScope: q.intent.supplyScope } : {}), amount: q.amount, expires: q.feeQuote.validUntil }, expiry: q.feeQuote.validUntil, created: q.feeQuote.validFrom,
-      quote: { ...q, payableAmount: q.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), baseFee: q.feeQuote.baseFee,
+      quote: { ...q, lateConfirmBlocks: this.document.values.lateConfirmBlocks ?? PAYMENT_TIMING_DEFAULTS.lateConfirmBlocks,
+        payableAmount: q.fees.reduce((n, f) => n + BigInt(f.amount), 0n).toString(), baseFee: q.feeQuote.baseFee,
         feeSettings: q.feeQuote.feeSettings, actualTicker: q.deployment.tick, deploymentId: q.deployment.id },
       context: { deployment: q.deployment }, state: 'awaiting_payment', paymentIds: [] };
+    if (prepareOnly) return row;
     if (!start) return { ...publicMint(row), id: null, requestId: null, payable: false, reservation: 'none' };
     const plot = rules.publicPlotId(resolved.asset, block, q.intent.supplyScope);
     const secret = newRequesterSecret();
@@ -102,14 +108,18 @@ export class PublicMints {
     const scan = this.store.get('accountRecords', publicScanKey(rules.publicPlotId(row.request.asset, row.request.block, row.intent?.supplyScope ?? row.request.supplyScope)));
     const refunds = this.store.list('publicMintRefundsByRequest/' + id, { limit: this.document.values.publicMintPageSize }).map(r => refundView(r.value));
     const lost = !!scan?.winner && scan.winner.id !== id;
-    const expired = BigInt(this.store.get('meta', 'ruleState')?.counted ?? row.created) > BigInt(row.expiry);
+    const counted = this.store.get('meta', 'ruleState')?.counted ?? row.created;
+    const timing = paymentTiming(row, row.expiry, counted), expired = BigInt(counted) > BigInt(row.expiry);
     // A checkout reserves nothing. Recheck before offering an unpaid request to the wallet.
     const current = !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length ? this.state(row.request.asset, row.request.block, undefined, row.intent?.supplyScope ?? row.request.supplyScope) : null;
     const unavailable = current && !['public', 'finder'].includes(current.state) ? current.state : null;
     const registered = !row.paymentRegistration || !!this.store.get('accountRecords', rules.publicPaymentKey(row.paymentRegistration.commitment));
-    const state = row.permit ? row.state : refunds.length && scan?.winner?.id !== id ? 'refundable' : lost ? 'someone_paid_first' : unavailable ?? row.state;
+    const state = row.permit ? row.state : refunds.length && scan?.winner?.id !== id ? 'refundable' : lost ? 'someone_paid_first' : unavailable ??
+      (timing.held && !row.paymentIds.length ? 'confirming_payment' : row.state);
     const status = { ...publicMint(row), payer: row.payer, state, reservation: 'none', unitsConsumed: false, publicMint: true, catalogAsset: row.catalogAsset,
+      ...(row.publicBulkOrderId ? { publicBulkOrderId: row.publicBulkOrderId } : {}),
       ...(state === 'not_yet_public' && current?.publicFrom !== undefined ? { publicFrom: current.publicFrom } : {}),
+      paymentTiming: { ...timing, held: false },
       payable: registered && !unavailable && !expired && !row.permit && !scan?.winner && !refunds.length && !row.paymentIds.length,
       refunds, winner: scan?.winner ? { id: scan.winner.id, tapAddress: scan.winner.tapAddress } : null,
       reason: refunds.find(refund => refund.reason === 'claimed_first')?.reason ?? (lost ? 'someone_paid_first' : refunds[0]?.reason ?? unavailable ?? row.reason ?? null), paymentPage: '/mint/' + id,
@@ -118,7 +128,7 @@ export class PublicMints {
     return publicMintTargetVisible(this.store, row, requesterSecret) ? decorated : privatePublicMintView(decorated);
   }
   async payment({ id, requestId, paymentId, paymentIds = [], inscription }, requesterSecret) {
-    id ??= requestId; const row = this.store.get('mints', id); check(row?.publicMint, 'request_not_found', 404);
+    id ??= requestId; let row = this.store.get('mints', id); check(row?.publicMint, 'request_not_found', 404);
     if (inscription) {
       check(row.permit && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(inscription), 'mint_inscription');
       await this.store.put('mints', id, { ...row, mintInscription: inscription });
@@ -126,6 +136,9 @@ export class PublicMints {
       check(Array.isArray(paymentIds), 'payment_id');
       const ids = [...new Set([...(row.paymentIds ?? []), ...(paymentId ? [paymentId] : []), ...paymentIds])];
       check(ids.length > 0 && ids.length <= this.document.values.paymentPage && ids.every(id => /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(id)), 'payment_id');
+      const counted = this.reads.counted ? await this.reads.counted() : this.store.get('meta', 'ruleState')?.counted ?? row.created;
+      row = notePaymentSeen(row, ids, row.expiry, counted, { lateConfirmBlocks: row.quote.lateConfirmBlocks ?? PAYMENT_TIMING_DEFAULTS.lateConfirmBlocks });
+      await this.store.put('mints', id, { ...row, paymentReferences: ids });
       const at = await this.reads.batchStamp(), receipts = await publicPaymentReceipts(this.reads, row, ids, at);
       check(receipts.length, 'payment_unseen', 409);
       const verified = [...new Set(receipts.map(r => r.reference))];
@@ -171,7 +184,7 @@ export class PublicMints {
     const writes = [];
     for (const { id } of rows) {
       const row = this.store.get('mints', id);
-      if (row?.paymentRegistration && BigInt(height) > BigInt(row.expiry)) {
+      if (row?.paymentRegistration && (BigInt(height) > BigInt(row.expiry) || row.publicBulkOrderId && !openPublicMint(this.store, row, height))) {
         const work = rules.hashObject(['dmw-financial-transition-v2', registrationTransition(row)]);
         if (this.store.get('financialQueue', work) && !await this.parent.financial.expire(work, { counted: height })) continue;
       }
@@ -188,6 +201,7 @@ export class PublicMints {
     if (this.running) return; this.running = true;
     try {
     await this.releaseFinishedRequests(this.store.get('meta', 'ruleState').counted);
+    await this.bulk.tick();
     const registrationAfter = this.store.get('meta', 'publicMintRegistrationCursor') ?? '';
     let pending = this.store.list('publicMintRequests', { after: registrationAfter, limit: this.parent.resources.workPage });
     if (!pending.length && registrationAfter) pending = this.store.list('publicMintRequests', { limit: this.parent.resources.workPage });
@@ -245,6 +259,7 @@ export class PublicMints {
     if (!row) {
       const s = winner.source, q = s.intent;
       row = { id: winner.id, publicMint: true, request: { ...s.request, ...(s.capacity?.supplyScope ? { supplyScope: s.capacity.supplyScope } : {}), expires: q.feeQuote.validUntil }, kind: 'tap', payer: s.payer, receiver: s.receiver,
+        ...(q.publicBulkOrderId ? { publicBulkOrderId: q.publicBulkOrderId } : {}),
         created: q.feeQuote.validFrom, expiry: q.feeQuote.validUntil, context: { deployment: s.deployment }, state: 'paid', paymentIds: [winner.reference],
         catalogAsset: patternCatalogId(s.asset), quote: { ...q, fees: s.feeItems, baseFee: q.feeQuote.baseFee, feeQuote: q.feeQuote } };
     }

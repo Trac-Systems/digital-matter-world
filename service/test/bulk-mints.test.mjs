@@ -192,19 +192,18 @@ test('six-block bulk expiry releases slots while reported payment is still uncon
   assert.equal(f.store.get('bulkPaymentRecovery', id), true);
 });
 
-for (const stage of ['bulk-fund', 'bulk-consume']) test(`six-block expiry retires an unsigned queued ${stage} and releases the order`, async t => {
+for (const stage of ['bulk-fund-held', 'bulk-consume-held']) test(`six-block expiry preserves queued ${stage} and completes the paid order`, async t => {
   const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); await f.execute();
   await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null });
-  if (stage === 'bulk-consume') { await f.execute(); await f.bulk.tick(); }
+  if (stage === 'bulk-consume-held') { await f.execute(); await f.bulk.tick(); }
   assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, stage);
   f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
-  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, 'bulk-release');
-  await f.execute();
-  assert.ok(['expired', 'credited'].includes((await f.bulk.status(id)).state)); assert.equal(f.store.count('activeBulkOrders'), 0);
-  await f.bulk.tick();
-  if (f.store.count('financialQueue')) await f.execute();
-  assert.ok(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')));
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, stage);
+  await f.execute(); await f.bulk.tick();
+  if (stage === 'bulk-fund-held') { await f.execute(); await f.bulk.tick(); }
+  assert.equal((await f.bulk.status(id)).state, 'permit_issued');
+  assert.equal(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')), null);
 });
 
 test('six-block bulk reservation keeps until strictly before expiry with a long freshness setting', async t => {

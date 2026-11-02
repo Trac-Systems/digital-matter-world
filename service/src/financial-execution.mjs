@@ -12,7 +12,13 @@ import { capacityKey, plotKey } from '../../contract/financial-capacity.js';
 import { financialTerminalOperations, FinancialLinkReconciler } from './financial-lifecycle.mjs';
 import { publicMintAcceptedWrites } from './public-mints.mjs';
 import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
+import { paymentTiming } from '../../rules/src/payment-timing.js';
+import { surplusCreditId } from '../../contract/payment-pages.js';
 const nonceReservation = t => t?.type === 'reserve-many' && t.action?.type === 'reserve-n' || singleNonceReservation(t);
+// These source results invalidate an earlier local full-payment observation.
+// HTTP/snapshot failures alone do not establish that confirmed money vanished.
+const missingPayment = new Set(['financial_receipt_binding', 'financial_escrow_unsettled',
+  'bulk_payment_unknown', 'bulk_payment_items', 'bulk_payment_binding']);
 async function bulkWork(execution, operations) {
   if (!operations.some(op => op.op === 'fp' && op.type.startsWith('bulk-'))) return;
   const { BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
@@ -21,8 +27,8 @@ async function bulkWork(execution, operations) {
     if (op.op !== 'fp' || !op.type.startsWith('bulk-')) continue;
     const t = op.type === 'bulk-open' ? op.terms : (await execution.getAsync('fp/' + op.id))?.manifest;
     check(t, 'bulk_work_terms');
-    members += ['bulk-open', 'bulk-consume'].includes(op.type) ? t.members.length : ['bulk-finish', 'bulk-release'].includes(op.type) ? op.members.length : 0;
-    groups += ['bulk-open', 'bulk-fund', 'bulk-consume', 'bulk-credit'].includes(op.type) ? t.groups.length : 0;
+    members += ['bulk-open', 'bulk-consume', 'bulk-consume-held'].includes(op.type) ? t.members.length : ['bulk-finish', 'bulk-release'].includes(op.type) ? op.members.length : 0;
+    groups += ['bulk-open', 'bulk-fund', 'bulk-fund-held', 'bulk-consume', 'bulk-consume-held', 'bulk-credit'].includes(op.type) ? t.groups.length : 0;
   }
   check(members <= BULK_LIMITS.memberWork && groups <= BULK_LIMITS.groupWork, 'bulk_batch_work');
 }
@@ -227,24 +233,34 @@ export class FinancialExecution {
   }, { pending: true }); }
   pending() { return this.store.count('financialQueue') > 0; }
   async expire(id, at) {
+    return this.gate(async () => {
     const transition = this.store.get('financialQueue', id);
     if (!transition) return !this.store.get('financialAccepted', id);
-    if (transition.type === 'refund' || transition.type.startsWith('bulk-') && !['bulk-fund', 'bulk-consume'].includes(transition.type)) return false;
-    const revision = this.revision;
-    if (['bulk-fund', 'bulk-consume'].includes(transition.type)) {
-      const funding = await this.reads.financialRecord('fp/' + transition.id, at);
+    if (transition.type === 'refund' || transition.type.startsWith('bulk-') && !['bulk-fund', 'bulk-fund-held', 'bulk-consume', 'bulk-consume-held'].includes(transition.type)) return false;
+    if (['bulk-fund', 'bulk-fund-held', 'bulk-consume', 'bulk-consume-held'].includes(transition.type)) {
+      const funding = this.store.get('accountRecords', 'fp/' + transition.id);
       if (!funding?.manifest || BigInt(at.counted) <= BigInt(funding.manifest.expires) || BigInt(funding.issuedMask) !== 0n) return false;
+      const row = this.store.get('bulkOrders', transition.id);
+      const confirmed = row?.confirmedPayment?.work === id && !missingPayment.has(this.store.get('financialDeferred', id)?.reason);
+      if (transition.type.endsWith('-held') && (confirmed || paymentTiming(row ?? {}, funding.manifest.expires, at.counted).held ||
+          transition.type === 'bulk-consume-held' && funding.state === 'bulk-funded')) return false;
     } else if (transition.type === 'public-payment') {
       // Reveals account for actual payments and must remain recoverable.
       if (transition.action !== 'register' || rules.compareOrdinal(at.counted, transition.registration.validUntil) <= 0) return false;
     } else if (transition.type === 'reserve' || transition.type === 'reserve-many' || transition.action?.type === 'link-reserve') { if (rules.compareOrdinal(at.counted, transition.action.until) <= 0) return false; }
-    else {
-      const exit = await this.reads.financialEvidence({ type: 'refund', id: transition.id, reason: 'credit' }, at);
-      check(exit.state === 'credit' && rules.compareOrdinal(at.counted, exit.expiry) > 0, 'financial_exit_live');
+    else if (!['fund', 'consume'].includes(transition.type)) return false;
+    if (['fund', 'consume'].includes(transition.type)) {
+      // Cancellation is local scheduling, not a refund. Read the accepted
+      // mirror under the commit gate; the eventual refund still needs quorum
+      // evidence. A remote multi-source snapshot here can starve forever.
+      const funding = this.store.get('accountRecords', 'fp/' + transition.id);
+      const source = this.store.get('accountRecords', 'fi/source/' + transition.id);
+      const row = this.store.get('mints', transition.id);
+      const expiry = source?.expiry ?? row?.expiry;
+      if (funding?.state !== 'open' || expiry === undefined || rules.compareOrdinal(at.counted, expiry) <= 0) return false;
+      if (row?.confirmedPayment?.work === id && !missingPayment.has(this.store.get('financialDeferred', id)?.reason)) return false;
+      if (paymentTiming(row ?? {}, expiry, at.counted).held || funding.fees.every((fee, i) => fee.amount === funding.paid[i])) return false;
     }
-    return this.gate(async () => {
-    if (!this.store.get('financialQueue', id)) return !this.store.get('financialAccepted', id);
-    check(revision === this.revision, 'financial_snapshot_changed', 503);
     // Preserve anything already signed or sent. Pipeline resolves that exact
     // draft before local admission counters can be released.
     const draft = this.store.get('meta', 'draft');
@@ -324,10 +340,12 @@ export class FinancialExecution {
       const accepted = { get: (space, id) => space === 'accountRecords' && records.has(id) ? records.get(id) : view.get(space, id) };
       const localWrites = (item.output.file.financialOperations ?? []).flatMap(input => {
         const id = rules.hashObject(['dmw-financial-transition-v2', input.transition]);
+        const surplus = input.operations?.find(op => op.op === 'fp' && op.type === 'surplus');
         const local = [...this.releaseAdmission(id, capacities, owners, balances), ...financialTerminalOperations(view, input, draft.proposal.batch.n), ...publicMintAcceptedWrites(view, input, accepted), ...bulkAcceptedWrites(view, input, accepted)];
         for (const write of local) projected.set(write.space + '/' + write.id, write.value);
         return [{ space: 'financialQueue', id }, { space: 'financialDeferred', id }, { space: 'financialAccepted', id, value: { id, state: 'accepted', batch: draft.proposal.batch.n,
-          request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence) } },
+          request: input.transition.id, type: input.transition.type, evidence: rules.hashObject(input.evidence),
+          ...(surplus ? { creditId: surplusCreditId(input.transition.id, surplus.sequence) } : {}) } },
           ...local];
       });
       for (const [id, value] of records) projected.set('accountRecords/' + id, value);

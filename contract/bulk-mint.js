@@ -69,7 +69,11 @@ export async function applyBulkPayment(store, op, { network, height, executionHe
         ...(fees?.length ? { creditId: receiptKey } : {}),
         groups: t.groups.flatMap((g, index) => paid[index] === '0' ? [] : [{ index, to: g.to, ticker: g.ticker, amount: paid[index] }]), feeRoot: t.feeRoot });
     };
-    if (op.type === 'bulk-fund' || op.type === 'bulk-credit') {
+    // New held operations deliberately have no confirmation/consumption
+    // deadline: the existing reserved obligation and every member lock are
+    // their authority. A gateway bounds how long it waits before release.
+    // Historical bulk-fund/bulk-consume retain their original window checks.
+    if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(op.type)) {
       exact(['terms', 'reference', 'block', 'paid', 'receiptRoot', ...(op.type === 'bulk-credit' && op.feeManifest ? ['feeManifest'] : [])]); inscription(op.reference);
       assert(exactKeys(op.block, ['height', 'hash']) && bulkUint(op.block.height) && hex(op.block.hash, 32) &&
         BigInt(op.block.height) <= BigInt(executionHeight) && hex(op.receiptRoot, 32) &&
@@ -78,17 +82,17 @@ export async function applyBulkPayment(store, op, { network, height, executionHe
       const receiptKey = 'fp/bulk-receipt/' + bulkReceiptKey(t.bitcoinNetwork, op.reference);
       assert(!await get(receiptKey), 'bulk_receipt_reused');
       put(receiptKey, { orderId: op.id, receiptRoot: op.receiptRoot });
-      if (op.type === 'bulk-fund') {
+      if (['bulk-fund', 'bulk-fund-held'].includes(op.type)) {
         assert(old.state === 'bulk-open' && obligation.state === 'reserved' && old.reference === null && released === 0n && issued === 0n &&
-          BigInt(op.block.height) >= BigInt(old.created) && BigInt(op.block.height) <= BigInt(t.expires), 'bulk_funding_window');
+          BigInt(op.block.height) >= BigInt(old.created) && (op.type === 'bulk-fund-held' || BigInt(op.block.height) <= BigInt(t.expires)), 'bulk_funding_window');
         const full = op.paid.every((n, i) => n === t.groups[i].amount);
         put('fp/' + op.id, { ...old, state: full ? 'bulk-funded' : 'bulk-open', paid: op.paid,
           reference: op.reference, receiptRoot: op.receiptRoot });
       } else await credit(op.reference, op.receiptRoot, op.paid);
-    } else if (op.type === 'bulk-consume') {
+    } else if (['bulk-consume', 'bulk-consume-held'].includes(op.type)) {
       exact(['terms', 'receiptRoot', 'permitRoot']);
       assert(old.state === 'bulk-funded' && obligation.state === 'reserved' && issued === 0n && released === 0n &&
-        BigInt(height) <= BigInt(t.expires) && BigInt(executionHeight) <= BigInt(t.expires) && old.paid.every((n, i) => n === t.groups[i].amount) &&
+        (op.type === 'bulk-consume-held' || BigInt(height) <= BigInt(t.expires) && BigInt(executionHeight) <= BigInt(t.expires)) && old.paid.every((n, i) => n === t.groups[i].amount) &&
         old.receiptRoot === op.receiptRoot && same(await get('fp/bulk-receipt/' + bulkReceiptKey(t.bitcoinNetwork, old.reference)),
           { orderId: op.id, receiptRoot: op.receiptRoot }), 'bulk_funding_incomplete');
       const plans = bulkPermitPlans(t, op.receiptRoot);

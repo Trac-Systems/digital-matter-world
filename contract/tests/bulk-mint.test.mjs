@@ -311,3 +311,29 @@ test('bulk partial-payment release credits only paid groups and only on its firs
   await f.pay(f.fp('bulk-release', { members: [1], reason: 'expired' }), '974570');
   assert.deepEqual(f.db.get('fc/' + credit), row);
 });
+
+test('new held bulk operations fund and consume after expiry, while old operations retain deadline checks', async () => {
+  const f = setup(2); await f.open();
+  const height = (BigInt(f.t.expires) + 1n).toString();
+  const fields = { reference: 'ee'.repeat(32) + 'i0', block: { height, hash: H }, paid: f.t.groups.map(g => g.amount), receiptRoot: H };
+  await unchanged(f, () => f.pay(f.fp('bulk-fund', fields), height), /bulk_funding_window/);
+  await f.pay(f.fp('bulk-fund-held', fields), height);
+  const plans = bulkPermitPlans(f.t, H), consume = { receiptRoot: H, permitRoot: plans.permitRoot };
+  await unchanged(f, () => f.pay(f.fp('bulk-consume', consume), height), /bulk_funding_incomplete/);
+  await f.pay(f.fp('bulk-consume-held', consume), height);
+  await f.accounts([{ type: 'consume-many', id: f.id, terms: f.terms, permitRoot: plans.permitRoot, evidence: H }], height);
+  assert.equal(f.db.get('fp/' + f.id).state, 'bulk-consumed');
+  assert.equal(f.db.get('ao/' + f.id).state, 'bulk-issued');
+  assert.equal(f.db.get('fc/' + bulkReceiptKey(f.t.bitcoinNetwork, fields.reference)), undefined);
+  await unchanged(f, () => f.pay(f.fp('bulk-fund-held', fields), height), /bulk_receipt_reused/);
+});
+
+test('held bulk operations cannot revive released capacity or issue an incomplete payment', async () => {
+  const released = setup(); await released.open(); await released.terminal([0], false);
+  const height = (BigInt(released.t.expires) + 1n).toString();
+  const fields = { reference: 'ee'.repeat(32) + 'i0', block: { height, hash: H }, paid: released.t.groups.map(g => g.amount), receiptRoot: H };
+  await unchanged(released, () => released.pay(released.fp('bulk-fund-held', fields), height), /bulk_funding_window/);
+  const partial = setup(); await partial.open();
+  await partial.pay(partial.fp('bulk-fund-held', { ...fields, paid: ['0'] }), height);
+  await unchanged(partial, () => partial.pay(partial.fp('bulk-consume-held', { receiptRoot: H, permitRoot: bulkPermitPlans(partial.t, H).permitRoot }), height), /bulk_funding_incomplete/);
+});

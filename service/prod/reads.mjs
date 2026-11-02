@@ -186,7 +186,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       tick: lock.tick, lockKind: lock.kind, conditionType: lock.condition.type, hash: lock.condition.hash, refund: lock.refund, claim: lock.claim, base: lock.amt,
       allocations: lock.al ?? [], refundAfter: Number(lock.refund_after) };
   };
-  const bindings = new (store instanceof EvidenceStore ? EvidenceBindings : Bindings)({ store, network: config.network, bitcoinNetwork: 'mainnet', rosterHistory: config.rosterHistory, members: config.committee?.map(s => s.peer) });
+  const bindings = new (store instanceof EvidenceStore ? EvidenceBindings : Bindings)({ store, bindingCacheEntries: config.listen?.publicReads?.bindingCacheEntries, network: config.network, bitcoinNetwork: 'mainnet', rosterHistory: config.rosterHistory, members: config.committee?.map(s => s.peer) });
   const supply = new AcceptedAssetSupply({ store, state, trac, pageBatches: limits.supplyPageBatches, pageOperations: limits.supplyPageOperations });
   // Every committee request (each agent move is acknowledged by all signers) read the Bitcoin tip,
   // the rules context and the authority afresh: seconds per request. Concurrent callers share one

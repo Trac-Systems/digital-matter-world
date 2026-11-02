@@ -45,6 +45,9 @@ function filePath(root, path) {
 export function evidencePublisher({ config, store, reads, secret, now = Date.now, snapshotLifetimeMs }) {
   const settings = evidenceSettings(config.prod?.evidenceSettings), gate = serial(), used = new Map(), sessions = new Map();
   const { retries, backoffMs } = evidenceSnapshotPolicy(config.prod?.evidenceSnapshot);
+  // Trac stamps only move forward: a stamp taken before this snapshot that still
+  // equals a fresh one after it brackets the snapshot like a fresh pair would.
+  let recentStamp = null;
   const drop = id => { const s = sessions.get(id); if (s) { clearTimeout(s.timer); s.db.exec('ROLLBACK'); s.db.close(); sessions.delete(id); } };
   const publish = request => gate(async () => {
     const { signature, ...challenge } = request;
@@ -80,12 +83,13 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
       check(now() - challenge.time <= settings.maxAgeMs, 'evidence_challenge');
       let db;
       try {
-        const stamp = await reads.trac('stamp'); db = new DatabaseSync(join(store.directory, 'index.sqlite'));
+        const stamp = recentStamp ?? await reads.trac('stamp'); recentStamp = null; db = new DatabaseSync(join(store.directory, 'index.sqlite'));
         const index = new AuthenticatedIndex(db);
         db.exec('PRAGMA query_only=ON; BEGIN');
         const savedRevision = db.prepare('SELECT sequence FROM journal_progress WHERE id=1').get()?.sequence ?? db.prepare('SELECT sequence FROM progress WHERE id=1').get().sequence;
         const revision = config.v2 ? rules.decimalV2(savedRevision) : savedRevision, root = index.root();
-        check(text(stamp) === text(await reads.trac('stamp')), 'evidence_snapshot_changed');
+        recentStamp = await reads.trac('stamp');
+        check(text(stamp) === text(recentStamp), 'evidence_snapshot_changed');
         const id = randomBytes(32).toString('hex'), observedAt = now();
         result = { id, root, revision, stamp, observedAt, expiresAt: observedAt + lifetimeMs };
         if (q.op === 'migration-open') {

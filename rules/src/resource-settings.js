@@ -31,7 +31,8 @@ export const RESOURCE_PROFILE = Object.freeze({
   committeeHistoryPage: 256,
   sponsorshipTransactions: '0', sponsorshipAtoms: '0', sponsorshipRunwayTransactions: '0',
   assetActiveMints: 2000, assetActiveLinks: 2000, assetMintsPerAgent: 8, assetLinksPerAgent: 8, assetInputCapacity: 2000, assetWorkPage: 128, assetCreditPage: 128, publicPageSize: 50, publicPageMaximum: 200, publicPreviewBytes: 60000,
-  assetPublicMintsPerPayer: 8, assetPublicMintsPerIP: 32, assetPublicMintStartsPerMinute: 12
+  assetPublicMintsPerPayer: 8, assetPublicMintsPerIP: 32, assetPublicMintStartsPerMinute: 12,
+  assetPublicBulkMintBlocks: 64, assetPublicBulkInputBytes: 16384, assetPublicBulkResponseBytes: 1048576
 });
 const resourceV2Keys = new Set(['journalFragmentBytes', 'journalGroupBytes', 'storePageRows', 'feedEventRows', 'feedEventsPerTick', 'feedPagesPerTick',
   'patternPageHeights', 'patternDetailRows', 'feedVersions', 'rankingRows', 'ownerRefreshRows', 'ownerRefreshMs', 'outboxFallbackMs', 'publicCachePages']);
@@ -43,8 +44,9 @@ const resourceV4Keys = new Set(['relayObservationPage', 'committeeHealthMs', 'co
   'committeeResponseBytes', 'committeePollMs', 'committeeHistoryPage',
   'closureWorkPerSecond', 'closureReadsPerSecond', 'closureBytesPerSecond', 'closureTimeoutPaddingMs']);
 const resourceV5Keys = new Set(['assetPublicMintsPerPayer', 'assetPublicMintsPerIP', 'assetPublicMintStartsPerMinute']);
-export function validateResources(values, version = 5) {
-  assert(exactKeys(values, Object.keys(RESOURCE_PROFILE).filter(key => (version !== 1 || !resourceV2Keys.has(key)) && (version >= 3 || !resourceV3Keys.has(key)) && (version >= 4 || !resourceV4Keys.has(key)) && (version >= 5 || !resourceV5Keys.has(key)))), 'resource_keys');
+const resourceV6Keys = new Set(['assetPublicBulkMintBlocks', 'assetPublicBulkInputBytes', 'assetPublicBulkResponseBytes']);
+export function validateResources(values, version = 6) {
+  assert(exactKeys(values, Object.keys(RESOURCE_PROFILE).filter(key => (version !== 1 || !resourceV2Keys.has(key)) && (version >= 3 || !resourceV3Keys.has(key)) && (version >= 4 || !resourceV4Keys.has(key)) && (version >= 5 || !resourceV5Keys.has(key)) && (version >= 6 || !resourceV6Keys.has(key)))), 'resource_keys');
   for (const [key, n] of Object.entries(values)) {
     if (key.startsWith('sponsorship')) { uintV2(n); continue; }
     assert(Number.isSafeInteger(n) && n >= (['localSendIntervalMs', 'sourceRetries', 'journalGroupDelayMs'].includes(key) ? 0 : 1), 'resource_value');
@@ -61,11 +63,11 @@ export function resourceRevision({ operator, values, previous = null }) {
   assert(typeof operator === 'string' && operator.length > 0, 'resource_operator');
   if (previous) validateResourceDocument(previous);
   assert(!previous || previous.operator === operator, 'resource_operator');
-  return freezeDocument({ version: 5, operator, revision: previous ? nextUint(previous.revision) : '0',
+  return freezeDocument({ version: 6, operator, revision: previous ? nextUint(previous.revision) : '0',
     previousHash: previous ? hashObject(previous) : null, values: structuredClone(validateResources(values)) });
 }
 export function validateResourceDocument(d) {
-  assert(exactKeys(d, ['version', 'operator', 'revision', 'previousHash', 'values']) && [1, 2, 3, 4, 5].includes(d.version) && typeof d.operator === 'string' && d.operator.length > 0, 'resource_document');
+  assert(exactKeys(d, ['version', 'operator', 'revision', 'previousHash', 'values']) && [1, 2, 3, 4, 5, 6].includes(d.version) && typeof d.operator === 'string' && d.operator.length > 0, 'resource_document');
   uintV2(d.revision); assert(d.previousHash === null || /^[0-9a-f]{64}$/.test(d.previousHash), 'resource_previous'); validateResources(d.values, d.version); return d;
 }
 export class ResourceHistory {

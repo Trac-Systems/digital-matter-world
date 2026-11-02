@@ -13,7 +13,7 @@ export async function pruneDrafts(store) {
 }
 export async function collectFiles(store, files) {
   for (const { id } of store.list('fileGarbage', { limit: 256 })) {
-    if (!/^\/patterns\/[a-z0-9]+\/[0-9]+(?:-detail(?:-index)?)?-[0-9a-f]{64}\.json$/.test(id)) throw Error('retention_path');
+    if (!/^\/patterns\/(?:[a-z0-9]+|p2:(?:0|[1-9][0-9]*))\/[0-9]+(?:-detail(?:-index)?)?-[0-9a-f]{64}\.json$/.test(id)) throw Error('retention_path');
     await removeFile(files.path(id.slice(1))); await store.put('fileGarbage', id);
   }
 }

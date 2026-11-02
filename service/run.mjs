@@ -31,6 +31,9 @@ import { Outbox } from './src/transport.mjs';
 import { Mints } from './src/mints.mjs';
 import { Feeds } from './src/feeds.mjs';
 import { serve } from './src/http.mjs';
+import { PublicReadPool } from './src/public-read-pool.mjs';
+import { publicReadSettings } from './src/public-read-settings.mjs';
+import { configurePublicIdentities } from './src/public-identities.mjs';
 import { loadConfig } from './src/config.mjs';
 import { PublicRegistry } from './src/public-registry.mjs';
 import { PublicSummaries } from './src/public-summaries.mjs';
@@ -83,19 +86,22 @@ async function startGateway(config, controller) {
   check(supportedNode(), 'node_version');
   const resources = config.v2 ? runtimeResources(config.v2.resources, config.v2.document) : null;
   const takenReads = takenReadResources(config.takenReads);
+  const publicReads = publicReadSettings(config.listen?.publicReads);
+  configurePublicIdentities(publicReads);
   config = configuredResources(config);
   const http = await phase('gateway.listen', () => startupListener(config.listen));
-  let store, pipeline, adapters, scheduler, evidence, committee, operator, mintSender, closed = false, closing;
+  let store, pipeline, adapters, scheduler, evidence, committee, operator, mintSender, readPool, closed = false, closing;
   const service = { ...http };
   const close = () => closing ??= (async () => {
     closed = true; scheduler?.stop();
     controller.abort(Error('gateway_stopping')); committee?.close();
     const replayStopped = pipeline?.replay.close();
     const stoppedHTTP = http.close();
+    const stoppedReads = readPool?.close();
     await service.ready.catch(() => {});
     try {
       await phase('gateway.pollers_close', () => scheduler?.close());
-      await stoppedHTTP;
+      await stoppedHTTP; await stoppedReads; await readPool?.close();
       await operator?.provisioner?.close();
       await replayStopped;
       await phase('gateway.pipeline_close', () => pipeline?.close());
@@ -137,7 +143,7 @@ async function startGateway(config, controller) {
     const publicIndex = new PublicIndex({ store, files, history, reads: adapters.reads });
     const publicViews = new PublicViews({ store, history, reads: adapters.reads, mints, network: config.network, claimsPerWindow: config.claimsPerWindow });
     const publicAPI = createPublicAPI({ views: publicViews, files, settings: { ...resources?.feeds, takenPageRows: takenReads.pageRows } });
-    const bindings = new Bindings({ store, network: config.network, bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', rosterHistory: config.rosterHistory, members: config.committee.map(s => s.peer), committee });
+    const bindings = new Bindings({ store, bindingCacheEntries: publicReads.bindingCacheEntries, network: config.network, bitcoinNetwork: config.mode === 'regtest' ? 'regtest' : 'mainnet', rosterHistory: config.rosterHistory, members: config.committee.map(s => s.peer), committee });
     operator = await createOperator({ config, store, files, reads: adapters.reads, committee });
     if (mints) mints.provisioner = operator.provisioner;
     if (operator.provisioner) { operator.provisioner.financial = v2?.financial; if (mintSender) operator.provisioner.mintSender = mintSender; }
@@ -150,7 +156,15 @@ async function startGateway(config, controller) {
       snapshotLifetimeMs: () => closureTimeouts(v2?.settings.document, config.v2?.resources)?.evidenceMs }) : undefined;
     const headers = new HeaderFiles({ history, files, network: config.mode === 'prod' ? 'mainnet' : 'regtest', chunkSettings: config.headerChunkSettings, secret, signingEpoch: config.headerSigningEpoch });
     controller.signal.throwIfAborted();
-    await serve({ listener: http, evidence, web, operator, inflight, intake, files, headers, mints, bulkMints: v2?.bulkMints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
+    readPool = await PublicReadPool.open({ directory: store.directory, filesDirectory: files.directory,
+      version2: !!v2, publicAPI, mints, settings: publicReads, bulkReads: !!v2?.bulkMints, financialActions: !!v2?.financialActions,
+      storeSettings: { storePageRows: store.storePageRows, defaultPageRows: store.defaultPageRows },
+      apiSettings: { ...resources?.feeds, takenPageRows: takenReads.pageRows },
+      bindingsOptions: { network: bindings.network, bitcoinNetwork: bindings.bitcoinNetwork,
+        members: bindings.members, rosterHistory: bindings.rosterHistory },
+      headerOptions: { network: headers.network, chunkSettings: config.headerChunkSettings }, checkout: true, operator: !!operator });
+    controller.signal.throwIfAborted();
+    await serve({ readPool, listener: http, evidence, web, operator, inflight, intake, files, headers, mints, bulkMints: v2?.bulkMints, links, financialActions: v2?.financialActions, custody: v2?.custody, submittedBitmaps: adapters.reads.submittedBitmaps, publicAPI, bindings, ...config.listen, ...resources?.http });
     await atomicWrite(join(config.data, 'process.json'), JSON.stringify({ pid: process.pid }));
     controller.signal.throwIfAborted();
     const workerStatus = new WorkerStatus(store), recordError = (e, worker) => workerStatus.failed(e, worker);
@@ -168,7 +182,7 @@ async function startGateway(config, controller) {
     scheduler.add('receipt_recovery', () => v2?.recoverReceipts());
     for (const [name, task] of [['pipeline', () => pipeline.tick()], ['recovery', () => v2?.recovery?.tick()], ['outbox', () => outbox.tick()], ['mints', () => mints?.tick()], ['links', () => links?.tick?.()], ['custody', () => v2?.custody?.tick()],
       ['feeds', () => feeds.tick()], ['public_reads', () => v2 ? undefined : publicIndex.tick()], ['operator', () => operator?.tick()], ['bindings', () => bindings.tick()], ...publicTasks]) scheduler.add(name, task);
-    Object.assign(service, { intake, pipeline, mints, recovery: v2?.recovery, adapters, store, operator });
+    Object.assign(service, { intake, pipeline, mints, readPool, recovery: v2?.recovery, adapters, store, operator });
     return service;
   };
   service.ready = initialize();

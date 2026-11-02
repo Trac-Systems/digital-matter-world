@@ -12,6 +12,7 @@ import { tapAccount, ethAccount, receipt, orderResult, authority, oneTxReady, re
 import { wallet, walletSummary, connectButtons } from './connect.js';
 import { tickerPage } from './ticker-deploy.js';
 import { tickerChoice } from './console/js/tickers.js';
+import { savedOrders } from './console/js/requester-storage.js';
 import { validateChosenTicker } from '../../../rules/src/ticker-grammar.js';
 
 // Linking several Bitmaps at once (local dashboard).
@@ -307,9 +308,11 @@ export function moneyPage(root, { type, id }) {
   if (type === 'bulk') {
     let closed = false, close = null;
     clear(root, h('div.page', {}, h('div.empty', {}, 'Loading…')));
-    import('./bulk-mint.js').then(({ mountBulkMint }) => {
+    // A public order (TAP Wallet only) or an agent's order: the same address form, told apart by the server.
+    import('./bulk-mint.js').then(async ({ mountBulkMint, mountPublicBulkMint, isPublicBulkOrder }) => {
+      const pub = await isPublicBulkOrder(id);
       if (closed) return;
-      close = mountBulkMint(root, { orderId: id });
+      close = (pub ? mountPublicBulkMint : mountBulkMint)(root, { orderId: id });
       root.querySelector('.page-head').after(back);
     }).catch(e => { if (!closed) clear(root, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${walletError(e)}`))); });
     return () => { closed = true; close?.(); };
@@ -879,7 +882,7 @@ function walletsHome(root, type) {
   } }, 'Mint');
   const stateCell = r => { const [label, kind] = publicState(r);
     return h('span.row', { style: { gap: '6px' } }, pill(label, kind), r.bitmapHolderOnly ? pill('Bitmap holder only', 'info', `Only the TAP Wallet holding ${r.block}.bitmap can mint this block.`) : null); };
-  const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. ' + PUBLIC_MINT_COPY)); soon.hidden = false; list.el.hidden = true; return true; };
+  const opensSoon = e => { clear(soon, h('div.callout.info', {}, e?.message === 'public_index_warming' ? publicMintMessages.public_index_warming : 'Public minting opens soon. ' + PUBLIC_MINT_COPY)); soon.hidden = false; list.el.hidden = true; severalLine.hidden = true; return true; };
   let selectedAsset = chosen?.asset ?? (/^p2:(0|[1-9][0-9]*)$/.test(asset ?? '') ? asset : (store.patterns?.patterns ?? []).find(p => /^p2:(0|[1-9][0-9]*)$/.test(p.asset))?.asset ?? 'p2:0');
   const search = patternSearch('public-pattern-names', store.pattern(selectedAsset) ? assetName(selectedAsset) : '', text => { listNote.textContent = text; },
     pick => { selectedAsset = pick.asset; drawToken(); list.reset(); });
@@ -891,21 +894,65 @@ function walletsHome(root, type) {
   let choice, loadChosen, choiceLine = h('div', { hidden: true });
   const drawToken = () => { clear(tokenLine, tokenStatus(selectedAsset)); choice = tickerChoice(selectedAsset, { initial: selectedAsset === asset ? initialTicker : null, onChange: () => { list?.reset(); loadChosen?.(); } }); initialTicker = null; choiceLine.replaceWith(choice.el); choiceLine = choice.el; };
   drawToken();
-  list = pagedTable({ path: () => '/public-mints?' + new URLSearchParams({ asset: selectedAsset, ...(choice?.value() ? { deployment: choice.value() } : {}) }), key: 'rows', limit: 25, skipEmpty: true,
-    empty: () => ['No public blocks of ', assetLink(selectedAsset), ` right now. ${PUBLIC_MINT_COPY}`],
-    onError: e => notOpen(e) && opensSoon(e),
-    onPage: (_rows, body) => { if (body.state === 'inactive') return opensSoon(); soon.hidden = true; list.el.hidden = false; },
-    columns: [
+  // Mint several: a pick box on each public row and one order for the picks. On the agent dashboard the agent
+  // makes the order; on the site TAP Wallet alone pays it, when the server offers public orders (its limit).
+  const publicPath = () => '/public-mints?' + new URLSearchParams({ asset: selectedAsset, ...(choice?.value() ? { deployment: choice.value() } : {}) });
+  const severalLine = h('div', { hidden: true });
+  let several = null;
+  const columns = [
       { key: 'asset', label: 'Pattern', render: r => matter(r.asset) },
       { key: 'block', label: 'Block', num: true, render: r => blockLink(r.block) },
       { key: 'amount', label: 'Units', num: true, render: r => h('span.mono', {}, fmtInt(r.amount)) },
       { key: 'state', label: 'State', render: stateCell },
       // Only a row the API lists as public gets a Mint button.
       { key: 'act', label: '', render: r => r.state === 'public' ? mintButton(r) : null },
-    ] });
+    ];
+  list = pagedTable({ path: publicPath, key: 'rows', limit: 25, skipEmpty: true,
+    empty: () => ['No public blocks of ', assetLink(selectedAsset), ` right now. ${PUBLIC_MINT_COPY}`],
+    onError: e => notOpen(e) && opensSoon(e),
+    onPage: (rows, body) => { if (body.state === 'inactive') return opensSoon(); soon.hidden = true; list.el.hidden = false; severalLine.hidden = !severalLine.firstChild; several?.page(rows.filter(r => r.state === 'public' && (globalThis.DMW_LOCAL_AGENT === true || !r.bitmapHolderOnly)).map(r => ({ ...r, asset: selectedAsset }))); },
+    columns });
   list.el.classList.add('public-mints');
+  // "Pick up to 64" reads the list from its first page, skipping blocks only a Bitmap holder may mint.
+  const fillPublic = async room => {
+    const rows = []; let cursor = null;
+    for (let pages = 0; rows.length < room && pages < 10; pages++) {
+      const page = await get(publicPath() + '&' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) }));
+      rows.push(...(page.rows ?? []).filter(r => r.state === 'public' && !r.bitmapHolderOnly).map(r => ({ ...r, asset: selectedAsset })));
+      cursor = page.next ?? page.nextCursor ?? null; if (!cursor) break;
+    }
+    return rows;
+  };
+  if (globalThis.DMW_LOCAL_AGENT === true) import('./bulk-mint.js').then(async m => {
+    if (!m.severalPicker || !await m.severalReady()) return;
+    several = m.severalPicker({ go, fill: fillPublic, ticker: a => a === selectedAsset ? choice?.value() ?? null : null, label: 'Pick public blocks below; your agent needs units for them' });
+    columns.unshift({ key: 'pick', label: '', render: r => r.state === 'public' ? several.check({ ...r, asset: selectedAsset }) : h('span') });
+    clear(severalLine, several.bar); severalLine.hidden = false; list.reload();
+  }).catch(() => {});
+  else import('./bulk-mint.js').then(async m => {
+    const max = await m.publicSeveralLimit?.();
+    if (!max) return;
+    // TAP Wallet connected, with 1-TX transfers on, as for a single public mint.
+    const payer = async notify => {
+      if (!wallet.tap) await wallet.connect('tap');
+      const tapAddress = wallet.tap?.address;
+      if (!tapAddress) fail('Connect TAP Wallet to mint.');
+      notify('Checking 1-TX Transfers in TAP Wallet…');
+      await oneTxReady(tapAddress);
+      return tapAddress;
+    };
+    several = m.severalPicker({ go, fill: fillPublic, max, ticker: a => a === selectedAsset ? choice?.value() ?? null : null, label: 'Pick public blocks below',
+      hint: `Up to ${max} blocks of one pattern in one order, no agent needed: you see the total first, and TAP Wallet pays it with one approval.`,
+      start: options => m.startPublicSeveral({ ...options, payer }) });
+    columns.unshift({ key: 'pick', label: '', render: r => r.state === 'public' && !r.bitmapHolderOnly ? several.check({ ...r, asset: selectedAsset }) : h('span') });
+    // Orders started in this browser, to reopen them.
+    const orders = savedOrders().slice(0, 5);
+    clear(severalLine, several.bar, orders.length ? h('div.small.muted', { style: { padding: '8px 14px', borderBottom: '1px solid var(--rule-2)' } }, 'Your orders: ',
+      orders.flatMap((o, i) => [i ? ' · ' : '', h('a', { href: '/mint/bulk/' + o.orderId }, `${fmtInt(o.blocks)} blocks of ${assetName(o.asset)}`)])) : null);
+    severalLine.hidden = false; list.reload();
+  }).catch(() => {});
   const publicPanel = panel('Public blocks', [h('div.stack', { style: { gap: '10px', padding: '12px 14px' } },
-    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, tokenLine, choiceLine, listNote, soon), list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
+    h('p', { style: { margin: 0 } }, h('strong', {}, PUBLIC_MINT_COPY)), picker, tokenLine, choiceLine, listNote, soon), severalLine, list.el], { flush: true, id: 'mint', actions: pill('No agent needed', 'good') });
   // A block opened from elsewhere (/mint?asset=…&block=…): its current state from the point read.
   const bigger = b => { b.classList.remove('sm'); b.classList.add('cta'); return b; };
   let chosenBox = null;

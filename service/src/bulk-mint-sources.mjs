@@ -399,14 +399,14 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     if (t.type === 'reserve-many') return reserve(t, anchor);
     const { terms, funding } = await accepted(t.id, anchor), base = { requestId: t.id, owner: terms.owner, terms: funding.terms };
     let evidence;
-    if (t.type === 'bulk-fund' || t.type === 'bulk-credit') {
+    if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) {
       const r = await receipt(t.id, t.reference, anchor, view);
-      if (t.type === 'bulk-fund') check(!funding.reference && BigInt(r.block.height) >= BigInt(funding.created) &&
-        BigInt(r.block.height) <= BigInt(terms.expires) && BigInt(anchor.counted) <= BigInt(terms.expires), 'bulk_payment_window', 409);
+      if (t.type !== 'bulk-credit') check(!funding.reference && BigInt(r.block.height) >= BigInt(funding.created) &&
+        (t.type === 'bulk-fund-held' || BigInt(r.block.height) <= BigInt(terms.expires) && BigInt(anchor.counted) <= BigInt(terms.expires)), 'bulk_payment_window', 409);
       evidence = { ...base, ...r, state: 'settled' };
-    } else if (t.type === 'bulk-consume') {
+    } else if (['bulk-consume', 'bulk-consume-held'].includes(t.type)) {
       check(funding.state === 'bulk-funded' && funding.reference && BigInt(funding.releasedMask) === 0n &&
-        BigInt(anchor.counted) <= BigInt(terms.expires), 'bulk_not_funded', 409);
+        (t.type === 'bulk-consume-held' || BigInt(anchor.counted) <= BigInt(terms.expires)), 'bulk_not_funded', 409);
       const r = await receipt(t.id, funding.reference, anchor, view);
       const entry = selectedDeployment(await reads.registry(), terms.asset, terms.deployment);
       check(entry, 'bulk_deployment_unavailable', 503);
@@ -433,6 +433,6 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
       evidence.feeManifest = source.feeManifest;
     }
     return b.bulkBytes(evidence, b.BULK_LIMITS.evidenceBytes, 'bulk_evidence_bytes');
-  }, ['bulk-fund', 'bulk-credit', 'bulk-consume', 'bulk-finish'].includes(transition.type));
+  }, ['bulk-fund', 'bulk-fund-held', 'bulk-credit', 'bulk-consume', 'bulk-consume-held', 'bulk-finish'].includes(transition.type));
   return reads;
 }

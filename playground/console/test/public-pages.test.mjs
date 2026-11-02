@@ -384,7 +384,7 @@ test('a pattern’s block list shows Minted for the chosen ticker; one ticker ke
     await p.route(/\/patterns\/p2(?::|%3A)0\/claimed-blocks\?/, route => { const u = new URL(route.request().url()); reads.push(Object.fromEntries(u.searchParams));
       json(route, { rows: [{ block: 7, height: 7, count: '1', found: true, finder: finderKey, minted: !u.searchParams.has('deployment'), link: null }], next: null, nextCursor: null }); });
     await p.goto(server.url + '/pattern/p2:0');
-    const blocks = p.locator('section.panel .section-label', { hasText: 'Blocks agents have submitted so far' }).locator('xpath=following-sibling::div[1]');
+    const blocks = p.locator('section.panel .section-label', { hasText: 'Blocks agents have submitted so far' }).locator('xpath=following-sibling::div[.//table][1]');
     await blocks.locator('tbody tr').first().waitFor();
     await p.waitForLoadState('networkidle');
     return { p, blocks, reads };
@@ -733,7 +733,7 @@ test('Pay and mint explains held TAP, a failed read and insufficient Bitcoin in 
   await p.getByText(/Not enough Bitcoin for fees:.*4,100 sats spendable/).waitFor();
   assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 0);
   wallet.state.coins[0].satoshi = 1000000; await pay();
-  await p.getByText('Paid. Your mint goes out automatically when the permit arrives. You can close this page.', { exact: true }).first().waitFor();
+  await p.getByText(/^Your payment is sent\. It counts once Bitcoin confirms it, usually within about 10 minutes; then the rest happens by itself\. Nothing to do; do not pay again\.$/).first().waitFor();
   assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
 });
 
@@ -749,7 +749,7 @@ test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside
   assert.match(await dialog.innerText(), /TAP Wallet asks once/); assert.match(await dialog.innerText(), /Bitcoin for the mint inscription\s+4,200 sats/);
   await shot(p, 'request-pay-and-mint-confirm');
   await dialog.getByRole('button', { name: 'Pay and mint', exact: true }).click();
-  await p.getByText('Paid. Your mint goes out automatically when the permit arrives. You can close this page.', { exact: true }).first().waitFor();
+  await p.getByText(/^Your payment is sent\. It counts once Bitcoin confirms it, usually within about 10 minutes; then the rest happens by itself\. Nothing to do; do not pay again\.$/).first().waitFor();
   const sent = wallet.state.calls.filter(c => c[0] === 'singleTxTransfer');
   assert.equal(sent.length, 1, 'one wallet approval');
   assert.deepEqual(sent[0][2], { extraOutputs: [{ address: setAsideAddress, satoshis: 4200, label: 'your mint inscription' }] });
@@ -758,7 +758,7 @@ test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside
   Object.assign(status, { state: 'paid', missing: [], payable: false, mintFunding: undefined, mintSender: { state: 'funded', fundingOutpoint: 'ab'.repeat(32) + ':1' } });
   await p.getByRole('button', { name: 'Refresh', exact: true }).click();
   const mine = panel(p, 'Your mint');
-  await mine.getByText(/Done: your payment and the set-aside confirmed on Bitcoin\./).waitFor();
+  await mine.getByText(/Done: your payment confirmed on Bitcoin\./).waitFor();
   await mine.getByText(/Now: waiting for the permit/).waitFor();
   assert.equal(await p.getByRole('button', { name: 'Inscribe mint', exact: true }).count(), 0);
   const commit = 'c1'.repeat(32), reveal = 'c2'.repeat(32);
@@ -771,7 +771,7 @@ test('one approval: Pay and mint sends one TAP Wallet payment with the set-aside
   await shot(p, 'request-mint-sent');
   Object.assign(status, { state: 'minted', inscription: reveal + 'i0', mintSender: { ...status.mintSender, state: 'minted' } });
   await p.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await p.getByText(/^Minted\. Inscription/).waitFor();
+  await p.getByText(/^Minted\. Your tokens are in your TAP Wallet\.\s+Inscription/).waitFor();
   assert.equal(wallet.state.calls.filter(c => c[0] === 'singleTxTransfer').length, 1);
   assert.doesNotMatch(await p.locator('main').innerText(), /\bprices?\b/i);
 });
@@ -780,14 +780,14 @@ test('needs_user: the server cannot send, so the page explains it and offers Ins
   const status = { ...awaiting(), state: 'permit_issued', missing: [], payable: false, mintFunding: undefined, mintSender: { state: 'needs_user' },
     mintContent: { p: 'tap', op: 'token-mint', tick: 'dmwfixture', amt: '3', dta: requestId, prv: { address: payer, hash: '56'.repeat(32) } } };
   const { p, wallet } = await requestPage(t, status);
-  await p.getByText('The set-aside was not enough after a fee rise; inscribe with your wallet. The set-aside is returned to you.', { exact: true }).waitFor();
+  await p.getByText('Your mint needs one more approval. Bitcoin fees rose above the Bitcoin your payment set aside, so our server cannot send your mint. Inscribe it from your TAP Wallet; the Bitcoin set aside is sent back to you.', { exact: true }).waitFor();
   await p.getByRole('button', { name: 'Inscribe mint', exact: true }).waitFor();
   assert.equal(await p.getByRole('heading', { name: 'Your mint', exact: true }).count(), 0);
   await shot(p, 'request-needs-user');
   // A mint without any server sending keeps today's Inscribe mint step.
   Object.assign(status, { mintSender: undefined });
   await p.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await p.getByText('Your payment won. This permit has no expiry; you can inscribe when ready.', { exact: true }).waitFor();
+  await p.getByText('Your payment won and your permit is ready. Inscribe the mint from your TAP Wallet below when you like; the permit has no expiry.', { exact: true }).waitFor();
   await p.getByRole('button', { name: 'Inscribe mint', exact: true }).waitFor();
   assert.deepEqual(wallet.state.calls, []);
 });
