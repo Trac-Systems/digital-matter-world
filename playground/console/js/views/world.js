@@ -48,9 +48,12 @@ export function mount(root, params) {
   // Data
   async function load(from, to) {
     if (site.public) {
-      let cursor = null, initialized = false;
-      do {
-        const r = await get(`/world/map?from=${from}&to=${to}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`);
+      let cursor = null, initialized = false, restarted = false;
+      for (;;) {
+        let r;
+        // A new batch makes a saved map cursor stale: read the range again from its start.
+        try { r = await get(`/world/map?from=${from}&to=${to}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`); }
+        catch (e) { if (!cursor || restarted || e.message !== 'page_cursor_stale') throw e; cursor = null; restarted = true; continue; }
         if (!alive) return;
         const first = Number(r.from), last = Number(r.to), frontier = Number(r.tip);
         if (![first, last, frontier].every(Number.isSafeInteger)) throw Error('Map height exceeds the canvas coordinate range');
@@ -65,7 +68,8 @@ export function mount(root, params) {
         }
         tip = Math.max(Number(tip), frontier); cursor = r.next ?? null;
         paint(); updateCount();
-      } while (cursor);
+        if (!cursor) break;
+      }
       return;
     }
     // The map keeps plot data, not rendered rows; each range is read in server pages of up to 200 plots.

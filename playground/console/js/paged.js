@@ -40,6 +40,8 @@ export function pagedTable(opts) {
     try { r = await get(`${base}${base.includes('?') ? '&' : '?'}${params}`); }
     catch (e) {
       if (seq === state.seq) {
+        // A new batch changed the list under a saved page cursor: start the list again from its first page.
+        if (cursor && e.message === 'page_cursor_stale') { state.cursors = [null]; state.at = 0; return load(0); }
         state.loading = false;
         el.setAttribute('aria-busy', 'false');
         if (opts.onError?.(e)) return;
