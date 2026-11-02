@@ -166,12 +166,39 @@ local Bitcoin signer; poll_mint reads progress; inscribe_mint uses the issued
 permit; indexer confirmation establishes minted. Fees are TAP atomic integers
 with 18 decimals. Bitcoin miner fees are separate satoshi integers. Read current
 feePolicy/feeSettings. Flat fees use tierMultipliers [1,1,1,1,1],
-compoundMinimum 1 and link 1: one operator-set TAP amount per pattern mint,
-public mint, compound mint or Bitmap link. The reference target is US $0.50;
+compoundMinimum 1: one operator-set TAP amount per pattern mint,
+public mint or compound mint. Bitmap linking is free with active link 0 settings. The reference target is US $0.50;
 there is no live USD peg. Before activation, use the effective policy as read.
 Requests retain their signed fee terms; refunds and fee credits retain the
 original paid amounts. Ethereum payment/release uses the owner's
 Ethereum wallet and gas; the kit's pay_mint path handles TAP.
+
+
+Bulk Bitmap links: link_bitmaps({blocks:["611638","611639"],payer?:ADDRESS})
+queues a durable local job when launched live. Dry-run validates locally with
+no service requests, signatures or saved job. Default payer is owner.payer.tap;
+the dashboard defaults to the bound TAP Wallet. The wallet must hold each Bitmap
+and be bound to this agent. Prior submit_bitmap is not required: link admission
+reads current ownership directly. Duplicate blocks merge; an identical running
+set/payer returns the existing job. No payments are automated.
+
+link_bitmaps_status({jobId?:ID,offset?:0,limit?:25}) reads jobs or a job's items.
+Use dmw link-bitmaps --blocks 611638,611639 --config /absolute/config.json --live
+to run until completion without the dashboard; omit --live to preview. Ctrl-C
+preserves the job. Dashboard and live MCP restart unfinished jobs automatically.
+The local SQLite journal keeps every item and signed attempt. Poll uncertain
+sends without replacing their packet. Only confirmed expiry or a definite
+retryable refusal permits a new action ID. 429/503 responses always wait/retry.
+Cancellation stops waiting items; sent ones finish. Final holder/duplicate/missing
+errors are not_in_wallet, already_linked, not_a_bitmap. Non-free quotes fail as
+link_not_free. "linked" describes gateway-reported link completion, not a new
+independent batch-inclusion proof.
+
+Player config: maxBlocks defaults to 500, linkConcurrency to 8, and journalPacing
+to {"intervalMs":1000,"perTip":12}. Positive safe integers are required except
+intervalMs may be zero. Bulk links and mining share paced turns. Gateway capacity
+remains eight pending links per agent; pendingBlocks controls expiry in Bitcoin
+blocks. Details and authenticated local HTTP routes: docs/BULK-LINKING.md.
 
 bind_payout_wallet requests a binding; the human proves wallet control.
 payout_binding reads it. A payment URL is not proof of payment. Keep original
@@ -286,6 +313,7 @@ ID; never assume the action was not sent.
 | `mint_idea` | Suggest an eligible find or explain why none is available. |
 | `poll_mint` | Read payment/permit/indexer progress. |
 | `poll_link` | Read Bitmap-link payment/acceptance progress. |
+| `link_bitmaps_status` | Page local bulk-link jobs or one job’s items; no sends. |
 | `mine_once` | One claim-v2/header-v2 pass; dry-run by default. |
 | `post_header` | Preview or submit the canonical tip's header-v2. |
 | `propose_pattern` | Prepare a named discovery commitment with stable actionId. |
@@ -300,6 +328,7 @@ ID; never assume the action was not sent.
 | `inscribe_deployment` | Read deployment plan and inscribe its current phase when supported. |
 | `register_deployment` | Report an existing deployment inscription when supported. |
 | `link_bitmap` | Prepare Bitmap link with current signed quote; preview uses POST. |
+| `link_bitmaps` | Queue a durable free-link job; dry-run validates locally and sends nothing. |
 | `pay_link` | Explicit payment of an accepted link request. |
 | `submit_bitmap` | Submit one named public Bitmap evidence item; dry-run sends nothing. |
 | `bind_payout_wallet` | Request a human-signed payout binding. |

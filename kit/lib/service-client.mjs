@@ -23,7 +23,8 @@ export class ServiceClient {
     }
     Object.defineProperty(this, 'receiptSigners', { value: receiptSigners && Object.freeze(receiptSigners.map(m => Object.freeze({ id: m.id, identity: m.identity }))) });
   }
-  async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0, retry = true } = {}) {
+  async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0, retry = true, signal } = {}) {
+    signal?.throwIfAborted();
     check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
     const search = query ? new URLSearchParams(query).toString() : '';
     const method = value === undefined ? 'GET' : 'POST';
@@ -33,7 +34,7 @@ export class ServiceClient {
     for (let attempt = 0; ; attempt++) try {
       response = await this.fetchImpl(this.origin + path + (search ? '?' + search : ''), { method: value === undefined ? 'GET' : 'POST', redirect: 'error',
         headers: value === undefined ? { accept: binary ? 'application/octet-stream' : 'application/json' } : { 'content-type': 'application/json' },
-        ...(value === undefined ? {} : { body: stableJSON(value) }), signal: AbortSignal.timeout(this.timeoutMs) });
+        ...(value === undefined ? {} : { body: stableJSON(value) }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs) });
       break;
     } catch (error) {
       const code = error.cause?.code ?? error.code ?? error.name;
@@ -65,7 +66,7 @@ export class ServiceClient {
       // A Trac batch landing during a read is refused as 400 or 503; the same request is retried.
       if (retry && (response.status === 503 && GATEWAY_BUSY.has(code) || code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
         await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterMs ?? 2000, 10000)));
-        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1, retry });
+        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1, retry, signal });
       }
       throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
         { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });

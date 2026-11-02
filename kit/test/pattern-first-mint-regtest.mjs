@@ -232,8 +232,8 @@ test('empty table discovery, first claim, wallet element/deploy, paid permit and
   assert.equal(patterns.length, 1); assert.equal(accepted.number, 0); assert.equal(accepted.discoverer, owner);
   const snapshot = { length: accepted.historyHeight + 1, get: history.get, field: history.field };
   assert.equal(accepted.rarity, rules.analyzePattern(proposal, snapshot).rarity);
-  assert.deepEqual(chooseClaims({ history, patterns: [] }), []);
-  assert.deepEqual(chooseClaims({ history, patterns, claimsPerWindow: 1 }).map(r => r.patterns), [[0]]);
+  assert.deepEqual(await chooseClaims({ history, patterns: [] }), []);
+  assert.deepEqual((await chooseClaims({ history, patterns, claimsPerWindow: 1 })).map(r => r.patterns), [[0]]);
   const find = rules.recordGet(state.finds, rules.findId(claimBlock, 0));
   assert.equal(find.finder, owner); assert.equal(find.source, 'claim');
   assert.equal(await ledger.balance(await ledger.agent(owner), 'p0'), String(find.count));

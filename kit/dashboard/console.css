@@ -451,3 +451,24 @@ a.btn { text-decoration: none; }
 .about-flow .fl-treasury { fill: var(--ink-2); }
 @media (max-width: 760px) { .about-flow .fl-wide { display: none; } .about-flow .fl-narrow { display: block; } }
 @media (max-width: 640px) { .about-flow, .about-topics { margin-left: 4px; margin-right: 4px; } .about-steps li { gap: 10px; } }
+/* Linking several Bitmaps (local dashboard): the block field grows with a pasted list; jobs and picks sit in boxes. */
+textarea.input.blocks { height: 34px; min-height: 34px; max-height: 160px; padding: 6px 10px; line-height: 20px; resize: vertical; font-family: var(--mono); }
+.link-job, .link-picker { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); }
+.link-job .job-head, .link-picker .job-head { gap: 8px; padding: 9px 12px; }
+.job-head .grow { flex: 1; }
+.link-job > .paged { border-top: 1px solid var(--rule-2); }
+.link-job table.t td { padding: 6px 12px; }
+a.pill-link { text-decoration: none; }
+a.pill-link .pill { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.bitmap-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px 14px; padding: 4px 12px 10px; }
+.link-picker > .note, .link-earlier > .note { margin: 0 12px 8px; }
+.link-earlier-list { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); }
+.link-earlier details + details { border-top: 1px solid var(--rule-2); }
+.link-earlier summary { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 9px 12px; cursor: pointer; list-style: none; }
+.link-earlier summary > .small { margin-left: auto; }
+.link-earlier summary::-webkit-details-marker { display: none; }
+.link-earlier summary::before { content: '▸'; color: var(--ink-3); margin-right: -6px; }
+.link-earlier details[open] > summary::before { content: '▾'; }
+.link-earlier details > div { padding: 0 12px 12px; }
+.link-earlier .link-job > .note { margin: 8px 12px; }
+.link-earlier .link-job > .paged { border-top: 0; }

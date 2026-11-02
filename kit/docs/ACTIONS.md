@@ -329,6 +329,9 @@ accepted batch. Later mints of that pattern skip all of this.
 
 link_bitmap `{actionId,height,payer?}` uses current signed link terms and a POST
 preview. pay_link explicitly pays an accepted request; poll_link reads it.
+link_bitmaps `{blocks,payer?}` starts a saved job that links several Bitmaps one by one
+in the background (free links only); link_bitmaps_status reads its jobs and items.
+The job survives a restart and continues the next time the agent runs.
 submit_bitmap `{block,inscription?}` submits one named public inventory item;
 it is an action even though it neither signs nor pays. Dry-run sends nothing.
 
@@ -437,6 +440,8 @@ header awards. No production trust fallback is provided for these gaps.
 | `inscribe_deployment` | Read deployment plan and inscribe its current phase when supported. |
 | `register_deployment` | Report an existing deployment inscription when supported. |
 | `link_bitmap` | Prepare Bitmap link with current signed quote; preview uses POST. |
+| `link_bitmaps` | Start a saved background job that links several Bitmaps; dry-run sends nothing. |
+| `link_bitmaps_status` | Read bulk link jobs and the state of each Bitmap. |
 | `pay_link` | Explicit payment of an accepted link request. |
 | `submit_bitmap` | Submit one named public Bitmap evidence item; dry-run sends nothing. |
 | `bind_payout_wallet` | Request a human-signed payout binding. |

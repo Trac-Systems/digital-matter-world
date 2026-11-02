@@ -24,6 +24,8 @@ import { HistorySync } from '../lib/history-sync.mjs';
 import { loadRegtestHistory } from '../lib/headers.mjs';
 import { localBitcoinWallet, mempoolBitcoinSource } from '../lib/bitcoin-wallet.mjs';
 import { dashboardProfile, findDashboardControl, reserveDashboardControl, dashboardControlHandler, forwardDashboardTool } from '../lib/dashboard-control.mjs';
+import { BulkLinkWorker } from '../lib/bulk-link.mjs';
+import { linkSettings, journalPacing } from '../lib/link-settings.mjs';
 
 const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, options: {
   directory: { type: 'string' }, config: { type: 'string' }, live: { type: 'boolean', default: false },
@@ -31,7 +33,7 @@ const { values: opts, positionals: args } = parseArgs({ allowPositionals: true, 
   headers: { type: 'string' }, source: { type: 'string' }, independent: { type: 'string' }, output: { type: 'string' },
   start: { type: 'string' }, end: { type: 'string' }, patterns: { type: 'string' }, strategy: { type: 'string' }, help: { type: 'boolean' },
   'max-fee-sats': { type: 'string' }, retry: { type: 'boolean' }, 'fee-rate': { type: 'string' },
-  cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }
+  cursor: { type: 'string' }, limit: { type: 'string' }, port: { type: 'string' }, blocks: { type: 'string' }, payer: { type: 'string' }
 } });
 const print = value => process.stdout.write(JSON.stringify(publicIdentities(value)) + '\n');
 async function secret(name, prompt) {
@@ -63,6 +65,23 @@ async function mcpSession(server) {
     process.once('SIGTERM', end); process.once('SIGINT', end); process.stdin.once('end', end); server.server.onclose = end;
   });
 }
+// Ctrl-C stops this foreground wait; the durable job remains resumable.
+async function waitForBulkJob(id, read) {
+  let stopped = false, wake;
+  const stop = () => { stopped = true; wake?.(); };
+  process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  try {
+    for (;;) {
+      const job = await read(id);
+      if (job.state !== 'running' || stopped) return { job };
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 1000);
+        wake = () => { clearTimeout(timer); resolve(); };
+        if (stopped) wake();
+      });
+    }
+  } finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+}
 // One readable log line per pass: the outcome, never the full signed receipt.
 const huntSummary = r => JSON.stringify(Object.fromEntries(['state', 'claimState', 'phase', 'window', 'actionId', 'message', 'reason']
   .filter(k => r?.[k] !== undefined).map(k => [k, r[k]]).concat(Array.isArray(r?.plots) ? [['plots', r.plots.length], ['patterns', r.patterns]] : [])));
@@ -72,7 +91,7 @@ async function main() {
   const live = opts.live || command === 'dashboard';
   if (command === 'dashboard') check(opts.port === undefined || /^(0|[1-9][0-9]{0,4})$/.test(opts.port) && Number(opts.port) <= 65535, 'Invalid dashboard port');
   let directory = opts.directory ?? process.env.DMW_SIGNER_DIRECTORY ?? defaultDirectory();
-  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nWhile it runs, the dashboard keeps the agent claiming once per new Bitcoin block and reveals its saved patterns when due.\nCLI and MCP calls for the same signer and settings run inside the dashboard; each launch still needs the signer password.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
+  if (opts.help || command === 'help') { process.stdout.write('dmw setup|upgrade|preflight|init|import|address|verify-history|download|backtest|status|once|action|read|mcp|dashboard\n\ndmw setup --network mainnet [--import] [--directory DIR] [--skip-addresses]\ndmw upgrade --config FILE\ndmw preflight --network mainnet\ndmw read TOOL [ARGS.json] --config FILE [--limit 50] [--cursor TOKEN]\ndmw action TOOL [ARGS.json] --config FILE [--live]\ndmw deploy-ticker ASSET TICKER --config FILE [--live] [--max-fee-sats ATOMS]\ndmw dashboard --config /absolute/mainnet.json [--port PORT]\ndmw link-bitmaps --blocks 1,2,3 --config /absolute/mainnet.json [--payer ADDRESS] [--live]\nDashboard clicks sign live mint requests; wallet payments require browser approval.\nWhile it runs, the dashboard keeps the agent claiming once per new Bitcoin block and reveals its saved patterns when due.\nCLI and MCP calls for the same signer and settings run inside the dashboard; each launch still needs the signer password.\nAll tool names and JSON arguments match MCP. Read commands never sign or send moves.\nActions default to dry-run; --live enables sends. Setup writes the pinned network config.\nPasswords and recovery words are accepted only through a hidden terminal prompt\nor DMW_SIGNER_PASSWORD / DMW_SIGNER_MNEMONIC in the local launch environment.\nSee kit/README.md for setup and MCP connection commands.\n'); return; }
   if (command === 'setup') {
     print(await setup({ network: opts.network ?? 'mainnet', networkFile: opts['network-file'], directory, configFile: opts.config,
       password: () => secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): '),
@@ -111,11 +130,15 @@ async function main() {
   }
   const password = await secret('DMW_SIGNER_PASSWORD', 'Keyring password (12+ characters): ');
   if (command === 'init' || command === 'import') { print(await init({ directory, password, ...(command === 'import' ? { mnemonic: await secret('DMW_SIGNER_MNEMONIC', 'Recovery words: ') } : {}) })); return; }
-  const wallet = await unlock({ directory, password }); let journal, adapter, server, historySync, bitcoinWallet, controlLease;
-  const shutdown = async () => { if (server) { const s = server; server = null; await s.close(); } await historySync?.close(); if (journal) { journal.close(); journal = null; } await adapter?.close?.(); bitcoinWallet?.close(); await controlLease?.release(); wipeWallet(wallet); };
+  const wallet = await unlock({ directory, password }); let journal, adapter, server, historySync, bitcoinWallet, controlLease, bulkLinks;
+  const shutdown = async () => { if (server) { const s = server; server = null; await s.close(); } await bulkLinks?.close(); await historySync?.close(); if (journal) { journal.close(); journal = null; } await adapter?.close?.(); bitcoinWallet?.close(); await controlLease?.release(); wipeWallet(wallet); };
   try {
     if (command === 'address') { print({ address: publicAddress(wallet) }); return; }
     let name, input = {};
+    if (command === 'link-bitmaps') {
+      check(typeof opts.blocks === 'string', 'Pass --blocks 1,2,3'); name = 'link_bitmaps';
+      input = { blocks: opts.blocks.split(',').map(block => block.trim()), ...(opts.payer === undefined ? {} : { payer: opts.payer }) };
+    }
     if (command === 'deploy-ticker') { check(args.length === 3, 'Usage: deploy-ticker <asset> <ticker>'); name = 'deploy_ticker'; input = { asset: args[1], ticker: args[2], ...(opts.retry ? { retry: true } : {}), ...(opts['max-fee-sats'] ? { maxFeeSats: opts['max-fee-sats'] } : {}), ...(opts['fee-rate'] ? { feeRate: Number(opts['fee-rate']) } : {}) }; }
     if (command === 'read' || command === 'action') {
       check(args[1], 'Pass a tool name or action JSON file');
@@ -126,7 +149,7 @@ async function main() {
     }
     const toolInput = { ...input, ...(opts.limit === undefined ? {} : { limit: Number(opts.limit) }), ...(opts.cursor === undefined ? {} : { cursor: opts.cursor }) };
     const scope = `${config.network}/${publicKey(wallet)}`, profile = dashboardProfile(config, opts);
-    if (['read', 'action', 'deploy-ticker', 'once', 'status', 'mcp'].includes(command)) {
+    if (['read', 'action', 'deploy-ticker', 'link-bitmaps', 'once', 'status', 'mcp'].includes(command)) {
       const control = await findDashboardControl({ directory, scope, profile });
       if (control) {
         const invoke = (name, input, extra) => forwardDashboardTool(control, wallet, { name, input, readOnly: command === 'read', live,
@@ -137,7 +160,10 @@ async function main() {
         } else {
           const result = await invoke(command === 'once' ? 'mine_once' : command === 'status' ? 'status' : name,
             ['once', 'status'].includes(command) ? {} : toolInput);
-          process.stderr.write('Your dashboard is running; this command ran inside it.\n'); print(result);
+          process.stderr.write('Your dashboard is running; this command ran inside it.\n');
+          if (command === 'link-bitmaps' && live) print(await waitForBulkJob(result.job.id, async id =>
+            (await invoke('link_bitmaps_status', { jobId: id, limit: 1 })).job));
+          else print(result);
         }
         return;
       }
@@ -153,13 +179,15 @@ async function main() {
     if (production) console.log = console.info = console.debug = () => {};
     const adapterModule=production?await import('../lib/mainnet-adapter.mjs'):await import(pathToFileURL(config.adapter));
     adapter=await adapterModule.create({wallet,network:config.network,localOnly:!production,config,service,dryRun:!live});
-    journal = await Journal.open(directory, scope);
+    journal = await Journal.open(directory, scope, journalPacing(config.journalPacing));
     const bitcoinNetwork = config.bitcoinNetwork ?? (config.powLimitBits === 0x207fffff ? 'regtest' : 'mainnet');
     bitcoinWallet = localBitcoinWallet({ wallet, network: bitcoinNetwork, authority: config.bitcoin?.authority,
       source: adapter.bitcoinSource ?? (bitcoinNetwork === 'mainnet' || config.bitcoin?.origin ? mempoolBitcoinSource({ network: bitcoinNetwork, ...config.bitcoin }) : undefined) });
     const agentOptions = { wallet, network: config.network, service, trac: adapter.trac, journal, bitcoinWallet, dryRun: !live, puzzleBits: config.puzzleBits ?? 12,
       powLimitBits: config.powLimitBits ?? 0x1d00ffff, paymentOrigin: config.paymentOrigin, owner: config.owner, bitcoinNetwork: config.bitcoinNetwork, miningReads: config.miningReads };
     const agent = new Agent({ ...agentOptions, journal: command === 'dashboard' ? dashboardJournal(journal) : journal });
+    agent.linkSettings = linkSettings(config);
+    bulkLinks = new BulkLinkWorker(agent);
     const strategyTool = ['mine_once', 'search_patterns', 'compound_idea', 'mint_idea', 'backtest'].includes(name);
     const historyTool = ['search_patterns', 'pattern_search_matches', 'propose_pattern', 'reveal_pattern', 'backtest'].includes(name);
     const hunting = command === 'dashboard', session = ['mcp', 'once'].includes(command) || hunting;
@@ -174,7 +202,11 @@ async function main() {
       } else if (opts.headers ?? config.headers) history = await (agent.bitcoinNetwork === 'regtest' ? loadRegtestHistory : loadHistory)(opts.headers ?? config.headers);
     }
     const strategies = (session || strategyTool) && (opts.strategy ?? config.strategy) ? await import(pathToFileURL(resolve(opts.strategy ?? config.strategy))) : {};
-    const context = { agent, history, historySync, source, strategies, candidates: adapter.candidates, compounds: adapter.compounds };
+    const context = { agent, bulkLinks, history, historySync, source, strategies, candidates: adapter.candidates, compounds: adapter.compounds };
+    if (command === 'link-bitmaps') {
+      const result = await runTool(context, name, toolInput);
+      print(live ? await waitForBulkJob(result.job.id, async id => bulkLinks.jobs.get(id)) : result); return;
+    }
     if (command === 'read' || command === 'action' || command === 'deploy-ticker') {
       print(await runTool(context, name, toolInput, { readOnly: command === 'read' }));
       return;
@@ -185,9 +217,12 @@ async function main() {
       // Keep both launch modes immutable, including their PlayerMint helpers.
       // Forwarded calls retain the ordinary CLI journal's rate gates.
       const forwardAgents = { live: new Agent({ ...agentOptions, dryRun: false }), dry: new Agent({ ...agentOptions, dryRun: true }) };
+      const miningAgent = new Agent({ ...agentOptions, dryRun: false });
       // Exclusive agent actions share one turn queue with mining and clicks;
       // their closures still use their own immutable launch mode and journal.
       for (const forwarded of Object.values(forwardAgents)) forwarded.exclusive = fn => agent.exclusive(fn);
+      miningAgent.exclusive = fn => agent.exclusive(fn);
+      const miningContext = { ...context, agent: miningAgent };
       const control = dashboardControlHandler(controlLease, async ({ name, input, readOnly, live, waitForHistory }, extra) => {
         if (waitForHistory) await historySync?.pending;
         return runTool({ ...context, agent: live ? forwardAgents.live : forwardAgents.dry }, name, input, { readOnly, ...extra });
@@ -206,12 +241,12 @@ async function main() {
           let tip = null;
           try { tip = readInteger((await agent.service.latest()).tip); } catch {}
           if (tip !== null && tip !== done) {
-            try { const r = await runTool(context, 'mine_once', {}); if (r.claimState !== 'taken_syncing') done = tip;
+            try { const r = await runTool(miningContext, 'mine_once', {}); if (r.claimState !== 'taken_syncing') done = tip;
               process.stdout.write(`${new Date().toISOString()} hunt tip ${tip}: ${huntSummary(r)}\n`); }
             catch (error) { process.stdout.write(`${new Date().toISOString()} hunt tip ${tip} failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
             // The agent's own saved pattern proposals are revealed as soon as their window opens.
             try { for (const row of (await agent.hunting({ limit: 200 })).items.filter(r => r.type === 'discovery' && r.phase === 'reveal_window')) {
-              const r = await runTool(context, 'reveal_pattern', { actionId: row.actionId });
+              const r = await runTool(miningContext, 'reveal_pattern', { actionId: row.actionId });
               process.stdout.write(`${new Date().toISOString()} reveal ${row.actionId}: ${huntSummary(r)}\n`); } }
             catch (error) { process.stdout.write(`${new Date().toISOString()} reveal failed: ${JSON.stringify(explainError(error)).slice(0, 300)}\n`); }
           }
@@ -222,6 +257,7 @@ async function main() {
       // A mining pass in flight must not hold up shutdown; closing the stores ends it.
       stop = true; await Promise.race([hunt, new Promise(resolve => setTimeout(resolve, 3000).unref())]);
     } else if (command === 'mcp') {
+      if (live) bulkLinks.start();
       server = await serveMcp(context);
       await mcpSession(server);
     } else throw new Error('Unknown command; run dmw --help');

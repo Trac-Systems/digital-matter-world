@@ -6,12 +6,12 @@ import { Journal } from '../lib/journal.mjs';
 import { temp, cleanup, history, fakeTrac, testWallet } from './helpers.mjs';
 import { CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW } from '../../rules/src/index.js';
 const patterns = [{ number: 0, name: 'dmwtest', fld: 4, dt: 'n', pat: '[0-9]', rarity: 201 }];
-test('default hunts old matching blocks, excludes found/minted slots and follows the configured budget', () => {
+test('default hunts old matching blocks, excludes found/minted slots and follows the configured budget', async () => {
   const hist = history(220), taken = { 0: new Set(Array.from({ length: 20 }, (_, i) => i)) };
-  const claims = chooseClaims({ history: hist, patterns, taken, claimableHeight: 199, window: 201 });
+  const claims = await chooseClaims({ history: hist, patterns, taken, claimableHeight: 199, window: 201 });
   assert.equal(claims.length, CLAIM_DEFAULTS.claimsPerWindow);
   assert.equal(claims[0].block, 20); assert.equal(claims.at(-1).block, 20 + CLAIM_DEFAULTS.claimsPerWindow - 1);
-  const all = chooseClaims({ history: hist, patterns, taken, claimsPerWindow: MAX_CLAIMS_PER_WINDOW, claimableHeight: 199, window: 201 });
+  const all = await chooseClaims({ history: hist, patterns, taken, claimsPerWindow: MAX_CLAIMS_PER_WINDOW, claimableHeight: 199, window: 201 });
   assert.equal(all.length, 181); assert.equal(all.at(-1).block, 201);
   assert.ok(!all.some(p => p.block === 200 || p.block > 201));
 });

@@ -13,6 +13,8 @@ import { compoundTickerMessage, validateOfficialTicker } from '../../rules/src/t
 import { signBytes } from './signing.mjs';
 import { formatTnk } from './tnk-values.mjs';
 import { previewCraftNamed } from './craft-v2.mjs';
+import { BulkLinkWorker } from './bulk-link.mjs';
+import { linkBlocks } from './link-jobs.mjs';
 
 export function dashboardCheck(ok, code, status = 400) {
   if (!ok) throw Object.assign(Error(code), { code, status });
@@ -111,7 +113,7 @@ const tnkFailure = error => {
 // Financial requests are independently identified. Mining's per-tip move
 // allowance must not make a human's mint click wait for another Bitcoin block.
 export function dashboardJournal(journal) {
-  return Object.assign(Object.create(journal), { waitTurn: async getHead => getHead(), finishTurn() {} });
+  return Object.assign(Object.create(journal), { rateJournal: journal, waitTurn: async getHead => getHead(), finishTurn() {} });
 }
 
 // A payment or mint the gateway has seen on Bitcoin and that waits for its confirmation (display only).
@@ -121,6 +123,7 @@ export class DashboardState {
     this.context = context; this.agent = context.agent;
     dashboardCheck(!this.agent.dryRun, 'dashboard_requires_live_signer');
     this.journal = this.agent.journal; this.service = this.agent.service;
+    this.bulkLinks = context.bulkLinks ?? new BulkLinkWorker(this.agent);
     this.inflight = new Map(); this.names = new Map(); this.closed = false;
     this.batch = null; this.batchTask = null; this.walletLocks = new Map(); this.instance = randomUUID();
     this.journal.db.exec('CREATE TABLE IF NOT EXISTS dashboard_wallet (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key))');
@@ -148,8 +151,13 @@ export class DashboardState {
       }
       db.prepare('INSERT OR REPLACE INTO dashboard_runtime(scope,pid,instance) VALUES(?,?,?)').run(this.journal.scope, process.pid, this.instance);
       db.exec('COMMIT'); this.active = true;
+      this.bulkLinks.start();
       if (this.batch && ['running', 'waiting_slots'].includes(this.batch.state)) this.bulkTimer = setTimeout(() => this.resumeBulkPlanner(), 0).unref();
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) {
+      if (this.active) { db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance); this.active = false; }
+      else db.exec('ROLLBACK');
+      throw error;
+    }
   }
   savedMints() {
     return this.journal.db.prepare("SELECT id FROM actions WHERE scope=? AND id LIKE 'mint/%' AND id NOT LIKE '%/reservation-v2' ORDER BY rowid DESC")
@@ -438,6 +446,14 @@ export class DashboardState {
     const result = await this.agent.linkBitmap({ actionId: 'dashboard-link-' + value.height + '-' + payer.slice(-8), height: Number.isSafeInteger(Number(value.height)) ? Number(value.height) : value.height, payer });
     dashboardCheck(typeof result?.paymentLink === 'string', result?.state ? 'link_' + result.state : 'link_unavailable', 409);
     return { paymentLink: result.paymentLink, state: result.state ?? null };
+  }
+  async linkBulk(value) {
+    dashboardCheck(!this.closed, 'dashboard_stopping', 503);
+    dashboardCheck(value && Object.keys(value).every(k => ['blocks', 'payer'].includes(k)), 'invalid_blocks');
+    linkBlocks(value.blocks, this.bulkLinks.jobs.settings.maxBlocks);
+    const result = this.bulkLinks.create({ ...value, payer: value.payer ?? await this.payout() });
+    if (result.existing) throw Object.assign(Error('link_job_running'), { code: 'link_job_running', status: 409, job: result.job });
+    return { job: result.job };
   }
   async payment(value) {
     dashboardCheck(value && Object.keys(value).every(k => ['id', 'paymentId', 'inscription'].includes(k)) && requestId(value.id) &&
@@ -1476,7 +1492,7 @@ export class DashboardState {
   }
   async close() {
     this.closed = true; clearTimeout(this.bulkTimer); this.wakeSend?.();
-    try { await this.batchTask; await Promise.allSettled([...this.inflight.values()]); await this.sendTail; await this.tnkTail; await this.craftTail; }
+    try { await this.bulkLinks.close(); await this.batchTask; await Promise.allSettled([...this.inflight.values()]); await this.sendTail; await this.tnkTail; await this.craftTail; }
     finally {
       if (this.active) this.journal.db.prepare('DELETE FROM dashboard_runtime WHERE scope=? AND instance=?').run(this.journal.scope, this.instance);
       this.active = false;

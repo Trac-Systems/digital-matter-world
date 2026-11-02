@@ -9,6 +9,7 @@ import { backtest } from './backtest.mjs';
 import { chooseClaims, chooseCompound, chooseMint } from '../strategies/default.mjs';
 import { readTools } from './read-tools.mjs';
 import { isAsset, patternId, readInteger } from './api-values.mjs';
+import { BulkLinkWorker, previewLinkJob } from './bulk-link.mjs';
 
 const hex = z.string().regex(/^[0-9a-f]{64}$/), units = z.string().regex(/^[1-9][0-9]{0,77}$/), height = z.number().int().nonnegative().safe();
 const asset = z.string().refine(isAsset, 'Invalid matter asset'), actionId = z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/);
@@ -24,7 +25,7 @@ const namedAnchor = z.object({ height: decimal, hash: hex }).strict();
 const namedMatches = z.array(z.object({ height: decimal, hash: hex, count: decimal }).strict()).min(1);
 const witnesses = z.object({ anchor: namedAnchor, matches: namedMatches }).strict();
 
-export function gameTools({ agent, history, historySync, source, strategies = {}, candidates = async () => [], compounds = async () => [] }) {
+export function gameTools({ agent, bulkLinks, history, historySync, source, strategies = {}, candidates = async () => [], compounds = async () => [] }) {
   const tools = {};
   const register = (name, description, shape, run, readOnly = true) => { tools[name] = { description, shape, schema: z.object(shape).strict(), run: async (...args) => { const result = await run(...args); return ['quote_bulk_mint', 'mint_bulk_on_chain', 'poll_bulk_mint', 'pay_bulk_mint'].includes(name) ? result : publicIdentities(result); }, readOnly }; };
   const currentHistory = () => historySync?.available() ?? history;
@@ -185,6 +186,16 @@ export function gameTools({ agent, history, historySync, source, strategies = {}
   register('poll_link', 'Read a paid link reservation and terminal settlement without signing or broadcasting.', { id: hex, timeoutMs: z.number().int().min(0).max(120000).default(30000) },
     (args, extra) => agent.playerLink.poll(args.id, { timeoutMs: args.timeoutMs, signal: extra?.signal }));
   register('link_bitmap', 'Sign a permanent Bitmap-link request and return its payment page. Acceptance requires current holder evidence. A zero-fee quote is Free and needs no payment.', { actionId, height: z.union([height, decimal]), payer: z.string().min(1).max(128).optional() }, args => agent.linkBitmap(args), false);
+  const linkWorker = () => bulkLinks ?? (agent.bulkLinks ??= new BulkLinkWorker(agent));
+  register('link_bitmaps', 'Queue free Bitmap links in the local journal. Dry-run validates the list without any service request. Live jobs resume when the dashboard or live MCP starts again.',
+    { blocks: z.array(decimal).min(1), payer: z.string().min(1).max(128).optional() }, args => {
+      if (agent.dryRun) return previewLinkJob(agent, args, bulkLinks?.jobs.settings);
+      const worker = linkWorker(); worker.start(); const { job, existing } = worker.create(args); return { job, ...(existing ? { existing: true } : {}) };
+    }, false);
+  register('link_bitmaps_status', 'Read local bulk-link jobs, or page the items of one job. Sends nothing.',
+    { jobId: z.string().min(1).max(128).optional(), offset: z.number().int().nonnegative().safe().default(0), limit: z.number().int().min(1).max(200).optional() },
+    ({ jobId, offset, limit }) => jobId ? linkWorker().jobs.detail(jobId, { offset, ...(limit === undefined ? {} : { limit }) })
+      : linkWorker().jobs.list({ offset, ...(limit === undefined ? {} : { limit }) }));
   register('transfer', 'Transfer integer units to a trac1… address using exact ledger assets after public-mint activation. Before activation, retain the authorization locally. V2 moves need no sender TNK; legacy transfers charge your own address. Reuse the action ID.', { actionId, to: z.string().refine(isTracAddress, TRAC_ADDRESS_ERROR), assets: pairs }, ({ actionId, ...value }) => agent.transaction({ actionId, op: 'tf', value }), false);
   return tools;
 }

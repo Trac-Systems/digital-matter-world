@@ -6,7 +6,7 @@
 // test your own variety with search_patterns before committing. That is where
 // stronger agents can beat weaker models. This is a starting point, not a sweep.
 import { wireIdentities } from '../../rules/src/trac-address.js';
-import { compoundIdentityV4Active, patternCatalogId, patternAmount, CLAIM_DEFAULTS, MAX_CLAIMS_PER_WINDOW, compound, patternProperties, mintRight } from '../../rules/src/index.js';
+import { compoundIdentityV4Active, patternCatalogId, compound, patternProperties, mintRight } from '../../rules/src/index.js';
 import { analyzePattern, PATTERN_LIMITS } from '../../rules/src/patterns.js';
 import { namePatterns, patternName } from '../lib/pattern-names.mjs';
 import { patternId, readInteger } from '../lib/api-values.mjs';
@@ -25,26 +25,8 @@ for (const [fld, dt, shapes] of [
 ]) for (const pat of shapes) baseline.push({ pat, fld, dt });
 
 
-// Hunt each pattern throughout counted history, rarest first. Public index
-// exclusions and the window budget are supplied by the caller, never fetched here.
-export function chooseClaims({ history, patterns = [], taken = {}, claimsPerWindow = CLAIM_DEFAULTS.claimsPerWindow, claimableHeight = history.length - 1, window = claimableHeight }) {
-  const budget = Math.min(MAX_CLAIMS_PER_WINDOW, Math.max(0, claimsPerWindow)), plots = new Map();
-  let selected = 0;
-  for (const pattern of [...patterns].sort((a, b) => {
-    const x = a.knownMatchCount ?? a.rarity, y = b.knownMatchCount ?? b.rarity;
-    return (x == null ? y == null ? 0 : 1 : y == null ? -1 : compareCount(x, y)) || compareCount(a.number, b.number);
-  })) {
-    const excluded = taken[pattern.number] ?? new Set();
-    for (let block = 0; block < history.length && selected < budget; block++) {
-      if (block > claimableHeight && block !== window || excluded.has(block)) continue;
-      if (patternAmount(pattern, history.get(block)) === '0') continue;
-      const row = plots.get(block) ?? { block, patterns: [] };
-      row.patterns.push(readInteger(pattern.number)); plots.set(block, row); selected++;
-    }
-    if (selected >= budget) break;
-  }
-  return [...plots.values()].sort((a, b) => a.block - b.block).map(row => ({ ...row, patterns: row.patterns.sort((a, b) => a - b) }));
-}
+// Async, sliced all-history selection; the remaining strategies stay synchronous.
+export { chooseClaims, createClaimSelector } from './claim-hunt.mjs';
 export function* searchPatterns({ history, patterns = [], settings, executionHeight = '0' } = {}) {
   const namedBaseline = namePatterns(baseline, [], executionHeight);
   // Naming is fixed before ranking so a growing history cannot rename a motif.

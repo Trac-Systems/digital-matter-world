@@ -58,7 +58,7 @@ test('100000 claimed slots across five patterns: identical choices with bounded 
   const cold = await Agent.prototype.takenSlots.call(agent, patterns), coldRequests = requests, coldBytes = bytes;
   assert.deepEqual(cold, baseline); assert.equal(coldRequests, 25);
   const history = { length: 25001, get: height => ({ height }) }, args = { history, patterns, claimsPerWindow: 100, claimableHeight: 25000, window: 25000 };
-  assert.deepEqual(chooseClaims({ ...args, taken: cold }), chooseClaims({ ...args, taken: baseline }));
+  assert.deepEqual(await chooseClaims({ ...args, taken: cold }), await chooseClaims({ ...args, taken: baseline }));
   requests = 0; bytes = 0;
   assert.deepEqual(await Agent.prototype.takenSlots.call(agent, patterns), baseline);
   const unchanged = requests, unchangedBytes = bytes; assert.equal(unchanged, 1);
@@ -68,7 +68,7 @@ test('100000 claimed slots across five patterns: identical choices with bounded 
   requests = 0; bytes = 0;
   const updated = await Agent.prototype.takenSlots.call(agent, patterns), changed = requests, changedBytes = bytes;
   assert.deepEqual(updated, baseline); assert.equal(changed, 1);
-  assert.deepEqual(chooseClaims({ ...args, taken: updated }), chooseClaims({ ...args, taken: baseline }));
+  assert.deepEqual(await chooseClaims({ ...args, taken: updated }), await chooseClaims({ ...args, taken: baseline }));
   requests = 0;
   const restarted = { ...agent, takenCache: undefined };
   assert.deepEqual(await Agent.prototype.takenSlots.call(restarted, patterns), baseline);

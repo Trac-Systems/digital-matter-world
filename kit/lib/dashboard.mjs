@@ -115,6 +115,22 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       if (req.method === 'GET' && path === '/api/links') {
         keys(['offset', 'limit']); json(await state.links({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 10) })); return;
       }
+      if (path === '/api/link-bulk') {
+        if (req.method === 'POST') { keys([]); json(await state.linkBulk(await body(req))); return; }
+        keys(['offset', 'limit']); json(state.bulkLinks.jobs.list({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 10) })); return;
+      }
+      // The page asks for the agent's own unlinked Bitmaps; this agent has no such list yet (a quiet 404 hides the picker).
+      if (req.method === 'GET' && path === '/api/link-bulk/candidates') { json({ error: 'not_available' }, 404); return; }
+      const linkJob = /^\/api\/link-bulk\/([a-zA-Z0-9._-]+)(\/cancel)?$/.exec(path);
+      if (linkJob && req.method === 'GET' && !linkJob[2]) {
+        keys(['offset', 'limit']); json(state.bulkLinks.jobs.detail(linkJob[1], { offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
+      }
+      if (linkJob?.[2] && req.method === 'POST') {
+        keys([]); dashboardCheck(!state.closed, 'dashboard_stopping', 503);
+        const value = !req.headers['transfer-encoding'] && !Number(req.headers['content-length'] ?? 0) ? {} : await body(req);
+        dashboardCheck(!Object.keys(value).length, 'invalid_cancel');
+        json(state.bulkLinks.jobs.cancel(linkJob[1])); return;
+      }
       if (req.method === 'GET' && path === '/api/bulk') {
         keys(['offset', 'limit']); json(await state.bulkOrders({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })); return;
       }
@@ -181,7 +197,7 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
     } catch (error) {
       // Opt-in local diagnostics: the owner's terminal only, never the page.
       if (process.env.DMW_DASHBOARD_DEBUG === '1') process.stderr.write(`dashboard ${req.method} ${req.url.split('?')[0]}: ${String(error?.stack ?? error).slice(0, 2000)}\n`);
-      if (!res.headersSent) json({ error: dashboardError(error) }, [400, 401, 403, 404, 409, 413, 415, 429, 502, 503].includes(error.status) ? error.status : 500);
+      if (!res.headersSent) json({ error: dashboardError(error), ...(error.code === 'link_job_running' ? { job: error.job } : {}) }, [400, 401, 403, 404, 409, 413, 415, 429, 502, 503].includes(error.status) ? error.status : 500);
       else res.end();
     }
   });

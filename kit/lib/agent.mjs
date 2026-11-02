@@ -461,12 +461,13 @@ export class Agent {
     });
   }
   linkBitmap(args) { return this.plotRequest('link', args); }
-  plotRequest(kind, { actionId, height, payer }) {
+  plotRequest(kind, { actionId, height, payer, freeOnly = false }) {
     return this.exclusive(async () => {
       this.actionId(actionId);
       payer = bitcoinAddress(payer ?? this.ownerConfig.payer.tap, this.bitcoinNetwork, 'payer');
       const context = await this.namedContext();
-      if (context) return await resumeLegacyFinancial(this, 'link', actionId, { height, payer }) ?? makeFinancialLink(this, { actionId, height, payer }, context);
+      if (context) return await resumeLegacyFinancial(this, 'link', actionId, { height, payer }) ?? makeFinancialLink(this, { actionId, height, payer, freeOnly }, context);
+      check(!freeOnly, 'bulk_link_requires_v2');
       check(kind === 'link' && integer(height), 'Invalid plot request');
       const id = `${kind}/${actionId}`, intent = { height, payer }, old = this.journal.get(id);
       if (old) check(old.fingerprint === sha256(stableJSON(intent)), 'Conflicting plot action ID');

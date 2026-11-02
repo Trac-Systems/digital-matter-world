@@ -6,10 +6,11 @@ supports it and existing player homes. Follow
 payout bindings and financial intents. Resume saved actions with the same IDs.
 
 The flat fee policy sets one TAP amount for every pattern mint, public mint,
-compound mint and Bitmap link, targeting US $0.50 at the operator's reference
+and compound mint, targeting US $0.50 at the operator's reference
 price. This is a fixed TAP setting, not a live USD peg. Read
 `public_status.feePolicy` for the effective `baseFee`, `unit` and `feeSettings`.
-Flat settings use `tierMultipliers: [1,1,1,1,1]`, `compoundMinimum: 1`, `link: 1`.
+Flat mint settings use `tierMultipliers: [1,1,1,1,1]` and `compoundMinimum: 1`.
+Bitmap linking is free with the active `link: 0` policy.
 Before that settings revision activates, the displayed policy still applies.
 Both Bitcoin TAP and bridged TAP payments use the same atomic amount; network
 fees are separate. Check the request's quote before paying. Existing requests,
@@ -716,10 +717,31 @@ JavaScript, not a security sandbox. Read [AGENTS.md](AGENTS.md) before editing.
 
 `chooseClaims` receives `{history,patterns,owner,taken,claimsPerWindow,claimableHeight,window}`
 and returns `[{block,patterns:[patternNumber,...]}]`, sorted by block and pattern.
+Always `await` this function: the default returns a Promise and yields to the
+event loop about every 20 ms while hunting.
 `taken` maps each pattern number to a Set of found or minted block heights, loaded
 by the caller from the paged public index. `history` is local header history.
 The default hunts the rarest pattern across history, filling the window budget
-before moving to the next pattern. Claims use `{window,plots,header?}` with at
+before moving to the next pattern. It reads header fields without hashing each
+block and retains matching heights for later hunts. The in-memory match cache
+has a 32 MiB default accounting limit; full entries fall back to sliced scanning.
+Taken sets and height eligibility are checked again on every hunt. A sliced
+native SHA-256 prefix check detects changed archives before reusing matches;
+it does not parse or hash individual headers. The first hunt fills the cache;
+subsequent hunts evaluate only newly claimable fields. Nothing is saved to disk.
+A trusted strategy can tune local memory and slice duration (at most 20 ms):
+
+```js
+import { createClaimSelector } from './kit/strategies/default.mjs';
+export const chooseClaims = createClaimSelector({ cacheBytes: 16 * 1024 * 1024, sliceMs: 10 });
+```
+
+Use an import path relative to your strategy module. Set `cacheBytes: 0` to scan
+without retaining matches. HeaderHistory byte archives can be replaced, extended
+or reorganized safely. Custom histories without `bytes` must be append-only
+while retaining the same object; replace the object on a reorganization. Such
+adapters should provide `field(height, fld, dt)` to avoid parsing headers.
+Claims use `{window,plots,header?}` with at
 most 1,000 slots, with a default budget of 100. The kit validates the complete bundle before signing.
 The tip header enters only that tip's unclaimed-pattern draws. `hunting` tracks
 historic claims and observed header wins without finalizing sparse projections
@@ -802,6 +824,54 @@ canonical input ratio determine identity; later crafts add units to that same
 asset. If exact tier comparison is still pending, `refine_compound` continues
 bounded work from its accepted cursor; it never spends matter or changes the
 compound identity. See [ACTIONS.md](docs/ACTIONS.md#crafting-with-activated-v2-rules).
+
+
+## Bulk Bitmap linking
+
+Link many Bitmaps for free with `link_bitmaps({blocks:["611638","611639"]})`.
+The payer defaults to `owner.payer.tap` for CLI/MCP; the local dashboard uses
+the bound TAP Wallet. That wallet must currently hold each Bitmap and be bound
+to this agent. No `/bitmaps/submit` registration is needed for linking: the
+gateway checks current ownership directly. Registration only makes an item
+visible in its public inventory.
+
+Actions default to dry-run. Bulk dry-run validates the list locally, sends
+nothing and creates no job. For a live foreground job from `kit/`:
+
+```sh
+node bin/dmw.mjs link-bitmaps --blocks 611638,611639 --config /absolute/player/mainnet.json --live
+```
+
+Use `--payer ADDRESS` to choose a different holder wallet. The command waits
+until all items finish. Ctrl-C stops the process and preserves the job. Repeating
+the same unfinished block set and payer resumes that job. Duplicate blocks are
+merged. `link_bitmaps_status({})` lists jobs newest first;
+`link_bitmaps_status({jobId:"ID",offset:0,limit:25})` lists its items.
+
+The dashboard and live MCP keep working in the background while their process
+is running. Restarting either automatically resumes unfinished jobs from the
+same signer directory. Closing a browser tab does not stop the dashboard.
+When the computer is off, saved waiting items stay local and requests already
+sent can finish at the gateway. On restart the worker reads their status before
+sending again. Timeouts retain the exact signed request; confirmed expiry or a
+known retryable refusal gets a new action ID automatically. Busy responses wait
+and retry. The worker never pays a fee; a non-free quote fails as `link_not_free`.
+
+Optional player config settings are `maxBlocks` (default 500),
+`linkConcurrency` (default 8), and
+`journalPacing: {"intervalMs":1000,"perTip":12}`. The first two and `perTip` must
+be positive safe integers; `intervalMs` must be a nonnegative safe integer.
+The job limit applies to entries before duplicate removal. Bulk links and mining
+share the normal journal pacing and the agent's turn queue; a waiting link gives
+up its turn. The gateway currently permits at most eight pending links per agent,
+so raising local concurrency does not raise gateway capacity. Pending requests
+expire after the accepted settings' `pendingBlocks` Bitcoin blocks.
+
+The local API offers `POST /api/link-bulk`, job and item paging, and cancellation
+under the existing dashboard login. Cancelling removes waiting items; sent
+requests still finish. Failed items report `not_in_wallet`, `already_linked`,
+`not_a_bitmap`, or another bounded reason code. See
+[the local API and recovery details](docs/BULK-LINKING.md).
 
 
 V2 public evidence tools: `claimed_blocks({asset:"p2:0",limit:20})` pages

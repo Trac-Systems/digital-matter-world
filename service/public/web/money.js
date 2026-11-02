@@ -4,7 +4,7 @@ import { mount as mintPage, findPayment, refundStatus } from './console/js/inscr
 import { presentation, get, store, site } from './console/js/api.js';
 import { tokenStatus, compoundFacts } from './console/js/views/table.js';
 import { pagedTable } from './console/js/paged.js';
-import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
+import { h, clear, panel, kv, pill, hashEl, fmtInt, table, confirmModal, ago, stepper, figures, inspectBtn as rawInspectBtn } from './console/js/dom.js';
 import { splitTable, btc, tap, feePrice } from './console/js/money.js';
 import { assetName, mineral, title, rememberCompound, lookupName, assetLink, agentLink, addressLink, inscriptionLink, txLink, ethereumLink, setEthereumChain, inflightTxid, inflightNote, inflightLine } from './console/js/words.js';
 import { formatTap } from './amount-format.js';
@@ -13,6 +13,235 @@ import { wallet, walletSummary, connectButtons } from './connect.js';
 import { tickerPage } from './ticker-deploy.js';
 import { tickerChoice } from './console/js/tickers.js';
 import { validateChosenTicker } from '../../../rules/src/ticker-grammar.js';
+
+// Linking several Bitmaps at once (local dashboard).
+// Linking several Bitmaps at once on an agent owner's local dashboard. The agent links them one by one
+// in the background (/api/link-bulk); this module reads the typed blocks, offers the agent's own
+// unlinked Bitmaps to pick from, and follows its jobs. Older agents answer 404 and the parts hide.
+const { parseBlocks, bitmapCount, startBulk, linkJobs, candidatePicker } = (() => {
+
+const PAGE = 25, JOBS = 10, PICKS = 25, POLL_MS = 3000, BLOCK = /^(0|[1-9][0-9]{0,8})$/, REQUEST = /^[0-9a-f]{64}$/;
+const OLD_AGENT = 'Your agent needs an update to link several Bitmaps at once. Link them one at a time, or update your agent.';
+const plural = (n, one, many = one + 's') => `${fmtInt(n)} ${n === 1 ? one : many}`;
+const blockLink = n => h('a.mono', { href: '/block/' + n }, String(n));
+const bitmaps = n => plural(n, 'Bitmap');
+
+// The block numbers in typed or pasted text (spaces, commas or new lines between them), in order and
+// without repeats; bad is the first piece that is not a block number, in words, or null.
+function parseBlocks(text) {
+  const blocks = [], seen = new Set();
+  for (const piece of String(text).split(/[\s,;]+/).filter(Boolean)) {
+    if (!BLOCK.test(piece)) {
+      const shown = piece.length > 16 ? piece.slice(0, 16) + '…' : piece;
+      return { blocks, bad: `“${shown}” is not a block number. Use Bitmap block numbers like 611638, separated by spaces, commas or new lines.` };
+    }
+    if (!seen.has(piece)) { seen.add(piece); blocks.push(piece); }
+  }
+  return { blocks, bad: null };
+}
+const bitmapCount = n => bitmaps(n);
+
+// The agent's own routes: same session as /api/link. Errors keep their status and body.
+async function local(path, { method = 'GET', body } = {}) {
+  const response = await fetch(path, { method, credentials: 'same-origin', headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(Error(String(data?.error ?? 'request_failed')), { status: response.status, body: data });
+  return data;
+}
+const gone = e => e.status === 404 || e.status === 405;
+// A reason code only ever shows as the "(code)" fallback, never longer than a word.
+const code = value => String(value ?? '').replace(/[^a-z0-9_]/gi, '').slice(0, 40) || 'unknown';
+const REASONS = { not_in_wallet: 'The paying TAP Wallet does not hold this Bitmap', already_linked: 'Already linked', not_a_bitmap: 'There is no Bitmap for this block' };
+const reasonText = reason => REASONS[reason] ?? `Could not link (${code(reason)})`;
+
+// A started job, or an Error worded for people.
+async function startBulk(blocks, payer) {
+  try { return (await local('/api/link-bulk', { method: 'POST', body: { blocks, ...(payer ? { payer } : {}) } })).job; }
+  catch (e) {
+    // An identical job is already running: that job is the answer.
+    if (e.status === 409 && e.body?.job) return Object.assign(e.body.job, { again: true });
+    const words = gone(e) ? OLD_AGENT
+      : e.message === 'invalid_blocks' ? 'Some of these are not Bitmap block numbers. Check the list and try again.'
+      : e.message === 'too_many_blocks' ? 'That is more Bitmaps than your agent links in one go. Split them into smaller groups.'
+      : e.status === 503 ? 'Your agent is stopping. Try again once it runs again.'
+      : `Your agent could not start (${code(e.message)}). Try again.`;
+    throw Object.assign(Error(words), { old: gone(e) });
+  }
+}
+
+// One Bitmap of a job, in plain words. A link the agent re-signs itself still counts as linking.
+function itemState(item) {
+  if (item.state === 'linked') return pill('Linked', 'good');
+  if (item.state === 'in_progress' || item.state === 'failed' && item.reason === 'expired_retrying') {
+    const p = pill('Linking…', 'info');
+    return REQUEST.test(item.requestId ?? '') ? h('a.pill-link', { href: '/link/' + item.requestId, 'aria-label': `Open the link for ${item.block}.bitmap` }, p) : p;
+  }
+  if (item.state === 'failed') return h('span.row', { style: { gap: '6px', rowGap: '2px' } }, pill('Not linked', 'bad'), h('span.small', {}, reasonText(item.reason)));
+  if (item.state === 'cancelled') return pill('Cancelled');
+  return pill('Waiting');
+}
+// "12 of 40 linked · 3 in progress · 25 waiting", with the other counts only when there are any.
+function jobSummary(job) {
+  const c = job.counts ?? {};
+  return [`${fmtInt(c.linked ?? 0)} of ${fmtInt(job.total ?? 0)} linked`, c.inProgress ? `${fmtInt(c.inProgress)} in progress` : null, c.waiting ? `${fmtInt(c.waiting)} waiting` : null,
+    c.failed ? `${fmtInt(c.failed)} not linked` : null, c.cancelled ? `${fmtInt(c.cancelled)} cancelled` : null].filter(Boolean).join(' · ');
+}
+const JOB_STATE = { running: ['Linking', 'info'], done: ['Done', 'good'], cancelled: ['Stopped', ''] };
+const jobPill = job => pill(...(JOB_STATE[job.state] ?? ['Done', '']));
+const when = iso => { const ms = Date.parse(iso ?? ''); return Number.isFinite(ms) ? ago(ms) : ''; };
+
+// Prev/Next under a list read by offset, like the site's pager.
+function pagerFoot(offset, size, shown, total, next, go) {
+  const from = offset + (shown ? 1 : 0), to = offset + shown;
+  return h('div.pager-foot', {}, h('span.small.muted', {}, shown ? `${fmtInt(from)}–${fmtInt(to)}${total != null ? ` of ${fmtInt(total)}` : ''}` : ''), h('div.grow'),
+    h('button.btn.sm.ghost', { type: 'button', disabled: offset === 0, 'aria-label': 'Previous page', onclick: () => go(Math.max(0, offset - size)) }, '‹ Prev'),
+    h('button.btn.sm.ghost', { type: 'button', disabled: next == null, 'aria-label': 'Next page', onclick: () => go(next) }, 'Next ›'));
+}
+
+// One job: its summary, the note while it runs, Stop for waiting Bitmaps, and its Bitmaps 25 a page
+// (only those for an earlier job opened from its summary line). A running job refreshes about every
+// 3 s while the tab is visible and stops once it is finished.
+function jobCard(first, { onFinish, itemsOnly = false } = {}) {
+  let job = first, offset = 0, timer = null, reads = 0, ended = false;
+  const head = h('div.row.job-head'), summary = h('div.callout', { role: 'status', 'aria-live': 'polite' }), note = h('p.small', { style: { margin: 0 } });
+  const msg = h('div.note.bad', { role: 'alert' }), items = h('div.paged', {}, h('div.empty', {}, 'Loading…'));
+  const el = itemsOnly ? h('div.link-job', {}, msg, items) : h('div.link-job', {}, head, h('div.stack', { style: { gap: '8px', padding: '0 12px 10px' } }, summary, note, msg), items);
+  const stop = h('button.btn.sm.danger', { type: 'button', onclick: async () => {
+    const waiting = job.counts?.waiting ?? 0;
+    if (!await confirmModal({ title: 'Stop linking?', lead: `${bitmaps(waiting)} still waiting will not be linked. Bitmaps your agent already sent finish linking.`, confirm: 'Stop waiting Bitmaps', danger: true })) return;
+    stop.disabled = true; stop.classList.add('busy');
+    try { job = (await local(`/api/link-bulk/${encodeURIComponent(job.id)}/cancel`, { method: 'POST' })).job ?? job; msg.textContent = ''; await load(); }
+    catch (e) { msg.textContent = gone(e) ? 'Your agent could not stop this job. Refresh the page and try again.' : `Could not stop (${code(e.message)}). Try again.`; }
+    finally { stop.disabled = false; stop.classList.remove('busy'); draw(); }
+  } }, 'Stop');
+  function draw() {
+    const running = job.state === 'running', c = job.counts ?? {};
+    clear(head, h('strong', {}, bitmaps(job.total ?? 0)), jobPill(job), h('span.small.muted', {}, when(job.createdAt)), h('div.grow'), running && c.waiting > 0 ? stop : null);
+    summary.className = 'callout ' + (running ? 'busy' : job.state === 'cancelled' ? '' : c.failed ? 'warn' : 'good');
+    summary.textContent = jobSummary(job);
+    note.hidden = !running;
+    note.textContent = 'Your agent links these in the background. If you turn it off, it continues the next time it runs.';
+  }
+  function drawItems(page) {
+    const rows = page.items ?? [];
+    const list = table(rows, [
+      { key: 'block', label: 'Bitmap', render: i => blockLink(i.block) },
+      { key: 'state', label: 'State', render: itemState },
+    ], { sortable: false, empty: 'No Bitmaps.' });
+    clear(items, list, (job.total ?? 0) > PAGE || offset > 0 ? pagerFoot(offset, PAGE, rows.length, job.total ?? null, page.next ?? null, to => { offset = to; load(); }) : null);
+  }
+  // The newest read wins: a page turn during a refresh is not lost.
+  async function load() {
+    const seq = ++reads;
+    try {
+      const page = await local(`/api/link-bulk/${encodeURIComponent(job.id)}?` + new URLSearchParams({ offset: String(offset), limit: String(PAGE) }));
+      if (seq !== reads) return;
+      job = page.job ?? job; msg.textContent = ''; draw(); drawItems(page);
+    } catch (e) { if (seq === reads) msg.textContent = `Could not reach your agent (${code(e.message)}). ${job.state === 'running' ? 'Trying again shortly.' : 'Try again later.'}`; }
+    if (job.state !== 'running' && !ended) { ended = true; onFinish?.(job); }
+  }
+  // Polls only while the job runs, the tab is visible and the card is on the page.
+  const schedule = () => { clearTimeout(timer); timer = !ended && !document.hidden ? setTimeout(tick, POLL_MS) : null; };
+  async function tick() {
+    if (!el.isConnected) { quit(); return; }
+    await load(); schedule();
+  }
+  const onVisible = () => { if (!el.isConnected) quit(); else if (!document.hidden && !ended) tick(); else clearTimeout(timer); };
+  const quit = () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
+  draw();
+  if (job.state === 'running') { document.addEventListener('visibilitychange', onVisible); load().then(schedule); }
+  else { ended = true; load(); }
+  return { el, id: job.id };
+}
+
+// The agent's jobs: unfinished ones as cards, finished ones in a short "Earlier" list that expands.
+// Hidden when the agent has no bulk links (older agents answer 404).
+function linkJobs() {
+  const current = h('div.stack', { style: { gap: '10px' } }), cards = new Map();
+  const earlierList = h('div'), earlierNote = h('div.note.bad', { role: 'alert' });
+  const earlier = h('div.link-earlier', { hidden: true }, h('div.section-label', { style: { padding: '4px 0' } }, 'Earlier'), earlierNote, earlierList);
+  const el = h('div.stack', { style: { gap: '12px' } }, current, earlier);
+  let offset = 0;
+  const show = job => {
+    if (cards.has(job.id)) return cards.get(job.id);
+    const card = jobCard(job, { onFinish: () => loadEarlier(0) });
+    cards.set(job.id, card); current.prepend(card.el);
+    return card;
+  };
+  function earlierRow(job) {
+    let opened = false;
+    const box = h('div');
+    const row = h('details', { ontoggle: () => { if (row.open && !opened) { opened = true; box.append(jobCard(job, { itemsOnly: true }).el); } } },
+      h('summary', {}, h('span.row', { style: { gap: '8px' } }, h('strong', {}, bitmaps(job.total ?? 0)), jobPill(job), h('span.small.muted', {}, when(job.createdAt))), h('span.small', {}, jobSummary(job))), box);
+    return row;
+  }
+  async function loadEarlier(at = offset, first = false) {
+    let page;
+    try { page = await local('/api/link-bulk?' + new URLSearchParams({ offset: String(at), limit: String(JOBS) })); }
+    catch (e) {
+      if (gone(e)) { el.hidden = true; return; }
+      clear(earlierNote, `Could not load your link jobs (${code(e.message)}). `, h('button.btn.sm', { type: 'button', onclick: () => loadEarlier(at, first) }, 'Retry'));
+      earlier.hidden = false; return;
+    }
+    clear(earlierNote); offset = at;
+    const jobs = page.jobs ?? [];
+    // On opening the page, unfinished jobs get their own card.
+    if (first) for (const job of jobs.filter(j => j.state === 'running').reverse()) show(job);
+    const done = jobs.filter(j => j.state !== 'running' && !cards.has(j.id));
+    const paged = at > 0 || page.next != null;
+    earlier.hidden = !done.length && !paged;
+    clear(earlierList, done.length ? h('div.link-earlier-list', {}, done.map(earlierRow)) : h('div.empty', {}, 'No earlier jobs on this page.'),
+      paged ? pagerFoot(at, JOBS, jobs.length, null, page.next ?? null, to => loadEarlier(to)) : null);
+  }
+  loadEarlier(0, true);
+  return { el, show };
+}
+
+// The agent's Bitmaps that are not linked yet, as checkboxes 25 a page, with Select all.
+// Hidden when the agent cannot list them (404). onChange runs whenever the picks change.
+function candidatePicker(onChange) {
+  const picked = new Set();
+  const all = h('input', { type: 'checkbox' }), allLabel = h('label.check', {}, all, h('span', {}, 'Select all'));
+  const grid = h('div.bitmap-picks'), foot = h('div'), note = h('div.note.bad', { role: 'alert' });
+  const el = h('div.link-picker', { hidden: true }, h('div.row.job-head', {}, h('strong', {}, 'Your Bitmaps not linked yet'), h('div.grow'), allLabel), note, grid, foot);
+  let offset = 0, total = null, ended = false;
+  const changed = () => { all.checked = picked.size > 0 && ended && picked.size >= total; all.indeterminate = picked.size > 0 && !all.checked; onChange?.(); };
+  const box = block => h('label.check', {}, h('input', { type: 'checkbox', checked: picked.has(block), onchange: e => { if (e.target.checked) picked.add(block); else picked.delete(block); changed(); } }), h('span.mono', {}, String(block)));
+  async function load(at) {
+    let page;
+    try { page = await local('/api/link-bulk/candidates?' + new URLSearchParams({ offset: String(at), limit: String(PICKS) })); }
+    catch (e) {
+      if (gone(e)) { el.hidden = true; return; }
+      clear(note, `Could not load your Bitmaps (${code(e.message)}). `, h('button.btn.sm', { type: 'button', onclick: () => load(at) }, 'Retry')); el.hidden = false; return;
+    }
+    clear(note); offset = at; el.hidden = false;
+    const rows = (page.bitmaps ?? []).filter(b => !b.linked && BLOCK.test(String(b.block)));
+    if (page.next == null) { ended = true; total = at + rows.length; }
+    allLabel.hidden = !rows.length && at === 0;
+    clear(grid, rows.length ? rows.map(b => box(String(b.block))) : h('div.empty', { style: { gridColumn: '1 / -1', padding: '4px 0' } }, 'Every Bitmap your agent knows is linked.'));
+    clear(foot, at > 0 || page.next != null ? pagerFoot(at, PICKS, rows.length, null, page.next ?? null, load) : null);
+    changed();
+  }
+  // Select all reads every page once (the agent caps a job anyway); clearing it unpicks everything.
+  all.addEventListener('change', async () => {
+    if (!all.checked) { picked.clear(); for (const b of grid.querySelectorAll('input')) b.checked = false; changed(); return; }
+    all.disabled = true;
+    try {
+      for (let at = 0, pages = 0; at != null && pages < 40; pages++) {
+        const page = await local('/api/link-bulk/candidates?' + new URLSearchParams({ offset: String(at), limit: '50' }));
+        for (const b of page.bitmaps ?? []) if (!b.linked && BLOCK.test(String(b.block))) picked.add(String(b.block));
+        at = page.next ?? null;
+        if (at == null) { ended = true; total = picked.size; }
+      }
+      for (const b of grid.querySelectorAll('input')) b.checked = true;
+    } catch (e) { clear(note, `Could not load all your Bitmaps (${code(e.message)}). Try again.`); }
+    finally { all.disabled = false; changed(); }
+  });
+  load(0);
+  return { el, picked, clear: () => { picked.clear(); load(offset); } };
+}
+return { parseBlocks, bitmapCount, startBulk, linkJobs, candidatePicker };
+})();
 const inspectBtn = (title, value) => rawInspectBtn(title, () => presentation(typeof value === 'function' ? value() : value));
 const complete = new Set(['complete', 'accepted', 'settled', 'minted', 'credited', 'refunded']);
 const stopped = new Set(['expired', 'cancelled', 'rejected', 'refund_wait', 'refund_eligible', 'unpaid_expired', 'quarantined', 'recovery', 'failed']);
@@ -468,15 +697,45 @@ async function mintPublic(row, notify, { deployment = null, ticker = null } = {}
 }
 // On an agent owner's local dashboard the agent signs the link request with
 // one click; the link's payment page then proves the Bitmap and takes the fee.
+// Several blocks (typed, pasted or picked) go to the agent as one job it links in the background.
 function localLink(initial) {
   const free = feePrice(store.status?.feePolicy, 'link') === 'Free';
-  const height = h('input.input', { style: { flex: '1 1 160px', width: 'auto' }, type: 'text', inputmode: 'numeric', value: initial ?? '', placeholder: 'Bitmap block, e.g. 611638', 'aria-label': 'Bitmap block' });
+  const grow = () => { height.style.height = 'auto'; height.style.height = Math.min(height.scrollHeight + 2, 160) + 'px'; };
+  // A textarea, not an input: a pasted column of blocks keeps its line breaks.
+  const height = h('textarea.input.blocks', { style: { flex: '1 1 160px', width: 'auto' }, rows: 1, inputmode: 'numeric', autocomplete: 'off', spellcheck: false, placeholder: 'Bitmap block, e.g. 611638 (or several)', 'aria-label': 'Bitmap blocks',
+    oninput: () => { update(); grow(); }, onkeydown: e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); start.click(); } } }, initial ?? '');
+  const count = h('span.small.muted', { 'aria-live': 'polite' });
   const status = h('div.callout', { role: 'status' });
   const say = (text, kind) => { status.className = 'callout ' + kind; status.textContent = text; };
+  let typedBad = false;
+  // Typed blocks first, then picked ones, without repeats.
+  const chosen = () => { const typed = parseBlocks(height.value); return { blocks: [...new Set([...typed.blocks, ...(picker?.picked ?? [])])], bad: typed.bad }; };
+  const label = n => n > 1 ? `Link ${fmtInt(n)} Bitmaps with my agent` : 'Link with my agent';
+  function update() {
+    const { blocks, bad } = chosen();
+    count.textContent = blocks.length && !bad ? bitmapCount(blocks.length) : '';
+    if (bad) { say(bad, 'bad'); typedBad = true; } else if (typedBad) { say('', ''); typedBad = false; }
+    if (!start.disabled) start.textContent = label(blocks.length);
+  }
+  const reset = () => { start.disabled = false; start.classList.remove('busy'); update(); };
   const start = h('button.btn.primary', { onclick: async () => {
-    const value = height.value.trim();
-    if (!/^(0|[1-9][0-9]*)$/.test(value)) { say('Enter the block number of your Bitmap.', 'bad'); return; }
-    if (!wallet.tap) { say('Connect the TAP Wallet that holds the Bitmap first (Connect wallet, top right).', 'bad'); return; }
+    const { blocks, bad } = chosen();
+    if (bad) { say(bad, 'bad'); return; }
+    if (!blocks.length) { say('Enter the block number of your Bitmap.', 'bad'); return; }
+    if (!wallet.tap) { say(`Connect the TAP Wallet that holds the ${blocks.length > 1 ? 'Bitmaps' : 'Bitmap'} first (Connect wallet, top right).`, 'bad'); return; }
+    typedBad = false;
+    if (blocks.length > 1) {
+      start.disabled = true; start.textContent = 'Your agent is starting…'; start.classList.add('busy'); say(`Asking your agent to link ${bitmapCount(blocks.length)}…`, 'busy');
+      try {
+        const job = await startBulk(blocks, wallet.tap.address);
+        jobs.show(job);
+        say(job.again ? 'Your agent is already linking these Bitmaps. Their progress is below.' : `Your agent started linking ${bitmapCount(job.total ?? blocks.length)}. Their progress is below.`, 'good');
+        height.value = ''; grow(); picker?.clear();
+      } catch (error) { say(error.message, error.old ? 'warn' : 'bad'); }
+      finally { reset(); }
+      return;
+    }
+    const value = blocks[0];
     start.disabled = true; start.textContent = 'Your agent is signing…'; start.classList.add('busy'); say(`Signing the link request for ${value}.bitmap…`, 'busy');
     try {
       if (!free) await oneTxReady(wallet.tap.address);
@@ -485,10 +744,14 @@ function localLink(initial) {
       if (!response.ok) throw Error(String(result.error ?? 'request_failed').replace(/_/g, ' '));
       const link = new URL(result.paymentLink, location.href);
       go(link.pathname + link.search);
-    } catch (error) { say(error.message, 'bad'); start.disabled = false; start.classList.remove('busy'); start.textContent = 'Link with my agent'; }
+    } catch (error) { say(error.message, 'bad'); reset(); }
   } }, 'Link with my agent');
-  return h('div.stack', { style: { gap: '8px' } }, h('div.row', { style: { gap: '8px' } }, height, start), status,
-    h('p.small.muted', { style: { margin: 0 } }, free ? 'Free. Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request; no payment is required.' : 'Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request here; then you review the fee and pay on the link page.'));
+  const picker = candidatePicker(update), jobs = linkJobs();
+  update();
+  return h('div.stack', { style: { gap: '8px' } }, h('div.row', { style: { gap: '8px', alignItems: 'flex-start' } }, height, start), count, status,
+    h('p.small.muted', { style: { margin: 0 } }, free ? 'Free. Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request; no payment is required.' : 'Hold the Bitmap in the TAP Wallet connected above. Your agent signs the request here; then you review the fee and pay on the link page.',
+      ' To link several, separate their block numbers with spaces, commas or new lines.'),
+    jobs.el, picker.el);
 }
 // A search field, not one control per pattern: there can be thousands. The server searches by name
 // (/patterns?q=) as you type and returns at most ten suggestions; a typed TAP ticker is one point read
@@ -680,6 +943,8 @@ function walletsHome(root, type) {
   };
   // Rebuilt only when the wallet's agent changes.
   let deploy = null, deployAgent;
+  // The link panel keeps its field, picks and job cards across wallet changes.
+  let linker = null;
   const deploySection = () => { const agent = wallet.player()?.agent ?? null; if (!deploy || agent !== deployAgent) { deployAgent = agent; deploy = deployPanel(); } return deploy; };
   const draw = () => {
     const any = wallet.connected();
@@ -694,7 +959,7 @@ function walletsHome(root, type) {
       primaryTap(connectButtons(undefined, status)), status), { id: 'wallets' }));
     out.push(panel('Link a Bitmap', h('div.stack', { style: { gap: '8px' } },
       h('p', { style: { margin: 0 } }, feePrice(policy, 'link') === 'Free' ? 'Free. Your agent proves you hold the Bitmap. No link payment is required.' : 'Bitmap holders earn 15% of every mint on their plot. During the finder’s week only the finder mints; afterwards any agent can. TAP Wallet proves you hold the Bitmap and pays the link fee in TAP.'),
-      globalThis.DMW_LOCAL_AGENT === true ? localLink(bitmap)
+      globalThis.DMW_LOCAL_AGENT === true ? linker ??= localLink(bitmap)
         : bitmap !== null ? h('div.small', {}, 'Block ', blockLink(bitmap), `: hold ${bitmap}.bitmap in TAP Wallet, then ask your agent to link it.`) : null,
       wallet.tap ? null : h('p.small.muted', { style: { margin: 0 } }, wallet.ethereum ? 'MetaMask cannot do this: Bitmaps live on Bitcoin. Connect TAP Wallet above.' : 'Needs TAP Wallet: connect it above.'),
       h('p.small.muted', { style: { margin: 0 } }, 'Your Bitmap is in UniSat or Xverse? ', h('a', { href: '/about#tap-wallet' }, 'Bring it into TAP Wallet'), '; nothing has to move.'),

@@ -6,11 +6,12 @@ import { check, privateDirectory, sha256 } from './check.mjs';
 import { stableJSON, DISCOVERY_LIMITS, moveId, moveIdV2 } from '../../rules/src/index.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readInteger, claimSelection } from './api-values.mjs';
+import { journalPacing } from './link-settings.mjs';
 
 // One durable intent per logical action; ambiguous sends retain the exact packet.
 export class Journal {
-  static async open(directory, scope, { now = Date.now, intervalMs = 1000, perTip = 12 } = {}) {
-    check(Number.isSafeInteger(intervalMs) && intervalMs >= 0 && Number.isSafeInteger(perTip) && perTip > 0, 'Invalid rate limits');
+  static async open(directory, scope, { now = Date.now, ...pacing } = {}) {
+    const { intervalMs, perTip } = journalPacing(pacing);
     const dir = await privateDirectory(directory), path = join(dir, 'journal.sqlite');
     try { const fd = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); await fd.close(); }
     catch (e) { if (e.code !== 'EEXIST') throw e; }
@@ -58,13 +59,16 @@ export class Journal {
       this.db.prepare('INSERT OR REPLACE INTO rates VALUES(?,?,?,?)').run(this.scope, tip, count, at); this.db.exec('COMMIT');
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
-  async waitTurn(getHead, wait = sleep) {
+  async waitTurn(getHead, wait = sleep, { waitForTurn = true } = {}) {
     let reportedTip;
     for (;;) {
       const head = await getHead();
       try { this.take(head.tip.height); return head; }
       catch (error) {
         if (error.retryAfterMs === undefined) throw error;
+        // Background work releases the agent's queue while it waits so a
+        // mining pass can take the next available turn.
+        if (!waitForTurn) throw error;
         if (error.code === 'waiting_for_bitcoin_block' && reportedTip !== error.tip) {
           reportedTip = error.tip;
           process.stderr.write(`waiting for the next Bitcoin block (${error.used}/${error.limit} used)\n`);

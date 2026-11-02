@@ -94,13 +94,13 @@ test('v2 compound suggestions use named ingredients and preserve warnings when t
   assert.equal(warning.total, null); assert.equal(warning.slots.length, 2); assert.equal(warning.pages['p2:0'].next, 'more');
 });
 
-test('v2 strategies compare string counts exactly and local selections contain numeric ordinals', () => {
+test('v2 strategies compare string counts exactly and local selections contain numeric ordinals', async () => {
   const candidates = ['9007199254740992', '9007199254740993'].map((count, i) => ({ time: String(i), find: {
     settingsHash: 'ab'.repeat(32), asset: 'p2:0', finder: owner, finderUntil: '1009', findHeight: '1', block: String(i), count
   } }));
   assert.equal(chooseMint({ candidates, owner, counted: 2, balance: '9999999999999999' }), candidates[1]);
   assert.equal(chooseMint({ candidates, owner, counted: 2, balance: '9999999999999999', specialDates: ['1970-01-01'] }), candidates[1]);
-  const plots = chooseClaims({ history: history(10), patterns: [{ ...pattern, fld: 4, pat: '1' }], claimsPerWindow: 1 });
+  const plots = await chooseClaims({ history: history(10), patterns: [{ ...pattern, fld: 4, pat: '1' }], claimsPerWindow: 1 });
   assert.deepEqual(plots, [{ block: 1, patterns: [0] }]);
 });
 

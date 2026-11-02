@@ -85,8 +85,8 @@ test('discovery still rejects nonconstant identical vectors across different fie
   assert.throws(() => evaluateDiscovery({ proposal: { name: 'dmwnoncedigits', pat: '[12]', fld: 10, dt: 'n' }, discoverer: owner,
     history: sameFields, existing, number: 1 }), /duplicate/);
 });
-test('claim default is sorted, count-aware and bounded; compound default uses exact reduced amounts', () => {
-  const hist = history(), claims = chooseClaims({ history: hist, patterns, claimsPerWindow: 64 });
+test('claim default is sorted, count-aware and bounded; compound default uses exact reduced amounts', async () => {
+  const hist = history(), claims = await chooseClaims({ history: hist, patterns, claimsPerWindow: 64 });
   assert.ok(claims.some(c => c.block === 0)); assert.ok(claims.some(c => c.block === 30)); assert.equal(claims.reduce((n, c) => n + c.patterns.length, 0), 64);
   assert.deepEqual(claims[1].patterns, [...claims[1].patterns].sort((a, b) => a - b));
   assert.ok(chooseCompound({ patterns, balances: { p0: '1', p1: '1' }, historyLength: 40 }).id.startsWith('c'));
