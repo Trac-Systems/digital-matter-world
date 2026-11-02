@@ -23,7 +23,7 @@ export function mount(root, params = {}) {
   const draw = () => {
     clear(document.getElementById('pt-mode'), seg([['grid', 'Table'], ['list', 'List']], mode, m => { mode = m; draw(); }));
     pager = mode === 'grid' ? pagedTable({
-      path: '/patterns', key: 'patterns', limit: 60, all: true, sorts: PATTERN_SORTS, filters: [{ name: 'tier', label: 'Tier', value: '', options: TIERS }],
+      path: '/patterns', key: 'patterns', limit: 60, sorts: PATTERN_SORTS, filters: [{ name: 'tier', label: 'Tier', value: '', options: TIERS }],
       empty: 'No patterns in this view.',
       render: rows => h('div.ptable', { style: { padding: '12px 14px' } }, [4, 10, 11].map(fld => ({ fld, items: rows.filter(p => p.fld === fld) })).map(g => h('section.pgroup', {},
         h('h3', {}, `${FIELDS[g.fld]}`, h('span.small.muted', { style: { fontWeight: 400 } }, g.fld === 4 ? 'digits of the block height' : g.fld === 10 ? 'digits of the nonce' : 'the difficulty bits, decimal or hex')),

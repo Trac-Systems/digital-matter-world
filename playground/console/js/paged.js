@@ -11,8 +11,7 @@ export function pageRows(r, key) {
 // opts: path (string or () => string), key, columns, sorts [['key:asc|desc', label]], sort, filters
 // [{ name, label, options: [[value, label]], value }], limit, empty (text, or filters => text), onRow, selected, onPage(rows, body), group(rows) to merge rows before rendering,
 // render(rows) for a custom body instead of a table, onError(error) returning true when the caller shows the failure itself,
-// skipEmpty to read past empty pages of a bounded scan, cursorParam when the route names its cursor otherwise (default cursor),
-// all to read every page into one view.
+// skipEmpty to read past empty pages of a bounded scan, cursorParam when the route names its cursor otherwise (default cursor).
 export function pagedTable(opts) {
   const state = { sort: opts.sort ?? opts.sorts?.[0]?.[0] ?? null, filters: Object.fromEntries((opts.filters ?? []).map(f => [f.name, f.value ?? ''])), cursors: [null], at: 0, seq: 0, loading: false, count: 0 };
   const limit = opts.limit ?? 50;
@@ -74,16 +73,6 @@ export function pagedTable(opts) {
       if (!next.length || !opts.joins(rows.at(-1), next[0])) break;
       rows.push(...next); r = n;
     }
-    // A view that must show the whole set (the periodic table) follows the cursor to the end.
-    for (let pages = 0; opts.all && r.next && pages < 200; pages++) {
-      const more = new URLSearchParams(params); more.set(opts.cursorParam ?? 'cursor', r.next);
-      let n;
-      try { n = await get(`${base}${base.includes('?') ? '&' : '?'}${more}`); }
-      catch (e) { if (seq === state.seq && e.message === 'page_cursor_stale' && !state.restarted) { state.restarted = true; return load(0); } break; }
-      if (seq !== state.seq) return;
-      rows.push(...pageRows(n, opts.key)); r = n;
-    }
-    if (opts.all && !r.next) { r = { ...r, total: rows.length }; state.restarted = false; }
     state.loading = false;
     state.at = at;
     state.count = rows.length;
