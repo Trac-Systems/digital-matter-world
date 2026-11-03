@@ -192,21 +192,66 @@ test('six-block bulk expiry releases slots while reported payment is still uncon
   assert.equal(f.store.get('bulkPaymentRecovery', id), true);
 });
 
-for (const stage of ['bulk-fund-held', 'bulk-consume-held']) test(`six-block expiry preserves queued ${stage} and completes the paid order`, async t => {
+for (const stage of ['bulk-fund', 'bulk-consume']) test(`six-block expiry retires an unsigned queued ${stage} and releases the order`, async t => {
   const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); await f.execute();
   await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null });
-  if (stage === 'bulk-consume-held') { await f.execute(); await f.bulk.tick(); }
+  if (stage === 'bulk-consume') { await f.execute(); await f.bulk.tick(); }
   assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, stage);
   f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
-  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, stage);
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, 'bulk-release');
+  await f.execute();
+  assert.ok(['expired', 'credited'].includes((await f.bulk.status(id)).state)); assert.equal(f.store.count('activeBulkOrders'), 0);
+  await f.bulk.tick();
+  if (f.store.count('financialQueue')) await f.execute();
+  assert.ok(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')));
+});
+
+test('six-block bulk reservation keeps until strictly before expiry with a long freshness setting', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6, moveFreshnessTips: 12 }, resources: { bulkLateBlocks: 0 } }), q = await f.bulk.quote(f.input());
+  assert.equal(BigInt(q.terms.expires) - BigInt(q.terms.until), 1n); b.validateBulkTerms(q.terms);
+});
+
+test('agent bulk order offers payment for pendingBlocks and stays reserved bulkLateBlocks longer', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6 }, resources: { bulkLateBlocks: 24 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  const from = BigInt(q.terms.feeQuote.validFrom);
+  assert.equal(BigInt(q.terms.expires), from + 30n); assert.ok(BigInt(q.terms.until) < from + 6n); b.validateBulkTerms(q.terms);
+  await f.bulk.request(f.sign(q)); await f.execute();
+  f.height(String(from + 6n));
+  let status = await f.bulk.status(id);
+  assert.equal(status.payable, true); assert.equal(status.payBy.untilBlock, q.terms.expires, 'deployed kits compare payBy with the signed expiry');
+  f.height(String(from + 7n)); await f.bulk.tick();
+  status = await f.bulk.status(id);
+  assert.equal(status.payable, false); assert.equal(status.state, 'awaiting_payment'); assert.equal(f.store.count('financialQueue'), 0, 'nothing releases before expiry');
+  f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick();
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, 'bulk-release');
+  await f.execute();
+  assert.equal((await f.bulk.status(id)).state, 'expired'); assert.equal(f.store.count('activeBulkOrders'), 0);
+});
+
+test('a bulk payment sent in time but confirmed after the payment window mints with the existing operations', async t => {
+  const f = await fixture(t, { values: { pendingBlocks: 6 }, resources: { bulkLateBlocks: 24 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  const from = BigInt(q.terms.feeQuote.validFrom);
+  await f.bulk.request(f.sign(q)); await f.execute();
+  const late = String(from + 20n); f.height(late);
+  await f.bulk.payment({ orderId: id, paymentId: f.payment(q, 'payment', [], late), commitTxid: null, revealTxid: null });
+  const types = [f.store.list('financialQueue', { limit: 1 })[0].value.type];
   await f.execute(); await f.bulk.tick();
-  if (stage === 'bulk-fund-held') { await f.execute(); await f.bulk.tick(); }
+  types.push(f.store.list('financialQueue', { limit: 1 })[0].value.type);
+  await f.execute(); await f.bulk.tick();
+  assert.deepEqual(types, ['bulk-fund', 'bulk-consume']);
   assert.equal((await f.bulk.status(id)).state, 'permit_issued');
   assert.equal(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')), null);
 });
 
-test('six-block bulk reservation keeps until strictly before expiry with a long freshness setting', async t => {
-  const f = await fixture(t, { values: { pendingBlocks: 6, moveFreshnessTips: 12 } }), q = await f.bulk.quote(f.input());
-  assert.equal(BigInt(q.terms.expires) - BigInt(q.terms.until), 1n); b.validateBulkTerms(q.terms);
+test('gateway evidence and signers refuse operation types deployed agent contracts cannot apply', async t => {
+  const { verifyFinancialExecution } = await import('../../committee/signer/financial-execution.mjs');
+  const f = await fixture(t), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  await f.bulk.request(f.sign(q)); await f.execute();
+  const reference = f.payment(q);
+  for (const type of ['bulk-fund-held', 'bulk-consume-held']) {
+    await assert.rejects(f.reads.financialEvidence({ type, id, reference }, f.stamp()), /bulk_operation_unsupported/);
+    await assert.rejects(verifyFinancialExecution({ files: [{ ops: [{ op: 'fp', v: 2, id, type }], financialOperations: [] }],
+      reads: f.independent, document: f.document, network: q.terms.network, height: f.stamp().counted, at: f.stamp() }), /financial_operation_unsupported/);
+  }
 });

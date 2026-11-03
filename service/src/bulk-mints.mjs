@@ -11,10 +11,17 @@ import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey, readAccountLeaf } from '../../contract/account-tree.js';
 import { timeReads, timeStep, addStep } from './read-timing.mjs';
-import { notePaymentSeen, paymentTiming } from '../../rules/src/payment-timing.js';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const bits = (mask, count) => Array.from({ length: count }, (_, i) => !!(BigInt(mask ?? '0') & 1n << BigInt(i)));
 const size = value => Buffer.byteLength(rules.stableJSON(value));
+// Payment is offered for pendingBlocks; the order stays reserved bulkLateBlocks
+// longer so a payment sent in time still confirms within the order's own expiry.
+export const bulkLifetime = (values, resources) => Math.min(values.pendingBlocks + resources.bulkLateBlocks,
+  values.requestMaxBlocks, values.quoteLifetimeTips);
+const paymentUntil = (t, values) => {
+  const end = BigInt(t.feeQuote.validFrom) + BigInt(values.pendingBlocks);
+  return end < BigInt(t.expires) ? end : BigInt(t.expires);
+};
 const reasonOf = error => /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'bulk_source_unavailable';
 // Batch/TAP plus gateway authority/policy: raw revisions also move on unrelated appends.
 const sameBatch = (x, y) => ['counted', 'tip', 'tipHash', 'last', 'tap', 'batchRoot', 'authority', 'admissionPolicy'].every(k => same(x?.[k] ?? null, y?.[k] ?? null));
@@ -154,7 +161,7 @@ export class BulkMints {
         custody: plan.custody, totalAmount: members.reduce((n, m) => n + BigInt(m.amount), 0n).toString(),
         grossFeeAtoms: plan.grossFeeAtoms, payableFeeAtoms: plan.payableFeeAtoms, settingsHash: rules.hashObject(document), feeQuote,
         until: (BigInt(at.counted) + BigInt(Math.min(document.values.moveFreshnessTips, document.values.pendingBlocks - 1))).toString(),
-        expires: (BigInt(at.counted) + BigInt(document.values.pendingBlocks)).toString(), mintFunding: funding.mintFunding,
+        expires: (BigInt(at.counted) + BigInt(bulkLifetime(document.values, this.resources))).toString(), mintFunding: funding.mintFunding,
         terminalPolicy: 'hold-issued-credit-unissued-v1' };
       try {
         b.validateBulkFees(terms, plan.feeManifest);
@@ -210,12 +217,9 @@ export class BulkMints {
     // independently once here and again in the batch and each signer.
     const current = this.row(row.id), key = rules.hashObject(['dmw-financial-transition-v2', transition]);
     check(!current.work || current.work === key || this.store.get('financialAccepted', current.work), 'bulk_transition_pending', 503);
-    const evidence = await this.reads.bulkEvidence(transition, at);
+    await this.reads.bulkEvidence(transition, at);
     const result = await this.financial.submit(transition);
-    const full = transition.type === 'bulk-fund-held' && evidence.paid.every((amount, i) => amount === row.body.terms.groups[i].amount);
-    await this.store.transact([{ space: 'bulkOrders', id: row.id, value: { ...this.row(row.id), work: result.id,
-      ...(full ? { confirmedPayment: { work: result.id, height: String(at.counted) } } : {}) } },
-      ...(full ? [{ space: 'financialDeferred', id: result.id }] : [])]);
+    await this.store.put('bulkOrders', row.id, { ...this.row(row.id), work: result.id });
     return result;
   }
   async payment(report) {
@@ -224,18 +228,7 @@ export class BulkMints {
       (report.paymentId === null || b.bulkInscription(report.paymentId)) && [report.commitTxid, report.revealTxid].every(v => v === null || rules.hex(v, 32)) &&
       [report.paymentId, report.commitTxid, report.revealTxid].some(Boolean), 'bulk_payment_report');
     return this.work.run(report.orderId, async () => {
-      let row = this.row(report.orderId);
-      const counted = await this.reads.counted();
-      // Save even a commit/reveal hint before a remote snapshot can fail. It
-      // grants only a fixed hold, never an allocation or a permit.
-      row = notePaymentSeen(row, [report.paymentId ?? report.revealTxid ?? report.commitTxid], row.body.terms.expires, counted, this.document.values);
-      if (report.paymentId) {
-        const pending = [...new Set([...(row.discoveryPending ?? []), report.paymentId])];
-        check(pending.length + (row.references?.length ?? 0) <= b.BULK_LIMITS.members, 'bulk_payment_hint_limit', 413);
-        row = { ...row, discoveryPending: pending };
-      }
-      await this.store.put('bulkOrders', row.id, row);
-      const at = await this.reads.batchStamp();
+      const row = this.row(report.orderId), at = await this.reads.batchStamp();
       let references = report.paymentId ? [report.paymentId] : [];
       if (!references.length && this.reads.bulkResolvePayment) references = await this.reads.bulkResolvePayment(report, row.body.terms, at);
       // Keep unverified hints separately: an unauthenticated report must not
@@ -281,9 +274,7 @@ export class BulkMints {
     if (!funding) return;
     const b = await bulkSchema(), t = funding.manifest;
     // Release unpaid members before any optional payment discovery can fail.
-    const held = paymentTiming(row, t.expires, at.counted).held;
-    if (BigInt(funding.issuedMask) === 0n && BigInt(at.counted) > BigInt(t.expires) && !held &&
-        !['bulk-funded', 'bulk-released'].includes(funding.state)) {
+    if (BigInt(funding.issuedMask) === 0n && BigInt(at.counted) > BigInt(t.expires) && funding.state !== 'bulk-released') {
       const members = bits(funding.releasedMask, t.members.length).flatMap((released, i) => released ? [] : [i]).slice(0, b.BULK_LIMITS.terminalPage);
       if (members.length) await this.queue(row, { type: 'bulk-release', id, members, reason: 'expired' }, at);
       return;
@@ -317,9 +308,9 @@ export class BulkMints {
         }
         throw error;
       }
-      const primary = !funding.reference && funding.state === 'bulk-open' && (held || BigInt(at.counted) <= BigInt(t.expires)) &&
-        BigInt(receipt.block.height) >= BigInt(funding.created) && (held || BigInt(receipt.block.height) <= BigInt(t.expires));
-      await this.queue(row, { type: primary ? 'bulk-fund-held' : 'bulk-credit', id, reference }, at); return;
+      const primary = !funding.reference && funding.state === 'bulk-open' && BigInt(at.counted) <= BigInt(t.expires) &&
+        BigInt(receipt.block.height) >= BigInt(funding.created) && BigInt(receipt.block.height) <= BigInt(t.expires);
+      await this.queue(row, { type: primary ? 'bulk-fund' : 'bulk-credit', id, reference }, at); return;
     }
     if (funding.state === 'bulk-consumed') {
       const plans = b.bulkPermitPlans(t, funding.receiptRoot);
@@ -353,7 +344,7 @@ export class BulkMints {
       }
       return;
     }
-    if (funding.state === 'bulk-funded') await this.queue(row, { type: 'bulk-consume-held', id,
+    if (funding.state === 'bulk-funded') await this.queue(row, { type: 'bulk-consume', id,
       permitRoot: b.bulkPermitPlans(t, funding.receiptRoot).permitRoot }, at);
   }
   async tick() {
@@ -386,17 +377,14 @@ export class BulkMints {
     if (sender?.state === 'needs_attention' && !['minted', 'expired', 'credited'].includes(state)) state = 'needs_attention';
     if (block) state = 'needs_attention';
     const counted = rules.decimalV2(await this.reads.counted());
-    const timing = paymentTiming(row, t.expires, counted);
-    if (state === 'awaiting_payment' && timing.held) state = 'confirming_payment';
     const credits = this.store.list('financialRequestCredits/' + id, { limit: b.BULK_LIMITS.members }).map(r => r.value);
     const creditTotal = this.store.get('financialCreditTotals', id);
     const creditedAmount = creditTotal?.amount ?? credits.reduce((n, c) => n + BigInt(c.amount), 0n).toString();
     const payable = !block && funding?.state === 'bulk-open' && !funding.reference && !(row.references?.length) &&
-      BigInt(counted) <= BigInt(t.expires) && BigInt(funding.issuedMask) === 0n;
+      BigInt(counted) <= paymentUntil(t, this.document.values) && BigInt(funding.issuedMask) === 0n;
     return { v: 1, orderId: id, termsHash: rules.hashObject(t), state, payable, asset: t.asset, deployment: t.deployment, ticker: t.ticker,
       receiver: t.receiver, payer: t.payer, count, totalAmount: t.totalAmount, grossFeeAtoms: t.grossFeeAtoms, payableFeeAtoms: t.payableFeeAtoms,
-      payBy: { rail: 'tap', untilBlock: t.expires }, paymentTiming: { ...timing, held: timing.held &&
-        ['bulk-open', 'bulk-funded'].includes(funding?.state) && funding.issuedMask === '0' && funding.releasedMask === '0' }, payment: { reference: funding?.reference ?? null,
+      payBy: { rail: 'tap', untilBlock: t.expires }, payment: { reference: funding?.reference ?? null,
         state: funding?.reference ? funding.paid.every((v, i) => v === t.groups[i].amount) ? 'paid' : 'partly_paid' : 'unseen',
         missingGroups: t.groups.flatMap((g, i) => funding?.paid[i] === g.amount ? [] : [i]) },
       progress: { reserved: funding ? count - sum(issued) - sum(released) : 0, issued: sum(issued), minted: sum(finished), released: sum(released), unresolved: count - sum(finished) - sum(released) },
@@ -471,7 +459,7 @@ export function bulkAcceptedWrites(store, input, accepted) {
     created: accepted.get('accountRecords', 'fp/' + id)?.created };
   check(row, 'bulk_projection_missing');
   if (t.type === 'bulk-credit') row = { ...row, creditReferences: [...new Set([...(row.creditReferences ?? []), t.reference])] };
-  if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) row = { ...row, references: (row.references ?? []).filter(r => r !== t.reference) };
+  if (['bulk-fund', 'bulk-credit'].includes(t.type)) row = { ...row, references: (row.references ?? []).filter(r => r !== t.reference) };
   const funding = accepted.get('accountRecords', 'fp/' + id), terminal = ['bulk-complete', 'bulk-released'].includes(funding?.state);
   if (funding?.state === 'bulk-released' && funding.reference) row = { ...row, creditReferences: [...new Set([...(row.creditReferences ?? []), funding.reference])] };
   writes.push({ space: 'bulkOrders', id, value: row }, { space: 'mints', id, value: bulkEvidenceProjection(row) },

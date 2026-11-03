@@ -396,6 +396,8 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
   });
   reads.bulkEvidence = (transition, at) => fenced(at, async (anchor, view) => {
     const b = await bulkSchema(), t = transition;
+    // Signers refuse these types: deployed agent contracts cannot apply them.
+    check(!['bulk-fund-held', 'bulk-consume-held'].includes(t.type), 'bulk_operation_unsupported', 409);
     if (t.type === 'reserve-many') return reserve(t, anchor);
     const { terms, funding } = await accepted(t.id, anchor), base = { requestId: t.id, owner: terms.owner, terms: funding.terms };
     let evidence;

@@ -37,11 +37,25 @@ test('a move sent while a batch is signed is admitted as soon as the gateway reo
   const started = Date.now(), receipt = await admission.accept(commit('held'));
   assert.ok(receipt && Date.now() - started >= 280);
 });
-test('a held move still gets the busy answer when admission stays closed past the wait', async () => {
+test('a held move gets the retryable busy answer while admission stays closed past the wait', async () => {
   const { admission } = setup(assetResources({ admissionWaitMs: 150, admissionPollMs: 20 }));
   const started = Date.now();
-  await assert.rejects(admission.accept(commit('closed')), error => error.message === 'reserved_batch_pending' && error.status === 503 && error.retryAfterMs === 1000);
+  await assert.rejects(admission.accept(commit('closed')), error => error.message === 'service_busy' && error.status === 503 && error.retryAfterMs === 1000);
   assert.ok(Date.now() - started >= 100);
+});
+test('the identical packet is refused once the busy period has passed; a new packet starts its own', async () => {
+  const { context, admission } = setup(assetResources({ admissionWaitMs: 20, admissionPollMs: 10, admissionBusyMs: 200 }));
+  await assert.rejects(admission.accept(commit('long')), /service_busy/);
+  await new Promise(resolve => setTimeout(resolve, 220));
+  await assert.rejects(admission.accept(commit('long')), error => error.message === 'reserved_batch_pending' && error.status === 503);
+  await assert.rejects(admission.accept(commit('other')), /service_busy/);
+  context.sealed = false;
+  assert.ok(await admission.accept(commit('long')), 'the refused packet is admitted once the batch is accepted');
+  assert.equal(admission.closedSince.size, 1);
+});
+test('without a busy period the refusal is immediate after the wait, as before', async () => {
+  const { admission } = setup(assetResources({ admissionWaitMs: 20, admissionPollMs: 10, admissionBusyMs: 0 }));
+  await assert.rejects(admission.accept(commit('none')), /reserved_batch_pending/);
 });
 test('without a wait setting admission answers at once, as before', async () => {
   const { admission } = setup();

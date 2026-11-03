@@ -108,7 +108,7 @@ export async function fixture(t, options = {}) {
         sig: { r: String(sig.r), s: String(sig.s), v: String(sig.recovery) } } } };
     } finally { active--; }
   } };
-  let bulk = new BulkMints({ store, reads, financial, committee, document, network, bitcoinNetwork, senderView, resources: { bulkMintEnabled: true } });
+  let bulk = new BulkMints({ store, reads, financial, committee, document, network, bitcoinNetwork, senderView, resources: { bulkMintEnabled: true, ...options.resources } });
   const input = (n = 1, nonce = 'order') => ({ v: 1, owner, nonce: digest(nonce), asset, deployment: deployment.id,
     payer: options.self ? address(4) : address(1), receiver: address(2), blocks: Array.from({ length: n }, (_, i) => String(900000 + i)) });
   const sign = quote => {

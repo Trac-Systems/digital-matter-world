@@ -6,8 +6,13 @@ export const ASSET_RESOURCES = Object.freeze({
   mintInputCapacity: 2000, workPage: 128, creditPage: 128,
   creditSources: 32, outboxPage: 128,
   bulkOrdersPerAgent: 24, activeBulkOrders: 512, bulkMintEnabled: true, bulkQuoteAttempts: 3,
+  // Extra blocks an agent bulk order stays reserved after its payment window, so a
+  // payment sent in time can still confirm and mint with the existing operations.
+  bulkLateBlocks: 24,
   // How long a move waits for admission to reopen while a batch is signed, and how often it checks.
   admissionWaitMs: 8000, admissionPollMs: 200,
+  // How long a move refused that way gets the retryable busy answer before the final refusal.
+  admissionBusyMs: 150000,
 });
 export function assetResources(overrides = {}) {
   const settings = { ...ASSET_RESOURCES, ...overrides };
@@ -16,7 +21,7 @@ export function assetResources(overrides = {}) {
       if (typeof value !== 'boolean') throw Error('asset_resource_setting');
       continue;
     }
-    if (!Object.hasOwn(ASSET_RESOURCES, key) || !Number.isSafeInteger(value) || value < 1 ||
+    if (!Object.hasOwn(ASSET_RESOURCES, key) || !Number.isSafeInteger(value) || value < (['bulkLateBlocks', 'admissionBusyMs'].includes(key) ? 0 : 1) ||
         (['workPage', 'creditPage', 'outboxPage'].includes(key) && value > 4096)) throw Error('asset_resource_setting');
   }
   // The v1 independent reader's declared compatibility envelope. V2 funding

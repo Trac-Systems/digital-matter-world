@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 // Only known protocol codes cross the HTTP boundary. Dependency messages can
 // contain URLs, paths or credentials and must never be returned verbatim.
-const codes = new Set(`authentication host_authentication host_body_limit host_escrow_required
+const codes = new Set(`authentication financial_operation_unsupported host_authentication host_body_limit host_escrow_required
 signer_closed signer_busy signer_not_caught_up ceremony_id ceremony_members ceremony_roster
 ceremony_retired ceremony_reused ceremony_reserved threshold_roster slot_conflict slot_already_reserved
 slots journal_double_reservation batch_authority batch_epoch batch_deadline batch_sequence

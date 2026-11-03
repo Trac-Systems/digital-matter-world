@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { rules } from './rules.mjs';
 import { check } from './util.mjs';
 import { NamedStorage } from './named-storage.mjs';
@@ -9,6 +10,8 @@ import { buildCreditAccounts } from './account-batch.mjs';
 // R3's sequencer must include all entries in this reserved batch or produce an
 // explicit rejection. Switching a batch with admitted entries is not allowed.
 const CLOSED = new Set(['reserved_batch_pending', 'ruleset_not_ready', 'reservation_context_changed']);
+// Closed only while a batch is signed and accepted; deployed kits resend on the busy answer.
+const SIGNING = new Set(['reserved_batch_pending', 'reservation_context_changed']);
 
 export class NamedAdmission {
   constructor({ store, secret, context, history, hashAt, resources, limiter, committee, wait = { admissionWaitMs: 1, admissionPollMs: 1 } }) {
@@ -18,17 +21,32 @@ export class NamedAdmission {
       perSecond: resources.values.senderPerSecond, ttl: resources.values.senderTtlMs });
     this.persistence = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: resources.values.namedNodeCache });
     this.tail = Promise.resolve();
+    this.closedSince = new Map();
   }
   accept(text) {
     const until = Date.now() + this.wait.admissionWaitMs, poll = this.wait.admissionPollMs;
+    const key = createHash('sha256').update(String(text)).digest('hex');
     const attempt = () => this.exclusive(() => this.admit(text)).catch(async error => {
       // Admission closes for a few seconds while each batch is signed. Hold the request and admit it
       // as soon as the gateway reopens, instead of sending the agent away to guess when to retry.
       if (CLOSED.has(error.message) && Date.now() + poll < until) { await new Promise(resolve => setTimeout(resolve, poll)); return attempt(); }
+      if (SIGNING.has(error.message) && this.stillBusy(key)) {
+        // Deployed kits resend the identical packet on this answer. Once the busy period
+        // has passed, the original refusal lets the agent sign a fresh packet instead.
+        error = Object.assign(Error('service_busy'), { status: 503 });
+      } else this.closedSince.delete(key);
       if ([429, 503].includes(error.status)) error.retryAfterMs ??= this.resources.values.outboxRetryMs;
       throw error;
     });
-    return attempt();
+    return attempt().then(receipt => { this.closedSince.delete(key); return receipt; });
+  }
+  stillBusy(key) {
+    const busy = this.wait.admissionBusyMs ?? 0, now = Date.now();
+    if (!busy) return false;
+    const since = this.closedSince.get(key);
+    if (since !== undefined) return now - since < busy;
+    for (const [id, at] of this.closedSince) if (now - at >= busy || this.closedSince.size >= 4096) this.closedSince.delete(id); else break;
+    this.closedSince.set(key, now); return true;
   }
   exclusive(fn) { const result = this.tail.then(fn); this.tail = result.catch(() => {}); return result; }
   async acknowledge(id, record) {

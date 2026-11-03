@@ -8,6 +8,8 @@ import { financialPlan, financialOperationShape, financialReserveGroups, mergedR
 import { check, equal } from './crypto.mjs';
 import { verifyCreditOperations } from '../../rules/src/account-batch.js';
 import { hashObject } from '../../rules/src/core.js';
+
+export const UNSIGNED_OPERATIONS = new Set(['bulk-fund-held', 'bulk-consume-held']);
 import { compareOrdinal } from '../../rules/src/integers-v2.js';
 import { applyBeaconRecovery } from '../../contract/beacon/recovery.js';
 import { claimsNeverCloseActive } from '../../rules/src/public-mint.js';
@@ -38,6 +40,9 @@ export async function verifyFinancialExecution({ files, reads, document, network
     else throw Error('financial_operation');
   };
   for (const file of files) {
+    // Deployed agent contracts reject these operation types and would stop at
+    // the batch carrying one, so no batch with them is ever signed.
+    check(!file.ops.some(op => UNSIGNED_OPERATIONS.has(op?.type)), 'financial_operation_unsupported');
     const inputs = file.financialOperations ?? [], financialCount = inputs.reduce((n, i) => n + i.operations.length, 0);
     check(financialCount <= file.ops.length && equal(file.ops.slice(file.ops.length - financialCount), inputs.flatMap(i => i.operations)), 'financial_operation_binding');
     const prefix = file.ops.slice(0, file.ops.length - financialCount);
