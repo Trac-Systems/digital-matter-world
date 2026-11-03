@@ -1,6 +1,14 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { multiTickerActive } from '../../rules/src/multi-ticker-activation.js';
-import { buildInscription, mintContent, missingItems, transferItems, ensure, digest, feeItemKey, deploymentContent, checkDeployer, checkSavedFee } from './inscription-core.mjs';
+import * as btc from '@scure/btc-signer';
+import { buildInscription, mintContent, missingItems, transferItems, ensure, digest, feeItemKey, deploymentContent, checkDeployer, checkSavedFee, hex, unhex } from './inscription-core.mjs';
+
+const commitInputs = plan => {
+  try {
+    const tx = btc.Transaction.fromRaw(unhex(plan.commitHex), { allowUnknownOutputs: true });
+    return Array.from({ length: tx.inputsLength }, (_, i) => { const input = tx.getInput(i); return { txid: hex(input.txid), vout: input.index }; });
+  } catch { return []; }
+};
 
 export class PlayerMint {
   constructor({ service, journal, wallet, owner, dryRun = true }) {
@@ -27,9 +35,23 @@ export class PlayerMint {
   async prepare(text, status, { feeRate, maxFeeSats }) {
     ensure(this.wallet && this.wallet.source, 'Configure the local Bitcoin signer and cardinal funding coins');
     this.wallet.source.addFunding?.(this.journal.bitcoinChanges());
-    const utxos = await this.wallet.source.utxos(this.wallet.address);
+    // A coin already used by a saved transaction stays with it, even while that transaction is not yet on Bitcoin.
+    const used = new Set(this.journal.bitcoinPlans().flatMap(commitInputs).map(c => `${c.txid}:${c.vout}`));
+    const utxos = (await this.wallet.source.utxos(this.wallet.address)).filter(c => !used.has(`${c.txid}:${c.vout}`));
     feeRate ??= await this.wallet.source.feeRate();
     return buildInscription({ text, receiver: status.receiver, publicKey: this.wallet.publicKey, network: this.wallet.network, utxos, feeRate, maxFeeSats });
+  }
+  // A saved commit is dead when Bitcoin confirmed a different transaction spending one of its coins: it can
+  // never confirm, so nothing it would pay can be paid twice by a fresh attempt.
+  async deadCommit(plan) {
+    const source = this.wallet.source;
+    if (typeof source.outspend !== 'function' || await source.hasTransaction?.(plan.commitTxid)) return null;
+    for (const input of commitInputs(plan)) {
+      const spent = await source.outspend(input.txid, input.vout);
+      if (spent?.spent && /^[0-9a-f]{64}$/.test(spent.txid ?? '') && spent.txid !== plan.commitTxid && spent.status?.confirmed === true)
+        return { reason: 'commit_input_spent', input: `${input.txid}:${input.vout}`, spentBy: spent.txid, height: spent.status.block_height ?? null };
+    }
+    return null;
   }
   // Right after a broadcast the gateway is told, so every viewer sees it as sent until Bitcoin confirms it.
   // Best effort: the gateway checks it on Bitcoin, and a failed report never fails the broadcast.
@@ -138,7 +160,11 @@ export class PlayerMint {
       ensure(current.binding?.request?.address === this.wallet.address && current.binding.request.agent === this.owner,
         'Bind this player’s local Bitcoin wallet before inscribing the deployment');
       const key = `bitcoin-deploy/${attemptId}`, intent = { asset, receiver: this.wallet.address, textHash: digest(text) };
-      let row = this.journal.get(key);
+      let row = this.journal.get(key), replaced = null;
+      if (row && (replaced = await this.deadCommit(row.body.plan))) {
+        if (this.dryRun) return { state: 'dry-run', asset, attemptId, replaces: replaced, signed: false };
+        this.journal.abandon(key, row.body, replaced); row = null;
+      }
       if (row) { checkSavedFee(row.body.plan, maxFeeSats); ensure(row.body.plan.textHash === intent.textHash && row.body.plan.receiver === intent.receiver, 'Saved deployment differs'); }
       else {
         const plan = await this.prepare(text, { receiver: this.wallet.address }, { feeRate, maxFeeSats });

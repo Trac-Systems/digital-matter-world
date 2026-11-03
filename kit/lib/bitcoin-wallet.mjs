@@ -63,6 +63,7 @@ export function mempoolBitcoinSource({ network = 'mainnet', funding = [], origin
     },
     async feeRate() { const fees = await read('/v1/fees/recommended'); return fees?.halfHourFee; },
     async hasTransaction(txid) { return !!await read(`/tx/${txid}`); },
+    async outspend(txid, vout) { return read(`/tx/${txid}/outspend/${vout}`); },
     async broadcast(raw, txid) {
       if (await this.hasTransaction(txid)) return txid;
       const result = await read('/tx', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: raw });

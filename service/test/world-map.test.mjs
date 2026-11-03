@@ -112,3 +112,29 @@ test('v2 explorer follows map continuations and pattern links read submitted blo
   assert.equal(await page.getByRole('heading', { name: 'V2-Known', exact: false }).count() > 0 || await page.locator('h2').filter({ hasText: /v2.known/i }).count() > 0, true);
   assert.deepEqual(errors, []);
 });
+
+test('the explorer map continues after the last plot read when batches keep making its cursor stale', async t => {
+  const store = await Store.open(await temp()); t.after(() => store.close());
+  const tip = 1000000, calls = [], errors = [];
+  await store.put('meta', 'ruleState', { batchVersion: 2, counted: String(tip) });
+  await store.put('meta', 'head', { tip: String(tip), hash: rules.hash('tip') });
+  for (let i = 0; i < 7; i++) await store.put('links', heightKey(tip - i), { block: String(tip - i), linkHeight: '1' });
+  const api = createPublicAPI({ views: { store }, settings: { patternDetailRows: 2 } });
+  let refusals = 0;
+  const server = await serve({ intake: { store }, files: { serve: async () => false }, publicAPI: { handles: () => true, read: async path => {
+    calls.push(path);
+    if (path === '/status') return { tip: String(tip), counted: String(tip), feePolicy: { baseFee: '100', unit: { decimals: 18 } } };
+    // Two batches land during the traversal, one after each cursor page.
+    if (path.startsWith('/world/map') && path.includes('cursor=') && refusals < 2) { refusals++; throw Object.assign(Error('page_cursor_stale'), { status: 409 }); }
+    return api.read(path);
+  } } }); t.after(() => server.close());
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage(); page.on('pageerror', e => errors.push(e.message));
+  await page.goto(server.url + '/explore');
+  await page.waitForFunction(() => document.getElementById('world-count')?.textContent.startsWith('40,001'));
+  await page.waitForLoadState('networkidle');
+  const map = calls.filter(p => p.startsWith('/world/map')), starts = map.map(p => Number(new URL(p, 'http://x').searchParams.get('from')));
+  assert.equal(refusals, 2); assert.equal(await page.getByText(/did not load/).count(), 0);
+  assert.ok(starts.at(-1) > starts[0], 'a resumed read starts after the plots already read');
+  assert.deepEqual(errors, []);
+});

@@ -150,7 +150,8 @@ export function mount(root, params) {
       const n = Number(blockIn.value); if (!Number.isSafeInteger(n) || n < 0) return;
       try {
         const b = await get(`/blocks/${n}`);
-        const all = async (path, key) => { const rows = []; let cursor; do { const page = await get(path + '?limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '')); rows.push(...(page[key] ?? [])); cursor = page.next; } while (cursor); return rows; };
+        // A new batch makes the cursor stale: read the list again from its first page.
+        const all = async (path, key, restarts = 0) => { const rows = []; let cursor; do { let page; try { page = await get(path + '?limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '')); } catch (e) { if (!cursor || e.message !== 'page_cursor_stale' || restarts >= 3) throw e; return all(path, key, restarts + 1); } rows.push(...(page[key] ?? [])); cursor = page.next; } while (cursor); return rows; };
         [b.matches, b.finds] = await Promise.all([all(`/blocks/${n}/matches`, 'matches'), all(`/blocks/${n}/finds`, 'finds')]);
         choices = (b.matches ?? []).filter(m => m.count > 0 && !m.finder && !m.minted && !(b.finds ?? []).some(f => f.asset === m.asset)).map(m => ({ number: m.pattern ?? m.number ?? store.pattern(m.asset)?.number, asset: m.asset ?? store.pattern(m.pattern)?.asset, count: m.count, on: true }));
         clear(pats,

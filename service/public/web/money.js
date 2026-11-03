@@ -915,9 +915,12 @@ function walletsHome(root, type) {
   list.el.classList.add('public-mints');
   // "Pick up to 64" reads the list from its first page, skipping blocks only a Bitmap holder may mint.
   const fillPublic = async room => {
-    const rows = []; let cursor = null;
+    const rows = []; let cursor = null, restarts = 0;
     for (let pages = 0; rows.length < room && pages < 10; pages++) {
-      const page = await get(publicPath() + '&' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) }));
+      let page;
+      // A new batch makes the cursor stale: read the list again from its first page.
+      try { page = await get(publicPath() + '&' + new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) })); }
+      catch (e) { if (!cursor || e.message !== 'page_cursor_stale' || ++restarts > 3) throw e; rows.length = 0; cursor = null; pages = -1; continue; }
       rows.push(...(page.rows ?? []).filter(r => r.state === 'public' && !r.bitmapHolderOnly).map(r => ({ ...r, asset: selectedAsset })));
       cursor = page.next ?? page.nextCursor ?? null; if (!cursor) break;
     }

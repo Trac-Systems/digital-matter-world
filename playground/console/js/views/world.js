@@ -48,12 +48,14 @@ export function mount(root, params) {
   // Data
   async function load(from, to) {
     if (site.public) {
-      let cursor = null, initialized = false, restarted = false;
+      let cursor = null, initialized = false, base = from, start = from, stale = 0;
       for (;;) {
         let r;
-        // A new batch makes a saved map cursor stale: read the range again from its start.
-        try { r = await get(`/world/map?from=${from}&to=${to}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`); }
-        catch (e) { if (!cursor || restarted || e.message !== 'page_cursor_stale') throw e; cursor = null; restarted = true; continue; }
+        // A new batch makes a saved map cursor stale, and batches land every few seconds:
+        // continue after the last plot already read instead of starting over or failing.
+        try { r = await get(`/world/map?from=${base}&to=${to}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`); }
+        catch (e) { if (!cursor || e.message !== 'page_cursor_stale' || ++stale > 5) throw e; cursor = null; base = start; continue; }
+        stale = 0;
         if (!alive) return;
         const first = Number(r.from), last = Number(r.to), frontier = Number(r.tip);
         if (![first, last, frontier].every(Number.isSafeInteger)) throw Error('Map height exceeds the canvas coordinate range');
@@ -65,10 +67,11 @@ export function mount(root, params) {
         for (const p of r.marks) {
           const height = Number(p.height);
           if (Number.isSafeInteger(height) && plots.has(height)) Object.assign(plots.get(height), p, { height });
+          if (Number.isSafeInteger(height) && height >= start) start = height + 1;
         }
         tip = Math.max(Number(tip), frontier); cursor = r.next ?? null;
         paint(); updateCount();
-        if (!cursor) break;
+        if (!cursor || start > to) break;
       }
       return;
     }
@@ -90,9 +93,12 @@ export function mount(root, params) {
   function updateCount() { const c = document.getElementById('world-count'); if (c) c.textContent = `${fmtInt(plots.size)} plots · tip ${fmtInt(tip)}`; }
   const offClaim = bus.on('event:claim', e => { const d = e.data ?? {}; if (d.window === tip) { claims.set(d.block, tip); paint(); } if (selected === d.block) drawSide(); });
   async function loadClaims() {
-    const round = tip; let cursor, done = false; const seen = new Set();
-    do {
-      const page = await get(`/feed?type=claim&sort=sequence&order=desc&limit=200${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`);
+    const round = tip; let cursor, done = false, restarts = 0; const seen = new Set();
+    for (;;) {
+      let page;
+      // A new batch makes the claim cursor stale; this round's claims are the newest, so read again from the top.
+      try { page = await get(`/feed?type=claim&sort=sequence&order=desc&limit=200${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`); }
+      catch (e) { if (!cursor || e.message !== 'page_cursor_stale' || ++restarts > 5) throw e; cursor = undefined; seen.clear(); continue; }
       if (!alive || round !== tip) return;
       for (const event of page.events ?? []) {
         const d = event.data ?? {};
@@ -102,7 +108,8 @@ export function mount(root, params) {
       cursor = page.next;
       if (cursor && seen.has(cursor)) throw Error('Repeated claim cursor');
       seen.add(cursor);
-    } while (cursor && !done);
+      if (!cursor || done) break;
+    }
     paint();
   }
   const offFind = bus.on('event:find', e => refreshHeights([e.data?.block]));

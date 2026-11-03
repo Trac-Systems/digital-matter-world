@@ -15,7 +15,8 @@ function fixture() {
   const key = schnorr.utils.randomPrivateKey(), publicKey = hex(schnorr.getPublicKey(key)), address = fundingAddress(publicKey, 'regtest');
   const fees = [{ role: 'treasury', to: address, ticker: 'tap', amount: '1230000000000000001', tt: 'a', dta: `dmw-pay-v2|${id}|treasury` }];
   const status = { requestId: id, receiver: address, payer: address, asset: 'cfixture', amount: '2', fees, missing: fees, payBy: { rail: 'tap', untilBlock: 500 }, state: 'awaiting_payment' };
-  const utxos = [{ txid: payee, vout: 0, value: '100000', script: hex(btc.p2tr(schnorr.getPublicKey(key)).script), cardinal: true, confirmed: true }];
+  // Two coins: a saved transaction keeps the coin it spends, so the next one pays from the other.
+  const utxos = [0, 1].map(vout => ({ txid: payee, vout, value: '100000', script: hex(btc.p2tr(schnorr.getPublicKey(key)).script), cardinal: true, confirmed: true }));
   const sends = [];
   const wallet = { address, publicKey, network: 'regtest', signCommit: p => signCommit(p, key), redeem: () => JSON.stringify({ p: 'tap', op: 'token-auth', redeem: { items: [] } }),
     source: { utxos: async () => utxos, feeRate: async () => 2, broadcast: async (raw, txid) => { sends.push(txid); return txid; } } };

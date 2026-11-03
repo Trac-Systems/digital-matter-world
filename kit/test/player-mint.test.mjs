@@ -17,7 +17,8 @@ function fixture() {
   const status = { requestId: id, receiver: address, payer: address, asset: 'cfixture', amount: '2', fees, missing: fees, payBy: { rail: 'tap', untilBlock: 500 }, state: 'awaiting_payment' };
   const utxos = [{ txid: payee, vout: 0, value: '100000', script: hex(btc.p2tr(schnorr.getPublicKey(key)).script), cardinal: true, confirmed: true }];
   const wallet = { address, publicKey, network: 'regtest', signCommit: p => signCommit(p, key), redeem: () => JSON.stringify({ p: 'tap', op: 'token-auth' }),
-    source: { utxos: async () => utxos, feeRate: async () => 2, broadcast: async (raw, expected) => { assert.equal(btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true }).id, expected); return expected; } } };
+    // The fixture wallet also holds a second coin: a saved transaction keeps the coin it spends.
+    source: { utxos: async () => [...utxos, { ...utxos[0], vout: 1 }], feeRate: async () => 2, broadcast: async (raw, expected) => { assert.equal(btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true }).id, expected); return expected; } } };
   const plan = text => buildInscription({ text, receiver: address, publicKey, network: 'regtest', utxos, feeRate: 2, maxFeeSats: '10000' });
   const ready = () => Object.assign(status, { state: 'permit_issued', missing: [], mintContent: { p: 'tap', op: 'token-mint', tick: 'dmwfixture', amt: '2', dta: id, prv: { address, hash: '56'.repeat(32) } } });
   return { key, wallet, status, plan, ready };
@@ -288,4 +289,52 @@ test('player payments use the configured network burn and refuse a wrong encodin
   player.dryRun = false;
   await assert.rejects(player.pay({ id, maxFeeSats: '10000' }), { code: 'tap_burn_address' });
   assert.equal(signs, 0); assert.equal(journal.recent().length, 0);
+});
+
+test('a deployment whose saved commit coin was spent by another confirmed transaction starts a fresh attempt; pending coins are never reused', async t => {
+  const f = fixture(), journal = await Journal.open(await temp(t), 'pattern-deploy-coins'); cleanup(t, () => journal.close());
+  const script = hex(btc.p2tr(schnorr.getPublicKey(f.key)).script), coin = n => ({ txid: String(n).repeat(64).slice(0, 64), vout: 1, value: '100000', script, cardinal: true, confirmed: true });
+  let coins = [coin(1), coin(2)], fail = true, sent = [];
+  const outspends = new Map(), known = new Set();
+  Object.assign(f.wallet.source, {
+    utxos: async () => coins,
+    broadcast: async (raw, txid) => { if (fail) throw Error('Bitcoin API returned HTTP 400'); sent.push(txid); known.add(txid); return txid; },
+    hasTransaction: async txid => known.has(txid),
+    outspend: async (txid, vout) => outspends.get(`${txid}:${vout}`) ?? { spent: false } });
+  const owner = 'pattern-minter', job = asset => {
+    const text = `dmw${asset.slice(3)}.[12].4.element`;
+    return { asset, catalogAsset: asset, kind: 'dmt', state: 'awaiting_player_deploy', phase: 'element', definition: { number: Number(asset.slice(3)), name: `dmw${asset.slice(3)}`, pat: '[12]', fld: 4, dt: 'n' },
+      elementAttempt: 0, tickerAttempt: 0, content: text, inscriptionText: text, privilege: payee + 'i0', attempts: [{ id: digestForTest(asset), phase: 'element', attempt: 0, text }] };
+  };
+  const service = { deployment: async asset => job(asset), payoutBinding: async () => ({ binding: { request: { agent: owner, address: f.wallet.address } } }),
+    submitDeployment: async () => { throw Error('deployment_confirmations'); } };
+  const player = new PlayerMint({ wallet: f.wallet, journal, service, owner, dryRun: false });
+  const inputs = plan => { const tx = btc.Transaction.fromRaw(unhex(plan.commitHex), { allowUnknownOutputs: true }); return hex(tx.getInput(0).txid); };
+  // The first deployment's commit never reaches Bitcoin; the second must not take its coin.
+  await assert.rejects(player.deploy({ asset: 'p2:575', maxFeeSats: '10000' }), /HTTP 400/);
+  const firstKey = `bitcoin-deploy/${digestForTest('p2:575')}`, first = journal.get(firstKey);
+  assert.equal(inputs(first.body.plan), coin(1).txid);
+  fail = false;
+  const second = await player.deploy({ asset: 'p2:531', maxFeeSats: '10000' });
+  assert.equal(inputs(journal.get(`bitcoin-deploy/${digestForTest('p2:531')}`).body.plan), coin(2).txid, 'a coin held by a saved transaction is never chosen again');
+  assert.equal(second.deploymentState, 'awaiting_verification');
+  // An unconfirmed spend elsewhere is not proof: the saved bytes are retried unchanged.
+  outspends.set(`${coin(1).txid}:1`, { spent: true, txid: 'ee'.repeat(32), status: { confirmed: false } });
+  fail = true; await assert.rejects(player.deploy({ asset: 'p2:575', maxFeeSats: '10000' }), /HTTP 400/);
+  assert.equal(journal.get(firstKey).body.plan.commitTxid, first.body.plan.commitTxid);
+  // Bitcoin confirmed a different spend of that coin: the saved commit can never confirm.
+  outspends.set(`${coin(1).txid}:1`, { spent: true, txid: 'ee'.repeat(32), status: { confirmed: true, block_height: 974246 } });
+  coins = [coin(2), coin(3)]; fail = false;
+  player.dryRun = true;
+  const preview = await player.deploy({ asset: 'p2:575', maxFeeSats: '10000' });
+  assert.equal(preview.state, 'dry-run'); assert.equal(preview.replaces.spentBy, 'ee'.repeat(32)); assert.equal(journal.get(firstKey).body.plan.commitTxid, first.body.plan.commitTxid);
+  player.dryRun = false;
+  const fresh = await player.deploy({ asset: 'p2:575', maxFeeSats: '10000' });
+  const replacement = journal.get(firstKey);
+  assert.notEqual(replacement.body.plan.commitTxid, first.body.plan.commitTxid);
+  assert.equal(inputs(replacement.body.plan), coin(3).txid, 'the fresh attempt skips the coin the other deployment still holds');
+  assert.equal(fresh.commitTxid, replacement.body.plan.commitTxid); assert.ok(sent.includes(fresh.commitTxid));
+  const archived = journal.recent(10).find(r => r.id.startsWith(firstKey + '#abandoned-'));
+  assert.equal(archived?.state, 'rejected');
+  assert.ok(!journal.bitcoinPlans().some(p => p.commitTxid === first.body.plan.commitTxid), 'an abandoned plan no longer holds coins');
 });

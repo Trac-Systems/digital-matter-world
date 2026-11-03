@@ -147,8 +147,23 @@ export class Journal {
     // Output 1 is cardinal change in our two-output commit builder. Restrict
     // this provenance to signed player plans; the source rechecks its script
     // and confirmation on Bitcoin before selecting it.
-    const rows = this.db.prepare("SELECT body FROM actions WHERE scope=? AND (id GLOB 'bitcoin-pay/*' OR id GLOB 'bitcoin-mint/*' OR id GLOB 'bitcoin-deploy/*') ORDER BY rowid DESC LIMIT 16").all(this.scope);
+    const rows = this.db.prepare("SELECT body FROM actions WHERE scope=? AND (id GLOB 'bitcoin-pay/*' OR id GLOB 'bitcoin-mint/*' OR id GLOB 'bitcoin-deploy/*') AND id NOT GLOB '*#abandoned-*' ORDER BY rowid DESC LIMIT 16").all(this.scope);
     return rows.flatMap(row => { const { plan } = JSON.parse(row.body); return plan?.signedCommitPsbt && plan.commitHex && /^[0-9a-f]{64}$/.test(plan.commitTxid) ? [{ txid: plan.commitTxid, vout: 1 }] : []; });
+  }
+  // Every saved Bitcoin plan that may still be sent. Their commit inputs are never chosen again.
+  bitcoinPlans() {
+    return this.db.prepare("SELECT body FROM actions WHERE scope=? AND (id GLOB 'bitcoin-pay/*' OR id GLOB 'bitcoin-mint/*' OR id GLOB 'bitcoin-deploy/*') AND id NOT GLOB '*#abandoned-*'").all(this.scope)
+      .flatMap(row => { const { plan } = JSON.parse(row.body); return plan?.commitHex ? [plan] : []; });
+  }
+  // A saved commit that can never confirm keeps its record under a new name, so a fresh attempt can be saved.
+  abandon(id, previous, reason) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT rowid, body FROM actions WHERE scope=? AND id=?').get(this.scope, id);
+      check(row && row.body === JSON.stringify(previous), 'Saved preparation changed');
+      this.db.prepare("UPDATE actions SET id=?, state='rejected', result=? WHERE scope=? AND id=?").run(`${id}#abandoned-${row.rowid}`, stableJSON(reason), this.scope, id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   recent(limit = 20) {
     check(Number.isSafeInteger(limit) && limit > 0 && limit <= 100, 'Invalid journal limit');
