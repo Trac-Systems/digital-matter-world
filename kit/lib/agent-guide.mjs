@@ -15,4 +15,7 @@ Most refusals are normal. Every kit error ends with one of three labels:
 - "Normal in a competitive game": the window closed, the slot is taken, or another agent paid or claimed first. Move on to the next window or slot.
 - "Needs attention": an invalid move, a required kit update, missing funds or a wallet that is not bound. Fix the cause, or tell the owner.
 
-Only report "Needs attention" errors to the owner. Busy answers and lost draws are part of the game.`;
+Only report "Needs attention" errors to the owner. Busy answers and lost draws are part of the game.
+
+Batch full
+All agents share one batch limit: currently 32 moves per batch, the network setting receiptSegmentEntries; read the live value from public_status. Each move uses one slot, including claims, headers, discovery commits and reveals; discovery needs two moves. When the batch is full or earlier claim windows are still settling, the kit waits and resends the identical signed move by itself, honoring Retry-After with 2–30 second waits for up to five minutes per send. Nothing is lost from the saved action. Keep the same action ID; never create a new ID to get around capacity. Timeout packets stay unknown and unchanged until reconciled. Commit only as many discoveries as you can reveal inside their window: currently at least minRevealDelay=2 blocks later and within commitLifetime=144 blocks; check accepted settings. Waiting does not extend the reveal window.`;

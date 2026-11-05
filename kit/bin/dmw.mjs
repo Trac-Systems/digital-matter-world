@@ -173,7 +173,8 @@ async function main() {
     check(production || config.localOnly===true && isAbsolute(config.adapter??''), 'Use a public production target or a trusted local adapter');
     // Own the bounded gateway transport before an adapter installs process-wide
     // fetch hooks (the playground's RPC guard intentionally rejects queries).
-    const service = new ServiceClient({ origin: config.gateway, mode:production?'mainnet':'regtest', network: config.network, gateway: config.gatewayKey, receiptSigners: config.receiptSigners });
+    const service = new ServiceClient({ origin: config.gateway, mode:production?'mainnet':'regtest', network: config.network, gateway: config.gatewayKey, receiptSigners: config.receiptSigners,
+      onBatchWait: ({ waitMs }) => process.stderr.write(`batch is full for everyone; waiting ${waitMs / 1000}s and sending the same move again\n`) });
     // Native libraries log every replayed public message even with tx logs off.
     // Keep that unbounded/untrusted feed out of CLI output and MCP's streams.
     if (production) console.log = console.info = console.debug = () => {};

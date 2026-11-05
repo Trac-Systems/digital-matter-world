@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { HeaderHistory, parseHeader } from '../../rules/src/index.js';
 import { chain } from '../../contract/tests/helpers/chain.mjs';
 import { Files } from '../../service/src/files.mjs';
@@ -16,7 +18,7 @@ import { FakeService } from './fake-service.mjs';
 import { temp, cleanup } from './helpers.mjs';
 
 const run = promisify(execFile), cwd = fileURLToPath(new URL('..', import.meta.url));
-for (const mode of ['cache', 'download', 'empty']) test(`README once --live uses setup config and ${mode} history for free moves`, async t => {
+for (const mode of ['cache', 'download', 'empty', 'batch-full', 'mcp-batch-full']) test(`README once --live uses setup config and ${mode} history for free moves`, async t => {
   const dir = await temp(t), genesis = Buffer.from('01000000' + '00'.repeat(32) + '3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a' + 'dae5494dffff7f2002000000', 'hex');
   const bytes = Buffer.from([genesis.toString('hex'), ...chain(20, parseHeader(genesis))].join(''), 'hex');
   const history = new HeaderHistory(bytes), testHistory = join(dir, 'source.bin'); await writeFile(testHistory, bytes);
@@ -27,7 +29,7 @@ for (const mode of ['cache', 'download', 'empty']) test(`README once --live uses
   const files = new Files(join(dir, 'static')), headers = new HeaderFiles({ files, network: 'regtest', history: {
     length: history.length, hashAt: h => history.get(h).hash, raw: h => history.raw(h),
   } });
-  const posts = [];
+  const posts = [], bodies = [], batchFull = mode.includes('batch-full');
   const server = createServer(async (req, res) => {
     try {
       if (await headers.serve(req, res) || await files.serve(req, res)) return;
@@ -40,7 +42,11 @@ for (const mode of ['cache', 'download', 'empty']) test(`README once --live uses
       else if (path === '/latest.json') value = { summary: descriptor };
       else if (path === '/moves' && req.method === 'POST') {
         let body = ''; for await (const part of req) body += part;
-        posts.push(JSON.parse(body)); const response = await fake.fetch(url, { body });
+        posts.push(JSON.parse(body)); bodies.push(body);
+        if (batchFull && posts.length === 1) {
+          res.statusCode = 429; res.setHeader('retry-after', '0'); res.end(JSON.stringify({ code: 'next_batch_work_capacity' })); return;
+        }
+        const response = await fake.fetch(url, { body });
         res.statusCode = response.status; res.end(await response.text()); return;
       } else { res.statusCode = 404; value = { error: 'unexpected_route' }; }
       res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value));
@@ -52,16 +58,29 @@ for (const mode of ['cache', 'download', 'empty']) test(`README once --live uses
   await writeFile(profile, JSON.stringify({ localOnly: true, mode: 'regtest', bitcoinNetwork: 'regtest', network, gateway: origin,
     gatewayKey: fake.gateway, receiptSigners: fake.witness.members, puzzleBits: 0, powLimitBits: 0x207fffff,
     adapter: fileURLToPath(new URL('./fixtures/once-adapter.mjs', import.meta.url)), testHistory,
-    ...(mode === 'cache' ? { headers: testHistory } : { headerSource: origin }) }));
+    ...(mode === 'cache' || mode === 'mcp-batch-full' ? { headers: testHistory } : { headerSource: origin }) }));
   const password = 'disposable once test password';
   const created = await setup({ network: 'regtest', networkFile: profile, directory: join(dir, 'signer'), password });
   assert.ok(created.next.at(-1).includes(created.config));
-  const { stdout, stderr } = await run(process.execPath, ['bin/dmw.mjs', 'once', '--live', '--config', created.config],
-    { cwd, env: { ...process.env, DMW_SIGNER_PASSWORD: password }, timeout: 20000 });
+  let stdout, stderr;
+  const env = { ...process.env, DMW_SIGNER_PASSWORD: password };
+  if (mode === 'mcp-batch-full') {
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['bin/dmw.mjs', 'mcp', '--live', '--config', created.config], cwd, env, stderr: 'pipe' });
+    stderr = ''; transport.stderr?.on('data', chunk => { stderr += chunk; });
+    const client = new Client({ name: 'kit-test', version: '1' }); cleanup(t, () => client.close());
+    await client.connect(transport);
+    const answer = await client.callTool({ name: 'mine_once', arguments: {} });
+    assert.equal(answer.isError, undefined, answer.content[0].text); stdout = answer.content[0].text;
+    await client.close();
+  } else ({ stdout, stderr } = await run(process.execPath, ['bin/dmw.mjs', 'once', '--live', '--config', created.config], { cwd, env, timeout: 20000 }));
   assert.equal((stdout + stderr).includes(password), false);
   const result = JSON.parse(stdout);
-  assert.equal(posts.length, 1); assert.equal(posts[0].t, mode === 'empty' ? 'header' : 'claim');
+  assert.equal(posts.length, batchFull ? 2 : 1); assert.equal(posts[0].t, mode === 'empty' ? 'header' : 'claim');
+  if (batchFull) {
+    assert.equal(bodies[0], bodies[1]);
+    assert.deepEqual(stderr.split('\n').filter(line => line.startsWith('batch is full')), ['batch is full for everyone; waiting 2s and sending the same move again']);
+  }
   if (mode === 'empty') { assert.equal(result.state, 'discovery_needed'); assert.equal(result.header.state, 'received'); assert.match(result.message, /wait for evaluation/); }
   else { assert.equal(result.state, 'received'); assert.equal(result.window, 20); assert.ok(result.plots.some(p => p.block < 20)); }
-  if (mode !== 'cache') assert.deepEqual(await readFile(join(dir, 'signer', 'headers.bin')), bytes);
+  if (mode !== 'cache' && mode !== 'mcp-batch-full') assert.deepEqual(await readFile(join(dir, 'signer', 'headers.bin')), bytes);
 });

@@ -11,7 +11,7 @@ Search uses readable alternatives for occupied DMW names. TAP element/ticker
 collisions use the existing name-plus-word fallback and keep `prov` attribution.
 Never rename an existing record or a saved commitment to resolve a collision.
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.3,
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.4,
 Node 24.22.1 or newer 24.x, and the reviewed mainnet pins. Installing a kit does
 not change network consensus. Follow docs/UPGRADING.md to preserve an existing
 player's encrypted wallet, journal, salts, headers and financial requests.
@@ -101,6 +101,24 @@ Most refusals are normal. Every kit error ends with one of three labels:
   unbound wallet. Fix the cause or tell the owner.
 
 Only report "Needs attention" errors to the owner.
+
+## Batch full
+
+All agents share the batch slot limit: currently 32 moves per batch, the network
+setting receiptSegmentEntries; read the live value from public_status.
+Each move uses one slot, including claims (finds), headers, discovery commits
+and reveals; discovery needs two moves. observationBudget and auditTotalBytes
+also bound admission. A new batch opens every few minutes.
+
+The kit waits and resends the identical signed move automatically when the batch
+is full or earlier claim windows are still settling. Retry-After sets each
+2–30 second wait, with a five-minute waiting budget per send. Nothing is lost
+from the saved action. Keep the same action ID; never create a new ID to get
+around capacity. Timeout packets stay unknown and unchanged until reconciled.
+Commit only as many discoveries as you can reveal inside their window:
+currently at least minRevealDelay=2 blocks later and within commitLifetime=144
+blocks; check accepted settings. If waiting ends with a refusal, retry the same
+ID after its retry timing.
 
 ## Play loop
 

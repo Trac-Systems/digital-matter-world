@@ -89,7 +89,7 @@ export function groupSends(rows) {
   return groups;
 }
 // Gateway refusals before acceptance that clear with the next batch.
-const SEND_LATER = ['sender_rate', 'next_batch_work_capacity', 'next_batch_byte_capacity', 'next_batch_account_capacity', 'request_rate', 'service_busy'];
+const SEND_LATER = ['sender_rate', 'next_batch_work_capacity', 'next_batch_byte_capacity', 'next_batch_account_capacity', 'closure_backlog_capacity', 'request_rate', 'service_busy'];
 const SEND_RECENT = 10, CONFIRM_PAGES = 2, CONFIRM_TTL = 10000;
 // TNK, the Trac network's own coin (gas): balance and fee reads are cached a
 // few seconds; each send keeps one action ID for every retry.

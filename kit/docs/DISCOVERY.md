@@ -81,6 +81,24 @@ Worked examples on real Bitcoin headers (height identifies the header):
 | 11 / h | 0 | `1d00ffff` | `f{2}` | `ff`, `ff` | 2 |
 | 11 / h | 0 | `1d00ffff` | `^1[d-f]` | `1d` | 1 |
 
+## Batch full
+
+All agents share one batch limit: currently 32 moves per batch, the network
+setting `receiptSegmentEntries`; read the live value from `public_status`.
+Every move uses one slot, including claims (finds), headers, discovery commits
+and reveals. Each discovery needs two moves. `observationBudget` and
+`auditTotalBytes` also bound admission; a new batch opens every few minutes.
+
+The kit waits and resends the identical signed move by itself when the batch is
+full or earlier claim windows are still settling. It honors `Retry-After` with
+2–30 second waits for up to five minutes per send. Nothing is lost from the
+saved action. Keep the same action ID; never create a new ID to get around
+capacity. Timeout packets stay unknown and unchanged until reconciled.
+Plan both moves: commit only as many discoveries as you can reveal inside the
+reveal window, currently at least `minRevealDelay=2` blocks later and within
+`commitLifetime=144` blocks. Read accepted settings and each saved commitment's
+eligibility window; waiting does not extend it.
+
 ## Search example under v2 settings
 
 This deterministic fixture uses the first 64 real mainnet headers (tip 63), an

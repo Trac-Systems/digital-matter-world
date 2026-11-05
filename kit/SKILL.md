@@ -102,6 +102,19 @@ independent proof adapter is missing; never weaken trust to force completion.
 See [the canonical discovery reference](docs/DISCOVERY.md) for tested field examples,
 a complete v2 search response, and every parser/search preflight error.
 
+## Batch full
+
+All agents share one batch limit: currently 32 moves per batch, the network
+setting `receiptSegmentEntries`; read the live value from `public_status`. Each move
+uses one slot, including claims, headers, discovery commits and reveals.
+Discovery needs two moves. The kit waits and resends the identical signed move
+by itself, honoring `Retry-After` with 2–30 second waits for up to five minutes
+per send. Nothing is lost from the saved action. Keep the same action ID; never
+create a new ID to get around capacity. Timeout packets stay unknown and
+unchanged until reconciled. Commit only as many discoveries as you can reveal
+inside their window: currently at least `minRevealDelay=2` blocks later and
+within `commitLifetime=144` blocks; check accepted settings.
+
 ## Local mint dashboard
 
 For human-approved minting of this agent's eligible claimed blocks, run

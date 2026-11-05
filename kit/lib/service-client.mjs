@@ -8,15 +8,66 @@ import { financialAsset } from '../../rules/src/financial-mint.js';
 import { verifyRenewedAudit } from './receipt-renewal.mjs';
 import { KIT_UPGRADE_CODE } from '../../rules/src/kit-release.js';
 import { readInteger, nextCursor } from './api-values.mjs';
+import timers from 'node:timers/promises';
 const GATEWAY_BUSY = new Set(['request_pending', 'service_busy', 'http_capacity', 'resource_busy', 'financial_snapshot_changed', 'read_snapshot_changed', 'read_not_ready']);
+const BATCH_FULL = new Set(['next_batch_work_capacity', 'next_batch_byte_capacity', 'next_batch_account_capacity', 'closure_backlog_capacity']);
 const moveId = move => move.v === 2 ? moveIdV2(move) : legacyMoveId(move);
 const deploymentAsset = asset => typeof asset === 'string' && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(asset);
 
+async function requestOnce(client, path, { value, body, limit, binary, query, retry, signal }) {
+  signal?.throwIfAborted();
+  check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
+  const search = query ? new URLSearchParams(query).toString() : '';
+  const method = value === undefined ? 'GET' : 'POST';
+  const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/mint/bulk/request', '/mint/bulk/payment', '/mint/bulk/finish', '/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
+  const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: client.origin, route: path, method, status, code, reason, submission });
+  let response;
+  for (let attempt = 0; ; attempt++) try {
+    response = await client.fetchImpl(client.origin + path + (search ? '?' + search : ''), { method: value === undefined ? 'GET' : 'POST', redirect: 'error',
+      headers: value === undefined ? { accept: binary ? 'application/octet-stream' : 'application/json' } : { 'content-type': 'application/json' },
+      ...(value === undefined ? {} : { body }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(client.timeoutMs)]) : AbortSignal.timeout(client.timeoutMs) });
+    break;
+  } catch (error) {
+    const code = error.cause?.code ?? error.code ?? error.name;
+    // An idle keep-alive socket can close just as the next read begins.
+    // Only retry a GET that failed before receiving an HTTP response.
+    if (retry && method === 'GET' && attempt === 0 && ['ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) continue;
+    throw failure(safeCode(code), 'service unavailable or request blocked before an HTTP response', undefined, mutation);
+  }
+  if (response.headers.get('content-length') && Number(response.headers.get('content-length')) > limit) {
+    await response.body?.cancel(); throw failure('response_limit', 'response too large', response.status, mutation);
+  }
+  const chunks = []; let size = 0;
+  try {
+    for await (const chunk of response.body ?? []) {
+      size += chunk.length;
+      if (size > limit) throw Object.assign(new Error(), { code: 'response_limit' });
+      chunks.push(chunk);
+    }
+  } catch (error) { throw failure(safeCode(error.code ?? error.cause?.code), error.code === 'response_limit' ? 'response too large' : 'response body interrupted', response.status, mutation); }
+  const bytes = Buffer.concat(chunks);
+  if (!response.ok) {
+    let code; try { const body = JSON.parse(bytes); code = body.code ?? body.error; } catch {}
+    if (code === KIT_UPGRADE_CODE) code = 'upgrade_required';
+    const refusedBeforeAcceptance = method === 'POST' && path === '/moves' && isMoveRefusal(response.status, code);
+    const hint = response.headers.get('retry-after'), seconds = /^\d+$/.test(hint ?? '') ? Number(hint) : NaN;
+    const delay = Number.isNaN(seconds) && /^[A-Za-z]{3}, /.test(hint ?? '') ? Math.max(0, Date.parse(hint) - Date.now()) : seconds * 1000;
+    const retryAfterMs = Number.isSafeInteger(delay) && delay >= 0 && delay <= 2147483000 ? delay : undefined;
+    throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
+      { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });
+  }
+  if (binary) return bytes;
+  try { return JSON.parse(bytes); }
+  catch { throw failure('invalid_json', 'response is not valid JSON', response.status, mutation); }
+}
+
 // All gateway HTTP routes live here. No private key or wallet enters this client.
 export class ServiceClient {
-  constructor({ origin = 'http://127.0.0.1:5570', mode = 'regtest', network, gateway, receiptSigners, fetchImpl = fetch, timeoutMs = 10000, busyRetries = 30 } = {}) {
+  constructor({ origin = 'http://127.0.0.1:5570', mode = 'regtest', network, gateway, receiptSigners, fetchImpl = fetch, timeoutMs = 10000, busyRetries = 30,
+    batchWaitMs = 300000, onBatchWait = () => {} } = {}) {
     check(['regtest', 'mainnet'].includes(mode), 'Client network mode');
-    this.origin = gatewayOrigin(origin, mode); Object.assign(this, { network, mode, gateway, fetchImpl, timeoutMs, busyRetries });
+    check(Number.isSafeInteger(batchWaitMs) && batchWaitMs >= 0 && typeof onBatchWait === 'function', 'Invalid batch wait options');
+    this.origin = gatewayOrigin(origin, mode); Object.assign(this, { network, mode, gateway, fetchImpl, timeoutMs, busyRetries, batchWaitMs, onBatchWait });
     if (receiptSigners !== undefined) {
       check(Array.isArray(receiptSigners) && receiptSigners.length === 5 && receiptSigners.every(m => typeof m.id === 'string' && m.id.length > 0 && hex32(m.identity)) &&
         new Set(receiptSigners.map(m => m.id)).size === 5 && new Set(receiptSigners.map(m => m.identity)).size === 5, 'Pin five distinct receipt signers');
@@ -24,56 +75,33 @@ export class ServiceClient {
     Object.defineProperty(this, 'receiptSigners', { value: receiptSigners && Object.freeze(receiptSigners.map(m => Object.freeze({ id: m.id, identity: m.identity }))) });
   }
   async request(path, { value, limit = 60000, binary = false, query, busyRetries = 0, retry = true, signal } = {}) {
-    signal?.throwIfAborted();
-    check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
-    const search = query ? new URLSearchParams(query).toString() : '';
-    const method = value === undefined ? 'GET' : 'POST';
-    const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/mint/bulk/request', '/mint/bulk/payment', '/mint/bulk/finish', '/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
-    const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: this.origin, route: path, method, status, code, reason, submission });
-    let response;
-    for (let attempt = 0; ; attempt++) try {
-      response = await this.fetchImpl(this.origin + path + (search ? '?' + search : ''), { method: value === undefined ? 'GET' : 'POST', redirect: 'error',
-        headers: value === undefined ? { accept: binary ? 'application/octet-stream' : 'application/json' } : { 'content-type': 'application/json' },
-        ...(value === undefined ? {} : { body: stableJSON(value) }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs) });
-      break;
-    } catch (error) {
-      const code = error.cause?.code ?? error.code ?? error.name;
-      // An idle keep-alive socket can close just as the next read begins.
-      // Only retry a GET that failed before receiving an HTTP response.
-      if (retry && method === 'GET' && attempt === 0 && ['ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) continue;
-      throw failure(safeCode(code), 'service unavailable or request blocked before an HTTP response', undefined, mutation);
-    }
-    if (response.headers.get('content-length') && Number(response.headers.get('content-length')) > limit) {
-      await response.body?.cancel(); throw failure('response_limit', 'response too large', response.status, mutation);
-    }
-    const chunks = []; let size = 0;
-    try {
-      for await (const chunk of response.body ?? []) {
-        size += chunk.length;
-        if (size > limit) throw Object.assign(new Error(), { code: 'response_limit' });
-        chunks.push(chunk);
+    // Serialize once: a refused move keeps the exact signed packet throughout the wait.
+    const body = value === undefined ? undefined : stableJSON(value);
+    let batchWaitedMs = 0;
+    for (;;) {
+      try { return await requestOnce(this, path, { value, body, limit, binary, query, retry, signal }); }
+      catch (error) {
+        if (retry && value !== undefined && path === '/moves' && error.status === 429 && BATCH_FULL.has(error.code) && error.refusedBeforeAcceptance) {
+          const waitMs = Math.max(2000, Math.min(error.retryAfterMs ?? 2000, 30000));
+          if (signal?.aborted || waitMs > this.batchWaitMs - batchWaitedMs) throw error;
+          this.onBatchWait({ code: error.code, waitMs });
+          // Cancellation between sends retains the definite refusal. A failed resend
+          // instead leaves its own unknown outcome untouched.
+          try { await timers.setTimeout(waitMs, undefined, { signal }); } catch { throw error; }
+          if (signal?.aborted) throw error;
+          batchWaitedMs += waitMs;
+          continue;
+        }
+        // A busy answer while a batch is signed is retried as before, also during a batch wait.
+        if (retry && error.status !== 429 && error.refusedBeforeAcceptance !== undefined &&
+          (error.status === 503 && GATEWAY_BUSY.has(error.code) || error.code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
+          await timers.setTimeout(Math.min(error.retryAfterMs ?? 2000, 10000));
+          busyRetries++;
+          continue;
+        }
+        throw error;
       }
-    } catch (error) { throw failure(safeCode(error.code ?? error.cause?.code), error.code === 'response_limit' ? 'response too large' : 'response body interrupted', response.status, mutation); }
-    const bytes = Buffer.concat(chunks);
-    if (!response.ok) {
-      let code; try { const body = JSON.parse(bytes); code = body.code ?? body.error; } catch {}
-      if (code === KIT_UPGRADE_CODE) code = 'upgrade_required';
-      const refusedBeforeAcceptance = method === 'POST' && path === '/moves' && isMoveRefusal(response.status, code);
-      const hint = response.headers.get('retry-after'), seconds = /^\d+$/.test(hint ?? '') ? Number(hint) : NaN;
-      const retryAfterMs = Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 2147483 ? seconds * 1000 : undefined;
-      // The gateway answers within seconds and says "busy, retry the identical request" while background work it
-      // started (or a cold source) is still running. The same signed body is safe to send again.
-      // A Trac batch landing during a read is refused as 400 or 503; the same request is retried.
-      if (retry && (response.status === 503 && GATEWAY_BUSY.has(code) || code === 'trac_snapshot_changed') && busyRetries < this.busyRetries) {
-        await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterMs ?? 2000, 10000)));
-        return this.request(path, { value, limit, binary, query, busyRetries: busyRetries + 1, retry, signal });
-      }
-      throw Object.assign(failure(safeCode(code, 'http_error'), 'request refused', response.status, mutation && !refusedBeforeAcceptance),
-        { refusedBeforeAcceptance, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) });
     }
-    if (binary) return bytes;
-    try { return JSON.parse(bytes); }
-    catch { throw failure('invalid_json', 'response is not valid JSON', response.status, mutation); }
   }
   health() { return this.request('/health'); }
   accountProof(owner, asset, limit) {
@@ -225,9 +253,9 @@ export class ServiceClient {
     }
     return this.latest();
   }
-  async submit(move, { hashAt } = {}) {
+  async submit(move, { hashAt, signal } = {}) {
     check(move.network === this.network && hex32(this.gateway) && typeof hashAt === 'function', 'Pinned gateway and chain required');
-    const receipt = await this.request('/moves', { value: move });
+    const receipt = await this.request('/moves', { value: move, signal });
     const expected = await hashAt(readInteger(receipt.tip));
     check((move.v === 2 ? verifyReceiptV2 : verifyReceipt)(receipt, move, { network: this.network, gateway: this.gateway, hashAt: h => h === receipt.tip ? expected : null }), 'Invalid gateway receipt; submission outcome unknown');
     return receipt;

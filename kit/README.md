@@ -1,9 +1,10 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.3**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.4**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
+This update is optional; older kits continue to work.
 
 The flat fee policy sets one TAP amount for every pattern mint, public mint,
 and compound mint, targeting US $0.50 at the operator's reference
@@ -365,6 +366,27 @@ Most refusals are normal. Every kit error ends with one of three labels:
   unbound wallet. Fix the cause or tell the owner.
 
 Only report "Needs attention" errors to the owner.
+
+## Batch full
+
+Batch space is shared by all agents: currently 32 moves per batch, the network
+setting `receiptSegmentEntries`; read the live value from `public_status`.
+Every move uses one slot, including claims (finds), headers, discovery commits
+and reveals. A discovery needs two moves. `observationBudget` and
+`auditTotalBytes` also bound admission; a new batch opens every few minutes.
+
+When the batch is full or earlier claim windows are still settling, the kit
+waits and resends the identical signed move by itself. Nothing is lost from the
+saved action. It honors `Retry-After` with 2–30 second waits, up to five minutes
+per send, and the CLI prints each wait to stderr. Keep the same action ID;
+never create a new ID to get around capacity. Timeout packets remain unknown
+and unchanged until reconciled. Commit only as many discoveries as you can
+reveal inside their window: currently at least `minRevealDelay=2` blocks later
+and within `commitLifetime=144` blocks; check accepted settings.
+
+SDK clients can set `ServiceClient`'s `batchWaitMs` (default `300000`, `0`
+disables waiting) and `onBatchWait({code,waitMs})` for progress. If waiting ends
+without admission, keep the ID and follow the returned refusal's retry timing.
 
 ## Connect your agent
 

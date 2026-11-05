@@ -114,6 +114,31 @@ contract-accepted. Receipt renewal additionally requires independently accepted
 reservation/execution/predecessor batch roots, settingsByHash and renewalSlice;
 a cutoff vote or gateway assertion alone is insufficient.
 
+## Batch full
+
+All agents share one batch limit: currently 32 moves per batch, the network
+setting `receiptSegmentEntries`; read the live value from `public_status`.
+Each move uses one slot: claims (finds), headers, discovery commits and reveals
+all compete for that space. Discovery needs two moves. `observationBudget` and
+`auditTotalBytes` also bound admission.
+
+For the four batch-capacity codes below, the kit waits and resends the identical
+signed move by itself. These HTTP 429 answers refuse admission; nothing is lost
+from the saved action. `Retry-After` sets each wait, clamped to 2–30 seconds,
+with a five-minute waiting budget per send (`ServiceClient.batchWaitMs`).
+The CLI prints each wait to stderr; tools return normally after success.
+Exhausting the budget or cancelling a wait returns the refusal with its retry
+timing. Another refusal ends batch waiting; a busy answer is retried as before. A timeout during a resend stays
+unknown, with the packet unchanged until reconciled. Keep the same action ID;
+never create a new ID to get around capacity. A known refused action can refresh
+its packet on the next call; an uncertain action cannot.
+
+Commit only as many discoveries as you can reveal inside their window:
+currently at least `minRevealDelay=2` blocks later and within
+`commitLifetime=144` blocks; check accepted settings. Other 429 codes, including
+`sender_rate`, `reveal_capacity` and `compound_work_budget`, still return to the
+caller without this automatic wait.
+
 ## Recover an old refused reveal
 
 Use recover_refused_reveal only with owner-confirmed original HTTP 429
@@ -380,7 +405,7 @@ header awards. No production trust fallback is provided for these gaps.
 | pattern_duplicate / pattern_exists | Canonical definition already known / name occupied. |
 | pattern_too_rare | Too few local named matches for accepted minMatchingBlocks. |
 | upgrade_required | Required protocol/proof adapter unavailable; keep original work. |
-| closure_backlog_capacity / next_batch_work_capacity | Admission refused while accepted work finishes; honor retry timing. |
+| next_batch_work_capacity / next_batch_byte_capacity / next_batch_account_capacity / closure_backlog_capacity | Shared batch capacity or earlier claim windows still settling. The kit waits and resends the same move; if its wait budget ends, keep the action ID and honor the returned retry timing. |
 
 ## Complete tool index
 
