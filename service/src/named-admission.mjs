@@ -57,6 +57,19 @@ export class NamedAdmission {
       }
     });
   }
+  // Before a late segment is witnessed again, collect the acknowledgements admission
+  // did not wait for, so that three signers have acknowledged every receipt in it.
+  async backfillAcknowledgements(entries) {
+    if (!this.committee?.backfillReceipt) return;
+    const checkpoint = this.store.get('meta', 'ruleState')?.claimSnapshot;
+    const updates = await Promise.all(entries.map(async ({ receipt }) => {
+      const record = this.store.get('namedDedupe', receipt.move);
+      if (!record?.votes || record.witnessPending || record.votes.length >= 5) return null;
+      const votes = await this.committee.backfillReceipt(record.receipt, checkpoint, record.votes);
+      return votes.length > record.votes.length ? { space: 'namedDedupe', id: receipt.move, value: { ...record, votes } } : null;
+    }));
+    if (updates.some(Boolean)) await this.store.transact(updates.filter(Boolean));
+  }
   async acknowledge(id, record) {
     if (!record.witnessPending) return record.receipt;
     const accepted = this.store.get('namedAccepted', id);

@@ -65,6 +65,14 @@ export class Committee {
   }
 
   acknowledgeReceipt(receipt, checkpoint) { return this.receiptFence('admission', receipt, checkpoint); }
+  // Admission keeps the first three acknowledgements. A late segment is witnessed only by
+  // signers that acknowledged every receipt in it, so ask the missing signers once.
+  async backfillReceipt(receipt, checkpoint, votes) {
+    const have = new Set(votes.map(v => v.signer)), members = this.signers.map(s => s.peer), missing = this.signers.filter(s => !have.has(s.id));
+    const replies = await Promise.allSettled(missing.map(s => this.request(s, '/ack-receipt', { receipt, checkpoint })));
+    return [...votes, ...replies.flatMap((r, i) => r.status === 'fulfilled' && r.value?.signer === missing[i].id &&
+      rules.verifyReceiptFenceVotes('admission', receipt, [r.value], members, 1) ? [r.value] : [])];
+  }
   fenceReceipts(cutoff, evidence) { return this.receiptFence('cutoff', cutoff, evidence); }
   async bindPayout(record, { bitcoinNetwork }) {
     const replies = await Promise.allSettled(this.signers.map(s => this.request(s, '/bind-payout', record)));

@@ -86,6 +86,8 @@ test('a snapshot changing between pages never exposes partial or stale exclusion
   await f.store.transact([row('p2:0', 1, false), row('p2:0', 0)]);
   f.calls.length = 0;
   assert.equal(await f.taken(), null); assert.equal(f.calls.length, 2);
+  // The download continues from its cursor and then replays the changes; it never starts over.
+  assert.match(f.calls[0], /cursor=/); assert.match(f.calls[1], /since=/);
   assert.deepEqual(await f.taken(), { 0: new Set([0, 2]), 1: new Set([3]) });
 });
 

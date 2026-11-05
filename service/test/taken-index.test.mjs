@@ -40,14 +40,16 @@ test('taken snapshots contain only found slots and deltas ignore mint/occurrence
   assert.match(JSON.stringify(plan), /SEARCH.*PRIMARY KEY/);
 });
 
-test('snapshot pagination is fenced and deltas resume as the head advances', async t => {
+test('a snapshot continues across new batches and its deltas resume as the head advances', async t => {
   const { store } = await fixture(t);
   await store.transact([row('p2:0', 1), row('p2:0', 2)]);
   const first = takenPage(store, params({ limit: 1 }));
   assert.ok(first.nextCursor);
   assert.deepEqual(takenPage(store, params({ cursor: first.nextCursor, limit: 1 })).slots, [['p2:0', ['2']]]);
   await store.transact([row('p2:0', 3), row('p2:0', 4)]);
-  assert.throws(() => takenPage(store, params({ cursor: first.nextCursor })), e => e.status === 409 && e.message === 'taken_snapshot_stale');
+  const later = takenPage(store, params({ cursor: first.nextCursor }));
+  assert.equal(later.revision, first.revision);
+  assert.deepEqual(later.slots, [['p2:0', ['2', '3', '4']]]);
   const one = takenPage(store, params({ since: first.revision, limit: 1 }));
   assert.equal(one.more, true); assert.deepEqual(one.changes, [['p2:0', '3', true]]);
   await store.put(row('p2:1', 8).space, row('p2:1', 8).id, row('p2:1', 8).value);
@@ -167,4 +169,32 @@ test('membership updates and revision hashes replay from a durable journal tail 
     assert.equal(takenPage(store, params()).revision, replayed.revision);
     assert.deepEqual(takenPage(store, params({ since: replayed.revision })).changes, []);
   } finally { await store.close(); }
+});
+
+test('a snapshot spanning batches ends equal to the head once its deltas are replayed', async t => {
+  const { store } = await fixture(t);
+  await store.transact([row('p2:0', 1), row('p2:0', 5), row('p2:1', 2)]);
+  const first = takenPage(store, params({ limit: 1 })), slots = new Map();
+  const add = page => { for (const [asset, blocks] of page.slots) for (const b of blocks) slots.set(asset + '/' + b, true); };
+  add(first);
+  // Removed before the cursor reaches it, added behind and ahead of the cursor.
+  await store.transact([row('p2:0', 5, false), row('p2:0', 0), row('p2:1', 9)]);
+  let page = first;
+  while (page.nextCursor) { page = takenPage(store, params({ cursor: page.nextCursor, limit: 1 })); assert.equal(page.revision, first.revision); add(page); }
+  const delta = takenPage(store, params({ since: first.revision }));
+  for (const [asset, block, found] of delta.changes) found ? slots.set(asset + '/' + block, true) : slots.delete(asset + '/' + block);
+  const head = takenPage(store, params()), expected = new Set(head.slots.flatMap(([asset, blocks]) => blocks.map(b => asset + '/' + b)));
+  assert.deepEqual(new Set(slots.keys()), expected);
+  assert.equal(delta.revision, head.revision);
+});
+
+test('a snapshot older than the retained change log still restarts', async t => {
+  const { store } = await fixture(t, { takenChangeRows: 2 });
+  await store.transact([row('p2:0', 1), row('p2:0', 2)]);
+  const first = takenPage(store, params({ limit: 1 }));
+  await store.transact([row('p2:0', 3), row('p2:0', 4), row('p2:0', 6)]);
+  assert.throws(() => takenPage(store, params({ cursor: first.nextCursor })), e => e.status === 409 && e.message === 'taken_snapshot_stale');
+  const forged = JSON.parse(Buffer.from(first.nextCursor, 'base64url'));
+  forged.revision = Buffer.from(JSON.stringify(['ab'.repeat(32), '1', 'cd'.repeat(32)])).toString('base64url');
+  assert.throws(() => takenPage(store, params({ cursor: Buffer.from(JSON.stringify(forged)).toString('base64url') })), /taken_snapshot_stale/);
 });

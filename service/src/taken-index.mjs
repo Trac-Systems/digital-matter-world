@@ -31,6 +31,14 @@ function revision(text) {
   return { epoch: value[0], sequence: value[1], hash: value[2] };
 }
 
+// True when every change after this revision is still in the log, so a client can replay them.
+function replayable(store, state, previous) {
+  if (previous.epoch !== state.epoch || rules.compareUint(previous.sequence, state.sequence) > 0) return false;
+  if (previous.sequence === state.sequence) return previous.hash === state.hash;
+  const next = statement(store.db, 'SELECT previous FROM takenChanges WHERE sequenceKey=?').get(rules.uintKeyV2(rules.nextUint(previous.sequence)));
+  return next?.previous === previous.hash;
+}
+
 export function takenSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS takenControl(id INTEGER PRIMARY KEY,epoch TEXT,sequence TEXT,hash TEXT,ready INTEGER,space TEXT,after TEXT);
     CREATE TABLE IF NOT EXISTS takenSlots(asset TEXT,heightKey TEXT,block TEXT,PRIMARY KEY(asset,heightKey)) WITHOUT ROWID;
@@ -133,17 +141,23 @@ export function takenPage(store, params, settings = {}) {
     check(Buffer.byteLength(JSON.stringify(result)) <= maxBytes, 'taken_row_budget', 503);
     return result;
   }
-  let after = ['', ''];
+  let after = ['', ''], pinned = current;
   if (params.has('cursor')) {
     const cursor = decode(params.get('cursor'));
-    check(cursor?.revision === current, 'taken_snapshot_stale', 409);
+    // A snapshot keeps its starting revision. Later pages may already include newer rows; the
+    // client then replays every change since that revision, which corrects both, so a batch
+    // landing during the download no longer forces a restart while the change log covers it.
+    let start = null; try { start = revision(cursor?.revision); } catch {}
+    check(cursor?.revision === current || start && replayable(store, state, start), 'taken_snapshot_stale', 409);
+    pinned = cursor.revision;
     check(Array.isArray(cursor.after) && cursor.after.length === 2 && isAsset(cursor.after[0]) &&
       typeof cursor.after[1] === 'string', 'taken_cursor');
     after = cursor.after;
   }
   const rows = statement(store.db, 'SELECT * FROM takenSlots WHERE (asset,heightKey)>(?,?) ORDER BY asset,heightKey LIMIT ?').all(...after, limit + 1);
-  const next = row => encode({ revision: current, after: [row.asset, row.heightKey] });
-  const result = { v: 1, mode: 'snapshot', revision: current, slots: [], nextCursor: null, next: null };
+  const next = row => encode({ revision: pinned, after: [row.asset, row.heightKey] });
+  // head tells a client that changes after the pinned revision exist and should be replayed now.
+  const result = { v: 1, mode: 'snapshot', revision: pinned, ...(pinned === current ? {} : { head: current }), slots: [], nextCursor: null, next: null };
   if (rows.length <= limit) {
     const slots = []; let group;
     for (const row of rows) {

@@ -245,6 +245,19 @@ export class Pipeline {
         ...entries.flatMap(r => [{ space: 'intake/' + row.id, id: r.id }, { space: 'dedupe', id: rules.moveId(r.value.move) }])]);
     }
   }
+  // A late segment needs three signers that acknowledged all of its receipts. When the
+  // witness quorum fails, collect the missing acknowledgements once and ask again.
+  async attestSegment(root, entries, version2) {
+    try { return await this.committee.attestRoot(root); }
+    catch (error) {
+      const admission = this.intake.namedAdmission;
+      if (!version2 || this.speculative || !entries.length || error.message !== 'receipt_quorum_unavailable' || !admission?.backfillAcknowledgements) throw error;
+      this.step = ['backfillAcknowledgements', Date.now()];
+      await admission.backfillAcknowledgements(entries);
+      this.step = ['attestRoot', Date.now()];
+      return this.committee.attestRoot(root);
+    }
+  }
   async build() {
     if (this.recovery?.active()) return null;
     // Reconciliation may have retired an old unsigned draft since the poller
@@ -321,7 +334,7 @@ export class Pipeline {
           await this.intake.namedAdmission.acknowledgePending(entries);
         }
         this.step = ['attestRoot', Date.now()];
-        try { if (this.store.get('missedReceipts', observation.id)) throw Error('receipt_quorum_unavailable'); rootAttestations = await this.committee.attestRoot(receiptRoot); }
+        try { if (this.store.get('missedReceipts', observation.id)) throw Error('receipt_quorum_unavailable'); rootAttestations = await this.attestSegment(receiptRoot, originalEntries, version2); }
         catch (e) {
           if (version2 || e.message !== 'receipt_quorum_unavailable' || (this.intake.head?.highestTip ?? 0) < observation.tip + 2) throw e;
           missed = { observation, entries: originalEntries, reason: 'receipt_witness_window_missed' };

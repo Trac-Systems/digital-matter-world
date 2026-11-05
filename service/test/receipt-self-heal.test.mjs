@@ -161,3 +161,34 @@ test('successor preparation finishes pending acknowledgements before speculative
   const successor = await build(); assert.equal(successor.proposal.batch.n, '3');
   assert.deepEqual(f.calls, ['ack/2', 'attest/1']);
 });
+
+test('a late segment acknowledged by different signer triples collects the missing acknowledgements before witnessing', async t => {
+  const f = await setup(t), packets = [f.packet(1), f.packet(2)], triples = [[0, 3, 4], [1, 3, 4]];
+  let n = 0;
+  f.committee.acknowledgeReceipt = async (receipt, snapshot) => {
+    f.calls.push('ack/' + receipt.sequence); return Promise.all(triples[n++].map(i => f.signers[i].admit(receipt, snapshot)));
+  };
+  for (const text of packets) await f.admission.accept(text);
+  const sealed = await f.intake.seal(); f.advance('20');
+  f.committee.attestRoot = async seal => {
+    f.calls.push('attest/' + seal.segment);
+    const { receipts } = f.store.get('receiptObservations', r.receiptSegmentKey(seal));
+    const votes = f.signers.flatMap((s, i) => s.admittedAll(receipts) ? [r.attestReceiptRoot(seal, seal.tip, receiptSigners[i].id, agent(800 + i).secret)] : []);
+    if (!r.verifyRootAttestations(seal, votes, receiptSigners)) throw Object.assign(Error('receipt_quorum_unavailable'), { status: 503 });
+    return votes;
+  };
+  await assert.rejects(f.committee.attestRoot(sealed.receiptRoot), /receipt_quorum_unavailable/);
+  f.committee.backfillReceipt = async (receipt, snapshot, votes) => {
+    f.calls.push('backfill/' + receipt.sequence);
+    const have = new Set(votes.map(v => v.signer));
+    const added = await Promise.all(receiptSigners.map((w, i) => have.has(w.id) ? null : f.signers[i].admit(receipt, snapshot)));
+    return [...votes, ...added.filter(Boolean)];
+  };
+  f.calls.length = 0;
+  await f.pipeline.tick();
+  assert.deepEqual(f.calls, ['attest/0', 'backfill/1', 'backfill/2', 'attest/0']);
+  for (const text of packets) assert.equal(f.store.get('namedDedupe', r.moveIdV2(JSON.parse(text))).votes.length, 5);
+  const draft = await f.pipeline.loadDraft();
+  assert.deepEqual(draft.items[0].input.receiptRoot, sealed.receiptRoot);
+  assert.equal(draft.items[0].input.rootAttestations.length, 5);
+});

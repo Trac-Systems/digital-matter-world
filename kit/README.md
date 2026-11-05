@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.2**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.3**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.

@@ -84,6 +84,9 @@ export class TakenCache {
         }
         check(page?.v === 1, 'Invalid taken page');
         const to = revision(page.revision);
+        // A snapshot that spans new batches keeps its starting revision and names the newer
+        // head; replaying the changes since then brings it to the head before any choice.
+        const behind = (!state.revision || !!state.cursor) && typeof page.head === 'string' && page.head !== page.revision;
         if (!state.revision || state.cursor) {
           check(page.mode === 'snapshot' && Array.isArray(page.slots) && (!state.cursor || state.revision === page.revision), 'Invalid taken snapshot');
           const next = nextCursor(page), rows = [], seen = new Map();
@@ -118,7 +121,7 @@ export class TakenCache {
           dirty ||= page.revision !== state.revision || state.complete !== !page.more;
           state.revision = page.revision; state.complete = !page.more;
         }
-        if (state.complete) return Object.fromEntries(patterns.map(pattern => [pattern.number, new Set(state.slots.get(patternId(pattern)) ?? [])]));
+        if (state.complete && !behind) return Object.fromEntries(patterns.map(pattern => [pattern.number, new Set(state.slots.get(patternId(pattern)) ?? [])]));
       }
       return null; // Catch up on the next pass; never choose from a partial set.
     } finally { if (dirty) await this.save(state); }
