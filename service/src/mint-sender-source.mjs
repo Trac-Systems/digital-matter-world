@@ -5,6 +5,7 @@ import { btc } from './mint-sender-keys.mjs';
 import { hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
 import { inscriptionContents } from './mint-payments.mjs';
 import { rules } from './rules.mjs';
+import { sideWalletItem, validateDeployerPayment } from './direct-deployer.mjs';
 
 // Bounded Esplora calls. Endpoint contents and provider bodies never enter logs.
 export class SenderHTTP {
@@ -70,9 +71,10 @@ export class MintSenderBitcoin {
     check(Array.isArray(outs) && outs.length <= 64, 'mint_sender_outspends');
     return [...new Set(outs.map((o, vout) => vout !== except && o?.spent === true && /^[0-9a-f]{64}$/.test(o.txid ?? '') ? o.txid : null).filter(Boolean))];
   }
-  async bulkFunding({ terms, orderId, paymentId }) {
+  async bulkFunding({ terms, orderId, paymentId, deployerPayment, allowMissingDeployer = false }) {
     const { validateBulkTerms, bulkOrderId, bulkWalletItems, BULK_LIMITS } = await import('../../rules/src/bulk-mint.js');
     validateBulkTerms(terms);
+    if (deployerPayment) validateDeployerPayment(deployerPayment, terms, orderId);
     check(bulkOrderId(terms.network, terms.owner, terms.nonce) === orderId && terms.bitcoinNetwork === this.network &&
       /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(paymentId), 'bulk_funding_binding');
     check(this.tap?.at && this.tap?.cardinal, 'bulk_cardinal_unavailable');
@@ -83,8 +85,10 @@ export class MintSenderBitcoin {
       const raw = await this.http.request('/tx/' + paymentId.slice(0, 64) + '/hex', { text: true });
       check(typeof raw === 'string' && raw.length / 2 <= BULK_LIMITS.rawTransactionBytes, 'bulk_transaction_bytes');
       const parsed = inscriptionContents(raw), target = Number(paymentId.slice(65)), payload = parsed.contents[target];
+      const groups = bulkWalletItems(terms), items = deployerPayment ? [...groups, sideWalletItem(deployerPayment)] : groups;
       check(parsed.txid === paymentId.slice(0, 64) && payload?.p === 'tap' && payload.op === 'token-auth' &&
-        rules.stableJSON(payload.redeem?.items) === rules.stableJSON(bulkWalletItems(terms)), 'bulk_redeem_binding');
+        (rules.stableJSON(payload.redeem?.items) === rules.stableJSON(items) || allowMissingDeployer &&
+          rules.stableJSON(payload.redeem?.items) === rules.stableJSON(groups)), 'bulk_redeem_binding');
       const payment = btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true, allowUnknownOutputs: true });
       // Locate the actual inscription input, not an arbitrary fee-input parent.
       let envelope = 0, parent = null, spentVout = null;

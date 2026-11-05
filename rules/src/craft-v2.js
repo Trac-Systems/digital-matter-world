@@ -38,7 +38,7 @@ export function previewCraftV2(state, { recipe, inputs, snapshot, settings, cata
 }
 export function executeCraftV2(state, { move, settings, counted, executionHeight = counted, hashAt, provenance, catalog = state }) {
   const { recipe, snapshot, action } = move.p; validateCraftPayload(move.p, settings, executionHeight);
-  assert(action.owner === move.a && ordinalCodec().compare(counted, action.until) <= 0 && ed25519.verify(hexToBytes(action.sig), craftActionDigest(settings.network, action), hexToBytes(action.owner), { zip215: false }), 'craft_authorization');
+  assert(action.owner === move.a && ordinalCodec().compare(executionHeight, action.until) <= 0 && ed25519.verify(hexToBytes(action.sig), craftActionDigest(settings.network, action), hexToBytes(action.owner), { zip215: false }), 'craft_authorization');
   assert(compareUint(snapshot.height, counted) <= 0 && hashAt(snapshot.height) === snapshot.hash, 'compound_snapshot');
   const nonceKey = `craft-nonce/${move.a}/${action.nonce}`;
   assert(!namedGet(state.records, nonceKey), 'account_replay');

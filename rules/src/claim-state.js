@@ -4,6 +4,7 @@ import { namedRoot } from './named-index.js';
 import { recordChanges, recordSet } from './record-index.js';
 import { decimalV2, ordinalCodec } from './integers-v2.js';
 import { decodeNodeHints } from './node-evidence.js';
+import { indexRowBytes } from './index-row-cache.js';
 
 export const CLAIM_MAPS = Object.freeze(['receiptSegments', 'claimAgents', 'claimInputs', 'claimSlots', 'claimReservations',
   'settlementPages', 'headerAwards', 'headerInputs', 'headerTickets', 'headerPools', 'finds']);
@@ -83,7 +84,7 @@ export function claimEvidenceReader(evidence, document, get) {
   return (id, ancestors) => {
     let row;
     try { row = nodes.get(id) ?? get?.(id, ancestors); } catch { throw Error('claim_node_read'); }
-    assert(!row || utf8(stableJSON(row)).length <= document.values.auditTotalBytes, 'claim_proof_node_budget');
+    assert(!row || indexRowBytes(row) <= document.values.auditTotalBytes, 'claim_proof_node_budget');
     return row;
   };
 }

@@ -1,0 +1,3167 @@
+[
+  {
+    "sequence": "1",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "evidence_nodes": {
+        "rows": 3,
+        "digest": "3812bff09155a0fe2c40215e5c1e18ecf47f5fd0145114954d582f2633c5b748"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "24e200dba78175fbc2261d70fdc653c90c8304f14f409aa32ff5587e16b28e66"
+      },
+      "evidence_values": {
+        "rows": 3,
+        "digest": "9cb03629a221818f99a7c684ab073132fe3b0b0b0895710a5300db491191ad99"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "c4c15c6dfc9c98eb478be718232bc8dd68541eca4746a6081cabcad462d31886"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 7,
+        "digest": "ad477a4f39fb184341b12becdcc2c2d9d2bd2e5f02c2e7698fe5592582046c15"
+      },
+      "publicBalancesV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicItemCountsV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicItemsV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicOrderV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternMintCounts": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 1,
+        "digest": "cd7c41f14c038afaac101cbb31dc7557b552e057459ddfa66ec1768ccbdb12af"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 3,
+        "digest": "cb270f636a7ddd5d4f4136033a25704d1b48d7e8e9bd85025b4e4d778afab13e"
+      },
+      "record_counts_decimal": {
+        "rows": 3,
+        "digest": "b1f3e332d03a401670f0af28c6b589e3c9572434ce47d4064ce9e9aeaef0d3cb"
+      },
+      "records": {
+        "rows": 4,
+        "digest": "86927ed914a5ec1447c6e65e80a4165d4df64f9bc64fbdfb02588b32e941eace"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "6082e47926ce9a1b5f4f7602f5be4bad5f62a57804ea2353e920d730a2722db8"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "root": "c416531c23818140a2a7bf61ab965888d0276fae6d8c1e101a6750ec213f44ee",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 0,
+        "digest": "0d726b3911ceb3bc1cef5880f69442b55ea76a8190d4584ad77725a391869c95"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 0,
+        "digest": "68feca08ba4ead9a6bc226983cba188990cc5047617cb2a71b0bb45686c7838a"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 0,
+        "digest": "68feca08ba4ead9a6bc226983cba188990cc5047617cb2a71b0bb45686c7838a"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "0d726b3911ceb3bc1cef5880f69442b55ea76a8190d4584ad77725a391869c95"
+      }
+    ]
+  },
+  {
+    "sequence": "97",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 15,
+        "digest": "bf619d0cfd96f49e4acc1d2498d16d7e2efcb6a4b459e6816bef8dd7c7dcf5f6"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 12,
+        "digest": "5cf191f002c603617c248deb20334f7179b44c019cc5cdf3ff61fa71a9bbd3a0"
+      },
+      "evidence_nodes": {
+        "rows": 129,
+        "digest": "a0022d4d157d00fc78aef4a48c55650b54acdb6f9b5ea485e63ad533ef9f2bf9"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "9b7abe958d35dd96590cb8e05a07d6bdb55c55b29d3ad37a2e198aefd6d205b5"
+      },
+      "evidence_values": {
+        "rows": 129,
+        "digest": "a89b1c7e99d28833dbafdd782382a1c3506ac8a1a6be98b81b8282835a7ab424"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "f305af5be7c15758120a183be90d9c3c727e9088c625da0780579e5eeaa3842d"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 336,
+        "digest": "a2015ea31084e2bd2e510a0f593d9b69e1af2915c2d95364e1ad0ede98e322f6"
+      },
+      "publicBalancesV2": {
+        "rows": 6,
+        "digest": "49eeb804ac89e3d7fc659240988ae523eb4b34bc75b919dd3449cdf7d989a33f"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 43,
+        "digest": "4738b9afdb24dc6e00cd98b012ba8a97d1cbc682fbe2ba45e81ce822ad548179"
+      },
+      "publicItemCountsV2": {
+        "rows": 27,
+        "digest": "ef1fa5eb84889937d362ddc738c79f251042f2b409bb9dab4ce6b49cb1f40bf9"
+      },
+      "publicItemsV2": {
+        "rows": 122,
+        "digest": "af93a2f240d2738eac8f1b7989dd16e1b7af7cc83b779f6f82a98650a4bece78"
+      },
+      "publicOrderV2": {
+        "rows": 635,
+        "digest": "90e908a88b4121cfd5f6caec8d35b36230cfa3428f92c5eca0c8f804e85df3b2"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 16,
+        "digest": "fd3cf746878d5c2c74dcbd0b54a610d620472d68d4174febaaee412639d47785"
+      },
+      "publicPatternMintCounts": {
+        "rows": 17,
+        "digest": "46dfaf9e68b606728814d39587bf5f5b20decded7f70ee751222fd41722c24ea"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 16,
+        "digest": "cbb46c5753e9e49190d2a1e7043cf6c133aeaa213f701b062c11de0d2c0adf94"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 82,
+        "digest": "b583823b89e513a1e3ccdab509cd1723d24c4185058af12cdb434d1b97313df4"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 12,
+        "digest": "59bc54684b603a48344db400b5d6c66629d8e20c556a679e27dd8e8876e46561"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 33,
+        "digest": "01fa8168940c2d83690392128350bb95c4295ec10622422f711f8b1d080dad68"
+      },
+      "record_counts_decimal": {
+        "rows": 33,
+        "digest": "e76b9582b7fe025e04e8795e88267d77b51b7fbdd5d91cda3caca99fd886f620"
+      },
+      "records": {
+        "rows": 220,
+        "digest": "38426b43d6230108081975976708bd9eee2edf649a2e52ba00bad67b1b6d0bae"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 4,
+        "digest": "edf502f29888b72676b591c6c948012602467aaf673bde7010e2cf6e5635a486"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "45e7d8b638a4b442e6526ccca656912c6571ac8eb58f235d29245465138420ad"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 4,
+        "digest": "39c9c6fdb7871f2a51a97fb0bf0616e53aa05bce290bcc9ebb719c83d3693412"
+      }
+    },
+    "root": "62fd22164285345f6f1e806d0fa6c33639a2525928a3970228a03daf4565dfd6",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 10,
+        "digest": "26a31c4b824a1ea97b664f166c97f198a4824df24bd4fc659f9937ee7b6f5a89"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 13,
+        "digest": "92896ac1b115d4a416aacca2808202aa6cb4355871458739eba07477d9456e85"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 12,
+        "digest": "c9dd4b6602e757dd339b192a7b8c80f893ee4e18e41aa616272f2333ea9ca6fb"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "c236d73a6949c6a2f4d11e8a3ddbff935ae75a6af0f1d317b7c30c706697a53a"
+      }
+    ]
+  },
+  {
+    "sequence": "166",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 26,
+        "digest": "38ea1d8c7aa506d8aaccf7a043c08e9772ffcded67adc8f7aba66b43659de4bc"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 19,
+        "digest": "3f9cf77ed44b7ab768b903f3d7e89a11ba3927496bdf08562d08316208413a0a"
+      },
+      "evidence_nodes": {
+        "rows": 212,
+        "digest": "3b4424a15b172cca96c0eaaf2a6263ea3749f0fc86aaec8e42d6342b2b09d1f5"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 212,
+        "digest": "3539a09bf02305d5a77675d525e7b995c2fc6dc6d6611acdd4e985d5cdf6b35c"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "ac1ba9660b755ea222d864b7ec855a48af779a3c3c08bd5ee9ab27f263a4036d"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 525,
+        "digest": "b142426efb1f6a4c5284d8112a3ad905ebd3f02f19b1500a08eec18985bfcdf4"
+      },
+      "publicBalancesV2": {
+        "rows": 14,
+        "digest": "c7f35a5803f27a69218082ae28341aa3532af02b6fa675ed3fefaf1ce6b4da08"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 61,
+        "digest": "b5720a0ed7beba63de4b81f0ac646778b0eb1654a8b7db0e9a84e22ffa4c9621"
+      },
+      "publicItemCountsV2": {
+        "rows": 37,
+        "digest": "718f27e5658a42b10329b745c38bd136c51a5d95d6476c673b0de65a0c843245"
+      },
+      "publicItemsV2": {
+        "rows": 210,
+        "digest": "79d72b0c340eb0e9aad2c3246ceccaf87a5a994f7864742101a3170675789e68"
+      },
+      "publicOrderV2": {
+        "rows": 1081,
+        "digest": "46e47b96433241b0fc79cb704f8f98f9e979992a089989b5c45057d883ee2596"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 21,
+        "digest": "c78959ecb738ee68a2db2a1a3c9c4f1422509003ce0d6ec5258412d0173c606b"
+      },
+      "publicPatternMintCounts": {
+        "rows": 24,
+        "digest": "4d99aaea96709b1a9e27ffbcad4849029dfd33fe2b916afc557fed79e717dff8"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 26,
+        "digest": "098547bbd93a158d870f9fd525a795cc95640ef269cebd08759c7ea026ca9ca8"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 138,
+        "digest": "a0e1f740f414aae45208e5dad5f60c627834e8d61073ec18ef636bf211d46a5c"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 22,
+        "digest": "76679f48913be3160be9cf30a90f8e3378a9bf478bd3ccc3c2de8ccb060e12b2"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 40,
+        "digest": "bf3e8baa424c988cefe64714e559e4bb3ac34832802f28f427d43ea131263365"
+      },
+      "record_counts_decimal": {
+        "rows": 40,
+        "digest": "951326d1707f4cf16d19e4689a814859422b55b17f9f5631f6b53c207341506e"
+      },
+      "records": {
+        "rows": 354,
+        "digest": "af1887175a7d9b0dac160f8d92b0954e5d93f592ded22d93a162052d4403e6bf"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 9,
+        "digest": "16eb2246c8649c2332c6d8c69072f70aa3b9fd86658e8ba852104e17900d654a"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "e6c61fd72626190c926030fdb22955136ff8ceb5bf57efd5333c92d6e631acbb"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 9,
+        "digest": "e79f972a92080e71b4603bc57ea509c5833eca390a1049c5631542e1b7f98f7a"
+      }
+    },
+    "root": "86dc68434d346fac6904e8e99b0059484b79420190adfe0e1836ad045f4c7a4a",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 17,
+        "digest": "8cce6f9f57792134742950627281ec11dbf7eee5a56433b2fb1f6e413b1020ee"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 17,
+        "digest": "71f91a9cc096dbb36bd05ae0b010311909447969d37116f1531a11ce63c7a367"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 22,
+        "digest": "05f04dccd22babff8c72ce3e789ab1328f9eb714c4980ce755e93a107dd6dde6"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "f0e26b686dfffcada41504baf5e6607f313c46e9be7cfc7aa0407a2e6f121692"
+      }
+    ]
+  },
+  {
+    "sequence": "235",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 40,
+        "digest": "592c026adbbe67faf9d658377275f54b4da48b98a13fe1b1e74eb8f494509068"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 24,
+        "digest": "64f5d911012ff08494bfaec226fee7375a9b2102c8a2a5c0db2e3e334eb0b2b1"
+      },
+      "evidence_nodes": {
+        "rows": 230,
+        "digest": "fcb8806dac133a4a1f89de686a5aa683c322966136748cc1ae4effc96700dcaa"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 230,
+        "digest": "816ea98e91cd6a283a5c445009f574796e3e6574e4558bfa28a18f50fce0cd1e"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "444253533ab5f16a1f41328e4fdceb28736ec9011aaeced6f78bbb4b369313bb"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 646,
+        "digest": "bfd1e045c11b8952468f38ab5d0df319e71b1daae7d1dd07cfd833e0bb673d0d"
+      },
+      "publicBalancesV2": {
+        "rows": 23,
+        "digest": "1b84d4fe8cc151bc0268cee5c37779d83f65bb230736ad40b9788c7c99839772"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 81,
+        "digest": "c01867f15959c94f49f1d5040ab3f20101d76451dc46972c2219b16ae31452c2"
+      },
+      "publicItemCountsV2": {
+        "rows": 41,
+        "digest": "1c8897871bedac7b92e281e60aabe0c28980f576edc37a28240d447644f495c6"
+      },
+      "publicItemsV2": {
+        "rows": 266,
+        "digest": "a64943d73dec0398c8c46168a28365fb58fff8401e5fd31130a2333e033960c2"
+      },
+      "publicOrderV2": {
+        "rows": 1281,
+        "digest": "a0a2c11bd7893dc5d49718a818826e1a4d1e7278594fd445093967f48076f6e0"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 27,
+        "digest": "17b8ee60cae8128f832ec10c78d3a2221baf70b80539416f0a1c8eaf540e6cf3"
+      },
+      "publicPatternMintCounts": {
+        "rows": 31,
+        "digest": "ebc2b9e953982276ddb8168e9592dc16f6b84729d6d098a1855976ad82fd220d"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 28,
+        "digest": "484ebeeafecfcbeb28a519bcc076ba415bed32f2e263d4eec0aa13fa444d86e7"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 184,
+        "digest": "8b98518174f810805a22f70afc3154471d8f415431e45d3a20c932c1c9b64775"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 23,
+        "digest": "91dc182e2d4611ff6ab2bdb3da8de1ca461a82d0ee947048e610e110a5bd99d4"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 46,
+        "digest": "186c1bdac4a5385703f4cf66399dcb6727c410d17e9f9c769cc0bdc9c6d3b297"
+      },
+      "record_counts_decimal": {
+        "rows": 46,
+        "digest": "20b0eadf18b5b85d4de899e36d6f56ac105dd284bc96716b2d482cec4d296a66"
+      },
+      "records": {
+        "rows": 430,
+        "digest": "639fdd534861be7322b8351e225521785b87d3a4bb8be1cea4ea04fe5ddf961e"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 16,
+        "digest": "e7aee4998ee78b549cbd924e07826997803bd9ceb18b6585b5ec3833ae4b1ed0"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "d8633e229ee14e225f9e30eb93e821a04750bceda3ce6e251dba481cb338cf35"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 12,
+        "digest": "2830de6be6c2af48c49d58ff0d5c731ba891baf9019c94c88e58f96e54739165"
+      }
+    },
+    "root": "11c47381acaaefb0a134d054a17c662e6285a05788c93e19b231ba5636e6ea26",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 17,
+        "digest": "dabf790303cd96558735568e1d5ee3529b3c6b8a4ae7a588ba3cb42f38d4fec4"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 19,
+        "digest": "74beebaf2b572b4b1cec36f3e7d61befcc06aa7f9f36bcaddb82830668308df7"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 23,
+        "digest": "04d09442985b46a41685fc1edf74c14a0f1aecd6b3c8d1475020172fca585493"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "f571c0b9812e88f1a71858de21bcd568555d04d3f411b896f204079b92271983"
+      }
+    ]
+  },
+  {
+    "sequence": "330",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 59,
+        "digest": "7c818b3c5c0815c9469bd0df8eeebf1be829b83ab6a0af6639e4f46c358ea7e5"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 27,
+        "digest": "c4b64b892452a4dac3502a42d98130b9d5845fd5aa427bc2fd9cd237832146b2"
+      },
+      "evidence_nodes": {
+        "rows": 290,
+        "digest": "1fdfc27f18aca07c53afad0cc50683a90db4ebc1636338df770170d3b3449b2f"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 290,
+        "digest": "382f4c5b6fd5be1f474bfd89f701293e7c7c791a34282ecaf3cd7de540f2925e"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "640a07a85b8c5684fec3942b4766fba520d74b332c66d1687507e9370b77265e"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 744,
+        "digest": "0667f666b9487e9171e45fde4e21d65c4218e7cfd49052fbf74e49f3cd8fb91f"
+      },
+      "publicBalancesV2": {
+        "rows": 31,
+        "digest": "812475158595637a3a96ad5aefb61cadf56c00b389ff43627a1b426e65a19f1a"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 100,
+        "digest": "ca2a8844c557c5959c6ad52bfb89bd371a5ad86ef49b666fb866eeaef5306683"
+      },
+      "publicItemCountsV2": {
+        "rows": 44,
+        "digest": "e1192057265b748b73898d7eb7906c9d9d3ab4bc45f002f72e804a29b561610c"
+      },
+      "publicItemsV2": {
+        "rows": 316,
+        "digest": "9336bcb24c807c7a0410c22e107de6b1141a466c7baa4fc73bb6d0f5b652857c"
+      },
+      "publicOrderV2": {
+        "rows": 1488,
+        "digest": "c8687ab0ad9056f784b6d215c968316f06a53419100b3dd680b6b46db147236b"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 31,
+        "digest": "6658b17729250e744ca3d81ddd0c2e43dd032faefc0d311ddffa821d5a61aa70"
+      },
+      "publicPatternMintCounts": {
+        "rows": 33,
+        "digest": "17241b4198423e66bcead5c8959c1d75ba2cf55dd69d90a7bdf6f427b586c67b"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 31,
+        "digest": "5959310c4733968d19b8f58c1665029cdbd319cf90e29391a26d89cdbdfd8900"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 218,
+        "digest": "01782366f8a5290388f7e8e002de78204756c2ce8e0e1335195087457a1656ff"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 25,
+        "digest": "654a34bed07e1dca4f7743280ce2a8934003df5da022e86c7f1263482297a3ec"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 50,
+        "digest": "f527a2e93369117946eee0e0e52728e6ad34201c48edfbadde016a3e3d4445c9"
+      },
+      "record_counts_decimal": {
+        "rows": 50,
+        "digest": "ebe713caa0c72fea3e9e5ef0d845d0c6510f3396eff45fc2b012b94989cf2b3d"
+      },
+      "records": {
+        "rows": 531,
+        "digest": "3de0d6591caa8aebb58c6b0c430f1e98181234a87447b5f7d5f264d987cc64b0"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 24,
+        "digest": "c9d63a11f1431eb0e800e7a3dcec31b34b8aab93929e46c8755b26aa27061b31"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "2321e70fa826c7dfd3a784acc6a98f8785e058fd036e066dccc110a8787e31b9"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 14,
+        "digest": "cbe25e9d3511f5b220e4ae0828343a76ead5ebf57d88d4c4407f8c67c6f65dd5"
+      }
+    },
+    "root": "8c333b856b81f56f86c277d774584985a06e99dda05ff51847aafce98e716ff2",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 24,
+        "digest": "7cd94a2c000858dd804f5c65784c36a74390c1beae88788289d1257bb2a0c302"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 27,
+        "digest": "ef0b9f90cab05bfc5339e0469323c63973949efc081334da9d0300d09122a193"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 25,
+        "digest": "8ea36a44a00ee506985b47b8a1c6eedf68eb7c3eacdc24cd8a13bcd20c1f0219"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "cd0fdc81217717dc6bc0c2511620619ac2387987476162bbe55dda4c7af1773f"
+      }
+    ]
+  },
+  {
+    "sequence": "400",
+    "decimalSequence": true,
+    "publicProjectionActive": false,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 66,
+        "digest": "5755f3a5b9315821ec370d694ac96e792ef09ab7d288cf58c239117b32b5c578"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 28,
+        "digest": "fae87240556e91805229db49aad49d5ee2a5fe9df09740a4ee7d7d691c7df16a"
+      },
+      "evidence_nodes": {
+        "rows": 341,
+        "digest": "6c0f64d5c596b21a822d89a0a505ec46ad3004a156792de18f734633c25f3f3a"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 341,
+        "digest": "230195de8fbd41becb7f2399a266e8625dcbd4b377cc01ee1e5ceeaa1993252a"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "5e82d3d75bdb50daae17b11c349c5d086595bede8943e11575347d9619f16538"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 744,
+        "digest": "0667f666b9487e9171e45fde4e21d65c4218e7cfd49052fbf74e49f3cd8fb91f"
+      },
+      "publicBalancesV2": {
+        "rows": 31,
+        "digest": "812475158595637a3a96ad5aefb61cadf56c00b389ff43627a1b426e65a19f1a"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 100,
+        "digest": "ca2a8844c557c5959c6ad52bfb89bd371a5ad86ef49b666fb866eeaef5306683"
+      },
+      "publicItemCountsV2": {
+        "rows": 44,
+        "digest": "e1192057265b748b73898d7eb7906c9d9d3ab4bc45f002f72e804a29b561610c"
+      },
+      "publicItemsV2": {
+        "rows": 316,
+        "digest": "9336bcb24c807c7a0410c22e107de6b1141a466c7baa4fc73bb6d0f5b652857c"
+      },
+      "publicOrderV2": {
+        "rows": 1488,
+        "digest": "c8687ab0ad9056f784b6d215c968316f06a53419100b3dd680b6b46db147236b"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 31,
+        "digest": "6658b17729250e744ca3d81ddd0c2e43dd032faefc0d311ddffa821d5a61aa70"
+      },
+      "publicPatternMintCounts": {
+        "rows": 33,
+        "digest": "17241b4198423e66bcead5c8959c1d75ba2cf55dd69d90a7bdf6f427b586c67b"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 31,
+        "digest": "5959310c4733968d19b8f58c1665029cdbd319cf90e29391a26d89cdbdfd8900"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 253,
+        "digest": "3cdd2cf00805151c8d36a86fb32f9780891cd2d6ccc10e1cad042f8f4eed9ed2"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 25,
+        "digest": "654a34bed07e1dca4f7743280ce2a8934003df5da022e86c7f1263482297a3ec"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 53,
+        "digest": "68f4ecdc60cb877432e7a8b61211a208aa8492b4e18b360523d26bdf0b55a692"
+      },
+      "record_counts_decimal": {
+        "rows": 53,
+        "digest": "91cb0a7ef5d12da1a98500f347e19f233130e7a235590719020667f0ae82e4c2"
+      },
+      "records": {
+        "rows": 596,
+        "digest": "72543ebf9902b862fbf565a8a6793ed163f1c065588674bec5853eb1b5ea43f9"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 28,
+        "digest": "4ad2763b0959166d600e1b252d2340eccae697b2f011825b236e7deb5e32139a"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "3fa2fbe678d18d0c547ef2d46b37388bfdf259c1d5e589c9f7396daa36d2ee9d"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 12,
+        "digest": "7d3b8f1362fffabdfffff84faa1490de02f26d5bea2ca8dd1c730399473973e6"
+      }
+    },
+    "root": "e36db8a7abf01ac8609881ad9ff0ec8390eb0e0b59bfc6ae47b8a9cc13d7b65d",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 27,
+        "digest": "916602fc33dca886c769749a82f2f1ee7a77475f5615004a4b8c36efc35f1db3"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 30,
+        "digest": "c511927e1f6df8804a5dd5906366f2be51299ae401eacf55dde4d7e39f1fa443"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 27,
+        "digest": "3250c81822074c53b2b7c4adeb004b63575be22c1a8c4881bca599c9ccb558c5"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "0de23649a640438dc88e91dcb5d8475c3ce778cd47dedf98f788cf4cfad7d30b"
+      }
+    ]
+  },
+  {
+    "sequence": "471",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 75,
+        "digest": "814a5f3ac738f3871a1e44d83ae029b010f7977f75e05ea5841e7afe91ade8e0"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 30,
+        "digest": "8e9d7dac4661e9dfdd3c4a98e6d5dd0157afc1b940cb1f2433ecb4afc50acb74"
+      },
+      "evidence_nodes": {
+        "rows": 352,
+        "digest": "6b5be118e6ee95f5b448ac0214e75b730e357e7b03d764ec9e02ae0b74efcf7f"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 352,
+        "digest": "5b54b5bb04c1b26f70ff47b6434eb98cb5924fcc06c4bc58d2897b13035cab3b"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "aacd183fc04af2fdc2a05d583173d3d5afd3dde33873706d5c244a8ce8565626"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 814,
+        "digest": "d0d49d156ee71e55be6c27eb0d7b069e041b65596b2fd8a3cc6022c8732f7939"
+      },
+      "publicBalancesV2": {
+        "rows": 36,
+        "digest": "025a5b75ceaf730a94bedd6b7404c03463bb7e67e19921d9e6e70d78f9531fe6"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 110,
+        "digest": "955c57ade279d67e679db33a195ac062a3a9b4eedb7e44b8eb7765ed45bc9392"
+      },
+      "publicItemCountsV2": {
+        "rows": 48,
+        "digest": "15085a1b242c0c4ae566d7ab6cba7682de98f8f742659289a4832480a9ba7712"
+      },
+      "publicItemsV2": {
+        "rows": 340,
+        "digest": "c37ed030d1ba4c69fb79c35ae8ce256d8328219ae66233ac6fb37a29db913790"
+      },
+      "publicOrderV2": {
+        "rows": 1577,
+        "digest": "4d7a35ebfb08b2f141d441d61e6d256dbf7798ae3f13faf4d367d090488804c2"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 34,
+        "digest": "60f6dc1cbe035eabad4c0fab7cea246ee4ef7efa39a7f23cf135bfed4959ee04"
+      },
+      "publicPatternMintCounts": {
+        "rows": 37,
+        "digest": "90c89c705e35e6688176df32c7df3d24a894ae2e68ba5ccf5f5f94e92f98b5a8"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 31,
+        "digest": "5959310c4733968d19b8f58c1665029cdbd319cf90e29391a26d89cdbdfd8900"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 274,
+        "digest": "d78a98b6936877949cd356765f424bd9ea6c9e5148895bceb74963afcb981575"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 25,
+        "digest": "fdb9818403b26c4500cccd304de8610468f97730ab7ae900e55d28bc329d3589"
+      },
+      "public_projection_fixes": {
+        "rows": 2,
+        "digest": "b596d94fa550ff393870d7fabf90dcecd6fb5bdf8210f808c0fb8248fe23b39b"
+      },
+      "record_counts": {
+        "rows": 58,
+        "digest": "0fff95bb12b1a136fd34239a2cc3edcf151320bbcfb8efddedf3c9dd3e5c5596"
+      },
+      "record_counts_decimal": {
+        "rows": 58,
+        "digest": "1dedd6e45f1a8324169852258cff193571effd053943c4b756a58e4e5d5e700f"
+      },
+      "records": {
+        "rows": 626,
+        "digest": "27f62a9b5623140ac06d3839caa87230296f1042ebdc71aa344035857c1444ab"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 39,
+        "digest": "ce89af5bfa28a92c8d8ed087b35f0ad39304b53f45ae32ac04c74b7401e394f9"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "c661de4381e69c9deb63f22f9c0042baeebc56c1946b0e72fbefdb349a356177"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 17,
+        "digest": "3f7014bc17f25e15aedab2d5b01ed8ce2a221f923d8a67ea3a6f31bad7614158"
+      }
+    },
+    "root": "f26f0cce04708b0d9949587fd1e241eb56192648f27acba5e8f54919b6f86a90",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 25,
+        "digest": "897b46752b9f8297c2d174bb2fac09d12fb2bd48156b98085d0b1e376d5d22dc"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 34,
+        "digest": "8f1603a6a41e07cfa750701fccead864001ca15cba2d3e99b5684fbfdfb71bd3"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 28,
+        "digest": "5585acd8e524e57c27f1f84d1040d3992218aed6703c9e57967e0c2b6f0407be"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "0e8fbc4f4cd86aca6e842720c4fb8659680f8becf39e950679d1c973368f0fd2"
+      }
+    ]
+  },
+  {
+    "sequence": "471",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 75,
+        "digest": "814a5f3ac738f3871a1e44d83ae029b010f7977f75e05ea5841e7afe91ade8e0"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 30,
+        "digest": "8e9d7dac4661e9dfdd3c4a98e6d5dd0157afc1b940cb1f2433ecb4afc50acb74"
+      },
+      "evidence_nodes": {
+        "rows": 352,
+        "digest": "6b5be118e6ee95f5b448ac0214e75b730e357e7b03d764ec9e02ae0b74efcf7f"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 352,
+        "digest": "5b54b5bb04c1b26f70ff47b6434eb98cb5924fcc06c4bc58d2897b13035cab3b"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "aacd183fc04af2fdc2a05d583173d3d5afd3dde33873706d5c244a8ce8565626"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 814,
+        "digest": "d0d49d156ee71e55be6c27eb0d7b069e041b65596b2fd8a3cc6022c8732f7939"
+      },
+      "publicBalancesV2": {
+        "rows": 36,
+        "digest": "025a5b75ceaf730a94bedd6b7404c03463bb7e67e19921d9e6e70d78f9531fe6"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 110,
+        "digest": "955c57ade279d67e679db33a195ac062a3a9b4eedb7e44b8eb7765ed45bc9392"
+      },
+      "publicItemCountsV2": {
+        "rows": 48,
+        "digest": "15085a1b242c0c4ae566d7ab6cba7682de98f8f742659289a4832480a9ba7712"
+      },
+      "publicItemsV2": {
+        "rows": 340,
+        "digest": "c37ed030d1ba4c69fb79c35ae8ce256d8328219ae66233ac6fb37a29db913790"
+      },
+      "publicOrderV2": {
+        "rows": 1577,
+        "digest": "4d7a35ebfb08b2f141d441d61e6d256dbf7798ae3f13faf4d367d090488804c2"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 34,
+        "digest": "60f6dc1cbe035eabad4c0fab7cea246ee4ef7efa39a7f23cf135bfed4959ee04"
+      },
+      "publicPatternMintCounts": {
+        "rows": 37,
+        "digest": "90c89c705e35e6688176df32c7df3d24a894ae2e68ba5ccf5f5f94e92f98b5a8"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 31,
+        "digest": "5959310c4733968d19b8f58c1665029cdbd319cf90e29391a26d89cdbdfd8900"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 274,
+        "digest": "d78a98b6936877949cd356765f424bd9ea6c9e5148895bceb74963afcb981575"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 25,
+        "digest": "fdb9818403b26c4500cccd304de8610468f97730ab7ae900e55d28bc329d3589"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 58,
+        "digest": "0fff95bb12b1a136fd34239a2cc3edcf151320bbcfb8efddedf3c9dd3e5c5596"
+      },
+      "record_counts_decimal": {
+        "rows": 58,
+        "digest": "1dedd6e45f1a8324169852258cff193571effd053943c4b756a58e4e5d5e700f"
+      },
+      "records": {
+        "rows": 626,
+        "digest": "27f62a9b5623140ac06d3839caa87230296f1042ebdc71aa344035857c1444ab"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 39,
+        "digest": "ce89af5bfa28a92c8d8ed087b35f0ad39304b53f45ae32ac04c74b7401e394f9"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "c661de4381e69c9deb63f22f9c0042baeebc56c1946b0e72fbefdb349a356177"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 17,
+        "digest": "3f7014bc17f25e15aedab2d5b01ed8ce2a221f923d8a67ea3a6f31bad7614158"
+      }
+    },
+    "root": "f26f0cce04708b0d9949587fd1e241eb56192648f27acba5e8f54919b6f86a90",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 25,
+        "digest": "897b46752b9f8297c2d174bb2fac09d12fb2bd48156b98085d0b1e376d5d22dc"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 34,
+        "digest": "8f1603a6a41e07cfa750701fccead864001ca15cba2d3e99b5684fbfdfb71bd3"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 28,
+        "digest": "5585acd8e524e57c27f1f84d1040d3992218aed6703c9e57967e0c2b6f0407be"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "0e8fbc4f4cd86aca6e842720c4fb8659680f8becf39e950679d1c973368f0fd2"
+      }
+    ]
+  },
+  {
+    "sequence": "573",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 91,
+        "digest": "89daeb2ca055af658931a0b9f6a6ccd3763a7b09e6a21792c0cb65539bead898"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 31,
+        "digest": "725a3dba119c4211c0fe34100b13507f4fe14270022f4b45272c9e848c91634d"
+      },
+      "evidence_nodes": {
+        "rows": 372,
+        "digest": "c5f380fcb3bef0d668f3a261603dde63833be7961acb8e8c8b77184549e5feca"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 372,
+        "digest": "6dfe76e3ee56f5c52e9e0e20d1fac2eec075d15cd7a597276df58676c0b362c6"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "2e3775c56f85251a7032907e3c7527328203859c208a6e837224187e77a23b04"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 882,
+        "digest": "dffc63be2f85d145f3d51cab2c376a17d2ada7fe94f0ae79c3dd7eff58fa34e0"
+      },
+      "publicBalancesV2": {
+        "rows": 48,
+        "digest": "9b5e4c275aa1550a2b9d8fff042d4f5545918546df881040ddc6e80de6c49ec3"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 126,
+        "digest": "4f6440800d1a1c3131216e507be05d96ca3cff3089908e54db8b7e8e4620a2da"
+      },
+      "publicItemCountsV2": {
+        "rows": 48,
+        "digest": "8e18555f4c4f20f9f91236b1ead8e57f096ca1f2e84f1297876d4139a58a05ea"
+      },
+      "publicItemsV2": {
+        "rows": 382,
+        "digest": "2fa69eb8ece4efecf8c32fcc422ca7c27c703f511ab03f54504c3a6e7b422647"
+      },
+      "publicOrderV2": {
+        "rows": 1743,
+        "digest": "ebd2c93025fb3851506d9ce43be4753ba00a4beac972b59426354771472ca248"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 36,
+        "digest": "afd167510b7791d868155e0724bf300cd483916f54f27c0b27dd102e1962a925"
+      },
+      "publicPatternMintCounts": {
+        "rows": 41,
+        "digest": "988f27aaaf470552ef607253a10b86e9d5e332baa9eb43a7b9a4204632da8a59"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 35,
+        "digest": "dc5cf783a3e0b5f8737520c76c34f9043714dd10d663dd55851a691d7ff51eba"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 302,
+        "digest": "3286ac74b03b6d93c81801d859df9eeb8cdbf478f960353485d12cdf0f5647e8"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 25,
+        "digest": "2fda54c0557743488a971118346b3e6fb46ec8636d00212a3caaaaed43464a1f"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 59,
+        "digest": "028cf92af603a9dccab39608937211670786ab955686fe9a45319dee6fd16263"
+      },
+      "record_counts_decimal": {
+        "rows": 59,
+        "digest": "924a608c117cd4e867ad6e792dfef59d9020929c547c0541db49452382d34680"
+      },
+      "records": {
+        "rows": 683,
+        "digest": "fcdcf2b51459d3e76a80981b57eb9a7b3b421197b72a888ff8c646aa3d901fa5"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 48,
+        "digest": "d8f6f00d21ad8a2251c89d44626332e816850c2fcdbba4a98180d2e22ec2eac4"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "04175aefc1f349addb7112389ca64d8f517c216fcae579dd09f8fd95d8f3d10b"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 16,
+        "digest": "c5811b7de24aaadb126efcb9eea2fb53b8407ee78288da9f9d65376c7ac0c7ec"
+      }
+    },
+    "root": "7b93cc115945f757634207b174504518b99b049222960bc12aefa5bcbbccd789",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 28,
+        "digest": "464e0ccd2de8045899a87a18800abb541a98f2cb6d986594066bd7346da4af00"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 35,
+        "digest": "ace5841a2e6238aa66288061726b2fbb3990696243497d51c257bd33c35197d2"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 27,
+        "digest": "cb3caef9219c1c0a8bc73bf7fcfd241ba20af7f0211b482aac369e602bd17729"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "2df079c0618c0c6492f9c218e0ad83d2ff087fa320647b3130ecb891f5b8b7f1"
+      }
+    ]
+  },
+  {
+    "sequence": "644",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 100,
+        "digest": "6485d8d524417548edf9f7019b45d7d17d1d0259af44d19f203a8748a24a4320"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 28,
+        "digest": "1e018809ce9abae19e75c3c93ff9fb84e7d086c26494d3cad195315e65363e93"
+      },
+      "evidence_nodes": {
+        "rows": 398,
+        "digest": "5cd7d59f7c4b0bd383bbb026e9685bd1236bb49a21ca6c78a47110e1272608d2"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 398,
+        "digest": "c1cf922a0d84e3b9c0983b4e968f105914fde3e2f349b0d8fb4c2e7b1a24bf01"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "a76af312f2873a4acc08baeb3afb3ce4eab1a2d452c13e7ad4aac70e2f4528ff"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 934,
+        "digest": "893d426cf4f3a743d9368d9d64f8730c6822ba2495198d65a325dc8bea162624"
+      },
+      "publicBalancesV2": {
+        "rows": 51,
+        "digest": "2221f5bd67f7ceee98a631588f0b19fcd60132ff2cc35af999a004a522555d94"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 136,
+        "digest": "68e56a30c251651a732aa3675922c20a1953c983823bd9acef0a0c6de8c5042f"
+      },
+      "publicItemCountsV2": {
+        "rows": 51,
+        "digest": "a81eb2a0b9346ccb1bd35b1fd1a235ef02b170f5c5ea841b9cf74676edcdbb0b"
+      },
+      "publicItemsV2": {
+        "rows": 411,
+        "digest": "b2feace8bb0928e006df7b7bdee0b584ca8e53ae6f7013ceab393c2c245f9e7e"
+      },
+      "publicOrderV2": {
+        "rows": 1892,
+        "digest": "330a47588588586b465cfbccd10fe36d78919309367a6dec77c76509089b7fc4"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 37,
+        "digest": "36dc1cf0dfbbb41c78152ff743dfc76b247597661da77da1445b00ae042eecf9"
+      },
+      "publicPatternMintCounts": {
+        "rows": 42,
+        "digest": "12cdcc91f1c32fc8800efa42846929ad688f35eff526bdfd922e6df09f72344b"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 41,
+        "digest": "a40c9b4ec0a6f52caa3447697ea46075ed58204d1b44af00b7614b6937b71357"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 322,
+        "digest": "248cefa389c6cba5cb4c3930b9e0c9b305f6af6e17b7e0d2703e08b312d535d7"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 24,
+        "digest": "1e92c0d43cd41b92e02798755d9b6c4ae9cb19699ff29d1a59d6fe7996b690e6"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 60,
+        "digest": "460c105903c59072de30c25ba5f6f0d4711a402404bb4e62ca05af29408e0203"
+      },
+      "record_counts_decimal": {
+        "rows": 60,
+        "digest": "f58f9208d90622173e0b3704b4946d7519548563a0dc5780f73ff07818dc5e0b"
+      },
+      "records": {
+        "rows": 728,
+        "digest": "245fb7278b83fe1ac1d6ae43b71a723f0cd595193e12a9e6091e5d2414ad1d1a"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 62,
+        "digest": "fef48824a40cb28f54d2115748872c5502fcf761154b25dcd43a37f9cccb287b"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "f5889f15cd5bdb37ea2146a86104fdbba1151c80ff57f57f26b4361d8b5e68b0"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 12,
+        "digest": "9e8839c1c2120e456cab296df929932cdd287f3dfb738a35fdd4dc75aa8e2885"
+      }
+    },
+    "root": "6da66ea4b373957f5836ed38c5e06ce73687827a22ef0c0d8312f243a1f607ad",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 33,
+        "digest": "7401a9010d6a446819c18045b425d0940fd91bbc471a219b5f21488a83dc4e15"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 37,
+        "digest": "6517389abdab1e62f75b40f23aabef1544a8e5ce1e8f3a647057aa66540494ad"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 26,
+        "digest": "55e02dbdb8e884d4f53350554c8faab786c9c2df92336b4b0482b1e5186b754d"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "579aaf7d543cd11c603658046c912dc4e9d94105cf26e87a40309ee0b0309527"
+      }
+    ]
+  },
+  {
+    "sequence": "721",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 110,
+        "digest": "29e7b37bac92d0f7d92e89d39bea265501026c7dd10d02c008316b3a6bca4a0d"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 29,
+        "digest": "bb0bf5714a66d7648f88d655a955c6406f2e41f899b82a29065cdcd85bffacf8"
+      },
+      "evidence_nodes": {
+        "rows": 404,
+        "digest": "1cec3eac7ee8da69349b9c29e7e9cddabf67bcb1a7251aad7848fefe810ed4a8"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 404,
+        "digest": "6f586da0cbb05d4a40009b511bf0f0f65b8fa4beb5643e477a5d4e805dd11fa8"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "9b437800acaf0cb8538a986c780301016d06fbf0b29e16a6dd5dad6eac24055e"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 970,
+        "digest": "58eacb133c929f647c7a11c791c255b209b7b3239f8086226823976b56b524af"
+      },
+      "publicBalancesV2": {
+        "rows": 56,
+        "digest": "9f22b98881520f11fbec4af3bf04fc1f9d412e74e64a9c3bb00433ebc14ba3c3"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 146,
+        "digest": "6e53df58299c183a2d1d17a733881b2a120486e6f1b20faddae9023032cd77de"
+      },
+      "publicItemCountsV2": {
+        "rows": 53,
+        "digest": "bec34d53490f34e21578f58822711d7c1a86dac3d2c4b353138315bc7ac89ae1"
+      },
+      "publicItemsV2": {
+        "rows": 446,
+        "digest": "eb0f499bf2d0dc2e001208f63f83bb504261e6813ae0f3c3b68fcf4feafa1ac4"
+      },
+      "publicOrderV2": {
+        "rows": 2032,
+        "digest": "8592038e99f7b3aa3c3894a923b26de77ab69281970e500cdabcfb1f804cace0"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 37,
+        "digest": "01a389df7a95a46c5dc9f11ab8ba40d5e48c878c7c8b9fc3f6ff094539231d2c"
+      },
+      "publicPatternMintCounts": {
+        "rows": 42,
+        "digest": "82765a467176de4f52b887e39edb32089ba3f43cc0bb65425a8072a25dbaa414"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 42,
+        "digest": "38e9b964e0e09d8f427db91cd1fcea340a75400eb30cc10a41afa46be232b7ed"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 336,
+        "digest": "606f5056857550fb23ec88daaa40a9a4787693a06df86312fd2c3fd6fc9407c0"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 26,
+        "digest": "3a4a04802273d2a366a1b62d051b76de203126ff70d367f2209dca7973a0b7b7"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 63,
+        "digest": "cdf2359078d3026f2871f837b26907ce667d791b1d7336feb6ad4ce14b1c6c64"
+      },
+      "record_counts_decimal": {
+        "rows": 63,
+        "digest": "599d3c7abca058af8c4fb13e23d6a950b67b11161df136f3f37010caf5b0a431"
+      },
+      "records": {
+        "rows": 756,
+        "digest": "7bbb5ae008d96a4917a34203a1df3c781c9625c29fa2d3a5fcb08076e6bdb1d4"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 77,
+        "digest": "584b1f324929076e75f538a6405aedffb9dee9d9b9f4a4c6f5379880239d1a75"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "6aeb9771fb9806f55ade0945a558bc5edf8af1db2002937fb04c261a3f072bfd"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 15,
+        "digest": "687ca036517c88c9c0e7f10138dbbe58f2042a4287087ad6b192d3a15c04a9d4"
+      }
+    },
+    "root": "2e441b762b79082f7a856cd992918fd08ddcc03ee3b4c49fb9a47039151b3404",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 30,
+        "digest": "2c33dcd3d9198c06a8e83365399b7290bdbcfa5a351220f2b9940f5935b9d26b"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 38,
+        "digest": "1ef4c7f8c9f6af6115900a53aa5bf2893c3b2c533a30aa0aed9a908ff11865e0"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 28,
+        "digest": "1a5972b26f39b622ed964499a7a45739acae05dcbdc6d5393c7f4f49ab37b30a"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "01d8b17395381bdc25a3970045edd82bbf262cc6276f1023f492a1ab6cefa2dc"
+      }
+    ]
+  },
+  {
+    "sequence": "829",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 128,
+        "digest": "7a7d65b6a73888eb395f92d8e99a7b50302797e7ac0c27b54495cceb54abbe36"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 34,
+        "digest": "be175e64e357170145bc25104c0aede6c37a30ffeb7f1eca54cc0dd819ee9953"
+      },
+      "evidence_nodes": {
+        "rows": 410,
+        "digest": "d8e4650ad224284f0ec0539bacbf8d01e8fda9dd9918234520595fc5fc50162a"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "aaad58e47667e0a2e2ace1d4e0f762c9fc90621b650913b62713b90823c460e6"
+      },
+      "evidence_values": {
+        "rows": 410,
+        "digest": "c7822f0ec514252a6c24289a85b098224b134c2687bfcb3950d83b6260105ddb"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "0cae825290fc4304f9df2d207547025d28b77800d2df68e5764d22558822250b"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 1007,
+        "digest": "32475c08daa448fd1d6e0a990611e01b28bf3ff362a968acbc5daba38e0b48ce"
+      },
+      "publicBalancesV2": {
+        "rows": 61,
+        "digest": "c8f554bd47d5acd050829498b86d348008158f33a61fa09ef69684aa5745285d"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 164,
+        "digest": "9e1f84c2175a96d39f54d2624180397e2369ec0deb37af853168d4698f27f8a5"
+      },
+      "publicItemCountsV2": {
+        "rows": 56,
+        "digest": "135f7dcc917e9a65865d124a8da835b34c881ad11dc92951acb0f5abfef1d6ee"
+      },
+      "publicItemsV2": {
+        "rows": 476,
+        "digest": "008949934f2525d309e727af8b64a4bee73d186aed45342b548db51d7d280c65"
+      },
+      "publicOrderV2": {
+        "rows": 2166,
+        "digest": "e4607a2ee18d5629fd43825314610b99b501e5382c1887ac446a4198074eb4e8"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 36,
+        "digest": "b602a94da6ee273143a12207ba45814a697eff1985958f6037779fe1c518f4d1"
+      },
+      "publicPatternMintCounts": {
+        "rows": 42,
+        "digest": "a10c3834d9f490514be9d9f3f99b17b06e2690135251565e2211750629b5e774"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 43,
+        "digest": "021d4c1509021918c55d73dba718c0a8687d3e0c5f8ae4f4c80d8875573b044a"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 357,
+        "digest": "0722071a942089d63d1e0e58bcc2eeec31b21b165907c09a56aa5d10333b00b0"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 28,
+        "digest": "55c73fc9456c565b12956724794d9d8ddfcced74200a063d6ee16fc74edc5e91"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 65,
+        "digest": "d3ed89547793cf67e353a0ac3276f75de1bd8c4ab0bd4e7ff9794fbe89e0aec9"
+      },
+      "record_counts_decimal": {
+        "rows": 65,
+        "digest": "0c8d5df09988c279bdbe12eba425e0700a58af08893c2089c712ae9990e4b8d1"
+      },
+      "records": {
+        "rows": 786,
+        "digest": "95ded7c5c0980866f40700a55ab8960ea5a91a651818b73a4f03c61067588d50"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 84,
+        "digest": "0ec7581cf9b0fe35e8b3b4cd34ae0048f955f55f985c4960f2ed398cc1809518"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "2bacac74513da9149e3439b5ea4c1b74c3885087d245e79fede04cc1f9a904f1"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 20,
+        "digest": "23a5d9312be1bfbaae2b6433069366947817eea0836643283fc7ad888b937d35"
+      }
+    },
+    "root": "1fc25b5cf549c2b8b8fd9bd22e0fd064a568f1da5d971e6b10f3583c018ad1fd",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 29,
+        "digest": "26a29a4a2fce306447dcdd6e480c9f64d546b7d2b15ca38348f666889746d5eb"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 41,
+        "digest": "e06f3bcfc9339ae56ac20da2c288847f19eb6f9a890b7bf2604bfbfdcfeaa0d3"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 30,
+        "digest": "648cff2c7b62b0d8d25d522c7d0c435cf5b63610f1f4ce53f119b76244c8a66f"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "3974cde117248d867755fd32f3bfb947dfa8ee101e334341c601e81ad0dfbea5"
+      }
+    ]
+  },
+  {
+    "sequence": "900",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 137,
+        "digest": "85aa2e6d98e8792fbf4e6c262be50af7727dc68b675514016e7cd4b5ba00a5da"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 34,
+        "digest": "19c0e11a82d585c3f8f9c29a2a6fe10eb78d4982a175c6d89fecac967c29b1e8"
+      },
+      "evidence_nodes": {
+        "rows": 417,
+        "digest": "47be8c6e1985964a74c6e4ce90f3d21ddff8486f0275b7826261dcf6ae4f8694"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "9b7abe958d35dd96590cb8e05a07d6bdb55c55b29d3ad37a2e198aefd6d205b5"
+      },
+      "evidence_values": {
+        "rows": 417,
+        "digest": "b0161efa21e3e16871db6e38d5316cd1b328e1d01b5381af7a8130bd710a8ded"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "5dd8a528950f66db593d981288a6f5e9bfa638e9135f3961764c62073937abb8"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 1033,
+        "digest": "b94be9121095203f948c312054a679e2020c09f1e13f2165ca1f8511c48c3373"
+      },
+      "publicBalancesV2": {
+        "rows": 62,
+        "digest": "65513bf2e03844a3ac6a90f1b01886aac64da3947619142962e1ec391db1203f"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 174,
+        "digest": "d11291a9058e4345917d80f8dbc3c9451da1f6bf62023bde52a5edd004918dea"
+      },
+      "publicItemCountsV2": {
+        "rows": 58,
+        "digest": "3c1d02ea79a7651935eddec24839bd890a24d326da513d668c7c38ac581d6ef6"
+      },
+      "publicItemsV2": {
+        "rows": 506,
+        "digest": "d59f794cf3ab99d8ba92f78758de829acc97c8e0943785ac3cf7826621ad87fb"
+      },
+      "publicOrderV2": {
+        "rows": 2311,
+        "digest": "9f481d55099c16b0619f6eac367e76f4fb0e00f6a6b6c09747cd92171cc8f9a0"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 35,
+        "digest": "cd8233dab4e80a1369e3d973ea6e27fba464fcec445cd43b1cc259b9884cca43"
+      },
+      "publicPatternMintCounts": {
+        "rows": 43,
+        "digest": "d3416856bb84f5334cce35f6ef92b720e9b19b9fa6e5d7d80986b9a91ef3d2f6"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 43,
+        "digest": "021d4c1509021918c55d73dba718c0a8687d3e0c5f8ae4f4c80d8875573b044a"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 369,
+        "digest": "5987c011ec9c509a4e88ead6957841b0b74a147101161749df6d2a0ceb7e94e9"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 31,
+        "digest": "01b7303c9b0e6cd703fca56ba95d58aca3cdd000ffbd57b4513417ecb4fbb9ed"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 65,
+        "digest": "d249f30a684f86c6acf8dba41273d1c797df2d01b7b652bb95dd66b5237a8e7c"
+      },
+      "record_counts_decimal": {
+        "rows": 65,
+        "digest": "b094ceecb69ffc2d34ede768c1b559dce155997c8007369ccb143aa22b01175d"
+      },
+      "records": {
+        "rows": 808,
+        "digest": "61ab6a5040b0e8b033f9447dabfb31c367e1d7801c1a190f6a7822b3405aa046"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 89,
+        "digest": "2004c6703f3475ed1eee3cd76b1b7ea0a8c979bfa8a56b08a9c920d205d08908"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "f237e1fea4178cff25600c836228cd082aed6114e28eb3ec59739d0cdaddf61b"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 17,
+        "digest": "bf11b78d2df0ba8e934c3fe3e11b6fd5a867c8bafef0dc221ef4cd8a1cbf3cad"
+      }
+    },
+    "root": "dcdb21d8c014e03ac3a84215aca39cf19bcb91acbac748ec354f863f6104b99b",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 31,
+        "digest": "e5b9b80a74545ecef7a373a52ea9ee8a2bf27c5ba2976df44f06f107cf85947f"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 38,
+        "digest": "604365f555d82be4e69cdb6e4428531e1a3cd95c25ffda35b885db726324c25c"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 31,
+        "digest": "399c6443f1f0953ec4a7acca07bc2356d5457fea3b9bea236c2b9e1ef548275b"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "402e29d1e8b0a5b3f81e35cec7985e26a9ea367f2c5fa65f13d270fb9bd90d99"
+      }
+    ]
+  },
+  {
+    "sequence": "976",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 158,
+        "digest": "dd0bf144e4bac8a40d5842e7ecfeee8d7d6b1c0fdf42ad39a329bdd935df86e7"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 35,
+        "digest": "fd15277117ac4f89b93a1e354179464d49b14389ea9169ee61809e755ab52600"
+      },
+      "evidence_nodes": {
+        "rows": 439,
+        "digest": "0f37b9f7b05fb933e58f9b098e3f6fe67055905a196b6d842704a112532178f3"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "9b7abe958d35dd96590cb8e05a07d6bdb55c55b29d3ad37a2e198aefd6d205b5"
+      },
+      "evidence_values": {
+        "rows": 439,
+        "digest": "87dd3ba201c748dccdbbce2899e951e7a68554ef9e82cbef2d08d838018f812c"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "a58f723b4309a624b5948b423141d0bc4b04096e87e8aaa1590af78be005d635"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 1059,
+        "digest": "aa5debc7d246cd8326a71cc2707ad87097f895f67fcc7b0de6179a86065ac49f"
+      },
+      "publicBalancesV2": {
+        "rows": 62,
+        "digest": "f4c66b8f48d9b07dd16ae16e4d7e7b572521c3a2c1f45993ab05e888acb6e310"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 195,
+        "digest": "43709282c4ed9ab9cbdee857830c53ef6eacb969f236f614ba6e722096b7204b"
+      },
+      "publicItemCountsV2": {
+        "rows": 58,
+        "digest": "367aca4d1b2288faa2a8e38c9d5270f67c51496f31bddd66c3c5d969d6212ab5"
+      },
+      "publicItemsV2": {
+        "rows": 527,
+        "digest": "5331ca10ff70acb74ac9dfed32f3af7ad9b8ed787faf8c445746b517cb01a2e1"
+      },
+      "publicOrderV2": {
+        "rows": 2421,
+        "digest": "c574143553de4a8797c8829cebd454a0d47e988a6e964df4c3ceebbefc4f31b3"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 36,
+        "digest": "88cb831332892e35b680da57cb10e556879845679a2c4d2c7ebde93ec83cb8af"
+      },
+      "publicPatternMintCounts": {
+        "rows": 43,
+        "digest": "6de22fb1d40bd7d5a0f030800d9eaf9840373aa87644b30283cf03dc736e4354"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 44,
+        "digest": "8e17796b71ec1aad977b95996f08686863e54c7ab55da4ccfbb2e45a3d022f60"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 392,
+        "digest": "ae2f353894932cedabfbcf70894706d09bc7a8ba8754699f091a24ae1b6c565b"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 32,
+        "digest": "9b593f961383360ff38dd7dd524fbeb448b7cf90f1b327188f34a21d65690b90"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 66,
+        "digest": "53f4ccac4c24a67c0587d715ec3e5083b6362d35b7efd4b86bc58142f7ca07c7"
+      },
+      "record_counts_decimal": {
+        "rows": 66,
+        "digest": "953a18f2921cfd9ca9c36d9f36b465378d4e49f25e5ffe860add2d1666ce61eb"
+      },
+      "records": {
+        "rows": 848,
+        "digest": "283cebd8686fa239ed9ddabbe50e80c09e2e620a5f5ef77f20d16746890cf9e9"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 95,
+        "digest": "ceb461a1bfcafff23881cf8a28c9e62041f7fa5a7ad7c0c2155318a7a5091db8"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "ca4c32a7d3d64e471bd21bb10480731f9546e1bbf9b1193c2b08055bbec89656"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 17,
+        "digest": "78373f5c430557685d25a8504bf2155419a31355befe3f53389fe055387c57b3"
+      }
+    },
+    "root": "ad8346c47cac3a679243c2575b4350d4859db2876d01e83ffdeb0b68ee9293f3",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 32,
+        "digest": "67d8fb34eeaaba22bab1b8e0451cb95e5d3c6c97a9842c67f0460380a11031f8"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 38,
+        "digest": "9bc1fad39faffc895f8121ca63f08f6946a4efb32ba14c266580ce4c6286e425"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 33,
+        "digest": "9582594079d1470c9aacd203d7a0ecaa866b4af69b3914966974e626fa3398a7"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "b8b338141d1e99be60ea2f8e305c9dc03eb82b157041fabbb1bc2ea93e90cb93"
+      }
+    ]
+  },
+  {
+    "sequence": "976",
+    "decimalSequence": true,
+    "publicProjectionActive": true,
+    "evidenceReady": true,
+    "tables": {
+      "bitmap_link_changes": {
+        "rows": 158,
+        "digest": "dd0bf144e4bac8a40d5842e7ecfeee8d7d6b1c0fdf42ad39a329bdd935df86e7"
+      },
+      "claimedBlocks": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claimedBlocksV2": {
+        "rows": 35,
+        "digest": "fd15277117ac4f89b93a1e354179464d49b14389ea9169ee61809e755ab52600"
+      },
+      "evidence_nodes": {
+        "rows": 439,
+        "digest": "0f37b9f7b05fb933e58f9b098e3f6fe67055905a196b6d842704a112532178f3"
+      },
+      "evidence_progress": {
+        "rows": 1,
+        "digest": "89cad253ed34cb00c153554cffe25cbcc9ddff28ffa43f3e33c8101d15485563"
+      },
+      "evidence_root": {
+        "rows": 1,
+        "digest": "9b7abe958d35dd96590cb8e05a07d6bdb55c55b29d3ad37a2e198aefd6d205b5"
+      },
+      "evidence_values": {
+        "rows": 439,
+        "digest": "87dd3ba201c748dccdbbce2899e951e7a68554ef9e82cbef2d08d838018f812c"
+      },
+      "journal_progress": {
+        "rows": 1,
+        "digest": "a58f723b4309a624b5948b423141d0bc4b04096e87e8aaa1590af78be005d635"
+      },
+      "progress": {
+        "rows": 2,
+        "digest": "a200814e0910db72de67ef3d76f33dd69290ae3710d952ada323cee7d01e603c"
+      },
+      "projectionAttribution": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionControl": {
+        "rows": 1,
+        "digest": "b4c6113546ea285bf19e978bcc577db8662a3dee689ae68d534644263324f515"
+      },
+      "projectionPending": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "projectionRevisions": {
+        "rows": 1059,
+        "digest": "aa5debc7d246cd8326a71cc2707ad87097f895f67fcc7b0de6179a86065ac49f"
+      },
+      "publicBalancesV2": {
+        "rows": 62,
+        "digest": "f4c66b8f48d9b07dd16ae16e4d7e7b572521c3a2c1f45993ab05e888acb6e310"
+      },
+      "publicBitmapV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicBlocksV2": {
+        "rows": 195,
+        "digest": "43709282c4ed9ab9cbdee857830c53ef6eacb969f236f614ba6e722096b7204b"
+      },
+      "publicItemCountsV2": {
+        "rows": 58,
+        "digest": "367aca4d1b2288faa2a8e38c9d5270f67c51496f31bddd66c3c5d969d6212ab5"
+      },
+      "publicItemsV2": {
+        "rows": 527,
+        "digest": "5331ca10ff70acb74ac9dfed32f3af7ad9b8ed787faf8c445746b517cb01a2e1"
+      },
+      "publicOrderV2": {
+        "rows": 2421,
+        "digest": "c574143553de4a8797c8829cebd454a0d47e988a6e964df4c3ceebbefc4f31b3"
+      },
+      "publicPatternMintBlocks": {
+        "rows": 36,
+        "digest": "88cb831332892e35b680da57cb10e556879845679a2c4d2c7ebde93ec83cb8af"
+      },
+      "publicPatternMintCounts": {
+        "rows": 43,
+        "digest": "6de22fb1d40bd7d5a0f030800d9eaf9840373aa87644b30283cf03dc736e4354"
+      },
+      "publicPatternSymbolFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbolQueue": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicPatternSymbols": {
+        "rows": 44,
+        "digest": "8e17796b71ec1aad977b95996f08686863e54c7ab55da4ccfbb2e45a3d022f60"
+      },
+      "publicPatternTotalsFill": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRanksV2": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadChanges": {
+        "rows": 392,
+        "digest": "ae2f353894932cedabfbcf70894706d09bc7a8ba8754699f091a24ae1b6c565b"
+      },
+      "publicReadHeaderFields": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadOldHashes": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPatternRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadPlots": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadRows": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicReadState": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "publicRightsV2": {
+        "rows": 32,
+        "digest": "9b593f961383360ff38dd7dd524fbeb448b7cf90f1b327188f34a21d65690b90"
+      },
+      "public_projection_fixes": {
+        "rows": 5,
+        "digest": "bfaedaef7c308db71afdc0e968c12667acafedbb79e87ff45164f0071b380274"
+      },
+      "record_counts": {
+        "rows": 66,
+        "digest": "53f4ccac4c24a67c0587d715ec3e5083b6362d35b7efd4b86bc58142f7ca07c7"
+      },
+      "record_counts_decimal": {
+        "rows": 66,
+        "digest": "953a18f2921cfd9ca9c36d9f36b465378d4e49f25e5ffe860add2d1666ce61eb"
+      },
+      "records": {
+        "rows": 848,
+        "digest": "283cebd8686fa239ed9ddabbe50e80c09e2e620a5f5ef77f20d16746890cf9e9"
+      },
+      "staged_transactions": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenChanges": {
+        "rows": 95,
+        "digest": "ceb461a1bfcafff23881cf8a28c9e62041f7fa5a7ad7c0c2155318a7a5091db8"
+      },
+      "takenControl": {
+        "rows": 1,
+        "digest": "ca4c32a7d3d64e471bd21bb10480731f9546e1bbf9b1193c2b08055bbec89656"
+      },
+      "takenDirty": {
+        "rows": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "takenSlots": {
+        "rows": 17,
+        "digest": "78373f5c430557685d25a8504bf2155419a31355befe3f53389fe055387c57b3"
+      }
+    },
+    "root": "ad8346c47cac3a679243c2575b4350d4859db2876d01e83ffdeb0b68ee9293f3",
+    "proofs": [
+      {
+        "space": "types",
+        "from": "c0",
+        "to": "c99",
+        "leaves": 32,
+        "digest": "67d8fb34eeaaba22bab1b8e0451cb95e5d3c6c97a9842c67f0460380a11031f8"
+      },
+      {
+        "space": "patternsByAsset",
+        "from": "p2:0",
+        "to": "p2:99",
+        "leaves": 38,
+        "digest": "9bc1fad39faffc895f8121ca63f08f6946a4efb32ba14c266580ce4c6286e425"
+      },
+      {
+        "space": "finds",
+        "from": "",
+        "to": "~",
+        "leaves": 33,
+        "digest": "9582594079d1470c9aacd203d7a0ecaa866b4af69b3914966974e626fa3398a7"
+      },
+      {
+        "space": "types",
+        "from": "missing",
+        "to": "missing",
+        "leaves": 0,
+        "digest": "b8b338141d1e99be60ea2f8e305c9dc03eb82b157041fabbb1bc2ea93e90cb93"
+      }
+    ]
+  }
+]

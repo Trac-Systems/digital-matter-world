@@ -5,6 +5,8 @@ import { check, serial, hash } from './util.mjs';
 import { pageRows } from './paging.mjs';
 
 const WALLET_PLAYERS = 16;
+// Signers endorse an original-format attempt only within a minute of its own time.
+const ORIGINAL_FRESHNESS_MS = 60000;
 export class Bindings {
   constructor({ store, network, bitcoinNetwork, members, committee, rosterHistory = [], now = Date.now, freshnessMs = BINDING_V2_DEFAULTS.freshnessMs, bindingCacheEntries = PUBLIC_READ_DEFAULTS.bindingCacheEntries }) {
     check(Number.isSafeInteger(freshnessMs) && freshnessMs > 0, 'binding_settings');
@@ -114,8 +116,10 @@ export class Bindings {
         record = { ...record, acceptedAt: this.now(), attempt: (BigInt(record.attempt) + 1n).toString() };
         await this.store.put('payoutAttempts', id, record);
       }
+      // An original-format attempt past that minute can never gather endorsements; its retry starts a fresh attempt.
+      else if (pending.request.v !== 2 && this.now() - record.acceptedAt > ORIGINAL_FRESHNESS_MS) record = null;
     }
-    else {
+    if (!record) {
       record = { id, ...envelope, acceptedAt: this.now() };
       if (pending.request.v === 2) Object.assign(record, { attempt: '0', blockedAt: record.acceptedAt });
       check(!current || record.acceptedAt > current.acceptedAt, 'binding_clock');
@@ -131,14 +135,21 @@ export class Bindings {
     const page = this.store.list('payoutAttempts', { after: this.attemptCursor ?? '', limit });
     this.attemptCursor = page.length === limit ? page.at(-1).id : '';
     for (const { id, value } of page) {
+      const expired = value.request.expiry <= this.now(), stale = value.request.v !== 2 && this.now() - value.acceptedAt > 2 * ORIGINAL_FRESHNESS_MS;
+      if (expired || stale) { await this.abandon(id, value, expired ? 'binding_expired' : 'binding_endorsement_stale'); continue; }
       if (value.request.v !== 2) continue;
-      if (value.request.expiry <= this.now()) {
-        await this.store.put('payoutAttemptStatus', id, { state: 'expired', reason: 'binding_expired' }); continue;
-      }
       try { await this.complete({ id, walletSignature: value.walletSignature }); await this.store.put('payoutAttemptStatus', id); }
       catch { await this.store.put('payoutAttemptStatus', id, { state: 'retrying', reason: 'binding_quorum_unavailable' }); }
     }
   }
+  // No signer endorses an expired or stale attempt, so it can never activate. The
+  // current binding stays in force and quotes no longer wait for the replacement.
+  abandon(id, value, reason) { return this.gate(async () => {
+    if (this.store.get('payoutBindings', id) || this.store.get('payoutAttempts', id)?.acceptedAt !== value.acceptedAt) return;
+    const key = bindingKey(value.request.agent, value.request.rail), transition = this.store.get('payoutTransitions', key);
+    await this.store.transact([{ space: 'payoutAttempts', id }, ...(transition?.id === id ? [{ space: 'payoutTransitions', id: key }] : []),
+      { space: 'payoutAttemptStatus', id, value: { state: reason === 'binding_expired' ? 'expired' : 'stale', reason } }]);
+  }); }
   read(input) { return publicIdentities(this.readWire(tracReadRoute(input))); }
   readWire(input) {
     const url = new URL(input, 'http://127.0.0.1');

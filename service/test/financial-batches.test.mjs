@@ -37,6 +37,7 @@ for (const observationsPerBatch of [1, 3]) test(`financial intents pass policy, 
   for (const page of imported.pages) assert.equal(await contract.run('ad_import', page), null);
   let store = await Store.open(path), last = await contract.state().batchLast(), pipeline, intake, financial, approvals = 0;
   const source = new Map(), certificates = new Map(), roots = new Map();
+  const readHints = Buffer.from(r.hash('synthetic-read-hint'), 'hex').toString('base64');
   await store.put('meta', 'ruleState', initialState(10, history.hashAt(10), 9));
   await installGatewayActivation({ store, manifest, manifestHash, document, imported, named: r.emptyNamedDiscovery() });
   const stamp = async () => { const head = await contract.state().head(); return { counted: '10', revision: head.revision, tip: '10', tipHash: history.hashAt(10), last }; };
@@ -49,7 +50,12 @@ for (const observationsPerBatch of [1, 3]) test(`financial intents pass policy, 
     const policyReads = { ...reads, authority: async () => ({ network, committee: deployment.committee, epoch: 0 }), batchStamp: stamp,
       rulesContext: async () => ({ ready: true, ruleset: 'dmw-v2', manifest, manifestHash, settings: document, settingsHash: r.hashObject(document), last,
         catalogRoot: contract.db.get('v2/catalog'), accountsRoot: contract.db.get('v2/accounts'), claimsRoot: contract.db.get('v2/claims') }),
-      batchContext: async () => { const draft = await pipeline.loadDraft(); return { authority: { epoch: 0 }, counted: '10', gateway: intake.gateway,
+      batchContext: async () => { const draft = await pipeline.loadDraft();
+        for (const item of draft.items) {
+          assert.equal(item.input.claimReadHints, readHints, 'read order survives draft persistence and restart');
+          assert.equal(item.output.claimReadHints, undefined, 'transport metadata is stored only with the replay input');
+        }
+        return { authority: { epoch: 0 }, counted: '10', gateway: intake.gateway,
         state: draft.startState, patterns: draft.startPatterns, inputs: draft.items.map(i => i.input), history, hashAt: history.hashAt,
         settings: draft.settings, limits: draft.limits, last, activation: settings.activation, previousRoot: draft.previousRoot }; },
       receiptCertificate: async (tip, hash, segment) => certificates.get(`${tip}/${hash}/${segment}`) ?? null,
@@ -80,6 +86,8 @@ for (const observationsPerBatch of [1, 3]) test(`financial intents pass policy, 
     }, status: async job => ({ state: roots.get(job.value.n) === job.value.root ? 'accepted' : 'pending' }) };
     pipeline = new Pipeline({ store, files, history, intake, reads, committee, financial,
       outbox: new Outbox({ store, transport, fallbackMs: 100000, retryMs: 0 }), settings });
+    const replay = pipeline.replay.run.bind(pipeline.replay);
+    pipeline.replay.run = async (...args) => ({ ...await replay(...args), claimReadHints: readHints });
   };
   const submit = async (transition, evidence) => {
     source.set(r.hashObject(transition), evidence); await financial.submit(transition);

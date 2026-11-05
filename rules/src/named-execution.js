@@ -14,7 +14,7 @@ export const namedStateRoot = state => hashObject(['dmw-named-state-v2', state.n
 
 // Shared gateway/signer replay of an authenticated receipt segment. The batch
 // verifier separately checks segment inclusion/quorum and predecessor roots.
-export function replayNamedEntries(state, { entries, settings, settingsHistory, batch, gateway, history, hashAt, counted, executionHeight = counted, lastSequence, craftCatalog = state, renewal, claimSettings }) {
+export function replayNamedEntries(state, { entries, settings, settingsHistory, batch, gateway, history, hashAt, counted, executionHeight = counted, lastSequence, craftCatalog = state, renewal, claimSettings, accountRevisions }) {
   uintV2(lastSequence);
   assert(Array.isArray(entries) && entries.length <= settings.values.observationBudget, 'named_observation_budget');
   const ordered = [...entries].sort((a, b) => compareUint(a.receipt.sequence, b.receipt.sequence));
@@ -26,7 +26,7 @@ export function replayNamedEntries(state, { entries, settings, settingsHistory, 
     try {
       const original = move.settingsHash === hashObject(settings) ? settings : settingsHistory.get(move.settingsHash);
       const result = executeNamedMove(next, { move, settings: original, settingsHistory, tip: receipt.tip, counted, executionHeight, receiptPosition: receipt.sequence, history, hashAt, craftCatalog, claimSettings,
-        provenance: { batch, receipt: hashObject(receipt), agent: move.a, ruleset: move.ruleset, settingsHash: move.settingsHash } });
+        accountRevisions, provenance: { batch, receipt: hashObject(receipt), agent: move.a, ruleset: move.ruleset, settingsHash: move.settingsHash } });
       next = result.state; outcomes.push({ id: receipt.move, reason: 'accepted', record: result.record ?? null, results: result.results ?? null, challenge: result.challenge ?? null,
         ...(result.craft ? { craft: result.craft } : {}), ...(result.transfers ? { transfers: result.transfers } : {}), ...(result.progress ? { progress: result.progress } : {}) });
     } catch (error) {
@@ -42,11 +42,15 @@ export function replayNamedEntries(state, { entries, settings, settingsHistory, 
 // Gateway and signers call this same transition AFTER authenticating the
 // receipt/segment. No receipt is acknowledged here. Only the bounded named
 // headers and indexed state passed by the caller are available to execution.
-export function executeNamedMove(state, { move, settings, settingsHistory, tip, counted, executionHeight = counted, receiptPosition, history, hashAt, provenance = null, craftCatalog = state, claimSettings = settings }) {
+export function executeNamedMove(state, { move, settings, settingsHistory, tip, counted, executionHeight = counted, receiptPosition, history, hashAt, provenance = null, craftCatalog = state, claimSettings = settings, accountRevisions }) {
   uintV2(tip); uintV2(counted); uintV2(receiptPosition);
   const invalid = checkMoveV2(move, { settings, tip, hashAt, executionHeight }); assert(!invalid, invalid);
   const id = moveIdV2(move);
   assert(!namedGet(state.records, `executed/${id}`), 'move_already_executed');
+  if (accountRevisions && ['craft-v2', 'transfer-v2'].includes(move.t)) {
+    const actions = move.t === 'craft-v2' ? [move.p.action] : move.p.actions;
+    assert(actions.every(a => a.revision === accountRevisions.get(move.a)), 'account_revision_changed');
+  }
   const common = { agent: move.a, tip, counted, executionHeight, receiptPosition, settings, history, provenance };
   let result;
   if (['header-v2', 'claim-v2'].includes(move.t)) {

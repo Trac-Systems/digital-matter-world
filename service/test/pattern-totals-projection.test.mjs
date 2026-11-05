@@ -17,8 +17,8 @@ const marker = (asset, block, id = 'mint', scope) => ({ space: 'minted', id: rul
 const apiFor = store => createPublicAPI({ views: { store } });
 const picked = async (store, asset = 'p2:2') => (await apiFor(store).read('/patterns?asset=' + encodeURIComponent(asset) + '&limit=1')).patterns[0];
 const totals = row => [row.supply, row.minted];
-async function fixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'pattern-totals-')), f = { directory, store: await Store.open(directory) };
+async function fixture(t, maintenance = false) {
+  const directory = await mkdtemp(join(tmpdir(), 'pattern-totals-')), f = { directory, store: await (maintenance ? Store.openForMaintenance(directory) : Store.open(directory)) };
   t.after(async () => { await f.store.close(); await rm(directory, { recursive: true, force: true }); });
   await f.store.put('meta', 'ruleState', { batchVersion: 2, counted: '974100' });
   return f;
@@ -93,7 +93,7 @@ test('imported patterns use their ledger supply and count canonical and legacy b
 });
 
 test('pattern totals roll back with records and survive restart, offline rebuild and journal replay', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   await f.store.transact([catalog(), supply('p2:2', '610'), marker('p2:2', '5255')]);
   const evidence = f.store.evidenceIndex.root();
   assert.throws(() => f.store.apply([{ sequence: rules.nextUint(f.store.sequence), operations: [
@@ -118,7 +118,7 @@ function seedOldStore(store) {
 }
 
 test('old stores fill totals automatically in bounded restartable pages before serving reads', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   seedOldStore(f.store);
   const sequence = f.store.sequence, evidence = f.store.evidenceIndex.root();
   assert.equal(fillPatternTotalsPage(f.store, { pageRows: 1 }), false);
@@ -131,7 +131,7 @@ test('old stores fill totals automatically in bounded restartable pages before s
 });
 
 test('failed startup fill pages roll back counters, membership and progress together', async t => {
-  const { store } = await fixture(t); seedOldStore(store);
+  const { store } = await fixture(t, true); seedOldStore(store);
   store.db.exec("CREATE TEMP TRIGGER stop_totals BEFORE INSERT ON publicPatternMintBlocks WHEN NEW.block='5256' BEGIN SELECT RAISE(ABORT,'injected_fill_failure'); END");
   assert.throws(() => fillPatternTotalsPage(store, { pageRows: 4 }), /injected_fill_failure/);
   assert.equal(store.db.prepare('SELECT n FROM publicPatternMintCounts WHERE asset=?').get('p2:2'), undefined);
@@ -142,7 +142,7 @@ test('failed startup fill pages roll back counters, membership and progress toge
 });
 
 test('startup fills old markers before replaying a durable mint tail without counting twice', async t => {
-  const f = await fixture(t); seedOldStore(f.store);
+  const f = await fixture(t, true); seedOldStore(f.store);
   const sequence = rules.nextUint(f.store.sequence);
   await f.store.close();
   const body = Buffer.from(JSON.stringify({ sequence, operations: [marker('p2:2', '5255'), marker('p2:2', '5258')] }));

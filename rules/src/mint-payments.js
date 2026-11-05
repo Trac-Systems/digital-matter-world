@@ -5,10 +5,11 @@ import { tapAtoms, formatTapAmount } from './fees.js';
 // Amounts at every server/contract boundary are atomic TAP. Conversion to the
 // wallet's decimal strings happens only when building its redeem items.
 export function mintFeeItems(split, destinations, requestId = null, payer = null, rail = 'tap', bitcoinNetwork = 'mainnet') {
-  // Deferred deploy-holder shares are funded in the existing treasury item.
-  // No holder receives a transfer inside the mint payment.
-  if (split.legacyDeploy || split.deployer) split = { ...split, treasury: String(BigInt(split.treasury) + BigInt(split.legacyDeploy ?? '0') + BigInt(split.deployer ?? '0')) };
-  return ['finder', 'firstMaker', 'discoverer', 'landowner', 'treasury', 'burn']
+  // A quoted holder destination selects direct payment. Retained quotes keep
+  // their deferred shares in the treasury item.
+  const direct = typeof destinations.deployer === 'string';
+  if (split.legacyDeploy || split.deployer && !direct) split = { ...split, treasury: String(BigInt(split.treasury) + BigInt(split.legacyDeploy ?? '0') + BigInt(direct ? '0' : split.deployer ?? '0')) };
+  return ['finder', 'firstMaker', 'discoverer', 'landowner', 'treasury', 'burn', ...(direct ? ['deployer'] : [])]
     .filter(role => BigInt(split[role] ?? '0') > 0n).map(role => {
       const to = role === 'burn' ? (rail === 'tap' ? tapBurnAddress(bitcoinNetwork) : null) : destinations[role];
       assert(role === 'burn' || typeof to === 'string' && to.length > 0, (role === 'firstMaker' ? 'first_maker' : role) + '_address_missing');

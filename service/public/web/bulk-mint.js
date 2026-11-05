@@ -2,6 +2,7 @@
 // the same step indicator, next step, fee table and request panel. One TAP Wallet approval pays every
 // fee of the order and sets aside the Bitcoin for its mint inscriptions; the server sends the mints.
 import { TapWalletBulkMint, TapWalletPublicBulkMint, bulkPaymentPlan } from './bulk-wallet.js';
+const withDeployer = (payable, deployer) => deployer ? (BigInt(payable) + BigInt(deployer.amount)).toString() : payable;
 import { bulkApi, api, get } from './console/js/api.js';
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from './console/js/dom.js';
 import { tap } from './console/js/money.js';
@@ -98,17 +99,19 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
   };
   const button = (label, fn, kind = '') => h(`button.btn${kind === 'primary' ? '.primary.cta' : kind === 'quiet' ? '.ghost' : ''}`, { onclick: event => attempt(fn, event.currentTarget) }, label);
   // The confirmation lists exactly what this one approval pays; the set-aside's return is explained on the page.
-  const confirmRows = terms => [
+  // The ticker deployer's share is one more transfer in the same approval, next to the fee groups.
+  const confirmRows = (terms, deployer) => [
     ...(terms.groups.length <= 6 ? terms.groups.map((g, i) => [groupRoles(i), tap(g.amount)]) : [['Fees', `${tap(terms.payableFeeAtoms)} to ${fmtInt(terms.groups.length)} recipients`]]),
-    ['Total', tap(terms.payableFeeAtoms)], ['Blocks', fmtInt(terms.members.length)], ['Bitcoin for the mint inscriptions', sats(terms.mintFunding.satoshis)]];
+    ...(deployer ? [['Ticker deployer', tap(deployer.amount)]] : []),
+    ['Total', tap(withDeployer(terms.payableFeeAtoms, deployer))], ['Blocks', fmtInt(terms.members.length)], ['Bitcoin for the mint inscriptions', sats(terms.mintFunding.satoshis)]];
   // A fee group's role names, from the fee manifest (one group can collect several roles of several blocks).
   const groupRoles = i => [...new Set(plan.feeManifest.flatMap(m => m.shares.filter(s => s.group === i).map(s => roleName(s.role))))].join(' + ') || 'Fee';
   async function pay(retry) {
     wallet.provider = globalThis.tapprotocol; await wallet.connect();
     const fresh = await wallet.plan(orderId), n = fresh.status.count;
     if (!await confirmModal(retry
-      ? { title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if TAP Wallet shows no sent payment for this order. Bitcoin is checked before another attempt.', rows: confirmRows(fresh.terms), confirm: 'Retry payment' }
-      : { title: `Pay and mint ${plural(n, 'block')}?`, lead: `TAP Wallet asks once: the same payment pays the fees of all ${plural(n, 'block')} and sets aside the Bitcoin for their mint inscriptions, and our server sends the mint when the permits are ready. Only this order is approved.`, rows: confirmRows(fresh.terms), confirm: 'Pay and mint' })) return;
+      ? { title: 'Retry the payment?', lead: 'TAP Wallet returned no receipt for the last attempt. Retry only if TAP Wallet shows no sent payment for this order. Bitcoin is checked before another attempt.', rows: confirmRows(fresh.terms, fresh.status.deployerPayment), confirm: 'Retry payment' }
+      : { title: `Pay and mint ${plural(n, 'block')}?`, lead: `TAP Wallet asks once: the same payment pays the fees of all ${plural(n, 'block')} and sets aside the Bitcoin for their mint inscriptions, and our server sends the mint when the permits are ready. Only this order is approved.`, rows: confirmRows(fresh.terms, fresh.status.deployerPayment), confirm: 'Pay and mint' })) return;
     const result = await wallet.pay(orderId, { retry }); localState = result.localState; reported = localState === 'payment_submitted';
     await refresh();
   }
@@ -135,7 +138,7 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
     draw(memberPage);
   }
   function draw(memberPage) {
-    const t = plan.terms, n = status.count, state = status.state, failed = STOPPED.includes(state);
+    const t = plan.terms, n = status.count, state = status.state, failed = STOPPED.includes(state), deployer = status.deployerPayment ?? null;
     heading.textContent = `Mint ${plural(n, 'block')} · ${status.ticker}`;
     clear(intro, `Pay once for ${plural(n, 'block')} of `, assetLink(status.asset), '. TAP Wallet asks once: the same payment pays every fee of this order and sets aside the Bitcoin for its mint inscriptions, and our server sends the mint when the permits are ready.');
     // Steps as on a single request: reserve → pay → permits → mint sent → minted.
@@ -149,7 +152,7 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
     // Fewer than 2 blocks left: the wallet does not start a payment; the page offers a fresh order instead.
     const tooLate = awaiting && status.payable && localState !== 'payment_pending' && (shortWindow || left !== null && left < 2);
     const owner = typeof t.owner === 'string' && t.owner.startsWith('trac1') ? t.owner : null;
-    clear(lead, awaiting && status.payable ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(t.payableFeeAtoms)),
+    clear(lead, awaiting && status.payable ? h('div', {}, h('div.small.muted', {}, 'Remaining to pay'), h('div.price', {}, tap(withDeployer(t.payableFeeAtoms, deployer))),
         tooLate ? null : h('div.small.muted', { style: { marginTop: '4px' } }, payWithin(until, tip))) : null,
       tooLate ? h('div.callout.warn', {}, h('strong', {}, 'Too little time is left to pay. '),
         'Fewer than 2 Bitcoin blocks (about 20 minutes) remain, and a payment that confirms after this order expires only becomes a fee credit. Your wallet does not start it; nothing was paid. ',
@@ -163,10 +166,11 @@ export function mountBulkMint(root, { orderId, network, reads = bulkApi, wallet,
       { key: 'amount', label: 'Amount', num: true, render: g => h('span.mono', {}, tap(g.amount)) },
       { key: 'to', label: 'Paid to', render: g => addressLink(g.to) },
     ], { sortable: false }) : null;
-    if (fees && t.groups.length > 1) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(t.payableFeeAtoms))), h('td')));
+    if (fees && deployer) fees.querySelector('tbody').append(h('tr', {}, h('td', {}, 'Ticker deployer'), h('td.num', {}, h('span.mono', {}, tap(deployer.amount))), h('td', {}, addressLink(deployer.to))));
+    if (fees && (t.groups.length > 1 || deployer)) fees.querySelector('tbody').append(h('tr.total', {}, h('td', {}, 'Total'), h('td.num', {}, h('span.mono', {}, tap(withDeployer(t.payableFeeAtoms, deployer)))), h('td')));
     const waived = BigInt(t.grossFeeAtoms) - BigInt(t.payableFeeAtoms);
     const waivedRoles = [...new Set(plan.feeManifest.flatMap(m => m.shares.filter(s => s.payable === '0').map(s => String(s.role).replace(/_/g, ' '))))].join(', ');
-    const feeNote = fees && waived > 0n ? h('p.small.muted', { style: { margin: '10px 14px' } }, `The fees of these blocks come to ${tap(t.grossFeeAtoms)}. ${tap(waived.toString())} of it${waivedRoles ? ` (${waivedRoles})` : ''} is not charged to you, so you pay ${tap(t.payableFeeAtoms)}.`) : null;
+    const feeNote = fees && waived > 0n ? h('p.small.muted', { style: { margin: '10px 14px' } }, `The fees of these blocks come to ${tap(t.grossFeeAtoms)}. ${tap(waived.toString())} of it${waivedRoles ? ` (${waivedRoles})` : ''} is not charged to you, so you pay ${tap(withDeployer(t.payableFeeAtoms, deployer))}.`) : null;
     clear(body, fees ? panel('Remaining fees', [fees, feeNote], { flush: true }) : null,
       failed ? null : panel('Your mint', mintSteps(status, localState), { flush: true }),
       panel(`Blocks in this order`, members(memberPage), { flush: true }));
@@ -301,7 +305,7 @@ export async function startSeveral({ asset, deployment = null, blocks, go, notif
     if (!await confirmModal({ title: `Mint ${plural(n, 'block')} of ${name}?`,
       lead: `One order, one payment. Your agent signs the order now; on the next page TAP Wallet asks once: it pays the fees of all ${plural(n, 'block')} and sets aside the Bitcoin for their mint inscriptions. Nothing is paid before you approve there.`,
       rows: [['Pattern', name], ['Ticker', h('span.mono', {}, t.ticker)], ['Blocks', `${fmtInt(n)} · ${blockList(t.members)}`], ['Units', fmtInt(t.totalAmount)],
-        ['Fees, total', h('strong.mono', {}, tap(t.payableFeeAtoms))], ['Bitcoin for the mint inscriptions', h('span.mono', {}, sats(t.mintFunding.satoshis))], ...reasons],
+        ['Fees, total', h('strong.mono', {}, tap(withDeployer(t.payableFeeAtoms, quote.deployerPayment)))], ['Bitcoin for the mint inscriptions', h('span.mono', {}, sats(t.mintFunding.satoshis))], ...reasons],
       confirm: `Sign the order for ${plural(n, 'block')}` })) return false;
     notify('Your agent is signing the order…');
     const status = await local('/api/bulk/request', { actionId, quoteId: quote.quoteId, maxPayableFeeAtoms: t.payableFeeAtoms, maxSetAsideSats: t.mintFunding.satoshis });

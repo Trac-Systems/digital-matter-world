@@ -130,7 +130,7 @@ export class FeeQuotes {
     const { signature, ...payload } = signed;
     check(verify(null, bytes(domain, payload), this.publicKey, Buffer.from(signature, 'hex')), 'fee_quote_signature'); return payload;
   }
-  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash) {
+  async issue(scope, counted, payouts, deploymentId, mintOwnershipHash, holderFees) {
     const started = this.now(), registry = await this.registry(), revision = currentFee(registry);
     const document = await this.settings?.() ?? this.document, policy = document?.values;
     if (revision.feeSettings) validateFeeSettings(revision.feeSettings, counted);
@@ -149,6 +149,7 @@ export class FeeQuotes {
     return this.sign('dmw-fee-quote-v1', { network: this.network, scope, revision: revision.id, baseFee: revision.baseFee, unit: rules.TAP_UNIT,
       ...settingsField(revision.feeSettings),
       ...(document ? { settingsHash: rules.hashObject(document) } : {}),
+      ...(holderFees ? { holderFees } : {}),
       issuedAt, expiresAt: issuedAt + milliseconds, validFrom, validUntil, ...(payouts ? { payouts } : {}), ...(deploymentId ? { deploymentId } : {}), ...(mintOwnershipHash ? { mintOwnershipHash } : {}) });
   }
   async validate(quote, scope) {

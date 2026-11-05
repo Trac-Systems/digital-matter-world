@@ -1,3 +1,4 @@
+import { financialRetirementTarget, checkRejectionStamp, verifyBatchRejection } from './batch-retirement.mjs';
 import { AuditedReplay } from './replay-cache.mjs';
 import { writeOperatorResponse } from '../../deploy/rehearsal/operator-pages.mjs';
 import { rotationBody, attestRotation } from '../rosters.mjs';
@@ -49,7 +50,8 @@ async function initializeSigner(config, secrets, reads, controller) {
     const status = await phase('signer.sidecar', () => rpc(config.sidecar, secrets.sidecarToken, '/status'));
     check(status.public && !status.retired && rules.compareOrdinal(status.epoch, config.tssEpoch ?? config.epoch) === 0, 'sidecar_not_active');
     check(!config.publicKey || status.public === config.publicKey, 'target_committee_key');
-    if (status.session && journal.records.some(r => ['retired-batch', 'retired-preparation'].includes(r.type) && r.session === status.session.id)) {
+    if (status.session && journal.records.some(r => r.session === status.session.id &&
+      (['retired-batch', 'retired-preparation'].includes(r.type) || r.type === 'reserve' && journal.rejectedBatches.has(r.digest)))) {
       await rpc(config.sidecar, secrets.sidecarToken, '/abort');
     }
     reads.verifyPayoutSnapshot = (snapshot, payouts) => verifyPayoutSnapshot(snapshot, payouts, { bindings: reads.bindings, journal });
@@ -57,7 +59,7 @@ async function initializeSigner(config, secrets, reads, controller) {
     replay = new BatchReplay({ timeoutMs: resources?.replayTimeoutMs ?? config.replayTimeoutMs,
       nodeCacheEntries: resources?.namedNodeCache ?? config.replayNodeCacheEntries, resources }); await phase('signer.replay_open', () => abortable(replay.ready));
     const receiptFences = new ReceiptFences({ journal, reads, members: config.v2?.receiptSigners ?? config.members, network: config.network, gateway: config.gateway,
-      signer: config.id, secret: secrets.identity === undefined ? undefined : Buffer.from(secrets.identity, 'hex') });
+      signer: config.id, secret: secrets.identity === undefined ? undefined : Buffer.from(secrets.identity, 'hex'), admission: config.receiptAdmission });
     const auditedReplay = new AuditedReplay((...args) => replay.run(...args));
     const policy = new Policy({ network: config.network, publicKey: status.public, reads, receiptFences, escrow: config.escrow, replayBatch: (...args) => auditedReplay.run(...args),
       authorizedMint: async id => {
@@ -75,13 +77,14 @@ async function initializeSigner(config, secrets, reads, controller) {
       if (!saved) await journal.append('certificate', { request: id, certificate });
       return details;
     };
-    let active = null, queue = Promise.resolve(), closed = false;
+    let active = null, queue = Promise.resolve(), closed = false, retirementUncertain = false;
     const readiness = new KeyedWork({ concurrency: 4, capacity: 16 });
     const uncertainPreparations = new Set();
     const perform = async (path, body) => {
       check(!closed, 'signer_closed');
       if (path === '/health') return { id: config.id, network: config.network, publicKey: status.public, epoch: config.epoch };
       check(!receiptFences.failed, 'receipt_journal_uncertain');
+      check(!retirementUncertain, 'batch_retirement_uncertain');
       if (path === '/batch-ready') {
         const counted = await reads.counted(), clock = await reads.tip();
         const active = await reads.rulesContext?.();
@@ -96,10 +99,10 @@ async function initializeSigner(config, secrets, reads, controller) {
       }
       if (path === '/preparation-state') {
         check(isHex(body.id), 'ceremony_id');
-        const reserved = uncertainPreparations.has(body.id) || journal.records.some(r => r.type === 'reserve' && r.session === body.id);
+        const reserved = uncertainPreparations.has(body.id) || journal.records.some(r => r.type === 'reserve' && r.session === body.id && !journal.retiredBatches.has(r.digest));
         return { id: body.id, reserved, retired: journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id) };
       }
-      if (!['/health', '/status', '/relay', '/round', '/abort', '/finish', '/retire-batch-attempt'].includes(path)) await reads.refreshEvidence?.();
+      if (!['/health', '/status', '/relay', '/round', '/abort', '/finish', '/retire-batch-attempt'].includes(path)) await phase('signer.evidence_refresh', () => reads.refreshEvidence?.());
       if (path === '/attest-deployment') return operatorAttestation(config, secrets.identity, status.public, body.challenge);
       if (path === '/migration-export') {
         check(Object.keys(body).sort().join(',') === 'document,legacySettings' && reads.migrationEvidence, 'pending_export_request');
@@ -150,9 +153,17 @@ async function initializeSigner(config, secrets, reads, controller) {
         check(seal.tip === body.tip && seal.hash === body.hash && rules.verifyReceiptRoot(seal, receipts, { network: config.network, gateway: config.gateway, tip: body.tip, hash: body.hash }), 'receipt_observation');
         check(seal.v !== 2 || seal.segment === body.segment, 'receipt_segment');
         receiptFences.checkSegment(seal, receipts);
-        const old = journal.records.find(r => r.type === 'root-attestation' && r.tip === body.tip && r.segment === body.segment);
+        const old = journal.records.find(r => r.type === 'root-attestation' && r.tip === body.tip && r.hash === body.hash && r.segment === body.segment);
+        // After a reorg the canonical block at an already witnessed height gets its own witness;
+        // any other block at that height stays refused.
+        if (!old && journal.records.some(r => r.type === 'root-attestation' && r.tip === body.tip && r.segment === body.segment))
+          check(typeof reads.financialCanonicalBitcoinHash === 'function' && await reads.financialCanonicalBitcoinHash(body.tip) === body.hash, 'receipt_root_conflict');
         if (old) { check(old.hash === body.hash && (seal.v === 2 ? old.attestation.segmentHash === rules.receiptSegmentHash(seal) : old.attestation.root === seal.root && old.attestation.count === seal.count), 'receipt_root_conflict'); return old.attestation; }
-        const attestation = rules.attestReceiptRoot(seal, highestTip, config.id, Buffer.from(secrets.identity, 'hex'));
+        // A non-empty segment past its window is witnessed at its own tip only when this
+        // witness acknowledged each of its receipts at admission; anything else stays late.
+        const late = seal.v === 2 && receipts.length && rules.compareUint(rules.decimalV2(highestTip), rules.addUint(rules.decimalV2(seal.tip), '2')) >= 0;
+        const observedTip = late && receiptFences.admittedAll(receipts) ? seal.tip : highestTip;
+        const attestation = rules.attestReceiptRoot(seal, observedTip, config.id, Buffer.from(secrets.identity, 'hex'));
         await journal.append('root-attestation', { tip: body.tip, hash: body.hash, ...(seal.v === 2 ? { segment: seal.segment } : {}), attestation });
         return attestation;
       }
@@ -167,6 +178,48 @@ async function initializeSigner(config, secrets, reads, controller) {
         if (!old) await journal.append('signed', { session: prior.session, digest: prior.digest, signature: body.signature, result });
         if (active?.id === prior.session) { await rpc(config.sidecar, secrets.sidecarToken, '/abort'); active = null; }
         return { status: 'complete', signature: body.signature, result };
+      }
+      if (path === '/reject-stale-batch' || path === '/retire-rejected-batch') {
+        check(body.network === config.network && !uncertainPreparations.size, 'batch_retirement_uncertain');
+        const target = financialRetirementTarget(config.network, body.proposal);
+        const authority = await reads.authority();
+        check(authority?.network === config.network && authority.committee === status.public &&
+          rules.compareOrdinal(authority.epoch, target.epoch) === 0, 'batch_authority');
+        if (path === '/reject-stale-batch') {
+          const stamp = await reads.batchStamp(); checkRejectionStamp(target, stamp);
+          let horizon = rules.MAX_BATCH_HORIZON;
+          if (body.proposal.batch.v === 2) {
+            const accepted = await reads.rulesContext?.(), batch = body.proposal.batch;
+            check(accepted?.ready && accepted.ruleset === 'dmw-v2', 'batch_activation_read');
+            const document = rules.effectiveSettings(accepted.settings, accepted.scheduledSettings, rules.decimalV2(batch.n), rules.decimalV2(batch.execution?.height));
+            check(document && rules.hashObject(document) === batch.settingsHash, 'batch_settings_proposal_mismatch');
+            horizon = rules.batchSettings({ document }).batchDeadlineMaxBlocks;
+          }
+          // A malformed target cannot create an unbounded reservation guard.
+          check(BigInt(target.deadline) >= BigInt(stamp.counted) && BigInt(target.deadline) <= BigInt(stamp.counted) + BigInt(horizon), 'batch_deadline');
+          check(rules.compareOrdinal(stamp.counted, body.proposal.batch.to) >= 0 && await reads.batchRoot(target.n) === null &&
+            canonicalJSON(stamp) === canonicalJSON(await reads.batchStamp()) &&
+            canonicalJSON(authority) === canonicalJSON(await reads.authority()), 'batch_retirement_snapshot');
+          // Serialize the durable promise with every prepare. Ambiguous writes
+          // stop this signer until a complete journal reload resolves them.
+          const vote = await journal.rejectBatch(target, body.proposal.batch, stamp, config.members, secrets.identity, () => { retirementUncertain = true; });
+          retirementUncertain = false; return vote;
+        }
+        verifyBatchRejection(body.certificate, { network: config.network, members: config.members, target });
+        check(await reads.batchRoot(target.n) === null && rules.compareOrdinal((await reads.batchLast()).n, target.n) < 0 &&
+          canonicalJSON(authority) === canonicalJSON(await reads.authority()), 'batch_retirement_snapshot');
+        await journal.retireRejectedBatch(body.certificate, config.members, () => { retirementUncertain = true; });
+        retirementUncertain = true;
+        for (const row of journal.records.filter(r => r.type === 'reserve' && r.digest === target.digest)) {
+          if (!journal.records.some(r => r.type === 'retired-preparation' && r.session === row.session))
+            await journal.append('retired-preparation', { session: row.session });
+        }
+        const running = (await rpc(config.sidecar, secrets.sidecarToken, '/status')).session;
+        if (running && journal.records.some(r => r.type === 'reserve' && r.session === running.id && r.digest === target.digest))
+          await rpc(config.sidecar, secrets.sidecarToken, '/abort');
+        if (active?.approval.digest === target.digest) active = null;
+        retirementUncertain = false;
+        return { status: 'batch-rejected', digest: target.digest };
       }
       if (path === '/retire-unprepared') {
         check(body.network === config.network && isHex(body.id), 'ceremony_id');
@@ -190,13 +243,14 @@ async function initializeSigner(config, secrets, reads, controller) {
         const running = (await rpc(config.sidecar, secrets.sidecarToken, '/status')).session;
         if (running?.id === body.id || active?.id === body.id) await rpc(config.sidecar, secrets.sidecarToken, '/abort');
         if (active?.id === body.id) active = null;
-        return { id: body.id, status: 'batch-attempt-retired', batchHash: sha256(JSON.stringify(body.batch)), digest: reservation?.digest ?? null };
+        return { id: body.id, status: 'batch-attempt-retired', batchHash: sha256(JSON.stringify(body.batch)), digest: reservation && !journal.retiredBatches.has(reservation.digest) ? reservation.digest : null };
       }
       if (path === '/audit-batch') {
         check(body?.kind === 'batch', 'audit_batch_only');
         return auditedReplay.audit(() => policy.approve(body));
       }
       if (path === '/prepare') {
+        if (body.proposal?.kind === 'batch') check(!journal.rejectedBatches.has(rules.bytesToHex(rules.batchDigest(config.network, body.proposal.batch))), 'batch_digest_rejected');
         // An expired or superseded active ceremony no longer owns its slot.
         // Preserve the reservation and proof before stopping the sidecar.
         if (active?.approval.batch || active?.approval.details?.batch) {
@@ -253,7 +307,7 @@ async function initializeSigner(config, secrets, reads, controller) {
         active = { id: ceremony.id, approval, completed: false };
         return { id: active.id, digest: approval.digest };
       }
-      if (path === '/go') { check(!journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id), 'ceremony_retired'); check(active?.id === body.id, 'ceremony_id'); await rpc(config.sidecar, secrets.sidecarToken, '/go'); return { ok: true }; }
+      if (path === '/go') { check(!journal.rejectedBatches.has(active?.approval.digest), 'batch_digest_rejected'); check(!journal.records.some(r => r.type === 'retired-preparation' && r.session === body.id), 'ceremony_retired'); check(active?.id === body.id, 'ceremony_id'); await rpc(config.sidecar, secrets.sidecarToken, '/go'); return { ok: true }; }
       if (path === '/status') {
         check(isHex(body.id), 'ceremony_id');
         const prior = journal.records.find(r => r.type === 'signed' && r.session === body.id);

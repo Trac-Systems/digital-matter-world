@@ -38,3 +38,22 @@ test('deployer liabilities bind the chosen inscription and a valid current Bitco
   assert.throws(() => r.deployerCommission('mint', liability, { ...holder, id: 'forged' }), /deployer_liability/);
   assert.throws(() => r.deployerCommission('mint', liability, { ...holder, address: 'forged' }));
 });
+
+test('direct holder terms retain the legacy share in burn and pay the holder separately', () => {
+  for (const kind of ['find', 'compound']) for (const linked of [false, true]) for (const publicMint of [false, true]) {
+    const base = financialSplit('10001', { kind, linked, publicMint, discovered: true }, document);
+    const result = r.deploymentHolderFee('10001', base, { kind, deployment, document, direct: true });
+    assert.equal(result.split.burn, String(BigInt(base.burn) - 500n));
+    assert.equal(result.split.treasury, base.treasury);
+    assert.equal(result.split.legacyDeploy, undefined);
+    assert.equal(result.deployer, undefined);
+    assert.equal(result.legacyDeploy, undefined);
+    const destinations = { finder: 'finder', firstMaker: 'maker', discoverer: 'discoverer', landowner: 'landowner', treasury: 'treasury', deployer: 'holder' };
+    const fees = r.mintFeeItems(result.split, destinations, 'request', 'payer');
+    assert.deepEqual(fees.find(f => f.role === 'deployer'), { role: 'deployer', to: 'holder', ticker: 'tap', amount: '500', tt: 'a', dta: 'dmw-pay-v2|request|deployer' });
+    assert.equal(fees.reduce((n, f) => n + BigInt(f.amount), 0n), 10001n);
+    const self = r.mintFeeItems(result.split, destinations, 'request', 'holder');
+    assert.equal(self.some(f => f.role === 'deployer'), false);
+    assert.equal(self.reduce((n, f) => n + BigInt(f.amount), 0n), 9501n);
+  }
+});

@@ -135,6 +135,23 @@ test('one earlier confirmed payer wins one member, refunds exactly that share, a
   assert.equal(f.chain.records.get(publicScanKey(r.publicPlotId('p2:0', '100'))).winner.id, other.id);
 });
 
+test('public bulk pays every member holder fee in one redeem and books no deferred holder shares', async t => {
+  const f = await fixture(t, {}, { deployerShareBps: 500 }), started = await f.start(), id = started.orderId;
+  await f.register(id);
+  const ready = f.bulk.status(id, f.secret), rows = f.rows(id);
+  for (const row of rows) {
+    const fee = row.quote.fees.find(f => f.role === 'deployer'); assert.ok(fee);
+    assert.ok(ready.redeem.items.some(item => item.dta === fee.dta && item.address === fee.to));
+    assert.equal(row.quote.legacyDeploy, undefined); assert.equal(row.quote.deployer, undefined);
+  }
+  const reference = await f.pay(id);
+  await f.bulk.payment(id, { paymentId: reference }, f.secret); await f.reveal(id, reference);
+  const pages = await f.settle(id);
+  assert.ok(pages.every(page => page.payments[0].complete && page.payments[0].reference === reference &&
+    !page.payments[0].source.deployer && !page.payments[0].source.legacyDeploy));
+  await f.complete(id); assert.equal(f.bulk.status(id, f.secret).counts.minted, rows.length);
+});
+
 test('a payment sent before the deadline survives restart and confirms after it without expiry refunds', async t => {
   const f = await fixture(t), started = await f.start(), id = started.orderId;
   await f.register(id); const reference = await f.pay(id);

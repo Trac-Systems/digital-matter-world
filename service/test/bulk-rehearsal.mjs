@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { bitcoin, mine } from '../../local/common.mjs';
 import { authority, redeem, testKey } from '../../local/protocol.mjs';
 import { buildInscription, fundingAddress, hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
-import { TapWalletBulkMint } from '../../kit/lib/tap-wallet-bulk-mint.mjs';
+import { TapWalletBulkMint } from '../../kit/lib/tap-wallet-deployer.mjs';
 import { quoteBulkMint, makeBulkMint } from '../../kit/lib/bulk-mint.mjs';
 import { btc } from '../src/mint-sender-keys.mjs';
 import { MintSenderView } from '../src/mint-sender-view.mjs';
@@ -58,6 +58,11 @@ export async function bulkRehearsalTransport({ stack, directory, inscription }) 
     getCapabilities: async () => ({ version: '1.0.49', singleTxTransferExtraOutputs: true }),
     requestAccounts: async () => [payer], getAccounts: async () => [payer], getNetwork: async () => 'regtest', getPublicKey: async () => publicKey,
     getCurrentAuthority: async () => ({ ins: auth, auth: [], addr: payer }), getAuthorityStatus: async () => ({ active: true }),
+    getBitcoinUtxos: async () => {
+      const out = await bitcoin(stack, 'gettxout', [coin.txid, coin.vout]);
+      return out?.confirmations > 0 ? [{ txid: coin.txid, vout: coin.vout, satoshi: Number(coin.value),
+        height: await bitcoin(stack, 'getblockcount') - out.confirmations + 1, inscriptions: [] }] : [];
+    },
     singleTxTransfer: async (items, { extraOutputs }) => {
       assert.equal(++payments, 1, 'one wallet approval/redeem for the entire order'); assert.equal(extraOutputs.length, 1);
       const secret = testKey(), draft = buildInscription({ text: JSON.stringify(redeem(auth, [], privateKey, { items })),
@@ -103,7 +108,12 @@ export async function bulkRehearsalTransport({ stack, directory, inscription }) 
   const journal = new MintSenderJournal(settings.directory, { keyId: view.keyId, network: 'regtest' });
   const walletJournal = { get: async key => { try { return JSON.parse(await readFile(join(directory, 'bulk-wallet.json')))[key]; } catch (e) { if (e.code !== 'ENOENT') throw e; } },
     put: async (key, value) => writeFile(join(directory, 'bulk-wallet.json'), JSON.stringify({ [key]: value }), { mode: 0o600 }), lock: async (_key, fn) => fn() };
-  return { view, payer, provider, walletJournal, heartbeat, payments: () => payments, journal,
+  const fetchImpl = (path, options) => {
+    if (path.startsWith('/web-api/tap-reader/')) return fetch(stack.ord.url + '/r/tap/' + path.slice('/web-api/tap-reader/'.length), options);
+    if (path === 'https://mempool.space/api/v1/fees/recommended') return Promise.resolve(Response.json({ halfHourFee: 1, fastestFee: 1 }));
+    throw Error('unexpected_rehearsal_wallet_read');
+  };
+  return { view, payer, provider, walletJournal, heartbeat, fetchImpl, payments: () => payments, journal,
     sender: origin => new BulkMintSender({ seed, network: 'regtest', settings, journal, keyId: view.keyId, now: Date.now, log() {}, bitcoin: chain,
       gateway: new MintSenderGateway({ http: new SenderHTTP({ origin, settings }), token: view.token }) }),
     async close() { journal.close(); view.close(); privateKey.fill(0); api.closeAllConnections(); await new Promise(resolve => api.close(resolve)); }
@@ -132,13 +142,17 @@ export async function runBulkRehearsal({ stack, directory, transport, entry, rec
   pass('64-member kit bulk reservation and three same-owner reserve-n mints accepted while bulk pending');
   mark('reserved');
   const wallet = new TapWalletBulkMint({ provider: transport.provider, network: 'regtest', journal: transport.walletJournal,
+    fetchImpl: transport.fetchImpl,
     readTip: () => bitcoin(stack, 'getblockcount'),
     readStatus: id => service.bulkMintStatus(id), readTerms: id => service.bulkMintTerms(id),
     reportPayment: async report => { await sync(); return service.request('/mint/bulk/payment', { value: report }); } });
-  const paidBalances = await Promise.all(quote.terms.groups.map(g => tap('getBalance/' + g.to + '/tap')));
+  const totals = new Map();
+  for (const g of [...quote.terms.groups, ...(quote.deployerPayment ? [quote.deployerPayment] : [])])
+    totals.set(g.to, (totals.get(g.to) ?? 0n) + BigInt(g.amount));
+  const paidBalances = new Map(await Promise.all([...totals.keys()].map(async to => [to, await tap('getBalance/' + to + '/tap')])));
   await wallet.connect(); const payment = await wallet.pay(id);
-  for (const [i, g] of quote.terms.groups.entries()) assert.equal(String(await tap('getBalance/' + g.to + '/tap') ?? '0'),
-    String(BigInt(paidBalances[i] ?? '0') + BigInt(g.amount)));
+  for (const [to, amount] of totals) assert.equal(String(await tap('getBalance/' + to + '/tap') ?? '0'),
+    String(BigInt(paidBalances.get(to) ?? '0') + amount));
   mark('paid');
   await progress(async () => (await getRuntime().bulkMints.status(id)).progress.issued === 64);
   mark('issued'); pass('one real bulk wallet redeem funds every group; all 64 member obligations issued');
@@ -191,9 +205,9 @@ export async function runBulkRehearsal({ stack, directory, transport, entry, rec
   }
   assert.equal(await tap('getBalance/' + receiver + '/dmt-' + entry.tick), t.totalAmount);
   assert.equal(await tap('getMintTokensLeft/' + entry.indexTick), String(BigInt(contract.db.get('fd/' + t.generation).maximum) - BigInt(t.totalAmount)));
-  assert.equal(await tap('getBalance/' + transport.payer + '/tap'), String(1000n * 10n ** 18n - BigInt(t.payableFeeAtoms)));
+  assert.equal(await tap('getBalance/' + transport.payer + '/tap'), String(1000n * 10n ** 18n - BigInt(t.payableFeeAtoms) - BigInt(quote.deployerPayment?.amount ?? '0')));
   const transfers = await tap('getTransferredList/' + payment.paymentId.slice(0, 64) + '?offset=0&max=500');
-  assert.equal(transfers.filter(row => row.ins === payment.paymentId && row.fail === false).length, t.groups.length);
+  assert.equal(transfers.filter(row => row.ins === payment.paymentId && row.fail === false).length, t.groups.length + (quote.deployerPayment ? 1 : 0));
   assert.equal((await bitcoin(stack, 'getnetworkinfo')).connections, 0);
   const participatingSigners = [...new Set(store.list('ceremonies', { limit: 1000 })
     .filter(({ value }) => value.proposal?.orderId === id).flatMap(({ value }) => value.peers))];

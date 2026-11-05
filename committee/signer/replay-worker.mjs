@@ -4,6 +4,8 @@ import { ReplayHistories } from './replay-history.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { PublicMintPrefetch } from '../../rules/src/public-mint-prefetch.js';
 import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
+import { immutableIndexRow } from '../../rules/src/index-row-cache.js';
+import { replayNodeCaches } from './replay-node-cache.mjs';
 
 export const DEFAULT_REPLAY_TIMEOUT_MS = 120000;
 if (!isMainThread) {
@@ -21,33 +23,43 @@ if (!isMainThread) {
     // The executor's small path cache can revisit the same immutable node many
     // times while closing a window. Keep bounded raw rows beside the executor
     // to avoid a synchronous thread round trip on every revisit. Scope this
-    // cache to one replay and preserve the reader's copy-on-read behavior;
+    // cache to one replay and freeze its privately transferred rows;
     // the executor still authenticates every path against its pinned root.
-    const nodes = new Map();
+    const proofBytes = context.settings?.document?.values.auditTotalBytes;
+    const cacheBytes = Math.min(67108864, Number.isSafeInteger(proofBytes) && proofBytes > 0 ? proofBytes * 4 : 6000000);
+    const evicted = new Set(), used = new Set();
+    const { nodes, prefetched } = replayNodeCaches(nodeCacheEntries, cacheBytes, evicted);
     const node = (method, id, ancestors) => {
-      const key = method + '/' + id;
-      let row = nodes.get(key);
-      if (row) nodes.delete(key);
+      const space = method === 'claimNode' ? 'claimNodes' : 'namedNodes', key = space + '/' + id;
+      let row = nodes.get(key) ?? prefetched.get(key);
+      if (row) { nodes.delete(key); prefetched.delete(key); }
       else {
-        const fetched = call(0, method, [id, ancestors]); row = fetched.row;
+        const released = [...evicted], consumed = [...used]; evicted.clear(); used.clear();
+        const fetched = call(0, method, [id, ancestors, released, consumed]); row = immutableIndexRow(fetched.row);
         for (const [hash, value] of fetched.neighbors ?? []) {
-          publicMints.node(value);
-          const key = method + '/' + hash; nodes.delete(key); nodes.set(key, value);
-          if (nodes.size > nodeCacheEntries) nodes.delete(nodes.keys().next().value);
+          const key = space + '/' + hash;
+          if (hash !== id && !nodes.has(key) && !prefetched.has(key)) {
+            publicMints.node(value);
+            try { prefetched.delete(key); prefetched.set(key, immutableIndexRow(value)); }
+            catch { /* Unused hints cannot reject a demanded, authenticated row. */ }
+          }
         }
       }
       if (row) {
         publicMints.node(row);
-        nodes.set(key, row);
-        if (nodes.size > nodeCacheEntries) nodes.delete(nodes.keys().next().value);
+        nodes.set(key, row); used.add(key);
       }
-      return row ? structuredClone(row) : row;
+      return row;
     };
     // Custom/in-memory adapters retain their exact semantics. Production views
     // read their verified local store directly, with no per-header thread RPC.
     const view = i => ({ hashAt: h => call(i, 'hashAt', [h]), history: { length: call(i, 'length', []), get: h => call(i, 'get', [h]), field: (...args) => call(i, 'field', args) } });
     try {
-      for (const input of context.inputs) publicMints.seed(input);
+      for (const input of context.inputs) {
+        for (const [, row] of input.claimEvidence?.nodes ?? []) immutableIndexRow(row);
+        for (const [, row] of input.namedEvidence?.nodes ?? []) immutableIndexRow(row);
+        publicMints.seed(input);
+      }
       const local = histories.views(sources), views = sources.map((_, i) => local[i] ?? view(i));
       const { state: _state, patterns: _patterns, ...result } = rebuildBatch(network, proposal, { ...context, ...views[0], views,
         claimNode: (id, ancestors) => node('claimNode', id, ancestors), namedNode: (id, ancestors) => node('namedNode', id, ancestors),
@@ -105,6 +117,7 @@ export class BatchReplay {
     const { history, hashAt, views, claimNode, namedNode, replayNodes, publicMintGet, publicMintBatch, ...data } = context;
     const source = views ?? context.inputs.map(() => ({ history, hashAt }));
     const signal = new SharedArrayBuffer(4), flag = new Int32Array(signal), { port1, port2 } = new MessageChannel();
+    const held = new Set(), heldLimit = this.nodeCacheEntries * 2 + Math.min(65536, this.nodeCacheEntries * 4);
     return new Promise((resolve, reject) => {
       const worker = this.worker;
       port1.on('message', async ({ view, method, args }) => {
@@ -112,10 +125,16 @@ export class BatchReplay {
           const s = source[view]; let value;
           if (method === 'claimNode' || method === 'namedNode') {
             if (replayNodes && (method === 'claimNode' ? claimNode : namedNode)) {
-              const rows = await replayNodes(method === 'claimNode' ? 'claimNodes' : 'namedNodes', ...args, this.nodeCacheEntries);
+              const space = method === 'claimNode' ? 'claimNodes' : 'namedNodes';
+              for (const key of args[2] ?? []) held.delete(key);
+              const rows = await replayNodes(space, args[0], args[1], this.nodeCacheEntries, held, args[3]);
               if (!Array.isArray(rows) || !rows.length || rows.length > this.nodeCacheEntries || rows[0]?.[0] !== args[0]) throw Error('replay_node_batch');
+              for (const [id] of rows) held.add(space + '/' + id);
+              // A custom reader may ignore exclusions or return unused hints.
+              // Keep bridge bookkeeping bounded independently of that adapter.
+              while (held.size > heldLimit) held.delete(held.values().next().value);
               value = { row: rows[0][1], neighbors: rows.slice(1) };
-            } else value = { row: await (method === 'claimNode' ? claimNode : namedNode)?.(...args) };
+            } else value = { row: await (method === 'claimNode' ? claimNode : namedNode)?.(args[0], args[1]) };
           } else if (method === 'publicMintBatch') {
             const [pairs, at] = args;
             if (at !== JSON.stringify([context.counted, context.last])) throw Error('public_mint_snapshot');

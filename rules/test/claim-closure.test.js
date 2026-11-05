@@ -126,3 +126,32 @@ test('the meter permits a verified metadata row larger than a settlement page an
   assert.equal(budget.bytes, r.utf8(r.stableJSON(row)).length);
   assert.throws(() => r.validateSettings({ ...s.document.values, closureByteBudget: 16777216 }), /settings_closure_progress/);
 });
+
+test('a settings successor resumes a closing checkpoint with new budgets and its original layout and finder policy', () => {
+  const original = settings(17), f = fixture(original, 12), initial = f.loader(), loaded = initial.load(f.state);
+  loaded.rounds[0].policy = { settingsHash: r.hashObject(original.document), claimsPerWindow: 100, claimWindowBlocks: 2, finderWindow: 1008 };
+  f.state = f.persist(initial, loaded);
+  const reference = finish(f, original), storage = f.loader(), partial = storage.load(f.state);
+  advanceClaimWindow({ state: partial, event: partial.rounds[0], decidingHash: r.hash('1002'), counted: '1002', settings: original,
+    budget: new ClosureBudget(original, storage.storage) });
+  f.state = f.persist(storage, partial);
+  assert.equal(f.state.rounds[0].closing.layout.rows, 7);
+  const document = r.settingsRevision({ network: 'local', previous: original.document, effectiveBatch: '2', effectiveBitcoinWindow: '1001',
+    values: { ...original.document.values, closureWorkBudget: 2048, closureReadBudget: 262144, closureByteBudget: 134217728,
+      settlementPageRows: 3, settlementPagesPerObservation: 64, finderWindow: 10 } });
+  r.settingsSuccessor(original.document, document);
+  const successor = r.batchSettings({ document }), resumed = finish(f, successor);
+  assert.ok(resumed.chunks < reference.chunks);
+  assert.ok(resumed.progress[0].work > original.closureWorkBudget);
+  assert.deepEqual(resumed.closure, reference.closure);
+  assert.deepEqual(resumed.winners, reference.winners);
+  assert.deepEqual(resumed.claims, reference.claims);
+  const payout = f.loader().load(resumed.state), event = payout.rounds[0];
+  let page;
+  do { page = r.takeSettlementPage({ state: payout, event, height: '2000', budget: new r.CreditBudget(successor) }); }
+  while (page && !page.winners.length);
+  assert.ok(page.winners.length <= 3, 'current delivery rows may split the original seven-row page');
+  const find = r.recordGet(payout.finds, page.winners[0].id);
+  assert.equal(find.settingsHash, r.hashObject(original.document));
+  assert.equal(find.finderUntil, String(BigInt(find.findHeight) + 1008n));
+});

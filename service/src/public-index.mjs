@@ -121,7 +121,7 @@ class PublicReadIndex {
     this.views = views;
     this.store = views.store;
     this.db = typeof this.store.database === 'function' ? this.store.database() : this.store.db;
-    readIndexSchema(this.db);
+    if (!this.store.writer) readIndexSchema(this.db);
     this.state = new ReadState(this.db);
     this.restore();
   }
@@ -174,7 +174,7 @@ class PublicReadIndex {
   async sync() {
     if (this.syncing) return this.syncing;
     this.syncing = this.refresh();
-    try { await this.syncing; }
+    try { return await this.syncing; }
     finally { this.syncing = null; }
   }
   async available() {
@@ -195,7 +195,7 @@ class PublicReadIndex {
     if (cached) return JSON.parse(cached.value);
     const { time, nonce, bits, hash } = this.views.history.get(height);
     const header = { height, time, nonce, bits, hash };
-    this.db.prepare('INSERT INTO publicReadHeaderFields VALUES(?,?) ON CONFLICT(height) DO UPDATE SET value=excluded.value').run(height, JSON.stringify(header));
+    if (!this.store.writer) this.db.prepare('INSERT INTO publicReadHeaderFields VALUES(?,?) ON CONFLICT(height) DO UPDATE SET value=excluded.value').run(height, JSON.stringify(header));
     return header;
   }
   score(id, contributions) {
@@ -432,10 +432,18 @@ class PublicReadIndex {
     for (const entry of scheduled) this.deadlines.set(entry, entry.key);
   }
   async refresh() {
+    if (this.store.writer) {
+      const head = await this.views.head();
+      return this.store.gate(async () => {
+        const changed = await this.store.requestWriter('refreshPublicReadIndex', { head, historyLength: this.views.history.length });
+        if (changed || !this.ready) this.restore();
+        return changed;
+      });
+    }
     const head = await this.views.head(), length = this.views.history.length;
     if (this.ready && length === this.length && JSON.stringify(head) === JSON.stringify(this.head) &&
         !this.db.prepare('SELECT 1 FROM publicReadChanges LIMIT 1').get() &&
-        [...this.patternRows.keys()].every(asset => this.patternComplete(asset))) return;
+        [...this.patternRows.keys()].every(asset => this.patternComplete(asset))) return false;
     // Populate the numeric plot universe in restartable chunks, without reading
     // even one historical header. Existing installations need no chain replay.
     let filled = this.state.get('meta', 'plotsThrough') ?? 0;
@@ -543,7 +551,7 @@ class PublicReadIndex {
       this.length = length; this.head = head; this.patternStamp = patternStamp;
       this.state.set('meta', 'cursor', { length, counted: this.counted, head, patternStamp, sequence: this.store.sequence ?? null });
       this.db.exec('DELETE FROM publicReadChanges; DELETE FROM publicReadOldHashes; RELEASE publicReadRefresh');
-      this.ready = true;
+      this.ready = true; return true;
     } catch (error) {
       this.db.exec('ROLLBACK TO publicReadRefresh; RELEASE publicReadRefresh');
       this.restore(); throw error;

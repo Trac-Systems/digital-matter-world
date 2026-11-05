@@ -66,6 +66,14 @@ test('accepted-root lookup and effective-policy checks run before publishing a s
   p.reads.batchRoot = async () => 'parent'; await p.promoteSuccessor(f.predecessor, f.draft); assert.equal(published, 1); assert.equal(p.overlap.promoted, 1);
 });
 
+test('receipts arriving during signing invalidate a prebuilt successor before it can be promoted', async () => {
+  let published = 0;
+  const p = Object.assign(Object.create(Pipeline.prototype), { store: { get: () => '8' },
+    overlap: { discarded: 0, promoted: 0 }, publishDraft: async () => published++ });
+  await p.promoteSuccessor({}, { admissionSequence: '7' });
+  assert.equal(published, 0); assert.equal(p.overlap.discarded, 1);
+});
+
 function ticking(signature) {
   const f = fixture(), p = Object.assign(Object.create(Pipeline.prototype), {
     reconciled: true, overlap: { discarded: 0, failed: 0, overlapMs: 0 }, committee: { signature }, reads: {},

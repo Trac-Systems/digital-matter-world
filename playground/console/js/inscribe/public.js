@@ -1,5 +1,5 @@
 import { h, clear, kv, hashEl, pill, confirmModal, fmtInt, input, field, panel, table, stepper } from '../dom.js';
-import { tap, legacyDeployPaymentText } from '../money.js';
+import { tap } from '../money.js';
 import { TapWalletMint, EthereumMint, BrowserMintJournal, tapWalletCapabilities, discovererOnly } from './wallet.js';
 import { walletError, knownReason, publicOpeningLabel, PAY_SOON, BEFORE_PAY, windowShort, payWithin, bitcoinTip, creditedAmount } from '../wallet-errors.js';
 import { PAYMENT_STATE, assetName, rememberCompound, inflightNote, inflightLine, inflightTxid, addressLink, agentLink, assetLink, blockLink, setEthereumChain } from '../words.js';
@@ -322,7 +322,6 @@ export function mount(root, { id, onPublicMint }) {
     else if (status.publicMint) intro.textContent = 'Pay every quoted fee in one TAP payment. The first confirmed complete payment wins. No units are consumed. ' + (serverSends ? 'TAP Wallet asks once: our server sends your mint inscription when the permit is issued. If your payment does not win the block, your TAP is refunded automatically and the unused Bitcoin comes back to you.' : 'After your permanent permit is issued, inscribe the mint from your TAP Wallet.');
     else if (serverSends) intro.textContent = 'Pay the fee items. TAP Wallet asks once: the same payment sets aside the Bitcoin for your mint inscription, and our server sends the mint when your permanent permit is ready.';
     else intro.textContent = initialIntro;
-    if (!status.requesterRequired) intro.textContent += legacyDeployPaymentText(status);
     if (/^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(status.asset)) {
       const deployment = await api('/mint/deployment-state/' + status.asset);
       if (deployment.state !== 'registered') return renderDeployment(deployment);

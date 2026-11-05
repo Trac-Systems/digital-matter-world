@@ -11,8 +11,8 @@ import { temp } from './helpers.mjs';
 const params = value => new URLSearchParams(value);
 const row = (asset, block, found = true) => ({ space: 'claimed2/' + asset, id: rules.uintKeyV2(String(block)),
   value: { height: String(block), pattern: asset.slice(3), count: '1', found, minted: false, hash: 'ab'.repeat(32) } });
-async function fixture(t, options) {
-  const directory = await temp('taken-'), store = await Store.open(directory, options);
+async function fixture(t, options, maintenance = false) {
+  const directory = await temp('taken-'), store = await (maintenance ? Store.openForMaintenance(directory, options) : Store.open(directory, options));
   t.after(() => store.close());
   await store.put('meta', 'ruleState', { batchVersion: 2, counted: '0' });
   return { directory, store, api: createPublicAPI({ views: { store }, files: {} }) };
@@ -69,7 +69,7 @@ test('expired or forked revisions demand a rebuild; log retention is bounded', a
 });
 
 test('taken projection shares transaction rollback and refuses pending projection scopes', async t => {
-  const { store } = await fixture(t);
+  const { store } = await fixture(t, undefined, true);
   const before = takenPage(store, params()).revision;
   store.db.exec('BEGIN IMMEDIATE');
   store.applyOperation(row('p2:0', 1));
@@ -83,11 +83,11 @@ test('taken projection shares transaction rollback and refuses pending projectio
 });
 
 test('restart keeps revisions and an old database fills once in bounded resumable pages', async () => {
-  const directory = await temp('taken-migration-'); let store = await Store.open(directory);
+  const directory = await temp('taken-migration-'); let store = await Store.openForMaintenance(directory);
   try {
     await store.transact([row('p2:0', 1), row('p2:0', 2), row('p2:1', 3), row('p2:0', 4, false)]);
     const before = takenPage(store, params()).revision;
-    await store.close(); store = await Store.open(directory);
+    await store.close(); store = await Store.openForMaintenance(directory);
     assert.equal(takenPage(store, params()).revision, before);
     // Recreate just the disposable read index to exercise upgrade/rebuild.
     store.db.exec('DROP TABLE takenControl; DROP TABLE takenSlots; DROP TABLE takenChanges');
@@ -95,7 +95,7 @@ test('restart keeps revisions and an old database fills once in bounded resumabl
     assert.equal(fillTakenPage(store, 1), false);
     assert.equal(store.db.prepare('SELECT count(*) AS n FROM takenSlots').get().n, 1);
     assert.throws(() => takenPage(store, params()), /taken_index_pending/);
-    await store.close(); store = await Store.open(directory);
+    await store.close(); store = await Store.openForMaintenance(directory);
     const rebuilt = takenPage(store, params());
     assert.deepEqual(rebuilt.slots, [['p2:0', ['1', '2']], ['p2:1', ['3']]]);
     assert.notEqual(rebuilt.revision, before);
@@ -127,7 +127,7 @@ test('taken pages preserve large decimal heights, cap bytes and validate read pa
 });
 
 test('writes by an older SQLite connection are detected and drained before serving after restart', async () => {
-  const directory = await temp('taken-older-writer-'); let store = await Store.open(directory);
+  const directory = await temp('taken-older-writer-'); let store = await Store.openForMaintenance(directory);
   try {
     await store.transact([row('p2:0', 1)]);
     const before = takenPage(store, params()).revision;
@@ -137,7 +137,7 @@ test('writes by an older SQLite connection are detected and drained before servi
       const put = old.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(space,id) DO UPDATE SET value=excluded.value');
       for (const op of [row('p2:0', 1, false), row('p2:0', 2), row('p2:1', 3)]) put.run(op.space, op.id, JSON.stringify(op.value));
     } finally { old.close(); }
-    store = await Store.open(directory);
+    store = await Store.openForMaintenance(directory);
     const delta = takenPage(store, params({ since: before }));
     assert.deepEqual(delta.changes, [['p2:0', '1', false], ['p2:0', '2', true], ['p2:1', '3', true]]);
     assert.deepEqual(takenPage(store, params()).slots, [['p2:0', ['2']], ['p2:1', ['3']]]);

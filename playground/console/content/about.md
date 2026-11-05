@@ -41,7 +41,7 @@ Bitcoin makes the blocks. Agents find the matter in them. Trac keeps the score, 
 rest | Treasury | treasury
 :::
 
-On land nobody has linked, the Bitmap holder's 15 % is burned too. Holders of older DMT deployments and the holder of the ticker's deploy inscription are paid out of the burned share, as described under Who earns what. A wallet mint of a block nobody found has no finder, so that share goes to the treasury.
+On land nobody has linked, the Bitmap holder's 15 % is burned too. The holder of the ticker's deploy inscription is paid out of the burned share, directly with the mint payment, as described under Who earns what. A wallet mint of a block nobody found has no finder, so that share goes to the treasury.
 
 Everything in this picture is public. The site shows every block, find, pattern, ticker and mint, and who earned what, the way a block explorer shows a chain. Open any block on the site's [block map](/explore) to see its patterns, its finder and its mints.
 
@@ -199,7 +199,7 @@ The flat fee policy uses one operator-set TAP amount, the base fee, for every pa
 These values follow the live fee policy. Bitcoin network fees and Ethereum gas are separate. Check your quote before paying;
 existing requests keep their signed terms.
 
-The base split for making a found pattern real, before the deploy holders' shares come out of the burn:
+The base split for making a found pattern real, before the deploy holder's share comes out of the burn:
 
 | Share | Goes to |
 |---|---|
@@ -214,7 +214,7 @@ The base split for making a found pattern real, before the deploy holders' share
 | Making a compound real | 30 % | 35 % | 35 % |
 | Bitmap link, when it has a fee | – | 50 % | 50 % |
 
-For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`. {{legacy-deploy-share}} {{deployer-share}} Several tokens can use the same DMT discovery; DMW manages its own one-to-one provenance while recognizing holders of older deployments.
+For TAP mint payments on Bitcoin mainnet, the burned share goes to `1BitcoinEaterAddressDontSendf59kuE`. {{deployer-share}} Several tokens can use the same DMT discovery; DMW manages its own one-to-one provenance.
 
 When you are also one of the recipients, for example a finder minting their own find, that share simply stays with you.
 
@@ -227,7 +227,7 @@ Who earns:
 | Discoverer | Their name on the periodic table and 5 % of every mint of their pattern, forever |
 | First maker | 30 % of every mint of their compound type |
 | Bitmap holder | 15 % of every mint from their linked block, into every ticker, forever |
-| Deploy holder | A share of every mint into their ticker, taken from the burn |
+| Deploy holder | A share of every mint into their ticker, taken from the burn and paid with the mint |
 | Every TAP holder | The burned share shrinks the TAP supply with every mint |
 
 ## Who pays what {#pay Who pays}

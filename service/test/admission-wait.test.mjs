@@ -63,3 +63,15 @@ test('without a wait setting admission answers at once, as before', async () => 
   await assert.rejects(admission.accept(commit('now')), /reserved_batch_pending/);
   assert.ok(Date.now() - started < 100);
 });
+
+test('a held move answers well inside the kit request timeout', async () => {
+  const { ServiceClient } = await import('../../kit/lib/service-client.mjs');
+  // Leave at least half the kit's timeout for the receipt witness round after the hold.
+  assert.ok(assetResources().admissionWaitMs * 2 <= new ServiceClient({}).timeoutMs);
+});
+
+test('future admission defaults to one batch and can be disabled without changing other resources', () => {
+  assert.equal(assetResources().admissionFutureBatches, 1);
+  assert.equal(assetResources({ admissionFutureBatches: 0 }).admissionFutureBatches, 0);
+  for (const admissionFutureBatches of [-1, 2, 0.5, '1']) assert.throws(() => assetResources({ admissionFutureBatches }), /asset_resource_setting/);
+});

@@ -1,7 +1,7 @@
 import { MigrationRows, migrationCommitment, migrationPages, migrationPageRoot, EMPTY_MIGRATION_ROOT, createMigrationRows, appendMigrationPage, compareRowKey } from '../src/migration-pages.mjs';
 import { createPrivateKey, createPublicKey, sign, verify, randomBytes } from 'node:crypto';
 import { open, mkdir, readFile, mkdtemp } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 import { rules } from '../src/rules.mjs';
@@ -13,12 +13,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { HttpSource } from './http.mjs';
 import { pendingArtifactInventory } from '../src/pending-artifacts.mjs';
 import { decodeNodeHints } from '../../rules/src/node-evidence.js';
+import { immutableIndexRow, indexRowBytes, indexRowHash } from '../../rules/src/index-row-cache.js';
 export { projectEvidence } from '../src/evidence-projection.mjs';
 export const EVIDENCE_VERSION = 2;
 export const EVIDENCE_DEFAULTS = Object.freeze({ pageRows: 128, pageBytes: 2_000_000, chunkBytes: 256_000,
   migrationPageRows: 1024, migrationPageBytes: 1_000_000, migrationLeaseMs: 300_000, migrationRequestMs: 300_000, requestBytes: 16_384, maxAgeMs: 30_000, clockSkewMs: 1000, maxSnapshots: 16, maxChallenges: 4096, maxProofNodes: 8192,
   maxDepth: 100, maxIdBytes: 1024, cacheEntries: 256, nodeCacheEntries: 65536, prefetchCacheEntries: 16384,
-  nodePrefetchAncestors: 1, nodeHintEntries: 65536, maxObjectBytes: 8_000_000, requestsPerSecond: 100 });
+  nodePrefetchAncestors: 1, nodeHintEntries: 65536, maxObjectBytes: 8_000_000, requestsPerSecond: 100, walCheckpointBytes: 8_000_000_000 });
 // Kept as a source-compatible name; this bounds ONE RESPONSE, never history.
 export const EVIDENCE_LIMIT = EVIDENCE_DEFAULTS.pageBytes;
 export function evidenceSettings(settings = {}) {
@@ -42,12 +43,14 @@ function filePath(root, path) {
   check(typeof path === 'string' && /^(blocks\/(?:v2\/)?[a-zA-Z0-9._-]+\.bin|[0-9a-f]{64}\.json)$/.test(path), 'evidence_path');
   const filename = resolve(root, path); check(filename.startsWith(resolve(root) + '/'), 'evidence_path'); return filename;
 }
-export function evidencePublisher({ config, store, reads, secret, now = Date.now, snapshotLifetimeMs }) {
+export function evidencePublisher({ config, store, reads, secret, now = Date.now, snapshotLifetimeMs, checkpointLog = () => store.checkpointWAL() }) {
   const settings = evidenceSettings(config.prod?.evidenceSettings), gate = serial(), used = new Map(), sessions = new Map();
   const { retries, backoffMs } = evidenceSnapshotPolicy(config.prod?.evidenceSnapshot);
   // Trac stamps only move forward: a stamp taken before this snapshot that still
   // equals a fresh one after it brackets the snapshot like a fresh pair would.
-  let recentStamp = null;
+  let recentStamp = null, checkpointDue = false;
+  const database = join(store.directory, 'index.sqlite');
+  const logBytes = () => { try { return statSync(database + '-wal').size; } catch { return 0; } };
   const drop = id => { const s = sessions.get(id); if (s) { clearTimeout(s.timer); s.db.exec('ROLLBACK'); s.db.close(); sessions.delete(id); } };
   const publish = request => gate(async () => {
     const { signature, ...challenge } = request;
@@ -78,13 +81,22 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
       const lifetimeMs = await snapshotLifetimeMs?.() ?? settings.maxAgeMs;
       check(Number.isSafeInteger(lifetimeMs) && lifetimeMs > 0 && lifetimeMs <= 2147483647, 'evidence_lifetime');
       for (const [id, s] of sessions) if (s.member === member.id) drop(id);
+      // Snapshots overlap constantly, so SQLite can never start its log over and the file grows without
+      // bound. Once it is large, open nothing new until the open snapshots end, then fold the log back.
+      if (!checkpointDue && logBytes() > settings.walCheckpointBytes) checkpointDue = true;
+      if (checkpointDue) {
+        check(sessions.size === 0, 'evidence_checkpoint_pending', 503);
+        checkpointDue = false;
+        const result = await checkpointLog(database);
+        if (!result || result.error || result.busy) console.error('evidence_log_checkpoint', JSON.stringify(result));
+      }
       check(sessions.size < settings.maxSnapshots, 'evidence_capacity');
       for (let attempt = 0; ; attempt++) {
       check(now() - challenge.time <= settings.maxAgeMs, 'evidence_challenge');
       let db;
       try {
-        const stamp = recentStamp ?? await reads.trac('stamp'); recentStamp = null; db = new DatabaseSync(join(store.directory, 'index.sqlite'));
-        const index = new AuthenticatedIndex(db);
+        const stamp = recentStamp ?? await reads.trac('stamp'); recentStamp = null; db = new DatabaseSync(join(store.directory, 'index.sqlite'), { readOnly: true });
+        const index = new AuthenticatedIndex(db, { initialize: false });
         db.exec('PRAGMA query_only=ON; BEGIN');
         const savedRevision = db.prepare('SELECT sequence FROM journal_progress WHERE id=1').get()?.sequence ?? db.prepare('SELECT sequence FROM progress WHERE id=1').get().sequence;
         const revision = config.v2 ? rules.decimalV2(savedRevision) : savedRevision, root = index.root();
@@ -190,7 +202,7 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
 }
 
 export class EvidenceStore {
-  constructor(options) { Object.assign(this, options); this.settings = evidenceSettings(this.config.settings); this.gate = serial(); this.exchangeGate = serial(); this.sequence = 0n; this.cache = new Map(); this.nodeCache = new Map(); this.prefetchCache = new Map(); this.nodeHints = new Map(); }
+  constructor(options) { Object.assign(this, options); this.settings = evidenceSettings(this.config.settings); this.gate = serial(); this.exchangeGate = serial(); this.sequence = 0n; this.cache = new Map(); this.nodeCache = new Map(); this.prefetchCache = new Map(); this.nodeHints = new Map(); this.nodePages = new Map(); this.nodePageFor = new Map(); this.nodePageRows = 0; }
   static async open(options) {
     const settings = evidenceSettings(options.config.settings);
     const source = options.source ?? new HttpSource({ ...await endpoint(options.config.endpoint), maxBytes: settings.pageBytes, retries: 0, requestsPerSecond: settings.requestsPerSecond });
@@ -290,12 +302,16 @@ export class EvidenceStore {
     const context = JSON.parse(await this.archive(descriptor.path, descriptor.hash));
     for (const input of context.inputs ?? []) {
       this.hintNodes('namedNodes', input.namedEvidence?.hints);
-      this.hintNodes('claimNodes', input.claimEvidence?.hints);
+      this.hintNodes('claimNodes', input.claimEvidence?.hints, input.claimReadHints);
     }
     return context;
   }
-  hintNodes(space, values) {
-    const hints = decodeNodeHints(values, 'evidence_node_hints', this.settings.nodeHintEntries - this.nodeHints.size);
+  hintNodes(space, values, supplemental) {
+    const remaining = this.settings.nodeHintEntries - this.nodeHints.size;
+    let hints = decodeNodeHints(values, 'evidence_node_hints', remaining);
+    if (supplemental !== undefined && hints.length < remaining) try {
+      hints = hints.concat(decodeNodeHints(supplemental, 'evidence_node_hints', remaining - hints.length));
+    } catch { /* Optional scheduling metadata cannot reject authenticated work. */ }
     for (let index = 0; index < hints.length; index++) this.nodeHints.set(space + '/' + hints[index], { hints, index });
   }
   async claimNode(id, ancestors) {
@@ -308,13 +324,16 @@ export class EvidenceStore {
     if (this.nodeCache.size > this.settings.nodeCacheEntries) this.nodeCache.delete(this.nodeCache.keys().next().value);
   }
   async indexNode(space, id, ancestors = []) {
+    return structuredClone(await this.readIndexNode(space, id, ancestors));
+  }
+  async readIndexNode(space, id, ancestors = []) {
     this.ready(); check(['claimNodes', 'namedNodes'].includes(space) && /^[0-9a-f]{64}$/.test(id), 'evidence_index_node');
     const snapshot = this.payload, key = space + '/' + id;
     if (this.nodeCache.has(key)) {
-      const row = this.nodeCache.get(key); this.nodeCache.delete(key); this.nodeCache.set(key, row); return structuredClone(row);
+      const row = this.nodeCache.get(key); this.nodeCache.delete(key); this.nodeCache.set(key, row); return row;
     }
     if (this.prefetchCache.has(key)) {
-      const row = this.prefetchCache.get(key); this.rememberNode(key, row); return structuredClone(row);
+      const row = this.prefetchCache.get(key); this.rememberNode(key, row); return row;
     }
     const hint = this.nodeHints.get(key), ids = [];
     if (hint) for (let i = hint.index; i < hint.hints.length && ids.length < this.settings.pageRows; i++) {
@@ -327,7 +346,14 @@ export class EvidenceStore {
       Buffer.byteLength(text(result.nodes)) <= this.settings.chunkBytes, 'evidence_index_node_hash');
     const nodes = new Map(result.nodes);
     check(nodes.size === result.nodes.length && nodes.has(id), 'evidence_index_node_hash');
-    for (const [hash, row] of nodes) check(rules.hashObject(['dmw-stored-index-v2', row]) === hash, 'evidence_index_node_hash');
+    for (const [hash, row] of nodes) check(indexRowHash(immutableIndexRow(row)) === hash, 'evidence_index_node_hash');
+    const page = {}, keys = [...nodes.keys()].map(hash => space + '/' + hash);
+    this.nodePages.set(page, keys); this.nodePageRows += keys.length; for (const key of keys) this.nodePageFor.set(key, page);
+    while (this.nodePages.size > 1 && this.nodePageRows > this.settings.prefetchCacheEntries) {
+      const first = this.nodePages.keys().next().value;
+      for (const key of this.nodePages.get(first)) if (this.nodePageFor.get(key) === first) this.nodePageFor.delete(key);
+      this.nodePageRows -= this.nodePages.get(first).length; this.nodePages.delete(first);
+    }
     for (const [hash, row] of nodes) {
       const key = space + '/' + hash;
       // Speculative neighbors must not evict nodes the executor actually used.
@@ -336,22 +362,71 @@ export class EvidenceStore {
       if (this.prefetchCache.size > this.settings.prefetchCacheEntries) this.prefetchCache.delete(this.prefetchCache.keys().next().value);
     }
     this.rememberNode(key, nodes.get(id));
-    return structuredClone(nodes.get(id));
+    return nodes.get(id);
   }
-  async replayNodes(space, id, ancestors, limit) {
+  async replayNodes(space, id, ancestors, limit, held, used = []) {
     check(Number.isSafeInteger(limit) && limit > 0, 'evidence_replay_nodes');
-    const row = await this.indexNode(space, id, ancestors), rows = [[id, row]];
-    let bytes = Buffer.byteLength(text(rows));
+    this.ready();
+    // A worker can consume prefetched rows without another bridge request.
+    // Protect those actual reads in the existing demand cache too, so unused
+    // source neighbors cannot evict them before a later page or replay.
+    for (const key of used) {
+      const value = this.nodeCache.get(key) ?? this.prefetchCache.get(key);
+      if (value) this.rememberNode(key, value);
+    }
+    const row = await this.readIndexNode(space, id, ancestors), rows = [[id, row]];
+    // A pair contributes the quoted 64-byte hash, comma and brackets. Cached
+    // rows are privately owned and frozen, so canonical size is computed once.
+    // Depth two preserves the validation of the enclosing rows/pair arrays.
+    const pairBytes = value => 69 + indexRowBytes(value, 2);
+    let bytes = 2 + pairBytes(row);
+    // The optional set describes this replay worker's current cache only.
+    // Demanded rows always cross the bridge; evictions make neighbors eligible
+    // again. Older callers omit it and keep the same page behavior.
     // Transfer already authenticated hint neighbors with the requested row.
     // The replay worker still verifies every path against its committed root.
     // Fresh reads keep the evidence lease checks; no cross-replay worker cache.
     const hint = this.nodeHints.get(space + '/' + id);
-    if (hint) for (let i = hint.index + 1; i < hint.hints.length && rows.length < Math.min(limit, this.settings.pageRows); i++) {
-      const hash = hint.hints[i], key = space + '/' + hash, value = this.nodeCache.get(key) ?? this.prefetchCache.get(key);
+    // Excluding held rows must not turn a page into a scan of the remaining
+    // context, or pull distant rows ahead of the worker's immediate reads.
+    const hintEnd = hint && (held ? Math.min(hint.hints.length, hint.index + 1 + this.settings.pageRows) : hint.hints.length);
+    if (hint) for (let i = hint.index + 1; i < hintEnd && rows.length < Math.min(limit, this.settings.pageRows); i++) {
+      const hash = hint.hints[i], key = space + '/' + hash;
+      if (held?.has(key)) continue;
+      const value = this.nodeCache.get(key) ?? this.prefetchCache.get(key);
       if (!value) continue;
-      const size = Buffer.byteLength(text([hash, value])) + 1;
+      const size = pairBytes(value) + 1;
       if (bytes + size > this.settings.chunkBytes) break;
       rows.push([hash, value]); bytes += size;
+    }
+    const page = this.nodePages.get(this.nodePageFor.get(space + '/' + id)), packed = new Set(rows.map(([hash]) => hash));
+    for (const key of page ?? []) {
+      if (rows.length >= Math.min(limit, this.settings.pageRows)) break;
+      const hash = key.slice(space.length + 1), value = this.nodeCache.get(key) ?? this.prefetchCache.get(key);
+      if (!value || packed.has(hash) || held?.has(key)) continue;
+      const size = pairBytes(value) + 1;
+      if (bytes + size > this.settings.chunkBytes) continue;
+      rows.push([hash, value]); packed.add(hash); bytes += size;
+    }
+    // A reader may already hold an authenticated page without an exact
+    // read-order hint (older or byte-limited proofs). Transfer its connected
+    // cached neighbors too, so each leaf does not require another worker RPC.
+    const queue = [id, ...(ancestors ?? []).slice(0, this.settings.nodePrefetchAncestors)], visited = new Set();
+    const included = new Set(rows.map(([hash]) => hash));
+    for (let i = 0; i < queue.length && visited.size < this.settings.pageRows && rows.length < Math.min(limit, this.settings.pageRows); i++) {
+      const hash = queue[i]; if (visited.has(hash)) continue; visited.add(hash);
+      const key = space + '/' + hash, value = this.nodeCache.get(key) ?? this.prefetchCache.get(key);
+      if (!value) continue;
+      if (!included.has(hash) && !held?.has(key)) {
+        const size = pairBytes(value) + 1;
+        if (bytes + size > this.settings.chunkBytes) continue;
+        rows.push([hash, value]); included.add(hash); bytes += size;
+      }
+      for (const child of Object.values(value.children ?? {})) {
+        if (queue.length >= this.settings.pageRows * 17) break;
+        const hash = typeof child === 'string' ? child : child?.storage;
+        if (typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)) queue.push(hash);
+      }
     }
     this.ready(); return rows;
   }

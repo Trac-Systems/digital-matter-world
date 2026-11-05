@@ -3,6 +3,7 @@ import { check } from './util.mjs';
 import { requestKey, validRequestId, validDestination } from './mint-sender-keys.mjs';
 import { buildBulkInscriptionPlan, signBulkCommit } from '../../kit/lib/inscription-batch-core.mjs';
 import { buildMintReturn } from './mint-sender.mjs';
+import { validateDeployerPayment } from './direct-deployer.mjs';
 
 export class BulkMintSender {
   constructor(sender) { this.sender = sender; this.lastDiscovery = 0; }
@@ -56,13 +57,16 @@ export class BulkMintSender {
     const s = this.sender; let row = s.journal.bulk(id), response;
     try { response = await s.gateway.bulkItem(id); }
     catch (error) { if (!row.plan && !row.returnPlan) throw error; return this.send(row); }
-    const { item, terms, permit: manifest } = response;
+    const { item, terms, permit: manifest, deployerPayment = null } = response;
     const { validateBulkTerms, bulkOrderId } = await import('../../rules/src/bulk-mint.js');
     validateBulkTerms(terms);
     check(response.keyId === s.keyId && item.orderId === id && bulkOrderId(terms.network, terms.owner, terms.nonce) === id &&
       rules.hashObject(terms) === row.termsHash && item.termsHash === row.termsHash && terms.bitcoinNetwork === s.network &&
       terms.payer === row.payer && terms.receiver === row.receiver && terms.mintFunding.address === row.address && terms.mintFunding.satoshis === row.fundingSats &&
       terms.members.length === row.count && item.payer === row.payer && item.receiver === row.receiver && item.fundingAddress === row.address && item.fundingSats === row.fundingSats && item.count === row.count, 'bulk_sender_binding_changed');
+    if (deployerPayment) validateDeployerPayment(deployerPayment, terms, id);
+    if ('deployerPayment' in row) check(rules.stableJSON(row.deployerPayment) === rules.stableJSON(deployerPayment), 'bulk_sender_binding_changed');
+    else row = this.save(row, { deployerPayment });
     if (row.plan) {
       check(!item.permitRoot || item.permitRoot === row.permitRoot, 'bulk_sender_permit_changed');
       if (item.state === 'minted') return this.save(row, { state: 'minted', reason: null });
@@ -72,7 +76,8 @@ export class BulkMintSender {
     if (!item.paymentId) return this.save(row, { state: 'waiting_funding' });
     check(!row.paymentId || row.paymentId === item.paymentId, 'bulk_sender_receipt_changed');
     row = this.save(row, { paymentId: item.paymentId });
-    const coin = await s.bitcoin.bulkFunding({ terms, orderId: id, paymentId: row.paymentId });
+    const coin = await s.bitcoin.bulkFunding({ terms, orderId: id, paymentId: row.paymentId, deployerPayment,
+      allowMissingDeployer: ['expired', 'credited'].includes(item.state) });
     if (!coin) return this.save(row, { state: 'waiting_funding' });
     row = this.save(row, { coin, state: 'funded' });
     if (['expired', 'credited'].includes(item.state)) {

@@ -95,7 +95,9 @@ function tokenStep(job) {
     ...(step === 'inflight' ? { inflight: job.inflight } : {}),
     // A compound's ticker chosen by its first maker, before it is deployed (null: not chosen yet).
     ...(job.kind === 'compound' && step !== 'deployed' ? { chosen: job.chosenTicker?.tick ?? null } : {}),
-    deployer: step === 'deployed' ? null : job.deployer ?? null };
+    deployer: step === 'deployed' ? null : job.deployer ?? null,
+    // A pattern's discoverer, so a page needs no second read to link the agent.
+    discoverer: /^trac1[0-9a-z]{20,}$/.test(job.definition?.discoverer ?? '') ? job.definition.discoverer : null };
 }
 
 export const bus = {
@@ -107,16 +109,18 @@ export const bus = {
 // The public feed has no event stream; this follows it the way the console's server does: start from the
 // newest page, then read every event after the last sequence once a second or two. Keeps at most `max`.
 export const stream = {
-  state: 'idle', events: [], seen: new Set(), max: 2000, rows: 100, last: null, timer: null, running: false, retry: 2000,
+  state: 'idle', events: [], seen: new Set(), max: 2000, rows: 100, seedPages: 1, last: null, timer: null, running: false, retry: 2000,
   start() { if (this.running) return; this.running = true; this.run(); },
   stop() { this.running = false; clearTimeout(this.timer); this.set('idle'); },
   set(s) { if (this.state !== s) { this.state = s; bus.emit('event-stream', s); } },
+  key: e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null,
+  rowCount(list) { return list.filter((e, i) => !this.key(e) || this.key(e) !== this.key(list[i - 1] ?? {})).length; },
   async seed() {
-    // The server caps a page well below `max`. Follow its cursor until the feed shows `rows` rows:
-    // a settled batch of finds is one row on the page however many events it holds.
-    const got = [], key = e => e.type === 'find' ? JSON.stringify([e.data?.finder ?? e.data?.winner, e.data?.asset, e.data?.findHeight ?? e.at]) : null;
-    const rows = () => got.filter((e, i) => !key(e) || key(e) !== key(got[i - 1] ?? {})).length;
-    for (let r = null; got.length < this.max && rows() < this.rows && (!r || r.next);) {
+    // The server caps a page well below `max`, and a settled batch of finds folds into one row however
+    // many events it holds. Show the newest pages at once, then fill older rows in the background.
+    const got = [];
+    let r = null;
+    for (let pages = 0; got.length < this.max && this.rowCount(got) < this.rows && (!r || r.next) && pages < this.seedPages; pages++) {
       r = await get(`/feed?limit=200&order=desc${r?.next ? `&cursor=${encodeURIComponent(r.next)}` : ''}`);
       if (!this.running) return;
       got.push(...(r.events ?? []));
@@ -126,6 +130,21 @@ export const stream = {
     this.last = seeded.length ? seeded.at(-1).sequence : 0;
     this.retry = 2000;
     this.set('live');
+    if (r?.next && this.rowCount(this.events) < this.rows && this.events.length < this.max) this.backfill(r.next);
+  },
+  async backfill(cursor) {
+    // Older pages only extend the window; a failed page ends the fill and live updates continue.
+    try {
+      while (cursor && this.running && this.rowCount(this.events) < this.rows && this.events.length < this.max) {
+        const r = await get(`/feed?limit=200&order=desc&cursor=${encodeURIComponent(cursor)}`);
+        if (!this.running) return;
+        const older = (r.events ?? []).slice().reverse().filter(e => !this.seen.has(`${e.sequence}:${e.id ?? e.at}`));
+        for (const e of older) this.seen.add(`${e.sequence}:${e.id ?? e.at}`);
+        this.events = [...older, ...this.events].slice(0, this.max);
+        bus.emit('event-backfill');
+        cursor = r.next;
+      }
+    } catch { /* the newest rows and live updates remain */ }
   },
   async run() {
     this.set('connecting');

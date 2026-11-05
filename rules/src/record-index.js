@@ -31,7 +31,8 @@ function put(node, path, key, value, offset = 0) {
 export function recordSet(index, key, value) {
   if (index?.$claimIndex) return { ...index, root: namedSet(index.root, String(key), value), changes: recordSet(index.changes, key, value) };
   const map = wrap(index);
-  return { ...map, root: put(map.root, hash(String(key)), key, value), size: map.size + (recordGet(map, key) === undefined ? 1 : 0) };
+  const path = hash(String(key)), root = put(map.root, path, key, value), existing = find(map.root, path);
+  return { ...map, root, size: map.size + ((existing ? existing.value : map.base?.[key]) === undefined ? 1 : 0) };
 }
 export function recordObject(index) {
   if (index?.$claimIndex) throw Error('claim_index_enumeration');

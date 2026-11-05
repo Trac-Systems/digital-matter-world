@@ -64,6 +64,27 @@ test('HTTP returns retryable errors on time and retains capacity until pending w
   assert.equal((await fetch(http.url + '/missing')).status, 404, 'late reply cannot corrupt the next response');
 });
 
+test('a busy gateway delays site pages but never answers them with a JSON busy reply', async t => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const pool = { handles: () => true, serve: () => new Promise(() => {}) };
+  const web = { handle: async (req, res) => {
+    const path = new URL(req.url, 'http://localhost').pathname;
+    if (path !== '/' && path !== '/web/app.js') return false;
+    await delay(150); res.setHeader('Content-Type', path === '/' ? 'text/html; charset=utf-8' : 'text/javascript'); res.end(path === '/' ? '<!doctype html>' : 'export {}'); return true;
+  } };
+  const http = await serve({ intake: {}, files: { serve: async () => false }, responseTimeoutMs: 50, maxInFlight: 1, readPool: pool, web,
+    mints: { quote: async () => { await pending; return { state: 'ready' }; } } });
+  t.after(async () => { release(); await http.close(); });
+  const quote = await fetch(http.url + '/mint/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal((await quote.json()).error, 'request_pending');
+  for (const [path, accept, body] of [['/', 'text/html', '<!doctype html>'], ['/web/app.js', '*/*', 'export {}']]) {
+    const page = await fetch(http.url + path, { headers: { accept } });
+    assert.equal(page.status, 200, path); assert.equal(await page.text(), body);
+  }
+  const data = await fetch(http.url + '/health');
+  assert.equal(data.status, 503); assert.deepEqual(await data.json(), { error: 'service_busy', retryable: true });
+});
+
 test('source saturation and dependency timeouts are clear retryable HTTP failures', async t => {
   let entered;
   const started = new Promise(resolve => { entered = resolve; });

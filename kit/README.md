@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.0**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.1**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
@@ -126,7 +126,7 @@ Mint only after a verified find and with the required units and right.
 After a timeout, keep the original packet and action ID. Existing wallets,
 journals, salts and headers stay in place. Legacy commitments add a separate
 signed witness attachment. If the service or independent verifier reports
-`upgrade_required`, install kit **0.2.0** from the reviewed public repository
+`upgrade_required`, install kit **0.2.0 or newer** from the reviewed public repository
 before sending again; keep the same player directory and verification settings.
 The accepted manifest selects the protocol; live mainnet is already v2. Installing
 this checkout does not change consensus or replace independent notary verification.

@@ -17,21 +17,22 @@ const { installPublicMintSources, publicPaymentData } = await import('../src/pub
 const { FeeQuotes, createFeePolicy } = await import('../src/fees.mjs');
 const { identifyFinancialFees } = await import('../src/financial-fee-identity.mjs');
 
-export function publicMintSourceFixture({ deployerShareBps, baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false, bitcoinNetwork = 'regtest', legacyElement, lateConfirmBlocks } = {}) {
+export function publicMintSourceFixture({ retainedQuotes = false, deployerShareBps, baseFee = '100', feeSettings, legacyPolicy = false, legacyAsset = false, publicPaymentV2Height, bitmapMintOpenHeight, moveBytes, chainAnchored = false, bitcoinNetwork = 'regtest', legacyElement, lateConfirmBlocks } = {}) {
   const network = 'test', key = new Uint8Array(32).fill(44), publicKey = Buffer.from(secp256k1.getPublicKey(key)).toString('hex');
   const address = fundingAddress(publicKey, bitcoinNetwork), asset = legacyAsset ? 'p0' : 'p2:0', block = '100';
   const registry = { feePolicy: createFeePolicy(baseFee, 0, feeSettings) };
   const document = r.settingsRevision({ network, effectiveBatch: '1', effectiveBitcoinWindow: '100', values: {
-    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, ...(deployerShareBps === undefined ? {} : { deployerShareBps }), ...(legacyElement ? { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } : {}), publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
+    ...r.SETTINGS_PROFILE, ...r.PUBLIC_MINT_SETTINGS, ...(deployerShareBps === undefined ? {} : { deployerShareBps, ...(deployerShareBps ? { legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' } : {}) }), ...(legacyElement ? { legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1000000000000000000' } : {}), publicMintActivationHeight: '100', feePolicyRevision: registry.feePolicy.current,
     linkMultiplier: feeSettings?.link ?? r.FEE_DEFAULTS.link, finderWindow: 2, publicMintLegacyFinderWindow: 2, ...(!legacyPolicy ? { claimsNeverCloseHeight: '100' } : {}),
     ...(bitmapMintOpenHeight ? { bitmapMintOpenHeight } : {}), ...(publicPaymentV2Height ? { publicPaymentV2Height } : {}), ...(moveBytes ? { moveBytes } : {}), ...(lateConfirmBlocks ? { lateConfirmBlocks } : {}) } });
   const feeQuotes = new FeeQuotes({ network, secret: Buffer.alloc(32, 9), registry: async () => registry, now: () => 1000 }); feeQuotes.document = document;
+  if (retainedQuotes) { const issue = feeQuotes.issue.bind(feeQuotes); feeQuotes.issue = (...args) => issue(...args.slice(0, 5)); }
   const context = { pattern: { number: '0', pat: '[0-9]', fld: 4, dt: 'n', releaseHeight: '100', releaseFinderWindow: 2 },
     publicClaims: { reservation: null, headerAward: false, unsettled: true }, find: null, tier: 1, treasury: address,
     beneficiaries: {}, payouts: {}, deployment: { active: true, kind: 'dmt', ...(legacyElement ? { elementId: legacyElement, privilege: r.hash('authority') + 'i0' } : {}), id: r.hash('deployment') + 'i0', tick: 'dmwfixture', remaining: '1000000', limit: '0' } };
   const records = new Map([['fd/asset/' + asset, 'generation'], ['fd/generation', { asset, deployment: context.deployment.id, minted: '0', reserved: '0', maximum: '1000000' }]]), blocks = new Map(), contents = new Map(), transfers = new Map(), included = new Map(), calls = [];
   let height = '103', confirmations = 1, activeDocument = document;
-  const reads = { feeQuotes, rulesContext: async () => ({ settings: activeDocument }), counted: async () => height,
+  const reads = { feeQuotes, deploymentHolders: async ids => ids.map(id => ({ id, address: fundingAddress(Buffer.from(secp256k1.getPublicKey(new Uint8Array(32).fill(45))).toString('hex'), bitcoinNetwork) })), rulesContext: async () => ({ settings: activeDocument }), counted: async () => height,
     assetContext: async () => context, isMinted: async () => false, publicMintHeader: async b => ({ height: Number(b) }),
     financialSettings: async hash => { assert.equal(hash, r.hashObject(document)); return document; },
     financialRecord: async id => records.get(id), publicBitcoinHash: async h => r.hash('block/' + h),

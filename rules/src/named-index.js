@@ -1,14 +1,14 @@
 import { hash, hashObject } from './core.js';
 import { freezeDocument } from './settings-v2.js';
+import { indexBranchRootOf } from './index-commitment.js';
 
 // Immutable compressed radix tree with cached child commitments. A named read
 // or write follows at most 64 hexadecimal digits, independent of catalog size.
 export const EMPTY_NAMED_ROOT = hashObject(['dmw-named-index-v2', null]);
 export const namedRoot = node => node?.root ?? EMPTY_NAMED_ROOT;
 function seal(node) {
-  node.root = hashObject(node.children ? ['dmw-named-branch-v2', node.prefix,
-    Object.keys(node.children).sort().map(k => [k, node.children[k].root])] :
-    ['dmw-named-leaf-v2', node.prefix, node.key, node.value]);
+  node.root = node.children ? indexBranchRootOf(node.prefix, node.children, child => child.root) :
+    hashObject(['dmw-named-leaf-v2', node.prefix, node.key, node.value]);
   if (node.children) Object.freeze(node.children);
   return Object.freeze(node);
 }

@@ -9,13 +9,13 @@ import { Store, STORE_DEFAULTS } from './store.mjs';
 export class PublicReadStore {
   constructor(directory, { sqliteCacheKiB = PUBLIC_READ_DEFAULTS.sqliteCacheKiB, storePageRows = STORE_DEFAULTS.pageLimit, defaultPageRows = STORE_DEFAULTS.defaultPageRows } = {}) {
     check([sqliteCacheKiB, storePageRows, defaultPageRows].every(n => Number.isSafeInteger(n) && n > 0), 'public_read_store_settings');
-    Object.assign(this, { directory, storePageRows, defaultPageRows });
+    Object.assign(this, { directory, storePageRows, defaultPageRows, sqliteCacheKiB });
     this.db = new DatabaseSync(join(directory, 'index.sqlite'), { readOnly: true });
     this.db.exec(`PRAGMA query_only=ON; PRAGMA cache_size=-${sqliteCacheKiB}; PRAGMA temp_store=FILE`);
     this.getStmt = this.db.prepare('SELECT value FROM records WHERE space=? AND id=?');
     this.listStmt = this.db.prepare('SELECT id,value FROM records WHERE space=? AND id>? ORDER BY id LIMIT ?');
     this.countStmt = this.db.prepare('SELECT n FROM record_counts_decimal WHERE space=?');
   }
-  close() { this.db.close(); }
+  close() { this.scratchDB?.close(); this.db.close(); }
 }
-for (const name of ['get', 'list', 'countUint', 'hasRows', 'count']) PublicReadStore.prototype[name] = Store.prototype[name];
+for (const name of ['get', 'list', 'countUint', 'hasRows', 'count', 'scratchDatabase']) PublicReadStore.prototype[name] = Store.prototype[name];

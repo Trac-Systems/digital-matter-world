@@ -12,6 +12,7 @@ import { batchFixture, network } from './fixture.mjs';
 import { headerAgent } from '../../rules/test/header-fixture.mjs';
 import { BitcoinViews } from '../../service/prod/bitcoin.mjs';
 import { mine } from '../../contract/tests/helpers/chain.mjs';
+import { publicClaimBatch } from './public-claim-batch-fixture.mjs';
 
 async function headers(t, count) {
   const directory = await mkdtemp(join(tmpdir(), 'dmw-replay-')), filename = join(directory, 'bitcoin.sqlite');
@@ -126,4 +127,51 @@ test('replay timeout setting rejects values that Node would silently clamp', () 
 
 test('replay node cache rejects unbounded or invalid capacities', () => {
   for (const nodeCacheEntries of [0, -1, NaN, Infinity, '4096', 1.5]) assert.throws(() => new BatchReplay({ nodeCacheEntries }), /replay_node_cache_setting/);
+});
+
+test('an unused malformed prefetched row cannot reject an otherwise valid worker replay', async t => {
+  const f = publicClaimBatch({ supplied: null }), input = f.context.inputs[0], rows = new Map(input.claimEvidence.nodes), named = new Map(input.namedEvidence.nodes);
+  input.claimEvidence = { nodes: [] }; f.context.authority = { epoch: '0' };
+  input.namedEvidence = { ...input.namedEvidence, nodes: [] };
+  f.context.claimNode = id => rows.get(id); f.context.namedNode = id => named.get(id);
+  let calls = 0;
+  f.context.replayNodes = async (space, id) => { calls++; return [[id, (space === 'claimNodes' ? rows : named).get(id)], [rules.hash('unused'), { invalid: undefined }]]; };
+  const replay = new BatchReplay(); t.after(() => replay.close());
+  const result = await replay.run(f.proposal.network, f.proposal, f.context);
+  assert.ok(calls > 0); assert.deepEqual(result.files, [f.output.file]);
+  f.context.replayNodes = async (space, id) => [[id, { invalid: undefined }]];
+  await assert.rejects(replay.run(f.proposal.network, f.proposal, f.context), /named_storage_read/);
+});
+
+test('bounded replay caches report evictions and reset membership without changing batch bytes', async t => {
+  const f = publicClaimBatch({ supplied: null }), input = f.context.inputs[0];
+  const sources = { claimNodes: new Map(input.claimEvidence.nodes), namedNodes: new Map(input.namedEvidence.nodes) };
+  input.claimEvidence = { nodes: [] }; input.namedEvidence = { nodes: [] };
+  f.context.authority = { epoch: '0' };
+  f.context.claimNode = id => sources.claimNodes.get(id); f.context.namedNode = id => sources.namedNodes.get(id);
+  const requested = new Set(); let repeat = 0, calls = 0, consumed = 0;
+  f.context.replayNodes = async (space, id, ancestors, limit, held, used) => {
+    consumed += used.length;
+    calls++; const key = space + '/' + id;
+    assert.equal(held.has(key), false, 'the bridge forgets every evicted demanded row');
+    if (requested.has(key)) repeat++; requested.add(key);
+    return [[id, sources[space].get(id)], ...[...sources[space]].filter(([hash]) => hash !== id && !held.has(space + '/' + hash))].slice(0, limit);
+  };
+  const replay = new BatchReplay({ nodeCacheEntries: 2 }); t.after(() => replay.close());
+  for (let n = 0; n < 2; n++) {
+    const result = await replay.run(f.proposal.network, f.proposal, f.context);
+    assert.deepEqual(result.files, [f.output.file]);
+    assert.deepEqual(result.batch, f.proposal.batch);
+  }
+  assert.ok(calls > 2 && repeat > 0 && consumed > 0, JSON.stringify({ calls, repeat, consumed }));
+});
+
+test('duplicate demanded neighbors cannot displace the valid demanded row', async t => {
+  const f = publicClaimBatch({ supplied: null }), input = f.context.inputs[0];
+  const rows = { claimNodes: new Map(input.claimEvidence.nodes), namedNodes: new Map(input.namedEvidence.nodes) };
+  input.claimEvidence = { nodes: [] }; input.namedEvidence = { nodes: [] }; f.context.authority = { epoch: '0' };
+  f.context.claimNode = id => rows.claimNodes.get(id); f.context.namedNode = id => rows.namedNodes.get(id);
+  f.context.replayNodes = async (space, id) => [[id, rows[space].get(id)], [id, { invalid: undefined }]];
+  const replay = new BatchReplay({ nodeCacheEntries: 2 }); t.after(() => replay.close());
+  assert.deepEqual((await replay.run(f.proposal.network, f.proposal, f.context)).files, [f.output.file]);
 });

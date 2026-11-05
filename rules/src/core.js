@@ -3,6 +3,7 @@ import { bytesToHex, hexToBytes } from '../../contract/signing.js';
 export { bytesToHex, hexToBytes };
 export function unicode(s) {
   assert(typeof s === 'string', 'unicode_string');
+  if (!/[\ud800-\udfff]/.test(s)) return s;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
     if (c >= 0xd800 && c <= 0xdbff) { const d = s.charCodeAt(++i); assert(d >= 0xdc00 && d <= 0xdfff, 'unicode_surrogate'); }
@@ -11,6 +12,9 @@ export function unicode(s) {
   return s;
 }
 const encoder = new TextEncoder();
+// Node's one-shot SHA-256 uses the platform implementation. The portable
+// implementation remains available in browsers and runtimes without it.
+const nativeHash = typeof process === 'object' && process.getBuiltinModule?.('node:crypto')?.hash;
 export const utf8 = s => encoder.encode(unicode(s));
 export function assert(ok, reason) { if (!ok) throw new Error(reason); }
 export const integer = (n, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(n) && n >= 0 && n <= max;
@@ -30,11 +34,19 @@ export function parseCanonical(text, maxBytes = 16384) {
   assert(stableJSON(value) === text, 'json_canonical');
   return value;
 }
-export const hashBytes = value => sha256(typeof value === 'string' ? utf8(value) : value);
-export const hash = value => bytesToHex(hashBytes(value));
+export const hashBytes = value => {
+  const bytes = typeof value === 'string' ? utf8(value) : value;
+  if (!nativeHash || !(bytes instanceof Uint8Array)) return sha256(bytes);
+  const result = nativeHash('sha256', bytes, 'buffer');
+  return Uint8Array.from(result);
+};
+export const hash = value => nativeHash && (typeof value === 'string' || value instanceof Uint8Array)
+  ? nativeHash('sha256', typeof value === 'string' ? unicode(value) : value, 'hex') : bytesToHex(hashBytes(value));
 // stableJSON already checked every source string. Its JSON escapes and ASCII
 // delimiters cannot introduce an unpaired surrogate requiring another scan.
-export const hashObject = value => bytesToHex(sha256(encoder.encode(stableJSON(value))));
+// Callers supply text from a canonical encoder that already validated strings.
+export const hashCanonicalText = text => nativeHash ? nativeHash('sha256', text, 'hex') : bytesToHex(sha256(encoder.encode(text)));
+export const hashObject = value => hashCanonicalText(stableJSON(value));
 export const digest = (domain, network, value) => hashBytes(`${domain}|${network}|${stableJSON(value)}`);
 export function networkId(network) { assert(typeof network === 'string' && /^[a-zA-Z0-9._:-]{1,96}$/.test(network), 'network'); return network; }
 export function randomIndex(seed, domain, size) {

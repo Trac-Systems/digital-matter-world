@@ -22,14 +22,14 @@ test('HTTP upgrade notice fits the installed client and names the exact release 
   const client = new ServiceClient({ origin: http.url });
   await assert.rejects(client.request('/moves', { value: {} }), error => {
     assert.equal(error.code, 'upgrade_required'); assert.equal(error.refusedBeforeAcceptance, true);
-    assert.match(error.message, /kit 0\.2\.0/); assert.ok(error.message.includes(KIT_DOWNLOAD_URL)); return true;
+    assert.match(error.message, new RegExp(`kit ${KIT_VERSION.replaceAll('.', '\\.')}`)); assert.ok(error.message.includes(KIT_DOWNLOAD_URL)); return true;
   });
   assert.equal(JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version, KIT_VERSION);
 });
 
 test('accepted manifest minimum kit version refuses future versions without numerical rounding', () => {
-  for (const minimum of ['0.1.0', '0.2.0']) requireKitVersion(minimum);
-  for (const minimum of ['0.2.1', '1.0.0', '99999999999999999999.0.0']) assert.throws(() => requireKitVersion(minimum), /upgrade_required/);
+  for (const minimum of ['0.1.0', '0.2.0', '0.2.1']) requireKitVersion(minimum);
+  for (const minimum of ['0.2.2', '1.0.0', '99999999999999999999.0.0']) assert.throws(() => requireKitVersion(minimum), /upgrade_required/);
   assert.throws(() => requireKitVersion('remote text'), /Invalid minimum kit version/);
 });
 

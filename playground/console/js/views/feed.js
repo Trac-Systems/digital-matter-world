@@ -165,6 +165,8 @@ export function mount(root) {
   });
   const off2 = bus.on('event-stream', () => { if (!rowsEl.querySelector('tr.feed-row')) redraw(); });
   const off3 = bus.on('status', drawLiveFoot);
+  // Older rows loaded after the first page extend the live window.
+  const off4 = bus.on('event-backfill', () => { if (mode === 'live' && !paused) redraw(); });
   redraw(); countRetained();
-  return () => { off(); off2(); off3(); };
+  return () => { off(); off2(); off3(); off4(); };
 }

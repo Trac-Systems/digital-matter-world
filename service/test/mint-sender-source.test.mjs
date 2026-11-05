@@ -4,7 +4,10 @@ import { createServer } from 'node:http';
 import { SenderHTTP, MintSenderBitcoin } from '../src/mint-sender-source.mjs';
 import { mintSenderSettings } from '../src/mint-sender-settings.mjs';
 import { requestKey, btc } from '../src/mint-sender-keys.mjs';
-import { hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
+import { buildInscription, hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
+import { bulkFixture } from './helpers/bulk-sender.mjs';
+import { bulkWalletItems } from '../../rules/src/bulk-mint.js';
+import { sideWalletItem } from '../src/direct-deployer.mjs';
 const settings = mintSenderSettings({ timeoutMs: 100, bitcoinApiPath: '' });
 test('HTTP deadlines include response bodies and redact remote errors; oversized payloads stop', async t => {
   const server = createServer((req, res) => {
@@ -40,4 +43,44 @@ test('UTXO lookup verifies raw txid, amount and script; current fees and broadca
   assert.equal(await bitcoin.feeRate(), 2.25); await bitcoin.broadcast(tx.hex, tx.id);
   wrongBroadcast = true; await assert.rejects(bitcoin.broadcast(tx.hex, tx.id), /broadcast_binding/);
   await assert.rejects(bitcoin.verifyNetwork(), /bitcoin_network/);
+});
+
+test('bulk funding binds the side item in the actual reveal and preserves group-only returns', async () => {
+  const f = await bulkFixture(1), net = networkFor('regtest'), key = f.key, secret = new Uint8Array(32).fill(21);
+  const side = { to: f.terms.receiver, amount: '5', dta: `dmw-bulk-deployer-v1|${f.orderId}` };
+  try {
+    for (const includeSide of [true, false]) {
+      const items = [...bulkWalletItems(f.terms), ...(includeSide ? [sideWalletItem(side)] : [])];
+      const draft = buildInscription({ text: JSON.stringify({ p: 'tap', op: 'token-auth', redeem: { items } }),
+        receiver: f.terms.payer, publicKey: key.publicKey, network: 'regtest', secret: secret.slice(), feeRate: 1, maxFeeSats: '90000',
+        utxos: [{ txid: '11'.repeat(32), vout: 0, value: '300000', script: f.funding.script, cardinal: true, confirmed: true }] });
+      const commit = btc.Transaction.fromPSBT(unhex(draft.commitPsbt));
+      commit.updateOutput(1, { script: unhex(f.funding.script), amount: BigInt(f.terms.mintFunding.satoshis) });
+      commit.sign(key.privateKey); commit.finalize();
+      const original = btc.Transaction.fromRaw(unhex(draft.revealHex), { allowUnknownInputs: true });
+      const leaf = btc.p2tr(btc.TAPROOT_UNSPENDABLE_KEY, { script: original.getInput(0).finalScriptWitness[1] }, net, true);
+      const reveal = new btc.Transaction({ allowUnknownInputs: true });
+      reveal.addInput({ txid: commit.id, index: 0, witnessUtxo: commit.getOutput(0), tapInternalKey: leaf.tapInternalKey, tapMerkleRoot: leaf.tapMerkleRoot, tapLeafScript: leaf.tapLeafScript });
+      reveal.addOutputAddress(f.terms.payer, 546n, net); reveal.sign(secret); reveal.finalize();
+      const http = { async request(path) {
+        if (path === '/block-height/100') return '22'.repeat(32);
+        if (path === '/tx/' + reveal.id + '/hex') return reveal.hex;
+        if (path === '/tx/' + commit.id + '/hex') return commit.hex;
+        if (path.includes('/outspend/')) return { spent: false };
+        return { txid: path.slice(4), status: { confirmed: true, block_height: 100, block_hash: '22'.repeat(32) } };
+      } };
+      const bitcoin = new MintSenderBitcoin({ http, network: 'regtest', settings });
+      bitcoin.tap = { at: async fn => ({ value: await fn({ height: '100' }) }), cardinal: async coins => coins };
+      const input = { terms: f.terms, orderId: f.orderId, paymentId: reveal.id + 'i0', deployerPayment: side };
+      if (includeSide) {
+        assert.equal((await bitcoin.bulkFunding(input)).txid, commit.id);
+        await assert.rejects(bitcoin.bulkFunding({ ...input, deployerPayment: { ...side, amount: '6' } }), /bulk_redeem_binding/);
+        await assert.rejects(bitcoin.bulkFunding({ ...input, deployerPayment: null }), /bulk_redeem_binding/);
+      } else {
+        await assert.rejects(bitcoin.bulkFunding(input), /bulk_redeem_binding/);
+        assert.equal((await bitcoin.bulkFunding({ ...input, allowMissingDeployer: true })).txid, commit.id);
+        assert.equal((await bitcoin.bulkFunding({ ...input, deployerPayment: null })).txid, commit.id);
+      }
+    }
+  } finally { key.privateKey.fill(0); secret.fill(0); }
 });

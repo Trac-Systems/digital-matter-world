@@ -51,6 +51,14 @@ test('gateway batches point reads while preserving every replay byte and root fr
   assert.deepEqual(after.batch, before.batch); assert.deepEqual(after.fileBytes, before.fileBytes);
   assert.deepEqual(batches.map(pairs => pairs.length), [64, 1]);
   assert.equal(actual.file.publicMintEvidence.length, 65);
+  const retry = { ...wire, claimEvidence: actual.claimEvidence, namedEvidence: actual.namedEvidence,
+    publicMintEvidence: actual.file.publicMintEvidence };
+  const claims = { store, staged: new Map(), namedStaged: new Map(), publicMintGet: () => { throw Error('retry_read'); } };
+  assert.deepEqual(await replay.run(retry, history, claims), actual);
+  const corrupt = structuredClone(retry), root = corrupt.namedEvidence.nodes.find(([id]) => id === wire.state.namedSnapshot.records);
+  assert.ok(root); root[1].prefix = 'tampered';
+  await assert.rejects(replay.run(corrupt, history, claims), /named_storage_integrity/);
+  assert.deepEqual(await replay.run(retry, history, claims), actual, 'a rejected proof cannot poison retained authenticated rows');
 });
 
 test('financial source bulk adapter validates keys and a scoped overlay cannot bypass its record reader', async () => {

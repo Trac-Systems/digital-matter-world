@@ -1,19 +1,19 @@
-import { h, clear, table, kv, pill, hashEl, fmtInt, tabs, panel, figures, cell, inspectBtn, labelFor } from '../dom.js';
+import { h, clear, table, kv, pill, hashEl, fmtInt, tabs, panel, figures, cell, inspectBtn, labelFor, short } from '../dom.js';
 import { get, bus, site } from '../api.js';
 import { mineral, assetName, who, assetLink, agentLink, blockLink, inscriptionLink, txLink, addressLink, requestLink } from '../words.js';
 import { tap, bridged, fee } from '../money.js';
 import { pagedTable } from '../paged.js';
 
 const TABS = [
-  ['mints', 'Minted on Bitcoin', (site.words?.resultsMints ?? 'What ord-tap indexed on Bitcoin regtest: block inscriptions with their DMT tokens, and compound tokens.')],
+  ['mints', 'Mint requests', (site.words?.resultsMints ?? 'What ord-tap indexed on Bitcoin regtest: block inscriptions with their DMT tokens, and compound tokens.')],
   ['payments', 'TAP payments', 'Player-paid fee items on Bitcoin. Each item must be final before the committee issues the mint permit.'],
   ['ethereum', 'Ethereum escrow', 'Player-funded bridged TAP deposits. The payer or a recipient submits the signed release and pays gas; the player also pays to inscribe on Bitcoin.'],
   ['payouts', 'Payment recipients', 'Public payment records by recipient. Indexed transactions show what was paid.'],
-  ['owed', 'Unsettled records', 'Public records still awaiting payout. Older deploy holders accrue their equal share from the burn here.'],
+  ['owed', 'Unsettled records', 'Public records still awaiting payout.'],
   ['links', 'Bitmap links', 'Paid Bitmap links. A link stays with the Bitmap for good.'],
 ];
 // The public pages also list payouts already sent to bound payout wallets.
-if (site.public) TABS.splice(5, 0, ['paid', 'Paid payouts', 'Payouts sent to beneficiaries, including the Bitcoin holders of older deployments.']);
+if (site.public) TABS.splice(5, 0, ['paid', 'Paid payouts', 'Payouts sent to beneficiaries.']);
 const AMOUNT_KEYS = /amount|price|fee|total|treasury|burn|share|paid|balance|released|held|accrued|owed|^tap$|erc20|supply/i;
 
 export function mount(root, params = {}) {
@@ -40,9 +40,9 @@ export function mount(root, params = {}) {
   function draw() {
     const d = data ?? {};
     clear(top, figures([
-      ['Minted on Bitcoin', fmtInt(count('mints')), 'inscriptions'],
-      ['Treasury', tapOr(sum(d.treasury)), 'TAP on Bitcoin', 'The quoted treasury share, including backing for older-deploy liabilities.'],
-      ['Burned', tapOr(sum(d.burn)), 'TAP on Bitcoin', 'Burn shares plus unlinked Bitmap shares, less any older-deploy share.'],
+      ['Minted on Bitcoin', fmtInt(d.counts?.inscriptions ?? count('mints')), 'inscriptions', 'Blocks and compounds inscribed on Bitcoin. Unpaid or expired mint requests do not count.'],
+      ['Treasury', tapOr(sum(d.treasury)), 'TAP on Bitcoin', 'The quoted treasury share.'],
+      ['Burned', tapOr(sum(d.burn)), 'TAP on Bitcoin', 'Burn shares plus unlinked Bitmap shares, less the ticker deployer\'s share.'],
       ['Escrow on Ethereum', fmtInt(count('ethereum')), 'payments'],
       ['Payouts', fmtInt(count('payouts')), 'ledger entries'],
     ]));
@@ -94,23 +94,23 @@ export function mount(root, params = {}) {
       { key: 'blck', label: 'Bitcoin block', num: true, render: r => blockLink(r.consumed?.blck ?? r.block), sort: r => r.consumed?.blck },
       { key: 'action', label: 'Action', render: r => r.consumed?.action === 'claim' ? 'Released' : r.consumed?.action === 'refund' ? 'Refunded' : cell(r.consumed?.action ?? r.action) },
       { key: 'total', label: 'Total', num: true, render: r => h('span.mono', {}, tap(r.consumed?.total ?? r.consumed?.amt ?? r.amount ?? r.total, unit())) },
-      { key: 'split', label: 'Split', sortable: false, render: r => h('span.small', {}, [...(r.consumed?.target ? [`${tap(r.consumed.amt, unit())} treasury`] : []), ...(!r.consumed && r.role ? [`${tap(r.amount, unit())} ${r.role}`] : []), ...(r.consumed?.al ?? []).map(a => `${tap(a.amt, unit())} ${ROLE[a.rl] ?? a.rl}`)].join(' · ')) },
+      { key: 'split', label: 'Split', sortable: false, render: r => h('span.small', {}, [...(r.consumed?.target ? [`${tap(r.consumed.amt, unit())} treasury`] : []), ...(!r.consumed && r.role ? [`${tap(r.amount, unit())} ${r.role}`] : []), ...(!r.consumed && !r.role && r.to ? [`${tap(r.amount, unit())} to ${short(r.to)}`] : []), ...(r.consumed?.al ?? []).map(a => `${tap(a.amt, unit())} ${ROLE[a.rl] ?? a.rl}`)].join(' · ')) },
       { key: 'tx', label: 'Transaction', render: r => txLink('bitcoin', r.consumed?.tx ?? r.reference), sortable: false },
     ],
     payouts: [
       { key: 'beneficiary', label: 'Paid to', render: r => addressLink(r.beneficiary ?? r.to), sortable: false },
       { key: 'accrued', label: 'Earned', num: true, render: r => h('span.mono', {}, tap(r.accrued, unit())) },
       { key: 'paid', label: 'Paid out', num: true, render: r => h('span.mono', {}, tap(r.paid, unit())) },
-      { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit()) + (r.legacyDeploy ? ` · ${r.eligible ? 'ready for payout' : 'payout from ' + tap(r.payoutMinAtoms, unit())}` : '')) },
+      { key: 'owed', label: 'Still owed', num: true, render: r => h('span.mono', {}, tap(r.owed, unit())) },
     ],
     owed: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'to', label: 'Paid to', render: r => addressLink(r.to), sortable: false },
       { key: 'inscription', label: 'From mint', render: r => inscriptionLink(r.inscription), sortable: false },
     ],
     paid: [
-      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', legacyDeploy: 'Older deploy holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
+      { key: 'role', label: 'For', render: r => ({ discoverer: 'Discoverer', landowner: 'Bitmap holder', deployer: 'Ticker deployer' }[r.role] ?? cell(r.role)) },
       { key: 'amount', label: 'Amount', num: true, render: r => h('span.mono', {}, tap(r.amount, unit())) },
       { key: 'agent', label: 'Agent', render: r => addressLink(r.agent ?? r.beneficiary), sortable: false },
       { key: 'address', label: 'Paid to', render: r => addressLink(r.address ?? r.to), sortable: false },
@@ -140,8 +140,8 @@ export function mount(root, params = {}) {
     payments: { sorts: [['block:desc', 'Newest'], ['total:desc', 'Largest']], filters: [{ name: 'action', label: 'Action', value: '', options: [['', 'All'], ['claim', 'Released'], ['refund', 'Refunded']] }] },
     ethereum: { sorts: [['id:desc', 'Newest'], ['amount:desc', 'Largest']], filters: [] },
     payouts: { sorts: [['owed:desc', 'Most owed'], ['accrued:desc', 'Most earned'], ['beneficiary:asc', 'Recipient']], filters: [] },
-    owed: { sorts: [['amount:desc', 'Largest'], ['role:asc', 'Role']], filters: [{ name: 'role', label: 'For', value: '', options: [['', 'All'], ['discoverer', 'Discoverer'], ['landowner', 'Bitmap holder']] }] },
-    paid: { sorts: [], filters: [] },
+    owed: { sorts: [['amount:desc', 'Largest'], ['role:asc', 'Role']], filters: [{ name: 'role', label: 'For', value: '', options: [['', 'All'], ['discoverer', 'Discoverer'], ['landowner', 'Bitmap holder'], ['deployer', 'Ticker deployer']] }], group: rows => rows.filter(r => r.role !== 'legacyDeploy') },
+    paid: { sorts: [], filters: [], group: rows => rows.filter(r => r.role !== 'legacyDeploy') },
     links: { sorts: [['block:desc', 'Block'], ['linkHeight:desc', 'Newest link']], filters: [] },
   };
   // The public pages open each mint request with its wallet payment and receipt.

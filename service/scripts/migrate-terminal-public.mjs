@@ -6,6 +6,7 @@ import { check } from '../src/util.mjs';
 import { migratePublicProjections } from './migrate-public-projections.mjs';
 
 export async function migrateTerminalPublic(store, { pageRows = 128, pageBytes = 90000 } = {}) {
+  check(!store.writer, 'store_maintenance_required');
   check(Number.isSafeInteger(pageRows) && pageRows > 0 && Number.isSafeInteger(pageBytes) && pageBytes > 0, 'public_import_settings');
   const pending = store.get('meta', 'legacyPendingWork'), ready = store.get('meta', 'terminalPublicImport');
   check(store.get('meta', 'v2Activation') && pending?.commitment?.sourceRoot, 'public_import_terminal_required');
@@ -54,6 +55,6 @@ export async function migrateTerminalPublic(store, { pageRows = 128, pageBytes =
   return result;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const store = await Store.open(process.argv[2]);
+  const store = await Store.openForMaintenance(process.argv[2]);
   try { console.log(JSON.stringify(await migrateTerminalPublic(store))); } finally { await store.close(); }
 }

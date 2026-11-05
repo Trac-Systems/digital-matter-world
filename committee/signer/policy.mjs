@@ -1,4 +1,5 @@
 import { paidMintPlan } from './pay-first.mjs';
+import { warmBatchRegistry } from '../../service/src/financial-registry.mjs';
 import { replayBatchWorker } from './replay-worker.mjs';
 import { canonicalJSON, check, equal, isHex, sha256 } from './crypto.mjs';
 import { rules, pendingRecord, permit, requestID } from './adapter.mjs';
@@ -9,6 +10,8 @@ import { financialMintId, financialPaymentHash } from '../../rules/src/financial
 import { verifyRecoveryBatch } from './recovery-batch.mjs';
 import { readPublicWinner, readPublicWinners, verifyPublicMintEvidence, verifyPublicPermit } from './public-claims.mjs';
 import { verifyBulkPermit, bulkPublicReads } from './bulk-mint.mjs';
+import { verifyAccountRevisions } from './account-revisions.mjs';
+import { phase } from '../../service/src/lifecycle.mjs';
 
 const uint = n => Number.isSafeInteger(n) && n >= 0 || typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n);
 const positive = n => typeof n === 'string' && /^[1-9][0-9]*$/.test(n) && BigInt(n) < 1n << 256n;
@@ -23,7 +26,7 @@ export class Policy {
     const authority = await this.reads.authority();
     check(authority?.network === this.network && authority.committee === this.publicKey && uint(authority.epoch), 'batch_authority');
     check(clock.valid(proposal.batch?.epoch) && clock.compare(proposal.batch.epoch, authority.epoch) === 0, 'batch_epoch');
-    let context = await this.reads.batchContext(proposal.batch?.n);
+    let context = await phase('prepare.context', () => this.reads.batchContext(proposal.batch?.n));
     if (proposal.batch.ruleset === 'dmw-v2') {
       const accepted = await this.reads.rulesContext?.();
       check(accepted?.ready && accepted.ruleset === 'dmw-v2', 'batch_activation_read');
@@ -61,11 +64,13 @@ export class Policy {
     if (proposal.batch.v === 1 && proposal.batch.ops.every(op => op.op === 'kv') && !proposal.batch.hx?.length && context.inputs.every(input =>
       !input.mintOperations?.length && !input.linkOperations?.length && input.entries.every(e => e.move.t !== 'craft')))
       context = { ...context, counted };
+    await phase('prepare.account_revisions', () => verifyAccountRevisions(context, this.reads));
     const publicReads = bulkPublicReads(this.reads);
-    const approval = await this.replayBatch(this.network, proposal, { ...context, authority,
+    const approval = await phase('prepare.replay', () => this.replayBatch(this.network, proposal, { ...context, authority,
       replayNodes: this.reads.replayNodes?.bind(this.reads), claimNode: this.reads.claimNode?.bind(this.reads), namedNode: this.reads.namedNode?.bind(this.reads),
       publicMintGet: (asset, block, deployment) => readPublicWinner(publicReads, asset, block, { counted: context.counted, last: context.last }, deployment),
-      publicMintBatch: pairs => readPublicWinners(publicReads, pairs, { counted: context.counted, last: context.last }) });
+      publicMintBatch: pairs => readPublicWinners(publicReads, pairs, { counted: context.counted, last: context.last }) }));
+    await phase('prepare.registry', () => warmBatchRegistry(this.reads, approval.files, this.network, { counted: context.counted, last: context.last }));
     await verifyPublicMintEvidence(approval.files, publicReads, { counted: context.counted, last: context.last });
     this.receiptFences?.checkBatch(proposal.batch, approval.files, context.renewal);
     for (const [index, file] of approval.files.entries()) {
@@ -101,14 +106,14 @@ export class Policy {
     }
     if (financialV2) {
       check(clock.compare(approval.files.at(-1).height, context.counted) === 0, 'financial_execution_height');
-      await verifyFinancialExecution({ files: approval.files, reads: this.reads, document: context.settings.document,
-        network: this.network, height: context.counted, at: { counted: context.counted, last: context.last } });
+      await phase('prepare.financial', () => verifyFinancialExecution({ files: approval.files, reads: this.reads, document: context.settings.document,
+        network: this.network, height: context.counted, at: { counted: context.counted, last: context.last } }));
     }
     if (financial) {
       check(clock.compare(await this.reads.counted(), context.counted) === 0, 'batch_clock_changed');
       check(equal(await this.reads.batchStamp(), stamp), 'batch_snapshot_changed');
     }
-    const preflight = await this.reads.preflight(approval.batch, { counted: context.counted, last: context.last });
+    const preflight = await phase('prepare.preflight', () => this.reads.preflight(approval.batch, { counted: context.counted, last: context.last }));
     check(preflight?.ok === true && clock.compare(preflight.counted, context.counted) >= 0 && equal(preflight.last, context.last) && preflight.digest === approval.digest, 'batch_preflight');
     const current = await this.reads.authority();
     check(current?.network === authority.network && current.committee === authority.committee && current.epoch === authority.epoch, 'batch_authority_changed');

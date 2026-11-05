@@ -472,3 +472,25 @@ a.pill-link .pill { cursor: pointer; text-decoration: underline; text-underline-
 .link-earlier details > div { padding: 0 12px 12px; }
 .link-earlier .link-job > .note { margin: 8px 12px; }
 .link-earlier .link-job > .paged { border-top: 0; }
+/* Editor's Picks: one panel per pick; its best utility leads, then why, its points, facts, the live state and links. */
+.picks { align-items: start; }
+.pick > header h2 { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.pick > header .emoji { font-size: 20px; line-height: 1; flex: none; }
+.pick > header .swatch { margin-right: 0; flex: none; }
+.pick > .body { display: flex; flex-direction: column; gap: 12px; }
+.pick p { margin: 0; line-height: 1.55; }
+.pick-use .k, .pick-now > .k { font-size: 12px; font-weight: 700; color: var(--ink-2); letter-spacing: 0.02em; text-transform: uppercase; }
+.pick-use .v { font-family: var(--serif); font-size: 22px; font-weight: 560; line-height: 1.25; margin-top: 2px; letter-spacing: -0.005em; }
+.pick-points { margin: 0; padding: 0 0 0 18px; display: grid; gap: 6px; line-height: 1.5; }
+.pick-now { display: grid; gap: 6px; }
+.pick-now table.t.kv th { width: 26%; vertical-align: top; }
+.pick-line { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.pick-links { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink-2); border-top: 1px solid var(--rule-2); padding-top: 10px; }
+.pick-links a { font-weight: 700; }
+@media (max-width: 640px) {
+  .pick-use .v { font-size: 19px; }
+  .pick-now table.t.kv th { width: 30%; }
+}
+.picks-stats { display: grid; gap: 6px; margin-bottom: 12px; }
+.picks-stats p, .picks-note { margin: 0; }
+.picks-note { margin-bottom: 14px; max-width: 76ch; }

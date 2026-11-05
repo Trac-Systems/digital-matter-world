@@ -10,4 +10,6 @@ assert.ok(Number.isSafeInteger(tssPort) && tssPort > 1024 && tssPort + 4 < 65536
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort(Error('rehearsal_interrupted')));
 process.once('SIGTERM', () => controller.abort(Error('rehearsal_interrupted')));
-await financialRehearsal({ checkpoint: () => controller.signal.throwIfAborted(), stack: await current(), directory: join(BUILD, 'mg3b-financial-' + Date.now()), tssPort, bulk: process.env.DMW_FINANCIAL_BULK === '1', latePayments: process.env.DMW_LATE_PAYMENTS === '1' });
+await financialRehearsal({ checkpoint: () => controller.signal.throwIfAborted(), stack: await current(), directory: join(BUILD, 'mg3b-financial-' + Date.now()), tssPort,
+  bulk: process.env.DMW_FINANCIAL_BULK === '1', latePayments: process.env.DMW_LATE_PAYMENTS === '1',
+  directHolder: process.env.DMW_DIRECT_HOLDER === '1', legacyQuote: process.env.DMW_LEGACY_QUOTE === '1' });

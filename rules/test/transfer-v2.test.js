@@ -86,3 +86,16 @@ test('a transfer that expires while its receipt waits is rejected at the batch e
   assert.deepEqual(replay.outcomes, [{ id: receipt.move, reason: 'transfer_authorization' }]);
   assert.equal(replay.root, r.namedStateRoot(state));
 });
+
+test('a later transfer receipt keeps inclusion but rejects an account revision changed by its predecessor', () => {
+  const state = r.emptyNamedDiscovery(), move = signed(), gatewayKey = r.hashBytes('later-transfer-gateway');
+  const receipt = r.signReceiptV2(move, { tip: '100', hash: hashAt('100'), sequence: '2', batch: '3' }, gatewayKey);
+  const options = { entries: [{ move, receipt }], settings, batch: '3', gateway: receipt.gateway,
+    hashAt, counted: '100', lastSequence: '1' };
+  const accepted = r.replayNamedEntries(state, { ...options, accountRevisions: new Map([[owner, '1']]) });
+  assert.equal(accepted.outcomes[0].reason, 'accepted');
+  const rejected = r.replayNamedEntries(state, { ...options, accountRevisions: new Map([[owner, '2']]) });
+  assert.deepEqual(rejected.outcomes, [{ id: receipt.move, reason: 'account_revision_changed' }]);
+  assert.equal(rejected.lastSequence, '2'); assert.equal(rejected.root, r.namedStateRoot(state));
+  assert.ok(r.verifyReceiptV2(receipt, move, { network: settings.network, gateway: receipt.gateway, hashAt, batch: '3' }));
+});

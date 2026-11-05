@@ -41,6 +41,49 @@ function setup() {
   return { store, context, make, accept, get reads() { return reads; } };
 }
 const anchor = { height: '100', hash: r.hash('100') }, matches = ['1', '10', '11'].map(height => ({ height, hash: r.hash(height), count: '3' }));
+test('a later reservation rebases after predecessor acceptance without replacing its promised receipts', async () => {
+  const f = setup(), first = packet('discovery-commit-v2', { commitment: r.hash('predecessor') }, '100');
+  const receipt1 = await f.make().accept(r.stableJSON(first));
+  f.context.batch = '44'; f.context.future = true;
+  const later = packet('discovery-commit-v2', { commitment: r.hash('later') }, '100');
+  const receipt2 = await f.make().accept(r.stableJSON(later));
+  assert.equal(receipt1.batch, '43'); assert.equal(receipt2.batch, '44');
+  f.context.batch = '43'; f.context.future = false; await f.accept();
+  const third = packet('discovery-commit-v2', { commitment: r.hash('after acceptance') }, '100');
+  await f.make().accept(r.stableJSON(third));
+  assert.deepEqual(await f.make().accept(r.stableJSON(later)), receipt2);
+  assert.equal(f.store.get('namedDrafts', '44').acceptedRoot, f.context.acceptedRoot);
+  const replay = await f.accept(); assert.equal(replay.outcomes.length, 2);
+  for (const commitment of [first.p.commitment, later.p.commitment, third.p.commitment])
+    assert.ok(r.namedGet(f.context.state.records, `commit/${agent}/${commitment}`));
+});
+
+test('rebase retains a receipt whose move becomes invalid, and admits new valid work against the new state', async () => {
+  const f = setup(), commitment = r.hash('shared commitment');
+  await f.make().accept(r.stableJSON(packet('discovery-commit-v2', { commitment }, '100')));
+  f.context.batch = '44'; f.context.future = true; f.context.tip = '101';
+  const text = r.stableJSON(packet('discovery-commit-v2', { commitment }, '101'));
+  const receipt = await f.make().accept(text);
+  f.context.batch = '43'; f.context.future = false; await f.accept();
+  await f.make().accept(r.stableJSON(packet('discovery-commit-v2', { commitment: r.hash('fresh') }, '101')));
+  const entries = f.store.list('namedIntake/44').map(row => row.value);
+  const replay = r.replayNamedEntries(f.context.state, { entries, settings, settingsHistory: history, batch: '44', gateway,
+    hashAt: r.hash, counted: '100', lastSequence: f.context.lastSequence });
+  assert.deepEqual(replay.outcomes.map(o => o.reason), ['discovery_commit_exists', 'accepted']);
+  assert.deepEqual(await f.make().accept(text), receipt);
+  assert.equal(replay.root, r.namedStateRoot(new NamedStorage({ get: id => f.store.get('namedNodes', id), cacheSize: 16 }).load(f.store.get('namedDrafts', '44').snapshot)));
+});
+
+test('a full future observation refuses before creating a receipt while exact retries still recover', async () => {
+  const f = setup(); f.context.batch = '44'; f.context.future = true;
+  const text = r.stableJSON(packet('discovery-commit-v2', { commitment: r.hash('future') }, '100'));
+  const receipt = await f.make().accept(text), before = JSON.stringify([...f.store.rows]);
+  f.context.sealed = true;
+  assert.deepEqual(await f.make().accept(text), receipt);
+  await assert.rejects(f.make().accept(r.stableJSON(packet('discovery-commit-v2', { commitment: r.hash('overflow') }, '100'))),
+    error => error.message === 'next_batch_work_capacity' && error.status === 429);
+  assert.equal(JSON.stringify([...f.store.rows]), before);
+});
 test('field-value gateway admission uses the counted execution height and only submitted evidence', async () => {
   const f = setup(), active = r.FIELD_VALUE_AMOUNT_HEIGHT;
   f.context.tip = f.context.counted = String(BigInt(active) - 2n);

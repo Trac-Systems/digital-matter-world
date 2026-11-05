@@ -11,6 +11,7 @@ import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey, readAccountLeaf } from '../../contract/account-tree.js';
 import { timeReads, timeStep, addStep } from './read-timing.mjs';
+import { directHolderTerms, bulkHolderHash, sideWalletItem } from './direct-deployer.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const bits = (mask, count) => Array.from({ length: count }, (_, i) => !!(BigInt(mask ?? '0') & 1n << BigInt(i)));
 const size = value => Buffer.byteLength(rules.stableJSON(value));
@@ -134,13 +135,14 @@ export class BulkMints {
     const output = { v: 1, orderId: null, quoteId: null, terms: null, feeManifest: [], skipped,
       deferred, anchor, limits: { members: b.BULK_LIMITS.members, groups: b.BULK_LIMITS.groups, setAsideSats: b.BULK_LIMITS.setAsideSats }, payable: false };
     let selected = null;
+    const holderFees = eligible.length ? await directHolderTerms(this.reads, eligible[0].deployment, document, { at, bitcoinNetwork: this.bitcoinNetwork }) : null;
     // Size the complete signed wrapper before returning anything signable.
     // Reducing a prefix here never changes a submitted signed set.
     for (let count = eligible.length; count > 0; count--) {
       const part = eligible.slice(0, count), d = part[0].deployment;
       const members = part.map(c => ({ block: rules.decimalV2(c.find.block), amount: String(c.find.count) }));
       const plan = bulkFeeManifest(this.reads, part, { payer: input.payer, bitcoinNetwork: this.bitcoinNetwork,
-        document, policy, height: at.counted, orderId });
+        document, policy, height: at.counted, orderId, holderFees });
       check(plan.payableFeeAtoms !== '0', 'bulk_zero_payable', 422);
       const generation = financialGenerationId(this.network, input.asset, d.id);
       check(registered?.deployment === d.id, 'bulk_deployment_unavailable', 503);
@@ -152,7 +154,7 @@ export class BulkMints {
       const membersRoot = b.bulkMembersRoot(members);
       const ownership = part.map(c => rules.hashObject({ bitmap: c.holder, link: c.link ?? null, ...(c.assetRevision ? { assetRevision: c.assetRevision } : {}) }));
       const feeQuote = await timeStep('feeQuote', this.reads.feeQuotes.issue(bulkFeeScope({ ...input, membersRoot }), at.counted, undefined, input.deployment,
-        rules.hashObject(['dmw-bulk-ownership-v1', ownership])));
+        bulkHolderHash(ownership, holderFees)));
       check(feeQuote.baseFee === policy.baseFee && same(feeQuote.feeSettings, policy.feeSettings ?? rules.FEE_DEFAULTS) &&
         feeQuote.settingsHash === rules.hashObject(document), 'bulk_quote_changed', 409);
       const terms = { v: 1, network: this.network, bitcoinNetwork: this.bitcoinNetwork, owner: input.owner, nonce: input.nonce,
@@ -169,12 +171,15 @@ export class BulkMints {
         const reserve = { ...b.bulkReserveAction(terms), sig: '0'.repeat(128) };
         b.bulkBytes({ version: 1, terms, feeManifest: plan.feeManifest, reserve }, b.BULK_LIMITS.requestBytes);
         b.bulkBytes({ type: 'reserve-many', id: orderId, action: reserve, terms }, b.BULK_LIMITS.transitionBytes);
-        b.bulkBytes({ ...output, orderId, quoteId: rules.hashObject(terms), terms, feeManifest: plan.feeManifest }, b.BULK_LIMITS.quoteBytes);
+        b.bulkBytes({ ...output, orderId, quoteId: rules.hashObject(terms), terms, feeManifest: plan.feeManifest,
+          ...(plan.deployerPayment ? { deployerPayment: plan.deployerPayment } : {}) }, b.BULK_LIMITS.quoteBytes);
+        if (plan.deployerPayment) b.bulkBytes({ p: 'tap', op: 'token-auth', redeem: { auth: '0'.repeat(64) + 'i4294967295',
+          items: [...b.bulkWalletItems(terms), sideWalletItem(plan.deployerPayment)] } }, b.BULK_LIMITS.redeemBytes);
       } catch (error) {
         if (!['bulk_byte_limit', 'bulk_mint_payload_bytes', 'bulk_groups', 'bulk_fee_conservation', 'bulk_custody'].includes(error.message)) throw error;
         deferred.unshift({ block: members.at(-1).block, reason: 'bulk_byte_limit' }); continue;
       }
-      selected = { terms, feeManifest: plan.feeManifest }; break;
+      selected = { terms, feeManifest: plan.feeManifest, ...(plan.deployerPayment ? { deployerPayment: plan.deployerPayment } : {}) }; break;
     }
     if (selected) Object.assign(output, selected, { orderId, quoteId: rules.hashObject(selected.terms) });
     else if (eligible.length && deferred.some(d => d.reason === 'bulk_funding_limit')) check(false, 'bulk_funding_limit', 422);
@@ -310,6 +315,9 @@ export class BulkMints {
       }
       const primary = !funding.reference && funding.state === 'bulk-open' && BigInt(at.counted) <= BigInt(t.expires) &&
         BigInt(receipt.block.height) >= BigInt(funding.created) && BigInt(receipt.block.height) <= BigInt(t.expires);
+      if (primary && receipt.deployerPaid === false) {
+        await this.store.put('bulkOrders', id, { ...row, deployerUnpaid: true }); return;
+      }
       await this.queue(row, { type: primary ? 'bulk-fund' : 'bulk-credit', id, reference }, at); return;
     }
     if (funding.state === 'bulk-consumed') {
@@ -376,6 +384,7 @@ export class BulkMints {
     if (state === 'permit_issued' && ['sending', 'sent', 'minted'].includes(sender?.state)) state = 'minting';
     if (sender?.state === 'needs_attention' && !['minted', 'expired', 'credited'].includes(state)) state = 'needs_attention';
     if (block) state = 'needs_attention';
+    if (row.deployerUnpaid && state === 'awaiting_payment') state = 'partly_paid';
     const counted = rules.decimalV2(await this.reads.counted());
     const credits = this.store.list('financialRequestCredits/' + id, { limit: b.BULK_LIMITS.members }).map(r => r.value);
     const creditTotal = this.store.get('financialCreditTotals', id);
@@ -383,9 +392,10 @@ export class BulkMints {
     const payable = !block && funding?.state === 'bulk-open' && !funding.reference && !(row.references?.length) &&
       BigInt(counted) <= paymentUntil(t, this.document.values) && BigInt(funding.issuedMask) === 0n;
     return { v: 1, orderId: id, termsHash: rules.hashObject(t), state, payable, asset: t.asset, deployment: t.deployment, ticker: t.ticker,
+      ...(row.deployerPayment ? { deployerPayment: row.deployerPayment } : {}),
       receiver: t.receiver, payer: t.payer, count, totalAmount: t.totalAmount, grossFeeAtoms: t.grossFeeAtoms, payableFeeAtoms: t.payableFeeAtoms,
       payBy: { rail: 'tap', untilBlock: t.expires }, payment: { reference: funding?.reference ?? null,
-        state: funding?.reference ? funding.paid.every((v, i) => v === t.groups[i].amount) ? 'paid' : 'partly_paid' : 'unseen',
+        state: funding?.reference ? funding.paid.every((v, i) => v === t.groups[i].amount) ? 'paid' : 'partly_paid' : row.deployerUnpaid ? 'partly_paid' : 'unseen',
         missingGroups: t.groups.flatMap((g, i) => funding?.paid[i] === g.amount ? [] : [i]) },
       progress: { reserved: funding ? count - sum(issued) - sum(released) : 0, issued: sum(issued), minted: sum(finished), released: sum(released), unresolved: count - sum(finished) - sum(released) },
       permit: { root: funding?.permitRoot ?? null, readyCount, complete: readyCount === count },
@@ -393,7 +403,8 @@ export class BulkMints {
       creditReferences: row.creditReferences ?? [], reason: block ?? failure,
       ...(creditedAmount !== '0' ? { creditedAmount, creditId: creditTotal?.firstCreditId ?? credits[0].id, credits, creditsCount: creditTotal?.count ?? credits.length, ...(!block && state === 'credited' ? { reason: 'credited' } : {}) } : {}) };
   }
-  async terms(id) { const row = this.row(id); return { v: 1, orderId: id, terms: row.body.terms, feeManifest: row.body.feeManifest }; }
+  async terms(id) { const row = this.row(id); return { v: 1, orderId: id, terms: row.body.terms, feeManifest: row.body.feeManifest,
+    ...(row.deployerPayment ? { deployerPayment: row.deployerPayment } : {}) }; }
   async page(id, offset, limit, max) {
     const row = this.row(id), count = row.body.terms.members.length;
     check(Number.isSafeInteger(offset) && offset >= 0 && offset <= count && Number.isSafeInteger(limit) && limit > 0 && limit <= max, 'bulk_page');
@@ -443,7 +454,8 @@ export class BulkMints {
       const member = this.store.get('bulkPermits/' + id, String(index)); if (member) members.push(member);
     }
     const permit = { ...manifest, offset: 0, next: null, members };
-    const result = { keyId: this.senderView?.keyId, item: this.senderSummary(row, status, b), terms: t, permit };
+    const result = { keyId: this.senderView?.keyId, item: this.senderSummary(row, status, b), terms: t, permit,
+      ...(row.deployerPayment ? { deployerPayment: row.deployerPayment } : {}) };
     check(size(result) <= b.BULK_LIMITS.permitBytes, 'bulk_response_bytes', 413); return result;
   }
 }
@@ -455,6 +467,7 @@ export function bulkAcceptedWrites(store, input, accepted) {
   if (t.type !== 'reserve-many' && !t.type.startsWith('bulk-')) return writes;
   let row = store.get('bulkOrders', id);
   if (t.type === 'reserve-many') row = { ...row, id, body: { version: 1, terms: t.terms, feeManifest: input.evidence.feeManifest, reserve: t.action },
+    ...(input.evidence.deployerPayment ? { deployerPayment: input.evidence.deployerPayment } : {}),
     feeAuthorization: input.evidence.feeAuthorization, state: 'awaiting_payment', references: row?.references ?? [],
     created: accepted.get('accountRecords', 'fp/' + id)?.created };
   check(row, 'bulk_projection_missing');

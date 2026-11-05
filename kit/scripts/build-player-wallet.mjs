@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 const legacy = process.argv.includes('--legacy');
 await build({
   ...(legacy ? { entryPoints: [fileURLToPath(new URL('../lib/tap-wallet-mint.mjs', import.meta.url))] } : {
-    stdin: { contents: "export * from './tap-wallet-mint.mjs'; export * from './tap-wallet-bulk-mint.mjs';",
+    stdin: { contents: "export * from './tap-wallet-mint.mjs'; export * from './tap-wallet-bulk-mint.mjs'; export { TapWalletBulkMint, bulkPaymentPlan } from './tap-wallet-deployer.mjs';",
       resolveDir: fileURLToPath(new URL('../lib/', import.meta.url)), sourcefile: 'player-wallet.mjs' }
   }),
   outfile: fileURLToPath(new URL(legacy ? '../../playground/console/js/inscribe/wallet.js' : '../dashboard/wallet.js', import.meta.url)),

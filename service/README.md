@@ -18,6 +18,10 @@ Stalled-only observations wait until the counted height advances. Each batch
 contains one receipt notary and at most 512 observations, subject to audit and
 contract operation limits. Audit filenames include both observation and height.
 
+Activated receipt admission can continue into the following batch while a
+proposal is signed. See [admission during signing](docs/ADMISSION.md) for limits,
+execution outcomes and the required signer-first rollout and amendment drain.
+
 Mint reservations, paid holds, consumption and unpaid expiry use `rq`, `mp`, `mc` and `rx`
 inputs in the final observation of a batch. The contract authority supplies its
 committee epoch; the TSS share epoch remains a separate configuration field.

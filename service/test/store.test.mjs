@@ -6,7 +6,7 @@ import { Store } from '../src/store.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { temp } from './helpers.mjs';
 test('preactivation rollback connections need no custom SQL functions and retain exact counts', async () => {
-  const path = await temp(); let s = await Store.open(path);
+  const path = await temp(); let s = await Store.openForMaintenance(path);
   try {
     await s.put('rollback', 'one', true); await s.compact(); await s.close();
     const old = new DatabaseSync(join(path, 'index.sqlite'));
@@ -17,7 +17,7 @@ test('preactivation rollback connections need no custom SQL functions and retain
       put.run('rollback', 'two', 'true'); put.run('rollback', 'two', 'false'); del.run('rollback', 'one');
       assert.equal(old.prepare('SELECT n FROM record_counts WHERE space=?').get('rollback').n, 1);
     } finally { old.close(); }
-    s = await Store.open(path); assert.equal(s.countUint('rollback'), '1'); assert.equal(s.get('rollback', 'two'), false);
+    s = await Store.openForMaintenance(path); assert.equal(s.countUint('rollback'), '1'); assert.equal(s.get('rollback', 'two'), false);
     for (const n of ['1', '9', '10', '99', '100', '1099', '9007199254740991', '9223372036854775807', '9'.repeat(80)]) {
       s.db.prepare('UPDATE record_counts_decimal SET n=? WHERE space=?').run(n, 'rollback');
       await s.put('rollback', 'carry', true); assert.equal(s.countUint('rollback'), String(BigInt(n) + 1n));

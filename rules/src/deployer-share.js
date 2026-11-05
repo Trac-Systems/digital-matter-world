@@ -2,9 +2,17 @@ import { assert } from './core.js';
 import { multiTickerActive } from './multi-ticker-activation.js';
 import { legacyDeployFee, legacyDeployHolderAddress } from './legacy-deploy-share.js';
 
-// Both deferred holder shares are backed by the existing treasury payment.
-// The gross price and every non-burn beneficiary stay unchanged.
+// New holder quotes pay directly from the burn share; a quote that names no
+// holder keeps that share in the burn. Retained quotes keep both deferred
+// shares backed by their original treasury payment.
 export function deploymentHolderFee(total, baseSplit, options) {
+  if (options.direct) {
+    const { kind, document } = options;
+    if (!['find', 'compound'].includes(kind) || !document?.values.deployerShareBps || options.direct !== true && !options.direct.to) return { split: baseSplit };
+    const amount = BigInt(total) * BigInt(document.values.deployerShareBps) / 10000n;
+    assert(amount <= BigInt(baseSplit.burn), 'deployer_burn');
+    return { split: { ...baseSplit, burn: String(BigInt(baseSplit.burn) - amount), deployer: String(amount) } };
+  }
   const result = legacyDeployFee(total, baseSplit, options);
   const { kind, document, height, deployment } = options;
   if (!['find', 'compound'].includes(kind) || !document?.values.deployerShareBps || !multiTickerActive(height)) return result;

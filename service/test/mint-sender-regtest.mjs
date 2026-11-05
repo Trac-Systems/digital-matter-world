@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { authority, tokenMintPermit, redeem } from '../../local/protocol.mjs';
-import { buildInscription, signCommit, hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
+import { buildInscription, signCommit, hex, unhex, networkFor, transferItems } from '../../kit/lib/inscription-core.mjs';
 import { requestKey, btc, fundingQuote } from '../src/mint-sender-keys.mjs';
 import { mintSenderSettings } from '../src/mint-sender-settings.mjs';
 import { senderKeyId, senderToken, MintSenderView, readSenderJSON } from '../src/mint-sender-view.mjs';
@@ -104,13 +104,14 @@ test('one payment approval funds the order and set-aside; independent server min
   const id = 'aa'.repeat(32), settings = mintSenderSettings({ enabled: true, directory: join(directory, 'sender'), seedFile: join(directory, 'seed'), bitcoinApiUrlFile: join(directory, 'bitcoin.url'), bitcoinApiPath: '', pollMs: 50, fundingPollMs: 50, healthMs: 500 });
   const funding = fundingQuote(seed, id, 'regtest', settings), keyId = senderKeyId(seed, 'regtest'), token = senderToken(seed, 'regtest');
   const fee = { role: 'treasury', to: committee.address, ticker: 'tap', amount: '1000000000000000000', tt: 'a', dta: `dmw-pay-v2|${id}|treasury` };
+  const deployer = { ...fee, role: 'deployer', to: order.address, amount: '50000000000000000', dta: `dmw-pay-v2|${id}|deployer` }, fees = [fee, deployer];
   let permit, reported, extraCoin, approvals = 0, mintBroadcasts = 0;
   async function status() {
     const receipts = await tap('getAccountSentList/' + payer.address + '/tap');
-    const paid = receipts.some(r => r.dta === fee.dta && !r.fail && r.taddr === committee.address && r.amt === fee.amount);
+    const paid = fees.every(f => receipts.some(r => r.dta === f.dta && !r.fail && r.taddr === f.to && r.amt === f.amount));
     if (paid && !permit) permit = tokenMintPermit({ tick, amt: '2', address: payer.address, dta: id }, committee.privateKey);
     const minted = reported && (await tap('getTickerMintList/' + tick)).find(r => r.ins === reported && r.dta === id && !r.fail && r.addr === payer.address);
-    return { requestId: id, receiver: payer.address, payer: payer.address, fees: [fee], missing: paid ? [] : [fee], amount: '2', actualTicker: tick,
+    return { requestId: id, receiver: payer.address, payer: payer.address, fees, missing: paid ? [] : fees, amount: '2', actualTicker: tick,
       state: minted ? 'minted' : paid ? 'permit_issued' : 'awaiting_payment', payBy: { rail: 'tap', untilBlock: 10000 },
       payable: !paid, ...(permit ? { mintContent: permit } : {}), ...(reported ? { sentInscription: reported } : {}), ...(minted ? { inscription: reported } : {}) };
   }
@@ -157,7 +158,8 @@ test('one payment approval funds the order and set-aside; independent server min
   const snapshot = () => readSenderJSON(join(settings.directory, 'status', id + '.json'))?.mintSender;
   await until(() => view.ready(), 'sender_heartbeat');
   const publicPlan = view.decorate({ id, kind: 'tap', payer: payer.address, receiver: payer.address }, await status());
-  assert.deepEqual(publicPlan.mintFunding, funding);
+  const { refundReserveSats, ...publicFunding } = funding;
+  assert.equal(refundReserveSats, 0); assert.deepEqual(publicPlan.mintFunding, publicFunding);
   // Simulate the wallet extra-output capability: the ONE wallet-approved order payment also carries the set-aside.
   const [input] = (await utxos(payer)).sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)));
   const payment = new btc.Transaction(); payment.addInput({ txid: input.txid, index: input.vout, witnessUtxo: { script: unhex(input.script), amount: BigInt(input.value) }, tapInternalKey: unhex(payer.publicKey).slice(1) });
@@ -169,7 +171,7 @@ test('one payment approval funds the order and set-aside; independent server min
   assert.equal((await bitcoin.utxos(funding.address))[0].confirmed, false);
   assert.equal(snapshot().commitTxid, undefined); assert.equal(permit, undefined); assert.equal(mintBroadcasts, 0);
   // The order's inscriber delivers the TAP transfer; no client mint inscription call exists.
-  const transfer = redeem(auth, [], payer.privateKey, { items: [{ address: committee.address, tick: 'tap', amt: '1', dta: fee.dta }], data: id });
+  const transfer = redeem(auth, [], payer.privateKey, { items: transferItems({ requestId: id, fees, missing: fees }, 'regtest'), data: id });
   const paid = signCommit(buildInscription({ text: JSON.stringify(transfer), receiver: payer.address, publicKey: order.publicKey, network: 'regtest', utxos: await utxos(order), feeRate: 2, maxFeeSats: '100000', allowUnconfirmed: true }), order.privateKey);
   await push(paid.commitHex, paid.commitTxid); await push(paid.revealHex, paid.revealTxid); await mine();
   assert.equal((await status()).state, 'permit_issued');
@@ -178,6 +180,7 @@ test('one payment approval funds the order and set-aside; independent server min
   await sleep(150); assert.equal(mintBroadcasts, 2, 'already present transactions are not broadcast twice');
   await mine(); await until(() => snapshot()?.state === 'minted', 'server_minted'); assert.equal((await status()).state, 'minted');
   assert.equal(await tap('getBalance/' + payer.address + '/' + tick), '2');
+  assert.equal(await tap('getBalance/' + order.address + '/tap'), deployer.amount);
   assert.equal((await rpc('getrawtransaction', [first.commitTxid, true])).vin[0].txid, payment.id);
   assert.equal((await rpc('getrawtransaction', [first.commitTxid, true])).vin[0].vout, 1);
   const commit = btc.Transaction.fromRaw(unhex(await rpc('getrawtransaction', [first.commitTxid])));

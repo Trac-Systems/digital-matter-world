@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ed25519 } from '../../contract/node_modules/@noble/curves/ed25519.js';
 import { secp256k1 } from '../../contract/node_modules/@noble/curves/secp256k1.js';
 import { bitcoin, rpc as chainRPC, mine, receiveAddress, sleep } from '../../local/common.mjs';
@@ -53,7 +54,7 @@ export async function probeLegacyLink({ service, store, network, request, secret
 }
 
 export async function financialRehearsal({ stack, directory, tssPort, checkpoint = async () => {}, recordPID = () => {}, checkLegacyLink = fn => fn(),
-  createContract = deployment => harness(deployment), paidBatches = false, bulk = false, latePayments = false }) {
+  createContract = deployment => harness(deployment), paidBatches = false, bulk = false, latePayments = false, directHolder = false, legacyQuote = false }) {
 assert.equal(stack.bitcoin.network, 'regtest');
 assert.ok(!latePayments || bulk, 'Late payment rehearsal requires bulk mode');
 assert.equal(await chainRPC(stack.ethereum.rpc, 'eth_chainId'), '0x7a69');
@@ -78,7 +79,7 @@ try {
   const signature = await sign(privilege.hash); privilege.sig = { r: signature.r, s: signature.s, v: String(signature.v) };
   const privilegeId = await inscription(privilege); await sendInscription(stack, privilegeId, payer); await mine(stack);
   const entry = { asset: 'c1', kind: 'compound', tick: 'dmwmg' + Date.now().toString(36), privilege: privilegeId, authorityKey: publicKey, options: { max: '100', dec: '0' } };
-  entry.id = await inscription(deploymentPayload(entry));
+  entry.id = await inscription(deploymentPayload(entry), directHolder ? maker : payer);
   await inscription({ p: 'tap', op: 'token-deploy', tick: 'tap', max: '1000000', dec: '18' });
   await inscription({ p: 'tap', op: 'token-mint', tick: 'tap', amt: '1000' });
   const payerKey = testKey(), authId = await inscription(authority(payerKey)); await sendInscription(stack, authId, payer); await mine(stack);
@@ -90,7 +91,7 @@ try {
     const tick = 'dmwbulk' + Date.now().toString(36), elementId = await inscription(tick + '.[0-9].4.element');
     bulkEntry = { asset: 'p0', kind: 'dmt', tick, indexTick: 'dmt-' + tick, elementId, dt: 'n',
       pattern: { pat: '[0-9]', fld: 4, dt: 'n' }, privilege: privilegeId, authorityKey: publicKey, options: {} };
-    bulkEntry.id = await inscription(deploymentPayload(bulkEntry));
+    bulkEntry.id = await inscription(deploymentPayload(bulkEntry), directHolder ? maker : payer);
     bulkTransport = await bulkRehearsalTransport({ stack, directory, inscription });
   }
   pass('real TAP fee supply, Bitmap and threshold-authorized compound deployment indexed');
@@ -120,7 +121,9 @@ try {
   assert.equal(await legacy.run('bt', initial), null);
   const imported = prepareTerminalImport({ records: legacy.db, height });
   const registry = { feePolicy: createFeePolicy('1000000000000000000', 0, bulk ? r.FEE_DEFAULTS : undefined), assets: { c1: entry, ...(bulk ? { p0: bulkEntry } : {}) }, link: { treasury } };
-  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, ...(bulk ? BULK_CAPACITY_VALUES : {}), ...(latePayments ? { pendingBlocks: 6 } : {}), puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
+  const document = r.settingsRevision({ network, effectiveBatch: '2', effectiveBitcoinWindow: String(height), values: { ...r.SETTINGS_PROFILE, ...(bulk ? BULK_CAPACITY_VALUES : {}), ...(latePayments ? { pendingBlocks: 6 } : {}),
+    ...(directHolder ? { deployerShareBps: 500, legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1' } : {}),
+    puzzleBits: 0, feePolicyRevision: registry.feePolicy.current, linkMultiplier: r.FEE_DEFAULTS.link } });
   const manifest = { version: 1, network, fromRuleset: 'dmw-v1', toRuleset: 'dmw-v2', effectiveBatch: '2', previousBatchRoot: initial.root,
     bitcoinAnchor: { height: String(height), hash: history.hashAt(height) }, settingsHash: r.hashObject(document), catalogRoot: r.namedStateRoot(r.emptyNamedDiscovery()),
     accountsRoot: imported.financialRoot, receiptSegmentStart: '0', schemas: { batch: 2, file: 5, integer: 2, receipt: 2 }, minimumKitVersion: '0.2.0', route: 'terminal-import' };
@@ -156,6 +159,10 @@ try {
       tip: async () => { const s = await stamp(); return { tip: s.tip, highestTip: s.tip }; }, batchLast: async () => (await stamp()).last,
       bitmap: async block => { const bitmap = await indexer.tap('getBitmap/' + block); assert.equal(String(bitmap.bm), block); assert.equal(bitmap.ins, bitmapId);
         const indexed = await indexer.inscription(bitmap.ins); assert.equal(indexed.address, bitmap.ownr); assert.equal(bitmap.ownr, payer); return { agent: alice.address, address: payer }; },
+      deploymentHolders: (ids, at) => indexer.at(at, async () => Promise.all(ids.map(async id => {
+        const current = await indexer.inscription(id); assert.equal(current.id, id);
+        return { id, address: r.legacyDeployHolderAddress(current.address, 'regtest') };
+      }))),
       link: async block => { const value = contract.db.get('k/link/' + BigInt(block).toString(36)); return value ? JSON.parse(value) : null; },
       settingsByHash: async hash => contract.db.get('v2/settings/' + hash),
       bitcoinTransaction: id => client.transaction(id),
@@ -262,12 +269,37 @@ try {
   assert.equal(journal.get('mint/' + mintIntent.actionId), null);
   assert.deepEqual(pendingDeployment.next, [{ tool: 'mint_on_chain', arguments: mintIntent }]);
   await progress(() => !!store.get('accountRecords', 'fd/asset/c1')); pass('threshold batch registers independently verified pristine deployment generation');
+  const mintQuote = service.mintQuote.bind(service);
+  let retainedQuote;
+  if (legacyQuote) {
+    assert.ok(process.env.DMW_OLD_ROOT, 'Set DMW_OLD_ROOT to the retained gateway checkout');
+    const { Mints: OldMints } = await import(pathToFileURL(join(process.env.DMW_OLD_ROOT, 'service/src/mints.mjs')));
+    const old = await OldMints.prototype.quote.call(runtime.mints, mintIntent);
+    retainedQuote = old;
+    assert.equal(old.feeQuote.holderFees, undefined);
+    service.mintQuote = async input => {
+      assert.equal(input.asset, old.asset); assert.equal(input.amount, old.amount);
+      return old;
+    };
+  }
   await assert.rejects(agent.makeReal(mintIntent), /simulated_response_loss/);
   journal.close(); journal = agent.journal = await Journal.open(join(directory, 'kit'), network, { intervalMs: 0 });
   const accepted = await agent.makeReal(mintIntent);
+  service.mintQuote = mintQuote;
   id = accepted.request.requestId;
   await progress(() => runtime.mints.public(id).payable); pass('kit journal restart retries both original packets; threshold batch and notary accept one reservation');
-  const fees = store.get('mints', id).quote.fees, result = await inscribe(stack, [{ text: redeem(authId, [], payerKey, { items: r.walletFeeItems(fees, 'regtest') }), receiver: payer }]);
+  const quote = store.get('mints', id).quote, fees = quote.fees;
+  if (directHolder && !legacyQuote) {
+    const side = fees.find(f => f.role === 'deployer'); assert.equal(side.to, maker);
+    assert.equal(side.amount, String(BigInt(quote.price) * BigInt(document.values.deployerShareBps) / 10000n));
+    assert.equal(quote.legacyDeploy, undefined); assert.equal(quote.deployer, undefined);
+  }
+  if (legacyQuote) {
+    assert.equal(fees.some(f => f.role === 'deployer'), false);
+    assert.deepEqual(quote.split, retainedQuote.split);
+    assert.deepEqual(quote.deployer, retainedQuote.deployer);
+  }
+  const result = await inscribe(stack, [{ text: redeem(authId, [], payerKey, { items: r.walletFeeItems(fees, 'regtest') }), receiver: payer }]);
   const paymentId = result.inscriptions[0].id;
   await assert.rejects(service.reportMintPayment({ id, paymentId })); pass('unconfirmed real payment refused');
   await mine(stack); const tip = await updateHeaders();

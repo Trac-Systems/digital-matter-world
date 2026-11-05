@@ -110,8 +110,10 @@ export class FinancialMints extends Mints {
     const creditTotal = this.store.get('financialCreditTotals', id);
     const creditedAmount = creditTotal?.amount ?? credits.reduce((n, c) => n + BigInt(c.amount), 0n).toString();
     const recovering = this.store.get('financialLegacyCredits', id);
-    const timing = paymentTiming(row, row.expiry, this.store.get('meta', 'ruleState')?.counted ?? row.created ?? row.expiry);
-    const status = { ...publicMint(row), financialVersion: 2, state: row.state,
+    const expiry = row.expiry ?? row.request.expires;
+    const counted = this.store.get('meta', 'ruleState')?.counted ?? row.created ?? expiry;
+    const timing = paymentTiming(row, expiry, counted);
+    const status = { ...publicMint(row, counted), financialVersion: 2, state: row.state,
       paymentTiming: { ...timing, held: timing.held && funding?.state === 'open' && !row.permit },
       creditRecovery: { state: recovering ? recovering.work ? 'queued' : 'pending' : creditedAmount !== '0' ? 'credited' : 'none',
         reason: recovering?.work ? this.store.get('financialDeferred', recovering.work)?.reason ?? null :
@@ -119,7 +121,8 @@ export class FinancialMints extends Mints {
       ...(row.reason === 'credited' && creditedAmount === '0' ? { reason: recovering ? 'credit_pending' : 'payment_expired' } : {}),
       ...(row.state === 'expired' && creditedAmount !== '0' ? { reason: 'credited', creditedAmount,
         creditId: creditTotal?.firstCreditId ?? credits[0].id, credits, creditsCount: creditTotal?.count ?? credits.length } : {}),
-      payable: !blocked && row.state !== 'expired' && !!funding && funding.state === 'open' && !row.permit, blocked: blocked ? [blocked] : [],
+      payable: !blocked && row.state !== 'expired' && !!funding && funding.state === 'open' && !row.permit &&
+        (BigInt(counted) <= BigInt(expiry) || timing.held), blocked: blocked ? [blocked] : [],
       // The reported, not yet confirmed mint inscription: every page hides a second inscribe.
       ...(row.mintInscription && row.state !== 'minted' ? { sentInscription: row.mintInscription } : {}),
       ...(rules.mintRetainsUnits(capacity) ? { unitsConsumed: false,

@@ -125,6 +125,17 @@ test('bulk pay tool rechecks accepted terms and returns a wallet plan without se
   await assert.rejects(payBulkMint(f.agent, { orderId: q.orderId }), /terms mismatch/);
 });
 
+test('bulk pay tool lists the ticker deployer transfer the same approval pays', async t => {
+  const f = await setup(t), q = await quoteBulkMint(f.agent, f.args);
+  const side = { to: 'bcrt1pdeployerholder', amount: '50000000000000000', dta: `dmw-bulk-deployer-v1|${q.orderId}` };
+  f.agent.service.bulkMintStatus = async () => ({ orderId: q.orderId, termsHash: q.quoteId, deployerPayment: side });
+  f.agent.service.bulkMintTerms = async () => ({ v: 1, orderId: q.orderId, terms: q.terms, feeManifest: q.feeManifest, deployerPayment: side });
+  const plan = await payBulkMint(f.agent, { orderId: q.orderId });
+  assert.equal(plan.items.length, 2); assert.deepEqual(plan.items[1], { address: side.to, tick: 'tap', amt: '0.05', dta: side.dta });
+  f.agent.service.bulkMintStatus = async () => ({ orderId: q.orderId, termsHash: q.quoteId, deployerPayment: { ...side, amount: '1' } });
+  await assert.rejects(payBulkMint(f.agent, { orderId: q.orderId }), /deployer payment mismatch/);
+});
+
 test('bulk no-member quotes retain reasons and cannot be submitted; zero-payable quotes are rejected', async t => {
   const f = await setup(t);
   f.agent.service.bulkMintQuote = async () => ({ v: 1, orderId: null, quoteId: null, terms: null, feeManifest: [],

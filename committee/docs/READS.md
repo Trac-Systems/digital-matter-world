@@ -238,6 +238,44 @@ The complete scan still fences batch/root, policy, authority and TAP changes.
 Bitcoin and Ethereum evidence require exactly one inclusion confirmation; canonical
 snapshot and reorg checks still apply.
 
+### Stale financial batch retirement
+
+A newer Bitcoin tip does not by itself release a batch reservation. A threshold
+signature might already exist even when preparation or result delivery timed out.
+The financial snapshot and evidence checks above remain mandatory.
+
+`POST /reject-stale-batch` takes `{network,proposal}`. The signer binds the audit
+files to the batch root, requires financial input and an independently read newer
+batch stamp, the next batch number and the existing deadline horizon, and checks
+its entire reservation history for the exact digest.
+A signer that ever reserved that digest cannot vote. Before returning its identity
+signature over the target and stamp, it durably reserves a domain-separated guard
+at the same batch slot and records permanent rejection of the original digest.
+Preparation and rejection share the same serialized journal queue.
+
+`POST /retire-rejected-batch` takes `{network,proposal,certificate}`. A certificate
+contains the bound target and at least three distinct valid votes from the current
+five-member roster. Any three signing participants intersect those three permanent
+nonparticipants, so the original digest cannot have obtained a threshold signature
+and cannot obtain one later. Only this proof releases matching reservations and
+guards. Other digests retain their locks. The signer fences all original attempt
+IDs and aborts any matching sidecar session before acknowledging retirement.
+Uncertain journal writes require a restart and successful journal replay.
+
+The gateway saves votes and the full certificate before requesting retirement.
+It archives the draft only after three participants acknowledge applying the proof,
+excludes the retired digest from recovery, and rebuilds through ordinary financial
+and receipt validation. An unknown or old participant never counts as an empty
+slot merely because a certificate exists. Gateway and signer restarts retain the
+proof and rejection. If three participants already reserved, this early path cannot
+produce a certificate; the original signing/recovery and deadline rules still apply.
+
+Older signers refuse the new endpoints and retain their original locks. The guard
+uses the existing reservation format and the original deadline, so an older reader
+cannot sign the abandoned digest after a downgrade. If a new replacement reservation
+follows the guard, an older journal reader fails closed on the conflicting records.
+This protocol adds no historical financial reads, batch format, or activation setting.
+
 ### Mint batch evidence
 
 `mintOperations` entries use `rq`, `mp`, `mc` or `rx`, retaining the original

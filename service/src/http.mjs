@@ -6,7 +6,7 @@ import { check, hash } from './util.mjs';
 import { Limiter } from './limiter.mjs';
 import { rules } from './rules.mjs';
 import { readFile } from 'node:fs/promises';
-import { createWeb } from './web.mjs';
+import { createWeb, staticWebRequest } from './web.mjs';
 import { KIT_VERSION, KIT_DOWNLOAD_URL, KIT_UPGRADE_CODE, KIT_UPGRADE_MESSAGE } from '../../rules/src/kit-release.js';
 import { AccountAvailability } from './account-availability.mjs';
 import { accountKey } from '../../contract/account-tree.js';
@@ -34,14 +34,17 @@ export function createHTTPHandler({ readPool, manageResponseBudget = true, liste
   const shown = (kind, result) => inflight ? inflight.decorate(kind, result) : result;
   const handler = async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (inFlight >= maxInFlight) {
+    // The site's pages, scripts, styles and fonts do not depend on game state. A busy
+    // moment only delays them; it never replaces a page with a JSON busy reply.
+    let page = false; try { page = staticWebRequest(req); } catch {}
+    if (inFlight >= maxInFlight && !page) {
       res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '1' });
       res.end(JSON.stringify({ error: 'service_busy', retryable: true })); return;
     } inFlight++;
-    const finishBudget = manageResponseBudget && (['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/')) ? responseBudget(req, res, responseTimeoutMs) : () => {};
+    const finishBudget = manageResponseBudget && !page && (['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/')) ? responseBudget(req, res, responseTimeoutMs) : () => {};
     try {
       admitRead(req);
-      if (readPool?.handles(req)) { await readPool.serve(req, res); return; }
+      if (!page && readPool?.handles(req)) { await readPool.serve(req, res); return; }
       if (req.method === 'POST') check(unauthenticated.take(req.socket.remoteAddress), 'request_rate', 429);
       if (evidence && req.method === 'POST' && req.url === '/operator-evidence') {
         const result = await evidence(JSON.parse(await body(req, evidence.requestBytes ?? 4096)));

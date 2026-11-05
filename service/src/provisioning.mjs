@@ -33,23 +33,45 @@ export class Provisioner {
   constructor({ store, reads, network, registryPath, policy, concurrency = 4 }) {
     Object.assign(this, { store, reads, network, registryPath, policy, concurrency });
     this.tickers = new TickerProvisioning(this);
-    this.work = new KeyedWork({ concurrency, capacity: Math.max(concurrency, 64) }); this.enqueues = new KeyedWork();
+    this.work = new KeyedWork({ concurrency, capacity: Math.max(concurrency, 64) });
     check(Number.isSafeInteger(policy.confirmations) && policy.confirmations === 1, 'provisioning_confirmation_policy');
   }
   async save(job, patch = {}) {
     const row = { ...job, ...patch, updatedAt: Date.now() };
     await this.store.put('provisioning', job.asset, row); return row;
   }
-  enqueue(asset, definition) { return this.enqueues.run(asset, async () => {
+  enqueue(asset, definition) {
+    const job = this.store.get('provisioning', asset);
+    if (job && same(job.definition, definition)) return Promise.resolve(job);
+    // Definition changes must wait for any inscription submission to finish.
+    return this.work.run(asset, () => this.enqueueJob(asset, definition), { after: true });
+  }
+  async enqueueJob(asset, definition) {
     let job = this.store.get('provisioning', asset);
-    if (job) { check(same(job.definition, definition), 'provisioning_definition_changed'); return job; }
+    if (job) {
+      if (same(job.definition, definition)) return job;
+      const { discoverer: oldDiscoverer, ...before } = job.definition, { discoverer, ...after } = definition;
+      check(job.kind === 'dmt' && oldDiscoverer !== discoverer && same(before, after) &&
+        !job.attempts.some(a => a.inscription) && !job.entry && job.registeredAt == null && job.state !== 'registered',
+      'provisioning_definition_changed');
+      const registry = await this.reads.registry();
+      check(!registry.assets[asset] && !registry.generations?.[asset]?.length &&
+        !['element', 'deployment'].some(phase => this.store.get('inflight', `deployment/${asset}/${phase}`)?.inscriptionId),
+      'provisioning_definition_changed');
+      // Element text and older deployments without prov do not name a finder.
+      const independent = job.attempts.every(a => a.phase === 'element' && typeof a.text === 'string' ||
+        a.phase === 'deployment' && a.text?.op === 'dmt-deploy' && a.text.prov === undefined);
+      return this.save(job, { definition, ...(!independent ? { salt: randomBytes(32).toString('hex'), attempts: [],
+        elementAttempt: 0, tickerAttempt: 0, state: 'queued', phase: null, content: null, inscriptionText: null,
+        receiver: null, reason: null, nextRetry: 0 } : {}) });
+    }
     const entry = (await this.reads.registry()).assets[asset];
     job = { asset, network: this.network, generation: entry?.generation ?? 1, definition, displayLabel: definition.name ?? asset,
       kind: asset.startsWith('p') ? 'dmt' : 'compound', salt: randomBytes(32).toString('hex'), elementAttempt: 0, tickerAttempt: 0,
       privilege: this.policy.privilege, authorityKey: this.policy.authorityKey,
       attempts: [], spentSats: '0', state: entry ? 'confirming' : 'queued', ...(entry ? { entry } : {}) };
     return this.save(job);
-  }, { join: true }); }
+  }
   async state(asset) {
     const resolved = await mintAssetDefinition(this.store, asset);
     const job = this.store.get('provisioning', resolved.asset);
@@ -100,8 +122,8 @@ export class Provisioner {
     }
     return shown(job);
   }
-  advanceAsset(asset, definition) { return this.work.run(asset, async () => this.advance(await this.enqueue(asset, definition)), { join: true }); }
-  async close() { await this.tickers.work.drain(); await this.enqueues.drain(); await this.work.drain(); }
+  advanceAsset(asset, definition) { return this.work.run(asset, async () => this.advance(await this.enqueueJob(asset, definition)), { join: true }); }
+  async close() { await this.tickers.work.drain(); await this.work.drain(); }
   async tick() {
     if (this.ticking) return this.ticking;
     this.ticking = (async () => {
@@ -116,17 +138,22 @@ export class Provisioner {
       const page = this.store.list('types', { after: cursor.type, limit: 8 }); definitions.push(...page.map(r => [r.id, r.value]));
       const compounds = v2 ? this.store.list('compoundTypes', { after: cursor.compound ?? '', limit: 8 }) : [];
       definitions.push(...compounds.filter(r => !r.value.retired).map(r => [r.id, r.value]));
+      // One asset's failure is reported after the page, but never holds back the rest of the sweep.
+      let failed = null;
       await parallelPage(definitions, async ([asset, definition]) => {
-        const job = await this.enqueue(asset, definition);
-        // A job waiting for the player's inscription advances when the player submits it, or once the
-        // inscription its page reported as sent is in a block, whether or not that page is still open.
-        if (!waitsForPlayer(job) && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
-        else if (job.state === 'awaiting_player_deploy') await this.submitSent(job);
+        try {
+          const job = await this.enqueue(asset, definition);
+          // A job waiting for the player's inscription advances when the player submits it, or once the
+          // inscription its page reported as sent is in a block, whether or not that page is still open.
+          if (!waitsForPlayer(job) && (job.nextRetry ?? 0) <= Date.now()) await this.advanceAsset(asset, definition);
+          else if (job.state === 'awaiting_player_deploy') await this.submitSent(job);
+        } catch (error) { failed ??= error; }
       }, this.concurrency);
       const next = { pattern: !v2 && patterns.length ? (cursor.pattern + 8) % patterns.length : 0, type: page.length === 8 ? page.at(-1).id : '',
         ...(v2 ? { named: named.length === 8 ? named.at(-1).id : '', compound: compounds.length === 8 ? compounds.at(-1).id : '' } : {}) };
       if (!same(cursor, next)) await this.store.put('meta', 'provisioningCursor', next);
       await this.tickers.tick().catch(() => {});
+      if (failed) throw failed;
     })().finally(() => { this.ticking = null; });
     return this.ticking;
   }

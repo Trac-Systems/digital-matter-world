@@ -22,6 +22,7 @@ import { mintSenderSettings } from '../src/mint-sender-settings.mjs';
 import { rules } from '../src/rules.mjs';
 import { bulkOrderId, bulkMembersRoot, bulkFeeRoot, bulkPermitPlans, bulkWalletItems, validateBulkFees } from '../../rules/src/bulk-mint.js';
 import { tapBurnAddress } from '../../rules/src/tap-burn.js';
+import { sideWalletItem } from '../src/direct-deployer.mjs';
 
 async function until(fn, label, ms = 60000) {
   const end = Date.now() + ms; let last;
@@ -115,7 +116,10 @@ test('real ord 16/64 bulk orders: one redeem, all transfers/reveals, receiver sa
     if (!order.paymentId) return 'awaiting_payment';
     const transfers = await tap('getTransferredList/' + order.paymentId.slice(0, 64) + '?offset=0&max=500');
     const paid = order.terms.groups.every((g, i) => transfers.some(r => r.ins === order.paymentId && !r.fail && r.int && r.addr === payer.address && r.taddr === g.to && r.tick === 'tap' && r.amt === g.amount && r.dta === `dmw-bulk-pay-v1|${order.id}|${i}`));
-    if (!paid) return 'awaiting_payment';
+    const side = order.deployerPayment;
+    const sidePaid = !side || transfers.some(r => r.ins === order.paymentId && !r.fail && r.int && r.addr === payer.address &&
+      r.taddr === side.to && r.tick === 'tap' && r.amt === side.amount && r.dta === side.dta);
+    if (!paid || !sidePaid) return 'awaiting_payment';
     if (!order.report) return 'permit_issued';
     const txs = new Map(await Promise.all([...new Set(order.report.members.map(m => m.inscription.slice(0, 64)))].map(async id => [id, await tap('getMintedList/' + id + '?offset=0&max=500')])));
     for (const member of order.report.members) {
@@ -137,7 +141,8 @@ test('real ord 16/64 bulk orders: one redeem, all transfers/reveals, receiver sa
         assert.equal(req.headers.authorization, 'Bearer test-token'); result = { keyId, rows: await Promise.all([...orders.values()].map(item)), next: null };
       } else if (path.startsWith('/internal/mint-sender/bulk/')) {
         assert.equal(req.headers.authorization, 'Bearer test-token'); const order = orders.get(path.split('/').at(-1));
-        result = { keyId, item: await item(order), terms: order.terms, permit: order.manifest };
+        result = { keyId, item: await item(order), terms: order.terms, permit: order.manifest,
+          ...(order.deployerPayment ? { deployerPayment: order.deployerPayment } : {}) };
       } else if (path === '/mint/bulk/finish') {
         let body = ''; for await (const chunk of req) body += chunk;
         const report = JSON.parse(body), order = orders.get(report.orderId); assert.equal(report.members.length, order.terms.members.length);
@@ -189,8 +194,9 @@ test('real ord 16/64 bulk orders: one redeem, all transfers/reveals, receiver sa
     const manifest = { v: 1, orderId: id, termsHash: rules.hashObject(terms), membersRoot: terms.membersRoot, paymentHash: permits.paymentHash, permitRoot: permits.permitRoot, count: n, readyCount: n, complete: true, offset: 0, next: null,
       members: permits.plans.map((p, index) => ({ index, memberId: p.memberId, ...terms.members[index], permitHash: p.digest,
         mintContent: mintPermit({ tick: ticker, blk: terms.members[index].block, dep: deployment, address: receiver.address, dta: p.payload.dta, salt: p.salt }, committee.privateKey) })) };
-    const order = { id, terms, manifest, paymentId: null, approvals: 0, terminal: new Map() }; orders.set(id, order);
-    const paymentPayload = redeem(auth, [], payer.privateKey, { items: bulkWalletItems(terms), data: id });
+    const deployerPayment = n === 64 ? { to: committee.address, amount: String(BigInt(n) * 50000000000000000n), dta: `dmw-bulk-deployer-v1|${id}` } : null;
+    const order = { id, terms, manifest, deployerPayment, paymentId: null, approvals: 0, terminal: new Map() }; orders.set(id, order);
+    const paymentPayload = redeem(auth, [], payer.privateKey, { items: [...bulkWalletItems(terms), ...(deployerPayment ? [sideWalletItem(deployerPayment)] : [])], data: id });
     const secret = testKey(); keys.push(secret);
     const draft = buildInscription({ text: JSON.stringify(paymentPayload), receiver: payer.address, publicKey: payer.publicKey, network: 'regtest', utxos: await utxos(payer), feeRate: 1, maxFeeSats: '90000', secret: secret.slice() });
     const commit = btc.Transaction.fromPSBT(unhex(draft.commitPsbt)), originalChange = commit.getOutput(1).amount;
@@ -202,15 +208,15 @@ test('real ord 16/64 bulk orders: one redeem, all transfers/reveals, receiver sa
     reveal.addOutputAddress(payer.address, 546n, net); reveal.sign(secret); reveal.finalize();
     order.approvals++; await push(commit.hex, payer); await push(reveal.hex); await mine(); order.paymentId = reveal.id + 'i0';
     assert.equal(await publicState(order), 'permit_issued');
-    const bound = await bitcoin.bulkFunding({ terms, orderId: id, paymentId: order.paymentId });
+    const bound = await bitcoin.bulkFunding({ terms, orderId: id, paymentId: order.paymentId, deployerPayment });
     assert.equal(bound.txid, commit.id); assert.equal(bound.vout, 1); assert.equal(bound.value, String(terms.mintFunding.satoshis));
     const changedAmount = structuredClone(terms); changedAmount.mintFunding.satoshis++; changedAmount.mintFunding.maxFeeSats = String(BigInt(changedAmount.mintFunding.maxFeeSats) + 1n);
-    await assert.rejects(bitcoin.bulkFunding({ terms: changedAmount, orderId: id, paymentId: order.paymentId }), /bulk_funding_output/);
+    await assert.rejects(bitcoin.bulkFunding({ terms: changedAmount, orderId: id, paymentId: order.paymentId, deployerPayment }), /bulk_funding_output/);
     const changedAddress = structuredClone(terms); changedAddress.mintFunding.address = receiver.address;
-    await assert.rejects(bitcoin.bulkFunding({ terms: changedAddress, orderId: id, paymentId: order.paymentId }), /bulk_funding_output/);
-    await assert.rejects(bitcoin.bulkFunding({ terms, orderId: id, paymentId: reveal.id + 'i1' }), /bulk_redeem_binding/);
+    await assert.rejects(bitcoin.bulkFunding({ terms: changedAddress, orderId: id, paymentId: order.paymentId, deployerPayment }), /bulk_funding_output/);
+    await assert.rejects(bitcoin.bulkFunding({ terms, orderId: id, paymentId: reveal.id + 'i1', deployerPayment }), /bulk_redeem_binding/);
     const cardinal = bitcoin.tap.cardinal.bind(bitcoin.tap); bitcoin.tap.cardinal = async () => [];
-    assert.equal(await bitcoin.bulkFunding({ terms, orderId: id, paymentId: order.paymentId }), null); bitcoin.tap.cardinal = cardinal;
+    assert.equal(await bitcoin.bulkFunding({ terms, orderId: id, paymentId: order.paymentId, deployerPayment }), null); bitcoin.tap.cardinal = cardinal;
     await sender.discover(); const sentBefore = sent.length; await sender.process(id);
     assert.equal(journal.bulk(id).state, 'sent'); assert.equal(order.approvals, 1); assert.equal(sent.length - sentBefore, 1 + Math.ceil(n / 16));
     await mine(); await until(async () => await publicState(order) === 'minted', 'mints');
@@ -222,8 +228,9 @@ test('real ord 16/64 bulk orders: one redeem, all transfers/reveals, receiver sa
       assert.equal(inscription.address, receiver.address); assert.equal(inscription.satpoint, `${batch.txid}:${member.output}:0`);
       assert.equal(inscription.id, member.inscription);
     }
-    const transfers = await tap('getTransferredList/' + reveal.id + '?offset=0&max=500'); assert.equal(transfers.filter(r => r.ins === order.paymentId && !r.fail).length, 3);
-    t.diagnostic(JSON.stringify({ members: n, approvals: order.approvals, recipientTransfers: 3, reveals: plan.reveals.length, terminalMembers: finishes.at(-1).members.length, feeSats: plan.feeSats, setAsideSats: terms.mintFunding.satoshis, satpoints: 'all receiver outputs at offset zero' }));
+    const transfers = await tap('getTransferredList/' + reveal.id + '?offset=0&max=500'), recipientTransfers = terms.groups.length + (deployerPayment ? 1 : 0);
+    assert.equal(transfers.filter(r => r.ins === order.paymentId && !r.fail).length, recipientTransfers);
+    t.diagnostic(JSON.stringify({ members: n, approvals: order.approvals, recipientTransfers, reveals: plan.reveals.length, terminalMembers: finishes.at(-1).members.length, feeSats: plan.feeSats, setAsideSats: terms.mintFunding.satoshis, satpoints: 'all receiver outputs at offset zero' }));
   });
   assert.equal(await tap('getBalance/' + receiver.address + '/dmt-' + ticker), '240');
   assert.equal((await rpc('getnetworkinfo')).connections, 0);

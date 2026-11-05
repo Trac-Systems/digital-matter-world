@@ -91,10 +91,10 @@ test('a branch view keeps only its fork suffix and rechecks the shared prefix af
     await history.appendMany(198, chain(3, history.get(197), 601));
     assert.equal(old.raw(10), original); assert.equal(old.raw(200), source.raw(200));
     const table = 'decimal_branch_' + source.hashAt(200);
-    assert.equal(store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 4);
+    assert.equal(history.cacheDB.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 4);
     // A second branch invalidates the cached common ancestor.
     await history.appendMany(196, chain(5, history.get(195), 602));
     assert.equal(old.raw(196), source.raw(196)); assert.equal(old.raw(10), original);
-    assert.equal(store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 6);
+    assert.equal(history.cacheDB.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 6);
   } finally { await store.close(); }
 });

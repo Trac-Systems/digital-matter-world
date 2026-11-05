@@ -58,6 +58,8 @@ export function ordTransaction(value) {
   } catch { throw Error('bitcoin_transaction_shape'); }
 }
 export class BitcoinSource {
+  #inclusionBlocks = new Map(); #inclusionBytes = 0; #inclusionFlights = new Map();
+  #inclusionProofs = new Map(); #proofBytes = 0;
   constructor({ kind = 'ord', source, network = 'mainnet' }) {
     check(kind === 'ord' && ['mainnet', 'regtest'].includes(network), 'bitcoin_source');
     Object.assign(this, { kind, source, network, params: network === 'mainnet' ? MAINNET_PARAMS : REGTEST_PARAMS, genesis: network === 'mainnet' ? GENESIS.hash : REGTEST_GENESIS });
@@ -110,6 +112,51 @@ export class BitcoinSource {
     const tx = this.decode(await this.source.request('/r/tx/' + hash(id)));
     check(tx.txid === id, 'bitcoin_tx_binding'); return tx;
   }
+  async inclusionBlock(id) {
+    const cached = this.#inclusionBlocks.get(id);
+    if (cached) {
+      this.#inclusionBlocks.delete(id); this.#inclusionBlocks.set(id, cached);
+      return cached.block;
+    }
+    let pending = this.#inclusionFlights.get(id);
+    if (!pending) {
+      // Membership and witness commitments are immutable under a block hash.
+      // Keep only independently verified blocks, shared across financial scopes
+      // and retries. Canonical membership is still checked on every inclusion.
+      pending = this.block(id, { withTransactions: true }).then(value => {
+        const block = Object.freeze({ ...value, tx: Object.freeze([...value.tx]), transactions: Object.freeze([...value.transactions]) });
+        // Count UTF-16 string storage conservatively, plus per-transaction
+        // overhead; bound both retained bytes and outstanding cache entries.
+        const bytes = 2 * (block.raw.length + block.transactions.reduce((sum, raw) => sum + raw.length, 0)) + block.tx.length * 256;
+        const limit = 16_000_000;
+        if (bytes <= limit) {
+          const previous = this.#inclusionBlocks.get(id);
+          if (previous) { this.#inclusionBytes -= previous.bytes; this.#inclusionBlocks.delete(id); }
+          while (this.#inclusionBlocks.size && (this.#inclusionBlocks.size >= 4 || this.#inclusionBytes + bytes > limit)) {
+            const first = this.#inclusionBlocks.keys().next().value;
+            this.#inclusionBytes -= this.#inclusionBlocks.get(first).bytes; this.#inclusionBlocks.delete(first);
+          }
+          this.#inclusionBlocks.set(id, { block, bytes }); this.#inclusionBytes += bytes;
+        }
+        return block;
+      }).finally(() => { if (this.#inclusionFlights.get(id) === pending) this.#inclusionFlights.delete(id); });
+      if (this.#inclusionFlights.size < 4) this.#inclusionFlights.set(id, pending);
+    }
+    return pending;
+  }
+  #rememberInclusion(key, value) {
+    // Retain compact transaction membership after its full block is evicted.
+    // A batch spanning many blocks must not download them all on every retry.
+    const bytes = value.hex.length * 2 + 512, limit = 16_000_000;
+    if (bytes > limit) return;
+    const previous = this.#inclusionProofs.get(key);
+    if (previous) { this.#proofBytes -= previous.bytes; this.#inclusionProofs.delete(key); }
+    while (this.#inclusionProofs.size && (this.#inclusionProofs.size >= 512 || this.#proofBytes + bytes > limit)) {
+      const first = this.#inclusionProofs.keys().next().value;
+      this.#proofBytes -= this.#inclusionProofs.get(first).bytes; this.#inclusionProofs.delete(first);
+    }
+    this.#inclusionProofs.set(key, { value, bytes }); this.#proofBytes += bytes;
+  }
   async included(id, at, history) {
     check(typeof id === 'string' && /^[0-9a-f]{64}i(0|[1-9][0-9]{0,9})$/.test(id), 'inscription_id');
     let inscription;
@@ -124,9 +171,22 @@ export class BitcoinSource {
       check(history.hashAt(tip.height) === tip.hash && String(history.length) === rules.nextUint(rules.decimalV2(tip.height)), 'bitcoin_view');
       const blockHash = await this.blockHash(n);
       if (history.hashAt(n) !== blockHash) return null;
-      const block = await this.block(blockHash, { withTransactions: true }), tx = await this.transaction(id.slice(0, 64));
-      check(block.height === n && block.tx.includes(tx.txid), 'bitcoin_tx_inclusion');
-      check(block.transactions[block.tx.indexOf(tx.txid)] === tx.hex, 'bitcoin_tx_witness_binding');
+      const key = blockHash + '/' + id.slice(0, 64), proof = this.#inclusionProofs.get(key);
+      let tx;
+      if (proof) {
+        tx = await this.transaction(id.slice(0, 64));
+        check(proof.value.height === n, 'bitcoin_tx_inclusion');
+        check(proof.value.hex === tx.hex, 'bitcoin_tx_witness_binding');
+        // Other inclusions may have evicted this entry while the fresh raw
+        // transaction was in flight. Reinsert through the accounting gate.
+        this.#rememberInclusion(key, proof.value);
+      } else {
+        const block = await this.inclusionBlock(blockHash);
+        tx = await this.transaction(id.slice(0, 64));
+        check(block.height === n && block.tx.includes(tx.txid), 'bitcoin_tx_inclusion');
+        check(block.transactions[block.tx.indexOf(tx.txid)] === tx.hex, 'bitcoin_tx_witness_binding');
+        this.#rememberInclusion(key, { height: n, hex: tx.hex });
+      }
       if (await this.blockHash(n) !== blockHash || await this.blockHash(tip.height) !== tip.hash) return null;
       return { height: n, blockHash, confirmations: typeof tip.height === 'string' || typeof n === 'string' ? String(BigInt(tip.height) - BigInt(n) + 1n) : tip.height - n + 1, tx };
     } finally { owned?.close(); }

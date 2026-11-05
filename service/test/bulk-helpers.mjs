@@ -131,9 +131,9 @@ export async function fixture(t, options = {}) {
     const id = digest(label) + 'i0', terms = quote.terms, orderId = b.bulkOrderId(network, terms.owner, terms.nonce);
     transactions.set(id.slice(0, 64), { txid: id.slice(0, 64), stamp: { height, hash: digest('tip') },
       inclusion: { height: paymentHeight, hash: digest('payment-block'), confirmations: 1 },
-      inscriptions: [{ id, content: { p: 'tap', op: 'token-auth', redeem: { auth: digest('auth') + 'i0', items: b.bulkWalletItems(terms) } } }],
+      inscriptions: [{ id, content: { p: 'tap', op: 'token-auth', redeem: { auth: digest('auth') + 'i0', items: [...b.bulkWalletItems(terms), ...(quote.deployerPayment ? [{ address: quote.deployerPayment.to, tick: 'tap', amt: r.formatTapAmount(quote.deployerPayment.amount), dta: quote.deployerPayment.dta }] : [])] } } }],
       transfers: terms.groups.map((g, index) => ({ index, value: { ins: id, fail: failed.includes(index), int: true,
-        addr: terms.payer, taddr: g.to, tick: 'tap', amt: g.amount, dta: b.bulkPaymentData(orderId, index) } })), mints: [], complete: { transfers: true, mints: true } });
+        addr: terms.payer, taddr: g.to, tick: 'tap', amt: g.amount, dta: b.bulkPaymentData(orderId, index) } })).concat(quote.deployerPayment ? [{ index: terms.groups.length, value: { ins: id, fail: failed.includes(terms.groups.length), int: true, addr: terms.payer, taddr: quote.deployerPayment.to, tick: 'tap', amt: quote.deployerPayment.amount, dta: quote.deployerPayment.dta } }] : []), mints: [], complete: { transfers: true, mints: true } });
     return id;
   };
   const reveal = async (id, indices) => {

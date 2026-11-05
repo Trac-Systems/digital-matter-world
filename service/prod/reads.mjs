@@ -6,6 +6,8 @@ import { patternCatalogId } from '../src/mint-assets.mjs';
 import { lookupMaintenance } from './lookup-maintenance.mjs';
 import { installFinancialSources, acceptedFinancialReservation } from '../src/financial-sources.mjs';
 import { installFinancialChain } from '../src/financial-chain.mjs';
+import { createFinancialRebaseVerifier } from '../src/financial-chain-provenance.mjs';
+import { createAcceptedAudits } from '../src/accepted-audits.mjs';
 import { acceptedFinancialRecord } from '../src/financial-inventory.mjs';
 import { financialMintId, verifyFinancialMintRequest } from '../../rules/src/financial-mint.js';
 import { BitmapIndex } from './bitmap-index.mjs';
@@ -41,7 +43,7 @@ import { preflightBatch } from '../../committee/signer/preflight.mjs';
 import { verifyMintCertificate } from '../../committee/signer/certificate.mjs';
 import { rules } from '../src/rules.mjs';
 import { verifyPayer } from '../src/mints.mjs';
-import { check, hash, heightKey, serial } from '../src/util.mjs';
+import { check, hash, serial } from '../src/util.mjs';
 import { AcceptedAssetSupply } from './asset-supply.mjs';
 import { walletBitmaps } from '../src/bitmaps.mjs';
 import { publicTreasury, publicEscrow, bitmapOwner, deploymentHolders } from './public-reads.mjs';
@@ -158,16 +160,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     try { const st = await fd.stat(); check(st.isFile() && st.size <= limits.auditFileBytes, 'audit_size'); const bytes = Buffer.alloc(limits.auditFileBytes + 1); const { bytesRead } = await fd.read(bytes, 0, bytes.length, 0); check(bytesRead <= limits.auditFileBytes, 'audit_size'); return bytes.subarray(0, bytesRead); }
     finally { await fd.close(); }
   };
-  const auditCache = new Map();
-  const audits = async n => {
-    const root = await trac('root', [n]); check(root, 'accepted_batch_missing');
-    if (auditCache.get(n)?.root === root) return auditCache.get(n).files;
-    const batch = await store.get('batches', heightKey(n)); check(batch?.batch.root === root, 'accepted_batch_binding');
-    check(Array.isArray(batch.publications) && batch.publications.length <= limits.auditFiles, 'audit_count');
-    const bytes = []; let total = 0; for (const p of batch.publications) { const value = await archive(p.audit.path, p.audit.hash); total += value.length; check(total <= limits.auditTotalBytes, 'audit_total_size'); bytes.push(value); }
-    check(rules.merkleRoot(bytes) === root, 'accepted_audit_root'); const files = bytes.map(b => rules.decodeBinary(b)); check(files.every(f => f.v === 4 || f.v === 5), 'audit_version');
-    if (auditCache.size >= limits.auditCacheEntries) auditCache.delete(auditCache.keys().next().value); auditCache.set(n, { root, files }); return files;
-  };
+  const audits = createAcceptedAudits({ store, root: n => trac('root', [n]), archive, limits });
   const find = async (asset, block, pattern, view) => {
     const id = rules.findId(block, pattern.number), hint = await store.get('finds', id);
     if (!hint) return null;
@@ -469,7 +462,10 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     ethereumRPC: ethRPC, payout: id => store.get('financialCustodyPayments', id) });
   reads.inscription = id => indexer.inscription(id);
   if (config.v2) {
-    installFinancialChain(reads, { bitcoinHash: async (height, at) => (await views.view(at.tip, at.tipHash)).hashAt(height), canonicalBitcoinHash: height => client.blockHash(height), ethereumRPC: ethRPC });
+    const bitcoinHash = async (height, at) => (await views.view(at.tip, at.tipHash)).hashAt(height), canonicalBitcoinHash = height => client.blockHash(height);
+    const rebaseSafe = createFinancialRebaseVerifier({ store, audits, bitcoinHash, canonicalBitcoinHash, deploymentIncluded: included, settings: config.financialChain });
+    installFinancialChain(reads, { bitcoinHash, canonicalBitcoinHash, bitcoinHeader: hash => views.get.get(hash), settings: config.financialChain,
+      rebaseSafe, ethereumRPC: ethRPC });
     reads.financialInventoryPage = (range, at) => trac('financialPage', [range, at]);
     reads.financialRecordProvenance = (key, value) => acceptedFinancialRecord({ store, audits, key, value });
     reads.financialBeaconConfig = () => trac('deployment');

@@ -1,4 +1,5 @@
 import { check, heightKey, serial } from '../src/util.mjs';
+import { bitmapLinkSchema } from '../src/bitmap-link-changes.mjs';
 import { pageCursor } from '../src/paging.mjs';
 
 // Wallet history is bootstrapped once in bounded pages. Afterwards the shared
@@ -14,13 +15,7 @@ export class BitmapIndex {
       CREATE INDEX IF NOT EXISTS bitmap_by_id ON bitmap_inventory(owner,epoch,inscription);
       CREATE INDEX IF NOT EXISTS bitmap_by_link ON bitmap_inventory(owner,epoch,linked,inscription);
       CREATE INDEX IF NOT EXISTS bitmap_by_link_height ON bitmap_inventory(owner,epoch,linked,height,inscription);`);
-    // Link projections follow accepted local record writes independently of TAP.
-    if (store?.db) {
-      store.db.exec('CREATE TABLE IF NOT EXISTS bitmap_link_changes(id TEXT PRIMARY KEY)');
-      for (const [name, op, ref] of [['Insert', 'INSERT', 'new'], ['Update', 'UPDATE', 'new'], ['Delete', 'DELETE', 'old']]) store.db.exec(`
-        CREATE TRIGGER IF NOT EXISTS bitmap_link_${name} AFTER ${op} ON records WHEN ${ref}.space='links'
-        BEGIN INSERT OR IGNORE INTO bitmap_link_changes VALUES(${ref}.id); END;`);
-    }
+    if (store?.db && !store.acknowledgeBitmapLinks) bitmapLinkSchema(store.db);
   }
   clock() { return this.db.prepare('SELECT * FROM bitmap_clock WHERE id=1').get(); }
   async watch(address) {
@@ -92,12 +87,15 @@ export class BitmapIndex {
     }
     check(await this.indexer.bitcoin.blockHash(at.height) === at.hash, 'bitmap_reorg');
     this.db.prepare('UPDATE bitmap_clock SET seenHeight=?,seenHash=? WHERE id=1').run(at.height, at.hash);
+    const acknowledged = [];
     if (this.store.db) for (const { id } of this.store.db.prepare('SELECT id FROM bitmap_link_changes ORDER BY id LIMIT ?').all(this.limits.walletItemsPerTick)) {
       const linked = Number(!!this.store.get('links', id));
       const changed = this.db.prepare('UPDATE bitmap_inventory SET linked=? WHERE height=? AND linked<>?').run(linked, Number(id), linked);
       if (changed.changes) this.db.prepare('UPDATE bitmap_clock SET revision=revision+1 WHERE id=1').run();
-      this.store.db.prepare('DELETE FROM bitmap_link_changes WHERE id=?').run(id);
+      if (this.store.acknowledgeBitmapLinks) acknowledged.push({ id, linked: !!linked });
+      else this.store.db.prepare('DELETE FROM bitmap_link_changes WHERE id=?').run(id);
     }
+    if (acknowledged.length) await this.store.acknowledgeBitmapLinks(acknowledged);
   }); }
   async source(address) {
     const stream = await this.watch(address), at = await this.indexer.stamp(), clock = this.clock();

@@ -1,3 +1,4 @@
+import { financialRetirementTarget, verifyBatchRejection } from '../../committee/signer/batch-retirement.mjs';
 import { randomBytes } from 'node:crypto';
 import { check, hash, serial } from './util.mjs';
 import { localURL } from './config.mjs';
@@ -107,6 +108,48 @@ export class Committee {
     return { counted: clock.max(counted, proposal.batch.to), tip: (proposal.files ?? []).map(f => rules.decodeBinary(Buffer.from(f, 'hex')).tip)
       .reduce((a, b) => clock.max(a, b), proposal.batch.to), ...(proposal.batch.settingsHash ? { settingsHash: proposal.batch.settingsHash } : {}) };
   }
+  retirementFor(batch) {
+    if (![1, 2].includes(batch?.v)) return null;
+    const digest = rules.bytesToHex(rules.batchDigest(this.network, batch)), certificate = this.store.get('batchRetirements', digest);
+    if (!certificate) return null;
+    const target = verifyBatchRejection(certificate, { network: this.network, members: this.signers.map(s => s.peer) });
+    check(target.digest === digest && target.epoch === batch.epoch && target.n === batch.n && target.deadline === batch.deadline,
+      'batch_retirement_certificate', 503);
+    return certificate;
+  }
+  async retireStaleFinancial(proposal, readStamp) {
+    let target;
+    try { target = financialRetirementTarget(this.network, proposal); } catch { return null; }
+    const members = this.signers.map(s => s.peer);
+    let certificate = this.retirementFor(proposal.batch);
+    if (!certificate) {
+      const stamp = await readStamp?.();
+      if (!validClock(stamp?.tip) || rules.compareOrdinal(stamp.tip, target.tip) <= 0) return null;
+      const saved = this.store.get('batchRejectionVotes', target.digest), votes = new Map();
+      if (saved) {
+        verifyBatchRejection(saved, { network: this.network, members, target, minimum: 1 });
+        for (const vote of saved.votes) votes.set(vote.signer, vote);
+      }
+      const replies = await Promise.allSettled(this.signers.map(s => this.request(s, '/reject-stale-batch', { network: this.network, proposal })));
+      for (const [i, reply] of replies.entries()) if (reply.status === 'fulfilled' && reply.value?.signer === this.signers[i].id) {
+        try {
+          verifyBatchRejection({ target, votes: [reply.value] }, { network: this.network, members, target, minimum: 1 });
+          votes.set(reply.value.signer, reply.value);
+        } catch { /* An unverified reply never counts toward retirement. */ }
+      }
+      if (votes.size) await this.store.put('batchRejectionVotes', target.digest, { target, votes: [...votes.values()] });
+      if (votes.size < 3) return null;
+      certificate = { target, votes: [...votes.values()] };
+      verifyBatchRejection(certificate, { network: this.network, members, target });
+      // Persist proof before releasing any participant or archiving the draft.
+      await this.store.put('batchRetirements', target.digest, certificate);
+    }
+    const replies = await Promise.allSettled(this.signers.map(s => this.request(s, '/retire-rejected-batch', { network: this.network, proposal, certificate })));
+    const peers = this.signers.filter((s, i) => replies[i].status === 'fulfilled' && replies[i].value?.status === 'batch-rejected' &&
+      replies[i].value.digest === target.digest).map(s => s.id);
+    await this.store.put('batchRetirementPeers', target.digest, peers);
+    return { certificate, peers, ready: peers.length >= 3 };
+  }
   async batchReservationPlan(key, candidates, at) {
     const current = this.store.get('ceremonies', key);
     const attempts = this.batchAttempts(key, [...candidates, ...(current ? [{ ceremony: current, proposal: current.proposal }] : [])]);
@@ -120,6 +163,10 @@ export class Committee {
     const inventory = await Promise.all(this.signers.map(async signer => {
       const held = new Set(); let unknown = false;
       for (const attempt of pending) {
+        if (this.retirementFor(attempt.proposal.batch)) {
+          if (!(this.store.get('batchRetirementPeers', attempt.digest) ?? []).includes(signer.id)) unknown = true;
+          continue;
+        }
         try {
           const state = await this.request(signer, '/preparation-state', { id: attempt.id });
           if (state.id !== attempt.id || typeof state.reserved !== 'boolean' || typeof state.retired !== 'boolean') { unknown = true; continue; }
@@ -133,7 +180,7 @@ export class Committee {
     const recovery = { checkedAt: Date.now(), counted: at.counted ?? null, waitUntil: deadlines[0] ?? null, reservations };
     const unreserved = inventory.every(row => !row.unknown && !row.held.length), choices = [], readiness = new Map();
     for (const candidate of candidates) {
-      if (!live(candidate.proposal.batch)) continue;
+      if (!live(candidate.proposal.batch) || this.retirementFor(candidate.proposal.batch)) continue;
       const digest = Buffer.from(rules.batchDigest(this.network, candidate.proposal.batch)).toString('hex');
       const snapshot = this.batchAt(candidate.proposal, at.counted), snapshotKey = JSON.stringify(snapshot);
       if (!readiness.has(snapshotKey)) readiness.set(snapshotKey, new Set((await this.healthy(snapshot)).map(s => s.id)));
@@ -151,6 +198,7 @@ export class Committee {
     const selected = this.signers.filter(s => peers.includes(s.id));
     const replies = await Promise.allSettled(selected.map(async signer => {
       for (const attempt of attempts) {
+        if (this.retirementFor(attempt.proposal.batch) && (this.store.get('batchRetirementPeers', attempt.digest) ?? []).includes(signer.id)) continue;
         const reply = await this.request(signer, '/retire-batch-attempt', { network: this.network, id: attempt.id, batch: attempt.proposal.batch });
         check(reply.id === attempt.id && reply.status === 'batch-attempt-retired' && reply.batchHash === hash(JSON.stringify(attempt.proposal.batch)) &&
           (reply.digest === null || reply.digest === attempt.digest), 'batch_attempt_fence', 503);
@@ -232,6 +280,7 @@ export class Committee {
     this.activeSigning?.delete(key); return null;
   }
   async sign(key, proposal, snapshot) {
+    check(proposal.kind !== 'batch' || !this.retirementFor(proposal.batch), 'batch_digest_rejected', 503);
     let session = this.store.get('ceremonies', key);
     if (session?.recovery?.waiting) return null;
     if (!this.activeSigning) {

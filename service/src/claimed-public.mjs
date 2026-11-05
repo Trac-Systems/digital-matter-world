@@ -13,7 +13,10 @@ import { publicPageBytes } from './public-page-bytes.mjs';
 export function recordPage(store, space, params, { key = 'rows', maxRows = R3_RESOURCES.patternDetailRows, maxBytes = R3_RESOURCES.publicPageBytes, map = r => ({ id: r.id, ...r.value }) } = {}) {
   projectionReady(store, space);
   const policy = space === 'payoutTotals' ? payoutPolicyHash(store) : '';
-  const requested = Number(params.get('limit') ?? maxRows), limit = Math.min(requested, maxRows), revision = projectionRevision(store, space) + (policy ? '/' + policy : '');
+  // Pattern rows are only ever added; every batch rewrites their statistics. A full catalog read takes
+  // longer than a batch, so its cursor stays valid until a pattern is added rather than on every batch.
+  const requested = Number(params.get('limit') ?? maxRows), limit = Math.min(requested, maxRows),
+    revision = space === 'catalogPatterns' ? store.countUint(space) : projectionRevision(store, space) + (policy ? '/' + policy : '');
   check(Number.isSafeInteger(requested) && requested > 0, 'page_limit');
   for (const k of params.keys()) check(['limit', 'cursor', 'order', 'sort'].includes(k) && params.getAll(k).length === 1, 'paged_query');
   const order = params.get('order') ?? 'asc', sort = params.get('sort') ?? 'id';

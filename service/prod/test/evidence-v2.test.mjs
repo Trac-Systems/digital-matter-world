@@ -159,7 +159,7 @@ test('targeted evidence crosses 4096 rows and 8 MB; snapshots, proofs and restar
 test('legacy reader storage requires explicit migration and resumes with byte-identical context data', async t => {
   const root = await mkdtemp(join(tmpdir(), 'dmw-reader-migration-')), data = join(root, 'data'), contexts = join(root, 'contexts');
   await mkdir(contexts);
-  let store = await Store.open(data);
+  let store = await Store.openForMaintenance(data);
   t.after(async () => { await store.close(); await rm(root, { recursive: true, force: true }); });
   await store.put('types', 'one', { legacy: true });
   // Reproduce a pre-v2 store, without mutating the original source record.

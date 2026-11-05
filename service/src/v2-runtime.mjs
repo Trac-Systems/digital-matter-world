@@ -59,7 +59,7 @@ export async function installGatewayActivation({ store, manifest, manifestHash, 
   // Neutral exported checkpoints intentionally contain no version-specific
   // derived indexes. Build the evidence index here, while still offline and
   // after reconciliation, before activation writes begin updating it.
-  if (!store.evidenceReady) store.rebuildEvidenceIndex();
+  if (!store.evidenceReady) await store.rebuildEvidenceIndex();
   check(store.sequence === sourceSequence, 'activation_snapshot_changed');
   function* writes() {
     for (const rows of [pending?.writes ?? [], signatures?.writes ?? [], saved.writes, imported.availability, imported.accountRecords, imported.financialIdentities ?? [], migration?.writes ?? []]) yield* rows;
@@ -101,10 +101,15 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
   };
   const context = () => {
     const state = store.get('meta', 'ruleState'), storage = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: pin.resources.values.namedNodeCache });
+    const next = rules.nextUint(rules.decimalV2(accepted.last.n)), draft = store.get('meta', 'draft');
+    const future = !!(assetResources(config.assetResources).admissionFutureBatches && draft?.observations &&
+      String(draft.proposal.batch.n) === next && !draft.proposal.batch.renewal && !accepted.scheduledSettings);
+    const batch = future ? rules.nextUint(next) : next;
     return { ruleset: 'dmw-v2', ready: ready && !accepted.receiptRenewal && !store.get('meta', 'financialRecoveryActive') && !!intake?.head && state.catalogRoot === accepted.catalogRoot && state.claimRoot === accepted.claimsRoot,
-      segmented: true, settings: settings.document, settingsHistory: historySettings, batch: rules.nextUint(rules.decimalV2(accepted.last.n)),
+      segmented: true, settings: settings.document, settingsHistory: historySettings, batch, future,
       tip: String(intake?.head?.tip ?? 0), counted: String(intake?.head?.counted ?? 0), observation: intake?.head?.id,
-      sealed: intake?.rotating || store.hasRows('observations'), state: storage.load(state.namedSnapshot), snapshot: state.namedSnapshot, acceptedRoot: accepted.catalogRoot };
+      sealed: intake?.rotating || (future ? BigInt(store.countUint('observations')) > BigInt(draft.observations.length) : store.hasRows('observations')),
+      state: storage.load(state.namedSnapshot), snapshot: state.namedSnapshot, acceptedRoot: accepted.catalogRoot };
   };
   // Keep the last decision while a refresh runs (signers can take seconds to answer);
   // only a failed or incapable refresh closes admission.

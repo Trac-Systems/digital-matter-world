@@ -2,6 +2,7 @@ import { rules } from './rules.mjs';
 import { check, heightKey } from './util.mjs';
 export class History {
   constructor(store, { branchCache = 4, appendRows = 2048 } = {}) { this.store = store; this.branchCache = branchCache; this.appendRows = appendRows; }
+  get cacheDB() { return this.store.scratchDatabase?.() ?? this.store.db; }
   get clock() { return rules.ordinalCodec(this.store.get('meta', 'ruleState')?.batchVersion === 2); }
   get length() { return this.clock.add(this.store.get('meta', 'headerHeight') ?? -1); }
   raw(height) { check(rules.compareOrdinal(height, 0) >= 0 && rules.compareOrdinal(height, this.length) < 0, 'header_missing', 503); const row = this.store.get('headers', heightKey(height)); check(row, 'header_missing', 503); return row.raw; }
@@ -41,19 +42,20 @@ export class History {
     this.views ??= new Map();
     const query = () => {
       const saved = this.views.get(table);
-      if (saved && this.hashAt(saved.floor) !== saved.anchor) { this.store.db.exec('DROP TABLE temp.' + table); this.views.delete(table); }
+      if (saved && this.hashAt(saved.floor) !== saved.anchor) { this.cacheDB.exec('DROP TABLE temp.' + table); this.views.delete(table); }
       if (!this.views.has(table)) {
-        if (this.views.size >= this.branchCache) { const old = this.views.keys().next().value; this.store.db.exec('DROP TABLE temp.' + old); this.views.delete(old); }
-        this.store.db.exec(`CREATE TEMP TABLE ${table}(height INTEGER PRIMARY KEY, raw TEXT NOT NULL)`);
-        this.store.db.prepare(`INSERT INTO ${table} WITH RECURSIVE ancestors(hash,value) AS (
+        if (this.views.size >= this.branchCache) { const old = this.views.keys().next().value; this.cacheDB.exec('DROP TABLE temp.' + old); this.views.delete(old); }
+        this.cacheDB.exec(`CREATE TEMP TABLE ${table}(height INTEGER PRIMARY KEY, raw TEXT NOT NULL)`);
+        const insert = this.cacheDB.prepare(`INSERT INTO ${table} VALUES(?,?)`);
+        for (const row of this.store.db.prepare(`WITH RECURSIVE ancestors(hash,value) AS (
           SELECT id,value FROM records WHERE space='headerObjects' AND id=? UNION ALL
           SELECT r.id,r.value FROM records r JOIN ancestors a ON r.space='headerObjects' AND r.id=json_extract(a.value,'$.parent')
           ${bounded ? "WHERE NOT EXISTS(SELECT 1 FROM records c WHERE c.space='headers' AND c.id=printf('%016d',json_extract(a.value,'$.height')) AND json_extract(c.value,'$.hash')=a.hash)" : ''})
-          SELECT json_extract(value,'$.height'),json_extract(value,'$.raw') FROM ancestors`).run(hash);
-        const floor = this.store.db.prepare(`SELECT height,raw FROM ${table} ORDER BY height LIMIT 1`).get();
-        if (!floor) this.store.db.exec('DROP TABLE temp.' + table);
+          SELECT json_extract(value,'$.height') AS height,json_extract(value,'$.raw') AS raw FROM ancestors`).iterate(hash)) insert.run(row.height, row.raw);
+        const floor = this.cacheDB.prepare(`SELECT height,raw FROM ${table} ORDER BY height LIMIT 1`).get();
+        if (!floor) this.cacheDB.exec('DROP TABLE temp.' + table);
         check(floor, 'branch_header_missing', 503);
-        this.views.set(table, { query: this.store.db.prepare(`SELECT raw FROM ${table} WHERE height=?`), floor: floor.height, anchor: rules.parseHeader(floor.raw, floor.height).hash });
+        this.views.set(table, { query: this.cacheDB.prepare(`SELECT raw FROM ${table} WHERE height=?`), floor: floor.height, anchor: rules.parseHeader(floor.raw, floor.height).hash });
       }
       return this.views.get(table);
     };
@@ -72,11 +74,11 @@ export class History {
     this.views ??= new Map();
     const query = () => {
       const saved = this.views.get(table);
-      if (saved && this.hashAt(saved.floor) !== saved.anchor) { this.store.db.exec('DROP TABLE temp.' + table); this.views.delete(table); }
+      if (saved && this.hashAt(saved.floor) !== saved.anchor) { this.cacheDB.exec('DROP TABLE temp.' + table); this.views.delete(table); }
       if (!this.views.has(table)) {
-        if (this.views.size >= this.branchCache) { const old = this.views.keys().next().value; this.store.db.exec('DROP TABLE temp.' + old); this.views.delete(old); }
-        this.store.db.exec(`CREATE TEMP TABLE ${table}(height TEXT PRIMARY KEY,raw TEXT NOT NULL) WITHOUT ROWID`);
-        const insert = this.store.db.prepare(`INSERT INTO ${table} VALUES(?,?)`); let cursor = hash, floor, anchor;
+        if (this.views.size >= this.branchCache) { const old = this.views.keys().next().value; this.cacheDB.exec('DROP TABLE temp.' + old); this.views.delete(old); }
+        this.cacheDB.exec(`CREATE TEMP TABLE ${table}(height TEXT PRIMARY KEY,raw TEXT NOT NULL) WITHOUT ROWID`);
+        const insert = this.cacheDB.prepare(`INSERT INTO ${table} VALUES(?,?)`); let cursor = hash, floor, anchor;
         try {
           for (;;) {
             const row = this.store.get('headerObjects', cursor); check(row, 'branch_header_missing', 503);
@@ -87,8 +89,8 @@ export class History {
             check(parent && rules.nextUint(rules.decimalV2(parent.height)) === floor, 'branch_header_link', 503);
             cursor = row.parent;
           }
-          this.views.set(table, { floor, anchor, query: this.store.db.prepare(`SELECT raw FROM ${table} WHERE height=?`) });
-        } catch (error) { this.store.db.exec('DROP TABLE temp.' + table); throw error; }
+          this.views.set(table, { floor, anchor, query: this.cacheDB.prepare(`SELECT raw FROM ${table} WHERE height=?`) });
+        } catch (error) { this.cacheDB.exec('DROP TABLE temp.' + table); throw error; }
       }
       return this.views.get(table);
     };

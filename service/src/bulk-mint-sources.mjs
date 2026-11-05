@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { POINT_BATCH_SIZE } from '../../rules/src/point-read-batch.js';
 import { parallelPage } from './keyed-work.mjs';
 import { timeStep } from './read-timing.mjs';
+import { directHolderTerms, bulkHolderHash, bulkDeployerData, sideWalletItem } from './direct-deployer.mjs';
 const require = createRequire(new URL('../../rules/package.json', import.meta.url));
 const { ed25519 } = require('@noble/curves/ed25519');
 const { secp256k1 } = require('@noble/curves/secp256k1');
@@ -58,18 +59,21 @@ export function checkBulkRecoveryBytes(b, terms, feeManifest) {
 
 // Fees are split and rounded before grouping; suspense identity never becomes
 // part of the destination key. This helper consumes authenticated contexts.
-export function bulkFeeManifest(reads, contexts, { payer, bitcoinNetwork, document, policy, height, orderId }) {
+export function bulkFeeManifest(reads, contexts, { payer, bitcoinNetwork, document, policy, height, orderId, holderFees }) {
   const groups = new Map(), rows = [], sources = [];
+  let sideAmount = 0n;
   for (const [member, context] of contexts.entries()) {
     const d = context.deployment, holder = context.holder;
     const grossFeeAtoms = rules.feeFor('find', policy.baseFee, context.tier, policy.feeSettings, height);
     const base = financialSplit(grossFeeAtoms, { kind: 'find', linked: !!holder,
       discovered: !!(context.beneficiaries?.discoverer ?? context.discoverer) }, document);
     const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(grossFeeAtoms, base,
-      { kind: 'find', deployment: d, document, height, bitcoinNetwork });
+      { kind: 'find', deployment: d, document, height, bitcoinNetwork, direct: !!holderFees });
+    const directAmount = holderFees ? BigInt(split.deployer ?? '0') : 0n;
+    sideAmount += directAmount;
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null,
       landowner: holder?.address ?? null, discoverer: context.discoverer ?? null };
-    const args = { split, destinations, beneficiaries: context.beneficiaries, id: orderId, rail: 'tap' };
+    const args = { split: holderFees ? { ...split, deployer: '0' } : split, destinations, beneficiaries: context.beneficiaries, id: orderId, rail: 'tap' };
     const full = reads.financialFeePlan({ ...args, payer: null }), payable = reads.financialFeePlan({ ...args, payer });
     const shares = [];
     for (const role of roles) {
@@ -83,7 +87,7 @@ export function bulkFeeManifest(reads, contexts, { payer, bitcoinNetwork, docume
       shares.push({ role, group: key, beneficiary: paid ? payable.custody.find(c => c.role === role)?.owner ?? null : null,
         gross: fee.amount, payable: paid?.amount ?? '0' });
     }
-    rows.push({ member, grossFeeAtoms, shares, deferred: { legacyDeploy: legacyDeploy?.amount ?? '0', deployer: deployer?.amount ?? '0' } });
+    rows.push({ member, grossFeeAtoms: String(BigInt(grossFeeAtoms) - directAmount), shares, deferred: { legacyDeploy: legacyDeploy?.amount ?? '0', deployer: deployer?.amount ?? '0' } });
     sources.push({ deployment: deploymentIdentity(d), ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}) });
   }
   const sorted = [...groups].sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
@@ -93,7 +97,8 @@ export function bulkFeeManifest(reads, contexts, { payer, bitcoinNetwork, docume
     if (share.beneficiary) custody.push({ member: m.member, role: share.role, group: share.group, owner: share.beneficiary, amount: share.payable });
     return share;
   }) }));
-  return { feeManifest, groups: sorted.map(([, value]) => value), custody, sources,
+  const deployerPayment = sideAmount && !rules.samePayer(holderFees.to, payer) ? { to: holderFees.to, amount: String(sideAmount), dta: bulkDeployerData(orderId) } : null;
+  return { feeManifest, groups: sorted.map(([, value]) => value), custody, sources, ...(deployerPayment ? { deployerPayment } : {}),
     grossFeeAtoms: rules.tapAtoms(rows.reduce((n, r) => n + BigInt(r.grossFeeAtoms), 0n).toString()).toString(),
     payableFeeAtoms: rules.tapAtoms(sorted.reduce((n, [, g]) => n + BigInt(g.amount), 0n).toString()).toString() };
 }
@@ -248,8 +253,12 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
       receiver: t.receiver, payer: t.payer, blocks: t.members.map(m => m.block) }, at, { strict: true, policy: original });
     const members = contexts.map(c => ({ block: rules.decimalV2(c.find.block), amount: String(c.find.count) }));
     check(same(members, t.members), 'bulk_members_changed', 409);
+    const ownership = contexts.map(c => rules.hashObject({ bitmap: c.holder, link: c.link ?? null, ...(c.assetRevision ? { assetRevision: c.assetRevision } : {}) }));
+    const legacy = t.feeQuote.mintOwnershipHash === rules.hashObject(['dmw-bulk-ownership-v1', ownership]);
+    const holderFees = legacy ? null : await directHolderTerms(reads, contexts[0].deployment, original, { at, bitcoinNetwork });
+    check(legacy || t.feeQuote.mintOwnershipHash === bulkHolderHash(ownership, holderFees), 'bulk_fees_changed', 409);
     const plan = bulkFeeManifest(reads, contexts, { payer: t.payer, bitcoinNetwork, document: original, policy,
-      height: at.executionHeight ?? at.counted, orderId: id });
+      height: at.executionHeight ?? at.counted, orderId: id, holderFees });
     body.feeManifest ??= plan.feeManifest;
     await verifyBulkRequest(body, network, bitcoinNetwork);
     const d = contexts[0].deployment, generation = financialGenerationId(network, t.asset, d.id);
@@ -258,14 +267,14 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
       await get(d.officialDeployment ? 'fd/external/' + rules.hashObject(d.id) : 'fd/asset/' + t.asset, at) === generation, 'bulk_deployment_unavailable', 503);
     check(d.tick === t.ticker && (rules.tickerSupplyScope(d, at.executionHeight ?? at.counted) || null) === t.supplyScope &&
       contexts.every(c => same(deploymentIdentity(c.deployment), deploymentIdentity(d))), 'bulk_deployment_changed', 409);
-    const ownership = contexts.map(c => rules.hashObject({ bitmap: c.holder, link: c.link ?? null, ...(c.assetRevision ? { assetRevision: c.assetRevision } : {}) }));
-    check(t.feeQuote.mintOwnershipHash === rules.hashObject(['dmw-bulk-ownership-v1', ownership]) && same(plan.feeManifest, body.feeManifest) &&
+    check(same(plan.feeManifest, body.feeManifest) &&
       same(plan.groups, t.groups) && same(plan.custody, t.custody), 'bulk_fees_changed', 409);
     const outstanding = BigInt(await get(capacityKey(d.id), at) ?? '0') + BigInt(await get('fi/deployment/' + d.id, at) ?? '0');
     check(outstanding + BigInt(t.totalAmount) <= BigInt(d.remaining) &&
       BigInt(registered.reserved) + BigInt(registered.minted) + BigInt(t.totalAmount) <= BigInt(registered.maximum), 'financial_capacity', 409);
     await unfrozen(id, t, at);
     return b.bulkBytes({ version: 1, requestId: id, terms: t, feeManifest: body.feeManifest, feeAuthorization: row.feeAuthorization,
+      ...(plan.deployerPayment ? { deployerPayment: plan.deployerPayment } : {}),
       owner: t.owner, asset: t.asset, amount: t.totalAmount, receiver: t.receiver, payer: t.payer, rail: 'tap',
       capacity: { deployment: d.id, asset: t.asset, amount: t.totalAmount, block: null, remaining: d.remaining, limit: d.limit ?? '0', supplyScope: t.supplyScope },
       generationCapacity: { deployment: generation, reserved: registered.reserved, minted: registered.minted, maximum: registered.maximum },
@@ -273,7 +282,7 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
       expiry: t.expires, settingsHash: t.settingsHash }, b.BULK_LIMITS.evidenceBytes, 'bulk_evidence_bytes');
   };
   const receipt = async (id, reference, at, view) => {
-    const { terms, funding } = await accepted(id, at), b = await bulkSchema();
+    const { terms, funding, source } = await accepted(id, at), b = await bulkSchema();
     check(b.bulkInscription(reference), 'bulk_payment_reference');
     const receiptKey = b.bulkReceiptKey(bitcoinNetwork, reference);
     check(!await get('fq/fp/bulk-receipt/' + receiptKey, at) && !await get('fq/fp/bulk-credit/' + receiptKey, at), 'financial_quarantined', 503);
@@ -281,10 +290,24 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     const tx = transactions.find(t => t.txid === reference.slice(0, 64));
     check(tx?.inclusion?.confirmations >= 1 && tx.complete?.transfers === true, 'bulk_payment_unknown', 503);
     const content = tx.inscriptions.find(i => i.id === reference)?.content;
-    check(content?.p === 'tap' && content.op === 'token-auth' && same(content.redeem?.items, b.bulkWalletItems(terms)), 'bulk_payment_items', 409);
+    const side = source.deployerPayment, items = b.bulkWalletItems(terms);
+    const withSide = side && same(content?.redeem?.items, [...items, sideWalletItem(side)]);
+    check(content?.p === 'tap' && content.op === 'token-auth' && (withSide || same(content.redeem?.items, items)), 'bulk_payment_items', 409);
     b.bulkBytes(content, b.BULK_LIMITS.redeemBytes, 'bulk_redeem_bytes');
-    const transfers = tx.transfers.filter(r => r.value.ins === reference).map(({ index, value }) => ({ index,
+    const allTransfers = tx.transfers.filter(r => r.value.ins === reference).map(({ index, value }) => ({ index,
       ...Object.fromEntries(['ins', 'fail', 'int', 'addr', 'taddr', 'tick', 'amt', 'dta'].map(k => [k, value[k]])) })).sort((a, z) => a.index - z.index);
+    let deployerPaid = !side;
+    const sideRows = side ? allTransfers.filter(r => r.dta === side.dta) : [];
+    if (withSide) {
+      check(sideRows.length === 1, 'bulk_payment_unknown', 503);
+      const r = sideRows[0];
+      check(Number.isSafeInteger(r.index) && r.index >= 0 && typeof r.fail === 'boolean' && r.int === true &&
+        r.ins === reference && r.addr === terms.payer && r.taddr === side.to && r.tick === 'tap' && r.amt === side.amount,
+      'bulk_payment_binding', 409);
+      deployerPaid = !r.fail;
+    } else check(sideRows.length === 0, 'bulk_payment_binding', 409);
+    check(new Set(allTransfers.map(r => r.index)).size === allTransfers.length, 'bulk_payment_unknown', 503);
+    const transfers = allTransfers.filter(r => !side || r.dta !== side.dta);
     check(transfers.length === terms.groups.length && new Set(transfers.map(r => r.index)).size === transfers.length, 'bulk_payment_unknown', 503);
     const paid = terms.groups.map((g, i) => {
       const matches = transfers.filter(r => r.dta === b.bulkPaymentData(id, i));
@@ -297,14 +320,17 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     const block = { height: rules.decimalV2(tx.inclusion.height), hash: tx.inclusion.hash };
     check(rules.hex(block.hash, 32), 'bulk_payment_block');
     const receiptRoot = rules.hashObject(['dmw-bulk-receipt-v1', network, reference, block.hash, transfers]);
-    return { requestId: id, terms: funding.terms, reference, block, paid, receiptRoot, transfers, confirmations: tx.inclusion.confirmations };
+    return { requestId: id, terms: funding.terms, reference, block, paid, receiptRoot, transfers, confirmations: tx.inclusion.confirmations,
+      ...(side ? { deployerPaid } : {}) };
   };
   reads.bulkReceipt = (id, reference, at) => fenced(at, (anchor, view) => receipt(id, reference, anchor, view), true);
   reads.bulkResolvePayment = (report, terms, at) => fenced(at, async (anchor, view) => {
     const b = await bulkSchema(), txids = [...new Set([report.revealTxid, report.commitTxid].filter(Boolean))];
+    const { source } = await accepted(b.bulkOrderId(network, terms.owner, terms.nonce), anchor);
+    const items = b.bulkWalletItems(terms), sideItems = source.deployerPayment ? [...items, sideWalletItem(source.deployerPayment)] : items;
     const txs = await reads.bulkTransactions(txids, { kinds: ['transfers'], view }), candidates = [];
     for (const tx of txs) for (const inscription of tx.inscriptions ?? []) {
-      if (inscription.content?.op === 'token-auth' && same(inscription.content.redeem?.items, b.bulkWalletItems(terms))) candidates.push(inscription.id);
+      if (inscription.content?.op === 'token-auth' && (same(inscription.content.redeem?.items, items) || same(inscription.content.redeem?.items, sideItems))) candidates.push(inscription.id);
     }
     // A commit txid is never guessed to mean redeem i0. Background recovery
     // will find its actual reveal if it is not indexed yet.
@@ -402,7 +428,8 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
     const { terms, funding } = await accepted(t.id, anchor), base = { requestId: t.id, owner: terms.owner, terms: funding.terms };
     let evidence;
     if (['bulk-fund', 'bulk-fund-held', 'bulk-credit'].includes(t.type)) {
-      const r = await receipt(t.id, t.reference, anchor, view);
+      const { deployerPaid, ...r } = await receipt(t.id, t.reference, anchor, view);
+      if (t.type !== 'bulk-credit') check(deployerPaid !== false, 'bulk_deployer_unpaid', 409);
       if (t.type !== 'bulk-credit') check(!funding.reference && BigInt(r.block.height) >= BigInt(funding.created) &&
         (t.type === 'bulk-fund-held' || BigInt(r.block.height) <= BigInt(terms.expires) && BigInt(anchor.counted) <= BigInt(terms.expires)), 'bulk_payment_window', 409);
       evidence = { ...base, ...r, state: 'settled' };
@@ -410,6 +437,7 @@ export function installBulkMintSources(reads, { network, bitcoinNetwork = 'mainn
       check(funding.state === 'bulk-funded' && funding.reference && BigInt(funding.releasedMask) === 0n &&
         (t.type === 'bulk-consume-held' || BigInt(anchor.counted) <= BigInt(terms.expires)), 'bulk_not_funded', 409);
       const r = await receipt(t.id, funding.reference, anchor, view);
+      check(r.deployerPaid !== false, 'bulk_deployer_unpaid', 409);
       const entry = selectedDeployment(await reads.registry(), terms.asset, terms.deployment);
       check(entry, 'bulk_deployment_unavailable', 503);
       const current = await verifyDeployment({ ...reads, withTapSnapshot: (_at, fn) => fn(view.stamp) }, entry, { view: anchor });

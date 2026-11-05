@@ -10,8 +10,8 @@ test('multi-frame acceptance is invisible before its commit marker and survives 
   let store = await Store.open(directory, options);
   const value = { rounds: Array.from({ length: 2000 }, (_, i) => ({ i, text: 'escape\n"😀' })) };
   const apply = store.apply.bind(store); let stages = 0;
-  store.apply = rows => {
-    apply(rows);
+  store.apply = async rows => {
+    await apply(rows);
     stages += rows.filter(r => r.stage).length;
     if (rows.some(r => r.stage) && !rows.some(r => r.commit)) { assert.equal(store.get('meta', 'accepted'), null); assert.equal(store.get('meta', 'state'), null); }
   };

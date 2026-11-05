@@ -16,8 +16,8 @@ const owner = 'a'.repeat(64), names = ['dmwmuffinite', 'dmwmudstone', 'dmwmuddit
 const pattern = (number, name = names[Number(number)]) => ({ number: String(number), name, discoverer: owner, knownMatchCount: '1' });
 const put = p => ({ space: 'catalogPatterns', id: 'p2:' + p.number, value: p });
 const assignments = store => store.db.prepare('SELECT asset,symbol FROM publicPatternSymbols ORDER BY asset').all().map(r => [r.asset, r.symbol]);
-async function fixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'pattern-symbols-')), f = { directory, store: await Store.open(directory) };
+async function fixture(t, maintenance = false) {
+  const directory = await mkdtemp(join(tmpdir(), 'pattern-symbols-')), f = { directory, store: await (maintenance ? Store.openForMaintenance(directory) : Store.open(directory)) };
   t.after(async () => { await f.store.close(); await rm(directory, { recursive: true, force: true }); });
   await f.store.put('meta', 'ruleState', { batchVersion: 2, counted: '0' });
   return f;
@@ -73,7 +73,7 @@ function seedOldCatalog(store) {
 }
 
 test('one-time fill uses bounded numeric-order pages and resumes across restart', async t => {
-  const f = await fixture(t), expected = seedOldCatalog(f.store), sequence = f.store.sequence, root = f.store.evidenceIndex.root();
+  const f = await fixture(t, true), expected = seedOldCatalog(f.store), sequence = f.store.sequence, root = f.store.evidenceIndex.root();
   for (let i = 0; i < 3; i++) assert.equal(fillPatternSymbolsPage(f.store, { pageRows: 2 }), false);
   assert.deepEqual(assignments(f.store), [], 'catalog identities must all be queued before allocating');
   assert.equal(fillPatternSymbolsPage(f.store, { pageRows: 2 }), false);
@@ -93,7 +93,7 @@ test('one-time fill uses bounded numeric-order pages and resumes across restart'
 });
 
 test('failed fill pages roll back reservations, catalog fields and progress together', async t => {
-  const { store } = await fixture(t), expected = seedOldCatalog(store);
+  const { store } = await fixture(t, true), expected = seedOldCatalog(store);
   fillPatternSymbolsPage(store, { pageRows: 8 });
   store.db.exec("CREATE TEMP TRIGGER stop_symbols BEFORE INSERT ON publicPatternSymbols WHEN NEW.asset='p2:10' BEGIN SELECT RAISE(ABORT,'injected_fill_failure'); END");
   assert.throws(() => fillPatternSymbolsPage(store, { pageRows: 8 }), /injected_fill_failure/);
@@ -106,7 +106,7 @@ test('failed fill pages roll back reservations, catalog fields and progress toge
 });
 
 test('startup fills existing patterns before replaying an acknowledged discovery tail', async t => {
-  const f = await fixture(t), expected = seedOldCatalog(f.store);
+  const f = await fixture(t, true), expected = seedOldCatalog(f.store);
   const sequence = rules.nextUint(f.store.sequence);
   await f.store.close();
   // A durable frame with no SQLite commit is the normal crash-recovery tail.
@@ -136,7 +136,7 @@ test('reads and completed fills do not enumerate the catalog or allocate symbols
 });
 
 test('a failed record transaction cannot reserve a symbol', async t => {
-  const { store } = await fixture(t);
+  const { store } = await fixture(t, true);
   assert.throws(() => store.apply([{ sequence: rules.nextUint(store.sequence), operations: [put(pattern(0)), { space: 'links', id: 'bad', value: { block: 'invalid' } }] }]), /integer_v2/);
   assert.deepEqual(assignments(store), []);
   assert.equal(store.get('catalogPatterns', 'p2:0'), null);

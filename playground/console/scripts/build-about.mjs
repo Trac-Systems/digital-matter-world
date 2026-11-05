@@ -218,7 +218,7 @@ export function buildAbout(markdown) {
   return `// Generated from content/about.md by scripts/build-about.mjs. Do not edit.
 import { h, clear } from '../dom.js';
 import { bus, store } from '../api.js';
-import { feePrice, legacyDeployPolicyText, deployerSharePolicyText, tickerDeployPrice, tickerDeployBurnText } from '../money.js';
+import { feePrice, deployerSharePolicyText, tickerDeployPrice, tickerDeployBurnText } from '../money.js';
 import { tickersOpen } from '../tickers.js';
 
 const html = ${JSON.stringify(renderMarkdown(markdown))};
@@ -243,8 +243,6 @@ export function mount(root) {
     for (const price of prices) price.textContent = feePrice(status?.feePolicy, price.dataset.feeKind, Number(price.dataset.feeTier));
     for (const price of article.querySelectorAll('[data-ticker-fee]')) price.textContent = tickerDeployPrice(status);
     for (const share of article.querySelectorAll('[data-ticker-burn-share]')) share.textContent = tickerDeployBurnText(status);
-    const legacy = article.querySelector('[data-legacy-deploy-share]');
-    if (legacy) legacy.textContent = legacyDeployPolicyText(status);
     // The ticker deployer's share is described once extra tickers are open.
     const deployer = article.querySelector('[data-deployer-share]');
     if (deployer) tickersOpen().then(open => { deployer.textContent = open ? deployerSharePolicyText(status) : ''; });

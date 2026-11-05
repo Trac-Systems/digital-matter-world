@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Store } from '../src/store.mjs';
+import { createPublicAPI } from '../src/public-api.mjs';
+import { temp } from './helpers.mjs';
+
+test('results count inscriptions, name grouped payment roles and report list totals', async t => {
+  const store = await Store.open(await temp('results-figures-')); t.after(() => store.close());
+  await store.put('meta', 'ruleState', { batchVersion: 2, counted: '10' });
+  await store.put('publicSummaries', 'treasury', { tap: '0', bitcoin: 'bc1ptreasury' });
+  const mint = (id, extra) => store.put('publicResults/mints', id, { id, owner: 'o', asset: 'p2:1', amount: '1', kind: 'tap', ...extra });
+  await mint('a', { block: '5', state: 'minted' });
+  await mint('b', { block: '6', state: 'expired' });
+  await mint('c', { block: '7', state: 'awaiting_payment' });
+  await mint('d', { block: null, asset: 'c2:' + 'e'.repeat(64), state: 'minted' });
+  await mint('e', { block: null, state: 'bulk-complete', bulk: true, count: 3 });
+  for (const block of ['5', '8', '9', '10']) await store.put('minted', 'p2:1/' + block, { id: block });
+  const pay = (id, extra) => store.put('publicResults/payments', id, { id, requestId: 'e', block: '9', amount: '2', total: '2', action: 'paid', ...extra });
+  await pay('p0', { group: 0, to: '1BitcoinEaterAddressDontSendf59kuE' });
+  await pay('p1', { group: 1, to: 'bc1ptreasury' });
+  await pay('p2', { group: 2, to: 'bc1pholder' });
+  await pay('p3', { role: 'treasury', to: 'bc1ptreasury' });
+  const api = createPublicAPI({ views: { store } });
+  const results = await api.read('/results');
+  assert.equal(results.counts.mints, '5', 'every mint request is listed');
+  assert.equal(results.counts.inscriptions, '5', 'four minted blocks (single and bulk) and one minted compound');
+  const payments = await api.read('/results/payments?limit=10');
+  assert.deepEqual(Object.fromEntries(payments.payments.map(p => [p.id, p.role ?? null])), { p0: 'burn', p1: 'treasury', p2: null, p3: 'treasury' });
+  assert.equal(payments.total, 4);
+  assert.equal((await api.read('/results/mints?limit=2')).total, 5);
+  assert.equal((await api.read('/results/mints?limit=2&state=minted')).total, null, 'a filtered list has no known total');
+});

@@ -23,6 +23,8 @@ export class SegmentedIntake extends Intake {
       // An ambiguous signing response is not proof that the reserved batch
       // cannot still land. Reconcile it before fixing the accepted predecessor.
       check(!this.store.get('meta', 'draft'), 'receipt_cutoff_draft_pending', 503);
+      const reserved = this.store.get('meta', 'namedReservedBatch');
+      check(!reserved || rules.compareUint(reserved, rules.nextUint(predecessor.n)) <= 0, 'receipt_future_pending', 503);
       const state = this.store.get('meta', 'ruleState');
       check(state.claimRoot === predecessor.claims && state.catalogRoot === predecessor.catalog &&
         rules.claimStateRoot(state.claimSnapshot) === predecessor.claims, 'receipt_cutoff_checkpoint');
@@ -104,7 +106,9 @@ export class SegmentedIntake extends Intake {
         const receiptRoot = rules.sealReceiptSegment(entries.map(e => e.receipt), { network: this.network, tip: this.head.tip, hash: this.head.hash,
           segment: previous ? rules.nextUint(rules.decimalV2(previous.segment)) : '0', previous: previous?.hash ?? null, ruleset: this.settings.ruleset, settingsRevision: this.settings.settingsRevision,
           ...(this.settings.settingsHash ? { settingsHash: this.settings.settingsHash } : {}) }, this.secret);
-        sealed = { ...this.head, receiptRoot, count: entries.length };
+        const receiptBatch = entries[0]?.receipt.batch;
+        check(entries.every(e => e.receipt.batch === receiptBatch), 'receipt_batch_mixed');
+        sealed = { ...this.head, receiptRoot, count: entries.length, ...(receiptBatch ? { receiptBatch } : {}) };
         ops.push({ space: 'observations', id: this.head.id, value: sealed },
           { space: 'receiptObservations', id: rules.receiptSegmentKey(receiptRoot), value: { seal: receiptRoot, receipts: entries.map(e => e.receipt) } },
           { space: 'receiptSegmentHeads', id: key, value: { segment: receiptRoot.segment, hash: rules.receiptSegmentHash(receiptRoot) } });

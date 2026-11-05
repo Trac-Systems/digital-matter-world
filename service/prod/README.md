@@ -117,6 +117,24 @@ height remains the application clock. Confirmations never come from an
 indexer's assertion alone. Full history should be seeded offline; missing history
 beyond the configured fetch budget is refused. Header forks are retained by hash.
 
+Inclusion reads retain independently verified blocks by hash across financial
+scopes and preparation attempts. Each Bitcoin reader keeps at most four blocks
+and 16 MB of accounted header/transaction storage. A separate cache retains at
+most 512 verified transaction memberships, also within 16 MB, so evicting a full
+block does not force a repeated deployment to download it again. Entries enter
+only after Merkle and witness verification. Every inclusion still reads the
+inscription height and raw transaction, checks the retained branch, and checks
+canonical membership before and after. Depth is recomputed for the requested
+tip. Failures are not cached, and a restart independently rebuilds both caches.
+
+The signer lifecycle `onPhase` callback reports context loading, replay,
+registry preparation, financial evidence, financial chain verification and
+preflight separately. `prepare.financial` includes its evidence and chain
+subphases; these durations should not be added together. The offline
+`signer-rebase-prepare.test.mjs` fixture exercises the service with a 430-batch
+gap and the existing closure timeout profile. `DMW_TEST_BLOCK_DELAY_MS` adds
+local simulated block-response latency without contacting a source.
+
 TAP and Bitcoin reads use the same configured ord origin. Responses and lists
 are bounded; list pagination uses ord-tap's `offset`/`max`, and calls use paced
 queues.

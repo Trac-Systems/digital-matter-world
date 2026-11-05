@@ -44,7 +44,7 @@ export async function migrateReaderStorage({ data, network, contexts, registry, 
       await atomicWrite(join(contexts, digest + '.json'), bytes);
       await store.put('evidenceContexts', name.slice(0, -5), { path: digest + '.json', hash: digest });
     }
-    store.rebuildEvidenceIndex(); await store.compact();
+    await store.rebuildEvidenceIndex(); await store.compact();
   } finally { await store.close(); }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

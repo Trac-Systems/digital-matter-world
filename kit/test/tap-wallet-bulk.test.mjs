@@ -148,3 +148,31 @@ test('bulk refuses fewer than two blocks including tip changes during funds chec
     assert.equal(f.records.size, 0); assert.equal(f.state.calls.length, 0);
   }
 });
+
+test('site bulk adapter includes the deployer side item in the same wallet approval and funds check', async () => {
+  const { TapWalletBulkMint: DirectBulkMint } = await import('../lib/tap-wallet-deployer.mjs');
+  const f = setup(), side = { to: f.terms.receiver, amount: '123', dta: `dmw-bulk-deployer-v1|${f.id}` };
+  f.status.deployerPayment = side;
+  const read = f.options.readTerms; f.options.readTerms = async () => ({ ...await read(), deployerPayment: side });
+  const wallet = new DirectBulkMint(f.options); await wallet.connect(); await wallet.pay(f.id);
+  assert.equal(f.state.calls.length, 1);
+  assert.equal(f.state.calls[0][1].length, f.terms.groups.length + 1);
+  assert.deepEqual(f.state.calls[0][1].at(-1), { address: side.to, tick: 'tap', amt: '0.000000000000000123', dta: side.dta });
+  assert.equal(f.state.calls[0][2].extraOutputs.length, 1);
+  const resumed = new DirectBulkMint(f.options); await resumed.connect(); await resumed.pay(f.id);
+  assert.equal(f.state.calls.length, 1);
+});
+
+test('site bulk adapter refuses changed, self-directed or mismatched deployer side items before approval', async () => {
+  const { TapWalletBulkMint: DirectBulkMint } = await import('../lib/tap-wallet-deployer.mjs');
+  for (const change of ['mismatch', 'payer', 'dta', 'amount']) {
+    const f = setup(), side = { to: f.terms.receiver, amount: '123', dta: `dmw-bulk-deployer-v1|${f.id}` };
+    if (change === 'payer') side.to = f.terms.payer;
+    if (change === 'dta') side.dta += '0';
+    if (change === 'amount') side.amount = '0';
+    f.status.deployerPayment = change === 'mismatch' ? { ...side, amount: '124' } : side;
+    const read = f.options.readTerms; f.options.readTerms = async () => ({ ...await read(), deployerPayment: side });
+    const wallet = new DirectBulkMint(f.options); await wallet.connect();
+    await assert.rejects(wallet.pay(f.id), /deployer payment/); assert.equal(f.state.calls.length, 0);
+  }
+});

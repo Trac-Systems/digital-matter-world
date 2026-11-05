@@ -66,6 +66,52 @@ test('signer receipt witnesses persist root agreement and high-water deadlines a
     await assert.rejects(signer.handle('/attest-root',{tip,hash:r.hash('fork')}),/receipt_root_conflict/);
   }finally{await signer?.close();await new Promise(resolve=>server.close(resolve));}
 });
+test('a late non-empty receipt segment is witnessed only by signers that admitted all of its receipts',async()=>{
+  const f=fixture(),directory=await mkdtemp(`${scratch}/committee-late-segment-`),tip='100',hash=hashAt(100);
+  const receipts=['7','8'].map(sequence=>({network,gateway,tip,hash,sequence,batch:'3',agent:r.hash('agent'+sequence)}));
+  const context={network,tip,hash,segment:'0',previous:null,ruleset:'dmw-v2',settingsRevision:'1',settingsHash:r.hash('settings')};
+  const seal=r.sealReceiptSegment(receipts,context,gatewaySecret);
+  const reads={...f.reads,tip:async()=>({tip:'103',highestTip:'103'}),receiptObservation:async()=>({seal,receipts})};
+  const server=createServer(async(req,res)=>{for await(const _ of req){};res.end(JSON.stringify({public:f.publicKey,retired:false,epoch:1}));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let signer;
+  const signerFor=async(m,admitted)=>{
+    const dir=`${directory}/${m.id}`;await mkdir(dir,{recursive:true,mode:0o700});
+    const journal=await new Journal(`${dir}/signed.log`,'disposable-late-key',network,m.id).load();
+    for(const receipt of admitted)await journal.append('receipt-admission',{receipt,vote:{signer:m.id}});await journal.close();
+    return createSigner({directory:dir,network,id:m.id,epoch:1,members:witnesses,gateway,sidecar:`http://127.0.0.1:${server.address().port}`},
+      {journalKey:'disposable-late-key',sidecarToken:'disposable-local-token',identity:r.bytesToHex(m.secret)},reads);
+  };
+  try{
+    const votes=[];
+    for(const m of witnesses.slice(0,3)){signer=await signerFor(m,receipts);votes.push(await signer.handle('/attest-root',{tip,hash,segment:'0'}));await signer.close();signer=null;}
+    assert.ok(votes.every(v=>v.observedTip==='100'));
+    assert.equal(r.verifySegmentAttestations(seal,votes,witnesses.map(({id,identity})=>({id,identity}))),true);
+    signer=await signerFor(witnesses[3],receipts.slice(0,1));
+    await assert.rejects(signer.handle('/attest-root',{tip,hash,segment:'0'}),/receipt_attestation_late/);
+  }finally{await signer?.close();await new Promise(resolve=>server.close(resolve));}
+});
+test('after a reorg the canonical block at a witnessed height gets its own witness; other blocks stay refused',async()=>{
+  const f=fixture(),directory=await mkdtemp(`${scratch}/committee-reorg-`),tip='100',m=witnesses[0];
+  const context=hash=>({network,tip,hash,segment:'0',previous:null,ruleset:'dmw-v2',settingsRevision:'1',settingsHash:r.hash('settings')});
+  let clock='100',canonical=hashAt(100),seal=r.sealReceiptSegment([],context(hashAt(100)),gatewaySecret);
+  const reads={...f.reads,tip:async()=>({tip:clock,highestTip:clock}),receiptObservation:async()=>({seal,receipts:[]}),financialCanonicalBitcoinHash:async()=>canonical};
+  const server=createServer(async(req,res)=>{for await(const _ of req){};res.end(JSON.stringify({public:f.publicKey,retired:false,epoch:1}));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let signer;
+  const config={directory,network,id:m.id,epoch:1,members:witnesses,gateway,sidecar:`http://127.0.0.1:${server.address().port}`};
+  try{
+    signer=await createSigner(config,{journalKey:'disposable-reorg-key',sidecarToken:'disposable-local-token',identity:r.bytesToHex(m.secret)},reads);
+    const first=await signer.handle('/attest-root',{tip,hash:hashAt(100),segment:'0'});
+    clock='104';seal=r.sealReceiptSegment([],context(r.hash('stale-fork')),gatewaySecret);
+    await assert.rejects(signer.handle('/attest-root',{tip,hash:r.hash('stale-fork'),segment:'0'}),/receipt_root_conflict/);
+    canonical=r.hash('reorg');seal=r.sealReceiptSegment([],context(canonical),gatewaySecret);
+    const replaced=await signer.handle('/attest-root',{tip,hash:canonical,segment:'0'});
+    assert.equal(replaced.segmentHash,r.receiptSegmentHash(seal));
+    await signer.close();signer=await createSigner(config,{journalKey:'disposable-reorg-key',sidecarToken:'disposable-local-token',identity:r.bytesToHex(m.secret)},reads);
+    assert.deepEqual(await signer.handle('/attest-root',{tip,hash:canonical,segment:'0'}),replaced);
+    seal=r.sealReceiptSegment([],context(hashAt(100)),gatewaySecret);
+    assert.deepEqual(await signer.handle('/attest-root',{tip,hash:hashAt(100),segment:'0'}),first);
+  }finally{await signer?.close();await new Promise(resolve=>server.close(resolve));}
+});
 test('discovery indexes extend existing vectors and invalidate a rewritten boundary',()=>{
   const p={name:'dmwone',pat:'1',fld:4,dt:'n'},q={name:'dmwtwo',pat:'2',fld:4,dt:'n'};
   let reads=0,changed=false;const history={length:102,field:n=>{reads++;return String(n);},get:n=>({hash:changed&&n===99?r.hash('fork'):hashAt(n)})};

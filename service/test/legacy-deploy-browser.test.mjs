@@ -18,7 +18,7 @@ test('public policy uses the same execution-height gate and operator settings', 
   counted = r.LEGACY_DEPLOY_SHARE_HEIGHT;
   assert.deepEqual((await view.statusV2()).legacyDeployShare, { active: true, shareBps: 1000, payoutMinAtoms: '1000000000000000000', cutoff: '973675' });
 });
-test('About, fee split and payout tables display the share using their existing components', async t => {
+test('About, fee split, payout tables and the mint page no longer show the older deployment share', async t => {
   const id = 'a'.repeat(64), address = '1BitcoinEaterAddressDontSendf59kuE';
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, 'http://local').pathname;
@@ -50,38 +50,36 @@ test('About, fee split and payout tables display the share using their existing 
   await page.evaluate(async () => {
     const { mount } = await import('/playground/console/js/views/about.js');
     window.stopView = mount(document.querySelector('main'));
-    window.shareNode = document.querySelector('[data-legacy-deploy-share]');
-  });
-  await page.getByText('The older deployment share is inactive.', { exact: true }).waitFor();
-  await page.evaluate(async () => {
     const { bus } = await import('/playground/console/js/api.js');
     bus.emit('status', { legacyDeployShare: { active: true, shareBps: 1000, payoutMinAtoms: '1000000000000000000', cutoff: '973675' } });
   });
-  assert.match(await page.locator('[data-legacy-deploy-share]').innerText(), /10 %.*from the burn.*before block 973675.*at least 1 TAP/);
-  assert.equal(await page.evaluate(() => window.shareNode === document.querySelector('[data-legacy-deploy-share]')), true);
+  await page.locator('article.about').waitFor();
+  assert.equal(await page.locator('[data-legacy-deploy-share]').count(), 0);
+  assert.doesNotMatch(await page.locator('main').innerText(), /older deploy/i);
   await page.evaluate(async () => {
     window.stopView(); const { splitTable } = await import('/playground/console/js/money.js');
     document.querySelector('main').replaceChildren(splitTable({ finder: '300', landowner: '150', discoverer: '50', burn: '100', treasury: '300', legacyDeploy: '100' }));
   });
-  const shareRow = page.getByRole('row').filter({ hasText: 'Older deploy holders' });
-  await shareRow.waitFor(); assert.match(await shareRow.innerText(), /10\.00 %.*payout ledger/s);
+  await page.getByRole('row').filter({ hasText: 'Treasury' }).waitFor();
+  assert.doesNotMatch(await page.locator('main').innerText(), /older deploy/i);
   await page.evaluate(async () => {
     const { site } = await import('/playground/console/js/api.js'); site.public = true;
     const { mount } = await import('/playground/console/js/views/results.js');
     document.querySelector('main').replaceChildren(); window.stopView = mount(document.querySelector('main'), { tab: 'owed' });
   });
-  await page.getByRole('cell', { name: 'Older deploy holder', exact: true }).waitFor();
+  await page.getByRole('tab', { name: /Unsettled records/ }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('main')?.innerText.includes('Loading'));
+  assert.equal(await page.getByRole('cell', { name: 'Older deploy holder', exact: true }).count(), 0);
   await page.getByRole('tab', { name: /Payment recipients/ }).click();
-  await page.getByText('0.1 TAP · payout from 1 TAP', { exact: true }).waitFor();
+  await page.getByText('0.1 TAP', { exact: true }).first().waitFor();
+  assert.doesNotMatch(await page.locator('main').innerText(), /payout from|older deploy/i);
   await page.evaluate(() => window.stopView());
   await page.evaluate(async id => {
     const { mount } = await import('/playground/console/js/inscribe/public.js');
     window.stopView = mount(document.querySelector('main'), { id });
   }, id);
-  const shareText = "0.1 TAP from this mint's burn is held in treasury for older deploy holders and paid through the payout ledger.";
-  await page.getByText(shareText, { exact: false }).waitFor().catch(async error => assert.fail(error.message + '\n' + await page.locator('main').innerText()));
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  assert.equal((await page.locator('.lead-text').innerText()).split(shareText).length, 2);
+  await page.locator('.lead-text').waitFor();
+  assert.doesNotMatch(await page.locator('main').innerText(), /older deploy|payout ledger/i);
   await page.evaluate(() => window.stopView());
   assert.deepEqual(errors, []);
 });

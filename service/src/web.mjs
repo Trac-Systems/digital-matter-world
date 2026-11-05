@@ -5,7 +5,7 @@ import { handleBulkMintHTTP } from './bulk-mint-http.mjs';
 import { handlePublicBulkMintHTTP } from './public-bulk-mint-http.mjs';
 const root = new URL('../public/web/', import.meta.url);
 const consoleRoot = new URL('../../playground/console/', import.meta.url), tracAddress = new URL('../../rules/src/trac-address.js', import.meta.url);
-const assets = new Map(['app.js', 'data.js', 'records.js', 'wallets.js', 'connect.js', 'money.js', 'ticker-deploy.js'].map(name => ['/web/' + name, new URL(name, root)]));
+const assets = new Map(['app.js', 'data.js', 'records.js', 'picks.js', 'picks-data.js', 'wallets.js', 'connect.js', 'money.js', 'ticker-deploy.js'].map(name => ['/web/' + name, new URL(name, root)]));
 assets.set('/web/amount-format.js', new URL('js/amount-format.js', consoleRoot));
 assets.set('/web/trac-address.js', tracAddress);
 assets.set('/playground/console/js/requester-storage.js', new URL('js/requester-storage.js', consoleRoot));
@@ -27,11 +27,13 @@ assets.set('/rules/src/ticker-grammar.js', new URL('../../rules/src/ticker-gramm
 const styles = new Map([['/web/console/console.css', ['text/css; charset=utf-8', new URL('console.css', consoleRoot)]],
   ...['fraunces-latin-wght-normal', 'atkinson-hyperlegible-next-latin-wght-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal']
     .map(name => [`/web/console/fonts/${name}.woff2`, ['font/woff2', new URL(`fonts/${name}.woff2`, consoleRoot)]])]);
-const pages = /^\/(?:about|explore|feed|blocks|patterns|table|compounds|agents(?:\/trac1[a-z0-9]+)?|records(?:\/batches\/\d+)?|results(?:\/(?:mints|payments|ethereum|payouts|owed|paid|links|treasury|burn))?|block\/\d+|plot\/\d+|pattern\/(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))|compound\/(?:[a-z0-9]{1,24}|c2:[0-9a-f]{64})|events\/\d+|mint(?:\/(?:[0-9a-f]{64}|[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64}))?|link(?:\/[0-9a-f]{64})?|bind-payout(?:\/[0-9a-f]{64})?)\/?$/;
+// Data files the site's editors change in place: read on every request, so a new version shows without a restart.
+const dataFiles = new Map([['/web/data/editors-picks.json', new URL('data/editors-picks.json', root)]]);
+const pages = /^\/(?:about|editors-picks|explore|feed|blocks|patterns|table|compounds|agents(?:\/trac1[a-z0-9]+)?|records(?:\/batches\/\d+)?|results(?:\/(?:mints|payments|ethereum|payouts|owed|paid|links|treasury|burn))?|block\/\d+|plot\/\d+|pattern\/(?:[a-z0-9]{1,24}|p2:(?:0|[1-9][0-9]*))|compound\/(?:[a-z0-9]{1,24}|c2:[0-9a-f]{64})|events\/\d+|mint(?:\/(?:[0-9a-f]{64}|[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64}))?|link(?:\/[0-9a-f]{64})?|bind-payout(?:\/[0-9a-f]{64})?)\/?$/;
 // Shared by the worker dispatcher; keep content negotiation in one place.
 export function staticWebRequest(req) {
   const path = new URL(req.url, 'http://localhost').pathname;
-  return ['GET', 'HEAD'].includes(req.method) && (assets.has(path) || styles.has(path) ||
+  return ['GET', 'HEAD'].includes(req.method) && (assets.has(path) || styles.has(path) || dataFiles.has(path) ||
     (path === '/' || pages.test(path) || /^\/mint\/bulk\/[0-9a-f]{64}$/.test(path)) &&
     (path === '/' || req.headers.accept?.includes('text/html')));
 }
@@ -42,6 +44,12 @@ export function createWeb(checkout) {
     if (path === '/' || pages.test(path) || bulkPage) res.setHeader('Vary', 'Accept');
     const send = (type, value) => { res.setHeader('Content-Type', type); res.setHeader('Cache-Control', 'no-store'); res.end(req.method === 'HEAD' ? undefined : value); };
     if (['GET', 'HEAD'].includes(req.method) && assets.has(path)) { send('text/javascript; charset=utf-8', await readFile(assets.get(path))); return true; }
+    if (['GET', 'HEAD'].includes(req.method) && dataFiles.has(path)) {
+      let value;
+      try { value = JSON.stringify(JSON.parse(await readFile(dataFiles.get(path), 'utf8'))); }
+      catch { res.statusCode = 503; value = JSON.stringify({ error: 'data_unavailable' }); }
+      send('application/json', value); return true;
+    }
     if (['GET', 'HEAD'].includes(req.method) && styles.has(path)) { const [type, file] = styles.get(path); send(type, await readFile(file)); return true; }
     if (['GET', 'HEAD'].includes(req.method) && (path === '/' || pages.test(path) || bulkPage) && (path === '/' || req.headers.accept?.includes('text/html'))) {
       res.setHeader('Vary', 'Accept'); res.setHeader('Referrer-Policy', 'no-referrer');

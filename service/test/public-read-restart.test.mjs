@@ -47,7 +47,8 @@ test('million-header legacy migration and restart read only changed/sparse heade
   const get = history.get.bind(history); history.get = h => { historyReads++; return get(h); };
   let start = performance.now(); await views.readIndex.sync();
   const migrationMs = performance.now() - start;
-  assert.equal(historyReads, 32, 'only find-bearing blocks need missing legacy timestamps');
+  assert.equal(historyReads, 0, 'missing legacy timestamps are resolved by the writer');
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM publicReadHeaderFields').get().n, 32, 'only find-bearing blocks need missing legacy timestamps');
   assert.equal(views.readIndex.length, length);
   assert.equal(views.readIndex.ready, true);
   const before = await createPublicAPI({ views }).read('/finds?limit=5');
@@ -100,7 +101,7 @@ test('million-header legacy migration and restart read only changed/sparse heade
 });
 
 test('persistent projections preserve small-chain outputs, offline changes, reorgs and retry after a failed refresh', async t => {
-  const directory = await temp('read-restart-small-'); let store = await Store.open(directory);
+  const directory = await temp('read-restart-small-'); let store = await Store.openForMaintenance(directory);
   t.after(async () => { await store?.close(); await rm(directory, { recursive: true, force: true }); });
   let history = new History(store); const source = fixtureHistory(24);
   await history.appendMany(0, Array.from({ length: source.length }, (_, h) => source.raw(h)));
@@ -112,12 +113,12 @@ test('persistent projections preserve small-chain outputs, offline changes, reor
   const oracle = createPublicAPI({ views: rawViews });
   for (const path of paths) assert.deepEqual(await api.read(path), await oracle.read(path), path);
   const expected = await api.read('/finds');
-  await store.close(); store = await Store.open(directory); history = new History(store);
+  await store.close(); store = await Store.openForMaintenance(directory); history = new History(store);
   let calls = 0;
   // Write before reconstructing the read index, then prove the persisted queue
   // catches both an upsert and a deletion across another close/open.
   await store.put('minted', 'p0/2', 'inscription');
-  await store.close(); store = await Store.open(directory); history = new History(store);
+  await store.close(); store = await Store.openForMaintenance(directory); history = new History(store);
   const get = history.get.bind(history); history.get = h => { calls++; return get(h); };
   const reads = fixtureReads(history);
   views = new PublicViews({ store, history, reads });
@@ -156,7 +157,7 @@ test('persistent projections preserve small-chain outputs, offline changes, reor
 });
 
 test('legacy pattern feed migration imports derived rows without historical header reads', async t => {
-  const directory = await temp('read-feed-import-'), store = await Store.open(directory);
+  const directory = await temp('read-feed-import-'), store = await Store.openForMaintenance(directory);
   t.after(async () => { await store.close(); await rm(directory, { recursive: true, force: true }); });
   const history = fixtureHistory(24), files = new Files(join(directory, 'static'));
   await store.put('meta', 'patterns', patterns);

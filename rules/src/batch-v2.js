@@ -29,13 +29,22 @@ import { advanceClaimWindow, ClosureBudget } from './claim-closure.js';
 import { claimsNeverCloseActive } from './public-mint.js';
 import { mergeCompoundCatalogV4 } from './compound-merge-v4.js';
 import { publicMintEvidenceReader, applyPublicClaimScan } from './public-claims.js';
+import { accountRevisionMap } from './account-revisions.js';
 
 export function processBlockV2(input, readers = {}) {
   const settings = batchSettings(input.settings);
   let deliveryRows = input.deliveryRows ?? settings.settlementPageRows * settings.settlementPagesPerObservation;
+  const requestedRows = deliveryRows;
   assert(Number.isSafeInteger(deliveryRows) && (deliveryRows > 0 || deliveryRows === 0 && input.entries.some(e => ['craft-v2', 'transfer-v2'].includes(e.move.t))) && deliveryRows <= settings.settlementPageRows * settings.settlementPagesPerObservation, 'settlement_delivery_budget');
   for (;;) {
-    try { return processBlockV2Attempt(input, deliveryRows, readers); }
+    try {
+      const output = processBlockV2Attempt(input, deliveryRows, readers);
+      // Account proofs are attached after planning. Replay must start at the
+      // same allowance or it can derive larger credits before reaching the
+      // audit check that originally reduced delivery. This is transport
+      // metadata only; the audit, state and signed batch remain unchanged.
+      return deliveryRows === requestedRows ? output : { ...output, deliveryRows };
+    }
     catch (error) {
       if (error.message !== 'audit_budget' || deliveryRows === 0 || deliveryRows === 1 && !input.entries.some(e => ['craft-v2', 'transfer-v2'].includes(e.move.t))) throw error;
       deliveryRows = deliveryRows === 1 ? 0 : Math.max(1, Math.floor(deliveryRows / 2));
@@ -94,6 +103,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     patterns = { get(number) { const key = namedGet(named.records, `number/${number}`), record = key && namedGet(named.records, `pattern/${key}`); return record && record; } };
   }
   const craftCatalog = named;
+  const accountRevisions = input.accountRevisions === undefined ? undefined : accountRevisionMap(entries, input.accountRevisions);
   if (clock.compare(tip, state.lastTip ?? clock.add(tip, -1)) > 0) next.rounds.push({ ...claimRound(tip, tipHash, clock.min(height, tip), {
     root: state.catalogRoot ?? merkleRoot([]), nextNumber: named?.nextPattern ?? state.nextPatternNumber ?? (Array.isArray(patterns) ? patterns.length : 0),
     revision: named?.catalogRevision ?? state.catalogRevision ?? 0,
@@ -150,7 +160,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
       assert(s.document, 'batch_settings');
       const replayed = replayNamedEntries(named, { entries: [{ move, receipt }], settings: receiptDocument, settingsHistory,
         batch: decimalV2(input.batchSequence), gateway, history, hashAt, counted: decimalV2(height), executionHeight: decimalV2(input.executionHeight ?? height), lastSequence: namedSequence, craftCatalog, renewal: input.renewal,
-        claimSettings: s.document });
+        claimSettings: s.document, accountRevisions });
       named = replayed.state; namedSequence = replayed.lastSequence; next.namedSequence = namedSequence;
       const result = replayed.outcomes[0];
       if (result.transfers) transfers.push(...result.transfers.map(t => ({ ...t, move: receipt.move })));
@@ -222,6 +232,7 @@ function processBlockV2Attempt(input, deliveryRows, readers) {
     ...(publicClaims ? { publicMintEvidence: publicClaims.rows() } : {}),
     discovery: { work: [], queued: 0, rejected: [] }, discoveries, crafts, ...(transfers.length ? { transfers } : {}), ...(refinements.length ? { refinements } : {}), commissions: [], mintOperations: [], mintOutcomes: [], linkOperations: [], linkOutcomes: [], ops: budget.operations(),
     ...(s.document ? { settingsHash: s.settingsHash, batchSequence: decimalV2(input.batchSequence), catalogRoot: next.catalogRoot } : {}),
+    ...(accountRevisions ? { accountRevisions: input.accountRevisions } : {}),
     ...(input.renewal ? { renewal: input.renewal.id, renewalCursor: input.renewal.cursor } : {}) };
   const savedClaims = claims?.save(next);
   if (savedClaims) { file.claimPrevious = state.claimRoot; file.claimRoot = savedClaims.state.claimRoot; }

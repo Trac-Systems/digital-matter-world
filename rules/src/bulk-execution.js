@@ -47,7 +47,7 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
   if (t.type === 'reserve-many') {
     const terms = t.terms; validateBulkFees(terms, e.feeManifest);
     assert(exactKeys(e, ['version', 'requestId', 'terms', 'feeManifest', 'feeAuthorization', 'owner', 'asset', 'amount', 'receiver', 'payer',
-      'rail', 'capacity', 'generationCapacity', 'members', 'expiry', 'settingsHash']) && e.version === 1 &&
+      'rail', 'capacity', 'generationCapacity', 'members', 'expiry', 'settingsHash', ...(e.deployerPayment ? ['deployerPayment'] : [])]) && e.version === 1 &&
       same(e.terms, terms) && e.owner === terms.owner && e.asset === terms.asset && e.amount === terms.totalAmount &&
       e.receiver === terms.receiver && e.payer === terms.payer && e.rail === 'tap' && e.settingsHash === terms.settingsHash && e.expiry === terms.expires &&
       exactKeys(e.feeAuthorization, ['network', 'quote', 'id', 'until', 'counted', 'at', 'signature']) &&
@@ -64,6 +64,13 @@ export async function bulkFinancialPlan({ transition: t, evidence: e }, { read, 
       m.memberId === bulkMemberId(t.id, i) && m.block === terms.members[i].block && m.amount === terms.members[i].amount &&
       m.find?.asset === terms.asset && String(m.find.block) === m.block && String(m.find.count) === m.amount &&
       m.deployment?.id === terms.deployment && m.deployment.tick === terms.ticker && m.deployment.kind === 'dmt'), 'bulk_reservation_members');
+    if (e.deployerPayment) {
+      const side = e.deployerPayment;
+      assert(exactKeys(side, ['to', 'amount', 'dta']) && typeof side.to === 'string' && side.to !== terms.payer &&
+        bulkUint(side.amount) && BigInt(side.amount) > 0n && side.dta === `dmw-bulk-deployer-v1|${t.id}` &&
+        e.feeManifest.every(m => m.deferred.deployer === '0' && m.deferred.legacyDeploy === '0') &&
+        e.members.every(m => !m.deployer && !m.legacyDeploy), 'bulk_deployer_payment');
+    }
     const c = e.capacity, g = e.generationCapacity, registered = await read('fd/' + terms.generation);
     assert(exactKeys(c, ['deployment', 'asset', 'amount', 'block', 'remaining', 'limit', 'supplyScope']) &&
       exactKeys(g, ['deployment', 'reserved', 'minted', 'maximum']) && c.deployment === terms.deployment && c.asset === terms.asset && c.amount === terms.totalAmount && c.block === null &&

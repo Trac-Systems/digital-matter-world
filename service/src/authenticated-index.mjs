@@ -7,9 +7,9 @@ export const EMPTY_ROOT = hash('dmw-evidence-map-v2/empty');
 const nodeHash = (key, valueHash, left, right) => hash(JSON.stringify(['dmw-evidence-map-v2', key, valueHash, left, right]));
 export const evidenceKey = (space, id) => Buffer.from(space).toString('hex') + '/' + Buffer.from(String(id)).toString('hex');
 export class AuthenticatedIndex {
-  constructor(db) {
+  constructor(db, { initialize = true } = {}) {
     this.db = db;
-    db.exec('CREATE TABLE IF NOT EXISTS evidence_nodes(key TEXT PRIMARY KEY,valueHash TEXT NOT NULL,l TEXT,r TEXT,height INTEGER NOT NULL,hash TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS evidence_root(id INTEGER PRIMARY KEY,key TEXT); INSERT OR IGNORE INTO evidence_root VALUES(1,NULL)');
+    if (initialize) db.exec('CREATE TABLE IF NOT EXISTS evidence_nodes(key TEXT PRIMARY KEY,valueHash TEXT NOT NULL,l TEXT,r TEXT,height INTEGER NOT NULL,hash TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS evidence_root(id INTEGER PRIMARY KEY,key TEXT); INSERT OR IGNORE INTO evidence_root VALUES(1,NULL)');
     this.read = db.prepare('SELECT * FROM evidence_nodes WHERE key=?');
     this.write = db.prepare('INSERT OR REPLACE INTO evidence_nodes VALUES(?,?,?,?,?,?)');
   }

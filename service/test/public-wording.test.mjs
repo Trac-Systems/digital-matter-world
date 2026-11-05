@@ -56,7 +56,7 @@ function read(input) {
 }
 const routes = ['/', '/explore', '/blocks', '/block/7', '/plot/7', '/table', '/patterns', '/compounds', '/pattern/p0', '/compound/c1', '/agents', '/agents/' + owner, '/feed', '/events/1', '/results',
   ...['mints', 'payments', 'ethereum', 'payouts', 'owed', 'paid', 'links', 'treasury', 'burn'].map(k => '/results/' + k),
-  '/records', '/records/batches/1', '/explore?collection=/finds&key=finds', '/explore?collection=/results/mints&key=mints',
+  '/records', '/records/batches/1', '/editors-picks', '/explore?collection=/finds&key=finds', '/explore?collection=/results/mints&key=mints',
   ...['mint', 'link', 'bind-payout'].flatMap(k => ['/' + k, '/' + k + '/' + id]), '/operator'];
 
 test('display projection removes connection metadata without altering signed input or payment terms', () => {

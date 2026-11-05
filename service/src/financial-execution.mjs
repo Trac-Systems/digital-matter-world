@@ -14,6 +14,7 @@ import { publicMintAcceptedWrites } from './public-mints.mjs';
 import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs';
 import { paymentTiming } from '../../rules/src/payment-timing.js';
 import { surplusCreditId } from '../../contract/payment-pages.js';
+import { warmFinancialRegistry } from './financial-registry.mjs';
 const nonceReservation = t => t?.type === 'reserve-many' && t.action?.type === 'reserve-n' || singleNonceReservation(t);
 // These source results invalidate an earlier local full-payment observation.
 // HTTP/snapshot failures alone do not establish that confirmed money vanished.
@@ -45,6 +46,8 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
       (at.revision === undefined || at.revision === snapshot.revision) && (at.tipHash === undefined || at.tipHash === snapshot.tipHash), 'financial_snapshot_changed');
     at = snapshot;
   }
+  try { await warmFinancialRegistry(reads, transitions, at); }
+  catch (error) { if (!defer || error.message !== 'host_registry_warming') throw error; }
   const execution = new AccountExecution({ store, document, height, read: typeof reads.financialRecord === 'function' ? key => reads.financialRecord(key, at) : undefined });
   const reservations = new Map(store.financialReservations ?? []);
   const sources = reads.financialScope?.({ record: key => execution.getAsync(key), reservations }) ?? reads;

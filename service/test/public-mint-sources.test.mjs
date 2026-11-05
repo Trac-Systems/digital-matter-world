@@ -113,7 +113,7 @@ test('historical signed intent bytes and legacy scan fences survive the new read
 for (const [legacyPolicy, digest] of [[true, '7d82a0e6fb7e4eea275e40e44b8ebc82d75e251200cebc0260bb122081002fbc'],
   [false, 'b178941489e014472ede30610e97e49fb7ad1caf64840ae101e7db4433bd03fc']]) {
   test(`historical public quote and payment scan retain their canonical bytes; legacy policy=${legacyPolicy}`, async () => {
-    const f = fixture({ legacyPolicy }); f.context.publicClaims.unsettled = false;
+    const f = fixture({ retainedQuotes: true, legacyPolicy }); f.context.publicClaims.unsettled = false;
     const quote = await f.reads.publicMintQuote(f.input); f.pay(quote);
     assert.equal(r.hashObject({ quote, scan: await f.scan() }), digest);
   });
@@ -331,7 +331,7 @@ test('flat gross public fee preserves payer self-share omission', async () => {
 
 for (const opaque of [false, true]) test(`public pattern quotes and independently verified settlement retain the legacy share; opaque=${opaque}`, async () => {
   const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
-  const f = fixture({ bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
+  const f = fixture({ retainedQuotes: true, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
     ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
   f.setHeight(String(BigInt(r.LEGACY_DEPLOY_SHARE_HEIGHT) - 1n));
   const before = await f.reads.publicMintQuote(f.input);
@@ -370,7 +370,7 @@ for (const opaque of [false, true]) test(`public pattern quotes and independentl
 
 for (const opaque of [false, true]) test(`public deployer share retains rewards and verifies the chosen inscription holder; opaque=${opaque}`, async () => {
   const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
-  const f = fixture({ deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
+  const f = fixture({ retainedQuotes: true, deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
     ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
   f.setHeight(String(BigInt(r.LEGACY_DEPLOY_SHARE_HEIGHT) - 1n));
   const before = await f.reads.publicMintQuote(f.input);
@@ -442,7 +442,7 @@ for (const opaque of [false, true]) test(`public selected ticker binds its deplo
 
 for (const opaque of [false, true]) test(`independent ticker public batch pays all rewards and each deploy holder; opaque=${opaque}`, async () => {
   const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
-  const f = fixture({ deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee,
+  const f = fixture({ retainedQuotes: true, deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee,
     feeSettings: flatSettings, bitmapMintOpenHeight: '100', ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
   let height = r.PER_TICKER_SUPPLY_HEIGHT; f.setHeight(height);
   const official = f.context.deployment, extra = { ...official, id: r.hash('independent-extra') + 'i0', tick: 'independent', officialDeployment: official.id };
@@ -567,4 +567,23 @@ test('public confirmation allowance is inclusive and follows the quoted settings
     assert.equal(scan.payments[0].complete, blocks === 3);
     if (blocks === 4) assert.equal(scan.payments[0].refusal, 'quote_expired');
   }
+});
+
+for (const opaque of [false, true]) test(`new public quotes pay the deployment holder with no deferred shares; opaque=${opaque}`, async () => {
+  const [element] = Object.entries(r.LEGACY_DEPLOY_MANIFEST.elements).find(([, rows]) => rows.length === 156);
+  const f = fixture({ deployerShareBps: 500, bitcoinNetwork: 'mainnet', legacyElement: element, baseFee: flat.baseFee, feeSettings: flatSettings,
+    ...(opaque ? { publicPaymentV2Height: '100' } : {}) });
+  f.setHeight(r.MULTI_TICKER_HEIGHT);
+  const q = await f.reads.publicMintQuote(f.input), gross = BigInt(flat.baseFee), holder = (await f.reads.deploymentHolders([q.deployment.id]))[0].address;
+  assert.equal(q.fees.find(f => f.role === 'deployer').to, holder);
+  assert.equal(q.split.deployer, String(gross * 500n / 10000n));
+  assert.equal(q.split.burn, String(gross * 3000n / 10000n));
+  assert.equal(q.split.legacyDeploy, undefined);
+  const self = await f.reads.publicMintQuote({ ...f.input, tapAddress: holder });
+  assert.equal(self.fees.some(f => f.role === 'deployer'), false);
+  if (opaque) { await f.register(q); f.setHeight(r.nextUint(r.MULTI_TICKER_HEIGHT)); }
+  const reference = f.pay(q); if (opaque) await f.reveal(q, reference);
+  const result = await f.settle(), winner = result.payments.find(p => p.complete);
+  assert.ok(winner); assert.equal(winner.source.deployer, undefined); assert.equal(winner.source.legacyDeploy, undefined);
+  assert.equal(winner.source.feeItems.find(f => f.role === 'deployer').to, holder);
 });

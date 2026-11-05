@@ -60,6 +60,7 @@ export function route(path) {
   if (p === '/agents') return { kind: 'agents' };
   if (p === '/feed') return { kind: 'feed' };
   if (p === '/records') return { kind: 'records' };
+  if (p === '/editors-picks') return { kind: 'picks' };
   if ((m = /^\/results(?:\/([a-z]+))?$/.exec(p))) return { kind: 'results', collection: m[1] };
   return { kind: 'missing' };
 }

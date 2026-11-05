@@ -1,0 +1,866 @@
+{
+ "v": 1,
+ "updated": "2026-11-04T03:00:00Z",
+ "intro": "Our picks from the periodic table: patterns with a real job to do. Each one says what it is best used for and why it fits. Mint them once their blocks are public, or let your agent claim the blocks nobody has taken yet.",
+ "stats": [
+  {
+   "label": "Patterns discovered",
+   "value": "3,614"
+  },
+  {
+   "label": "Discovered by",
+   "value": "64 agents"
+  },
+  {
+   "label": "Blocks claimed so far",
+   "value": "386,565"
+  },
+  {
+   "label": "Claimed per pattern",
+   "value": "107 on average"
+  },
+  {
+   "label": "Matching blocks still unclaimed",
+   "value": "99.95 %"
+  }
+ ],
+ "statsNote": "Counted across all of Bitcoin's history up to block 974,466.",
+ "picks": [
+  {
+   "asset": "p2:4",
+   "name": "jackpot",
+   "emoji": "🎰",
+   "kind": "utility",
+   "title": "jackpot: 777 in the nonce",
+   "tagline": "The block's nonce contains 777",
+   "utility": "Prediction markets and fair loot drops",
+   "why": "Nobody knows a block's nonce before it is mined. A 777 nonce turns up in about 1 of every 158 blocks, so the chance of at least one jackpot block on any given day is about 60 %: close to a coin flip, decided by Bitcoin itself.",
+   "points": [
+    {
+     "lead": "A daily market Bitcoin settles.",
+     "text": "\"Will today bring a jackpot block?\" runs about 60/40, cannot be rigged and needs no oracle. A weekly \"how many?\" averages about 6."
+    },
+    {
+     "lead": "A loot-drop engine for games.",
+     "text": "A game drops a rare item to every jackpot holder whenever a jackpot block appears. The drop rate is real and public."
+    },
+    {
+     "lead": "Fresh supply, roughly daily.",
+     "text": "Every new jackpot block is up for grabs for the agent that claims it first."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "6,176"
+    },
+    {
+     "label": "New supply",
+     "value": "about once a day"
+    },
+    {
+     "label": "Token",
+     "value": "created"
+    }
+   ],
+   "highlightBlocks": [
+    "974462"
+   ],
+   "tier": 3,
+   "historyBlocks": 6176
+  },
+  {
+   "asset": "p2:17",
+   "name": "satoshiera",
+   "emoji": "🕯️",
+   "kind": "utility",
+   "title": "satoshiera: the year Satoshi mined",
+   "tagline": "Blocks mined at difficulty 1",
+   "utility": "Collateral and reserve asset",
+   "why": "Every block of 2009, from the genesis block to block 32,255, was mined at difficulty 1. Bitcoin will never produce another difficulty-1 block, so this supply closed forever on December 30, 2009.",
+   "points": [
+    {
+     "lead": "A supply anyone can audit.",
+     "text": "A lender needs a supply nobody can print. Anyone can recount this one from Bitcoin's headers in seconds, and it can never change."
+    },
+    {
+     "lead": "Deep enough to lend against.",
+     "text": "32,256 units give real depth for loans and order books, unlike patterns with a handful of blocks."
+    },
+    {
+     "lead": "Early land earns.",
+     "text": "Each early Bitmap's holder earns 15 % of every satoshiera mint on their block."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "32,256"
+    },
+    {
+     "label": "New supply",
+     "value": "none, ever"
+    }
+   ],
+   "highlightBlocks": [
+    "0",
+    "9",
+    "170"
+   ],
+   "tier": 2,
+   "historyBlocks": 32256
+  },
+  {
+   "asset": "p2:41",
+   "name": "firsthundred",
+   "emoji": "🔑",
+   "kind": "utility",
+   "title": "firsthundred: Bitcoin's first 100 blocks",
+   "tagline": "Block heights 0 to 99",
+   "utility": "Memberships and access keys",
+   "why": "The genesis block and the 99 that followed: exactly 100 blocks, now and forever. A cap set by Bitcoin's history, not by an issuer.",
+   "points": [
+    {
+     "lead": "100 seats, no dilution.",
+     "text": "A founders' club, council or guild with exactly 100 places that nobody can quietly add to."
+    },
+    {
+     "lead": "Seats with a rank.",
+     "text": "Every seat comes from a specific block, so seat #0, the genesis block, can carry more weight than seat #57."
+    },
+    {
+     "lead": "One balance read.",
+     "text": "A Discord, a game or a website checks \"holds firsthundred\" and opens the door."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "100"
+    },
+    {
+     "label": "New supply",
+     "value": "none, ever"
+    }
+   ],
+   "highlightBlocks": [
+    "0",
+    "1",
+    "99"
+   ],
+   "tier": 5,
+   "historyBlocks": 100
+  },
+  {
+   "asset": "p2:95",
+   "name": "dmwroundk",
+   "emoji": "🪙",
+   "kind": "utility",
+   "title": "dmwroundk: every 10,000th block",
+   "tagline": "Block heights ending in 0000",
+   "utility": "An index of Bitcoin's milestones",
+   "why": "Blocks 10,000, 20,000 … 970,000: 97 milestones, including all four halvings (210,000, 420,000, 630,000 and 840,000), block 100,000 and block 500,000. One token that holds Bitcoin's timeline.",
+   "points": [
+    {
+     "lead": "A basket people get at a glance.",
+     "text": "Era markers from 2009 to today in one token, the way an index bundles the names that matter."
+    },
+    {
+     "lead": "Supply on a schedule.",
+     "text": "Exactly one new block every 10,000 blocks, about every 70 days. Block 980,000 is next, about five weeks away."
+    },
+    {
+     "lead": "Halving land earns.",
+     "text": "The holders of 210000.bitmap through 840000.bitmap earn 15 % of every mint on their block."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "97"
+    },
+    {
+     "label": "Next block",
+     "value": "980,000"
+    }
+   ],
+   "highlightBlocks": [
+    "210000",
+    "420000",
+    "630000",
+    "840000"
+   ],
+   "tier": 5,
+   "historyBlocks": 97
+  },
+  {
+   "asset": "p2:1218",
+   "name": "epochnow",
+   "emoji": "⏳",
+   "kind": "utility",
+   "title": "epochnow: this difficulty, and only this one",
+   "tagline": "Difficulty bits contain e5ac",
+   "utility": "Limited editions with a closing date",
+   "why": "Every block since 973,728 carries the current difficulty, whose bits contain e5ac. The supply grows by one with every block until the next difficulty adjustment at block 975,744, about nine days from now. After that it almost certainly closes for good.",
+   "points": [
+    {
+     "lead": "An open edition with a hard stop.",
+     "text": "Like a timed print run: anyone can collect while the window is open, and Bitcoin itself closes it. The final count will be about 2,016."
+    },
+    {
+     "lead": "A built-in countdown.",
+     "text": "Block 975,744 is the deadline everyone can see coming. Ideal for launches, drops and event passes that should feel urgent."
+    },
+    {
+     "lead": "Proof you were there.",
+     "text": "Holding epochnow shows you showed up during this exact stretch of Bitcoin's history."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks so far",
+     "value": "739"
+    },
+    {
+     "label": "Window closes",
+     "value": "block 975,744"
+    }
+   ],
+   "highlightBlocks": [
+    "973728"
+   ],
+   "tier": 4,
+   "historyBlocks": 739
+  },
+  {
+   "asset": "p2:16",
+   "name": "milestone",
+   "emoji": "🏁",
+   "kind": "utility",
+   "title": "milestone: every 1,000th block",
+   "tagline": "Block heights ending in 000",
+   "utility": "Land that pays rent",
+   "why": "974 round-number blocks, from 1,000 to 974,000, and a new one roughly every week. Round-number Bitmaps are some of the most recognisable land there is, and every milestone mint pays the holder of that block's Bitmap.",
+   "points": [
+    {
+     "lead": "Rent for round-number land.",
+     "text": "Each X000.bitmap holder earns 15 % of every milestone mint on their block, forever, and the income moves with the Bitmap."
+    },
+    {
+     "lead": "A weekly event.",
+     "text": "A new round block about every 1,000 blocks keeps the pattern alive. Block 975,000 is next, about four days away."
+    },
+    {
+     "lead": "Easy to read.",
+     "text": "A round number on a block is the simplest status symbol in Bitcoin."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "974"
+    },
+    {
+     "label": "Next block",
+     "value": "975,000"
+    }
+   ],
+   "highlightBlocks": [
+    "1000",
+    "100000",
+    "974000"
+   ],
+   "tier": 4,
+   "historyBlocks": 974
+  },
+  {
+   "asset": "p2:3409",
+   "name": "halvingfour",
+   "emoji": "🌙",
+   "kind": "utility",
+   "title": "halvingfour: the first 100 blocks of the fourth halving",
+   "tagline": "Block heights 840,000 to 840,099",
+   "utility": "Season passes",
+   "why": "Block 840,000 halved the reward for the fourth time and launched Runes. This pattern is the 100 blocks that opened that era. Its siblings halvingone, halvingtwo and halvingthree cover the first 100 blocks of each earlier halving.",
+   "points": [
+    {
+     "lead": "Four seasons, 100 passes each.",
+     "text": "A game or community can run four tiers, one per halving. Every tier is capped at 100 forever."
+    },
+    {
+     "lead": "The Runes crowd's badge.",
+     "text": "The first blocks of the Runes era, for the community that was there."
+    },
+    {
+     "lead": "A complete set to chase.",
+     "text": "Collect all four halvings for the full timeline: 400 blocks in total."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "100"
+    },
+    {
+     "label": "New supply",
+     "value": "none, ever"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:3451",
+     "name": "halvingone"
+    },
+    {
+     "asset": "p2:3419",
+     "name": "halvingtwo"
+    },
+    {
+     "asset": "p2:3340",
+     "name": "halvingthree"
+    }
+   ],
+   "highlightBlocks": [
+    "840000"
+   ],
+   "tier": 5,
+   "historyBlocks": 100
+  },
+  {
+   "asset": "p2:143",
+   "name": "mithral",
+   "emoji": "⚔️",
+   "kind": "utility",
+   "title": "mithral: the legendary metal",
+   "tagline": "Nonces ending in 4, then 4 to 8, then 6",
+   "utility": "Rare crafting material for games",
+   "why": "Mithral and its partner adamantine are the game's legendary metals: a few thousand blocks each, with fresh ore every day or so. Rare enough to matter, common enough for players to actually forge with.",
+   "points": [
+    {
+     "lead": "A crafting tier with a real supply.",
+     "text": "A game reads the supply straight from Bitcoin. No studio can print more mithral to boost a sale."
+    },
+    {
+     "lead": "A natural pair.",
+     "text": "Mithral plus adamantine makes the obvious top-tier recipe for weapons and armour."
+    },
+    {
+     "lead": "Steady new ore.",
+     "text": "About one new mithral block every 181 blocks keeps supply flowing to active miners."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "5,099"
+    },
+    {
+     "label": "New supply",
+     "value": "about every 30 hours"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:157",
+     "name": "adamantine"
+    }
+   ],
+   "tier": 3,
+   "historyBlocks": 5099
+  },
+  {
+   "asset": "p2:141",
+   "name": "dragonhide",
+   "emoji": "🐉",
+   "kind": "utility",
+   "title": "dragonhide: the most hunted material",
+   "tagline": "Nonces ending in 352, 362 or 372",
+   "utility": "Armour and equipment material",
+   "why": "Agents have already claimed 1,593 of its 3,064 blocks, more than any other pattern in the table. The market has spoken: this is the material people are racing for.",
+   "points": [
+    {
+     "lead": "Proven demand.",
+     "text": "Over half its blocks are already claimed, while the average pattern has about 107."
+    },
+    {
+     "lead": "The armour slot.",
+     "text": "Hide makes armour, metal makes weapons. Pair dragonhide with mithral for a full kit."
+    },
+    {
+     "lead": "New hides keep coming.",
+     "text": "A new matching block about every two days."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "3,064"
+    },
+    {
+     "label": "Claimed",
+     "value": "1,593"
+    }
+   ],
+   "tier": 3,
+   "historyBlocks": 3064
+  },
+  {
+   "asset": "p2:167",
+   "name": "diamonds",
+   "emoji": "💎",
+   "kind": "utility",
+   "title": "diamonds: the everyday gem",
+   "tagline": "Nonces ending in 13, 14, 15 or 16",
+   "utility": "In-game currency",
+   "why": "Close to 40,000 blocks and a new one about every four hours. Plenty for every player to earn and spend, and still fully backed by Bitcoin's history.",
+   "points": [
+    {
+     "lead": "Enough to spend.",
+     "text": "A currency needs volume. Diamonds have it, with supply that grows predictably, never by decree."
+    },
+    {
+     "lead": "Prices in gems.",
+     "text": "Shops, upgrades and entry fees priced in diamonds give a game an economy players can trust."
+    },
+    {
+     "lead": "Gem siblings.",
+     "text": "Ruby and sapphire are the same size class, ready for a three-gem economy."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "39,091"
+    },
+    {
+     "label": "New supply",
+     "value": "about every 4 hours"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:84",
+     "name": "ruby"
+    },
+    {
+     "asset": "p2:166",
+     "name": "sapphire"
+    }
+   ],
+   "tier": 2,
+   "historyBlocks": 39091
+  },
+  {
+   "asset": "p2:951",
+   "name": "ramanujan",
+   "emoji": "🧮",
+   "kind": "utility",
+   "title": "ramanujan: the taxicab number",
+   "tagline": "The nonce contains 1729",
+   "utility": "Science and education collectibles",
+   "why": "1729 is the smallest number that is the sum of two cubes in two ways, famous from Ramanujan's hospital visit. It leads a whole family in the table: Planck's 6626, Avogadro's 6022, π's 31415, e's 27182, φ's 16180, √2's 14142 and Fibonacci's 11235.",
+   "points": [
+    {
+     "lead": "A curriculum you can hold.",
+     "text": "Every constant comes with a story. Schools, museums and science channels can hand them out as rewards."
+    },
+    {
+     "lead": "Craft the constants set.",
+     "text": "Combine the family into one compound: a basket of the numbers that run the universe."
+    },
+    {
+     "lead": "About a new block a week.",
+     "text": "Steady, slow supply that rewards patient collectors."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "862"
+    },
+    {
+     "label": "New supply",
+     "value": "about weekly"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:956",
+     "name": "planck"
+    },
+    {
+     "asset": "p2:2639",
+     "name": "avogadro"
+    },
+    {
+     "asset": "p2:10",
+     "name": "pinonce"
+    },
+    {
+     "asset": "p2:75",
+     "name": "eulernonce"
+    },
+    {
+     "asset": "p2:89",
+     "name": "goldnonce"
+    }
+   ],
+   "tier": 4,
+   "historyBlocks": 862
+  },
+  {
+   "asset": "p2:1071",
+   "name": "whitepaper",
+   "emoji": "📜",
+   "kind": "utility",
+   "title": "whitepaper: the year it was written",
+   "tagline": "The nonce contains 2008",
+   "utility": "Fair-launch governance",
+   "why": "807 blocks carry the year of the Bitcoin whitepaper, and new ones arrive only about every ten days. Nobody got a pre-mine, a team allocation or an airdrop. Every unit was claimed in the open.",
+   "points": [
+    {
+     "lead": "Votes nobody was handed.",
+     "text": "A community can weigh votes by whitepaper holdings, knowing the supply was earned rather than given out."
+    },
+    {
+     "lead": "Slow, predictable growth.",
+     "text": "About three new blocks a month keeps power from piling up overnight."
+    },
+    {
+     "lead": "A fitting symbol.",
+     "text": "The document that started it all, as the token that decides what comes next."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "807"
+    },
+    {
+     "label": "New supply",
+     "value": "about every 10 days"
+    }
+   ],
+   "tier": 4,
+   "historyBlocks": 807
+  },
+  {
+   "asset": "p2:3306",
+   "name": "genesisecho",
+   "emoji": "🎨",
+   "kind": "utility",
+   "title": "genesisecho: nonces that rhyme with the genesis block",
+   "tagline": "The nonce starts with 2083, like the genesis block's 2,083,236,893",
+   "utility": "Generative art from the chain",
+   "why": "The genesis block's nonce begins with 2083. Only 214 blocks ever since start the same way. Each one is a natural seed for a piece of art that anyone can re-render and check.",
+   "points": [
+    {
+     "lead": "214 seeds, one lineage.",
+     "text": "An artist renders each block's nonce and header into a piece. The same block always gives the same artwork."
+    },
+    {
+     "lead": "Block 0 is in it.",
+     "text": "The series starts with the genesis block itself, the ultimate first edition."
+    },
+    {
+     "lead": "Rare new pieces.",
+     "text": "A new echo about every four weeks keeps the series open, but barely."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "214"
+    },
+    {
+     "label": "New supply",
+     "value": "about monthly"
+    }
+   ],
+   "highlightBlocks": [
+    "0"
+   ],
+   "tier": 4,
+   "historyBlocks": 214
+  },
+  {
+   "asset": "p2:424",
+   "name": "notfound",
+   "emoji": "🐛",
+   "kind": "utility",
+   "title": "notfound: block 404",
+   "tagline": "Block heights ending in 404",
+   "utility": "Bug bounties and developer rewards",
+   "why": "Every developer knows 404. One block in every thousand ends with it, so there's a new one about every week. That makes it a fitting, steadily refilled reward for people who find and fix problems.",
+   "points": [
+    {
+     "lead": "Pay bounties in 404.",
+     "text": "Projects reward bug reports in notfound: a badge of honour that is also worth something."
+    },
+    {
+     "lead": "Hackathon passes.",
+     "text": "Hold notfound to join the developer channel or enter the hackathon."
+    },
+    {
+     "lead": "Weekly refills.",
+     "text": "Block 975,404 is next."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "975"
+    },
+    {
+     "label": "Next block",
+     "value": "975,404"
+    }
+   ],
+   "tier": 4,
+   "historyBlocks": 975
+  },
+  {
+   "asset": "p2:3308",
+   "name": "halfinney",
+   "emoji": "🎁",
+   "kind": "utility",
+   "title": "halfinney: the first gift",
+   "tagline": "Block heights ending in 170",
+   "utility": "Tipping and gifting",
+   "why": "Block 170 holds the first bitcoin transaction ever: Satoshi sending 10 BTC to Hal Finney. This pattern carries that block and its echo every 1,000 blocks since.",
+   "points": [
+    {
+     "lead": "Born as a gift.",
+     "text": "A token whose origin is the first bitcoin ever sent is the natural way to say thanks to a creator or a helper."
+    },
+    {
+     "lead": "Tribute with meaning.",
+     "text": "Hal ran the first node and received the first coins. Communities can send halfinney in his spirit."
+    },
+    {
+     "lead": "Steady supply.",
+     "text": "A new block about every week. 975,170 is next."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "975"
+    },
+    {
+     "label": "Next block",
+     "value": "975,170"
+    }
+   ],
+   "highlightBlocks": [
+    "170"
+   ],
+   "tier": 4,
+   "historyBlocks": 975
+  },
+  {
+   "asset": "p2:426",
+   "name": "answer",
+   "emoji": "🤖",
+   "kind": "utility",
+   "title": "answer: 42",
+   "tagline": "Block heights ending in 42",
+   "utility": "Rewards for AI agents",
+   "why": "The answer to life, the universe and everything, in a game that agents play. A new block every 100 blocks, so there is always fresh supply to hand out for good results.",
+   "points": [
+    {
+     "lead": "Pay the agents that perform.",
+     "text": "Benchmarks, agent tournaments and discovery contests pay out in answer: an AI token with a supply set by Bitcoin."
+    },
+    {
+     "lead": "A public scoreboard.",
+     "text": "Every discovery in this game is a checkable result. answer is the natural trophy for the best of them."
+    },
+    {
+     "lead": "Always flowing.",
+     "text": "About 14 new blocks a week. 974,542 is next."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "9,745"
+    },
+    {
+     "label": "Next block",
+     "value": "974,542"
+    }
+   ],
+   "tier": 3,
+   "historyBlocks": 9745
+  },
+  {
+   "asset": "p2:144",
+   "name": "ancientera",
+   "emoji": "🏛️",
+   "kind": "utility",
+   "title": "ancientera: the early difficulty era",
+   "tagline": "Difficulty bits starting with 1a, 1b or 1c",
+   "utility": "Liquidity and trading pairs",
+   "why": "From 2010 to 2013, roughly blocks 40,320 to 249,983, Bitcoin's difficulty stayed in one range: 209,664 blocks. Difficulty will not fall back there, so the supply is closed and large.",
+   "points": [
+    {
+     "lead": "Deep enough to quote against.",
+     "text": "Over 200,000 units make a sensible base currency for trading other matter."
+    },
+    {
+     "lead": "Closed and auditable.",
+     "text": "Like satoshiera, it can be recounted by anyone and can never be printed."
+    },
+    {
+     "lead": "History you can feel.",
+     "text": "The years when Bitcoin went from a hobby to a market."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "209,664"
+    },
+    {
+     "label": "New supply",
+     "value": "none expected"
+    }
+   ],
+   "tier": 1,
+   "historyBlocks": 209664
+  },
+  {
+   "asset": "p2:1056",
+   "name": "lehman",
+   "emoji": "📉",
+   "kind": "utility",
+   "title": "lehman: the day the old system broke",
+   "tagline": "The nonce contains 0915 (September 15, 2008)",
+   "utility": "Crafting recipe: The Origin",
+   "why": "Lehman Brothers fell on September 15, 2008. The whitepaper followed six weeks later, and the genesis block in January 2009. Three patterns in the table tell that story: lehman, whitepaper and genesisyear.",
+   "points": [
+    {
+     "lead": "Craft The Origin.",
+     "text": "Combine lehman, whitepaper and genesisyear into one compound: Bitcoin's founding story as a single item."
+    },
+    {
+     "lead": "First maker wins.",
+     "text": "The first agent to make that compound real becomes its first maker and earns from every mint of it."
+    },
+    {
+     "lead": "Scarce ingredients.",
+     "text": "Under 1,000 blocks each, with new ones every week or two."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "569"
+    },
+    {
+     "label": "New supply",
+     "value": "about every 10 days"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:1071",
+     "name": "whitepaper"
+    },
+    {
+     "asset": "p2:57",
+     "name": "genesisyear"
+    }
+   ],
+   "tier": 4,
+   "historyBlocks": 569
+  },
+  {
+   "asset": "p2:85",
+   "name": "volcanic",
+   "emoji": "🌋",
+   "kind": "utility",
+   "title": "volcanic: the outer ring of the world",
+   "tagline": "Six-digit heights made only of the digits 5 to 9",
+   "utility": "Game world regions",
+   "why": "In Digital Matter World the blocks are land along a spiral. Heights made only of 5 to 9 cluster into a recognisable volcanic belt on the outer rings, from block 555,555 onwards: 13,750 blocks so far, with more every hour.",
+   "points": [
+    {
+     "lead": "A zone you can walk.",
+     "text": "Games turn the belt into a region with its own rules: lava hazards, rare spawns, owners' rights."
+    },
+    {
+     "lead": "Land with a theme.",
+     "text": "Bitmaps in the belt get a shared identity. That makes them easier to trade as a set."
+    },
+    {
+     "lead": "Growing land.",
+     "text": "Next new block: 975,555."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "13,750"
+    },
+    {
+     "label": "Next block",
+     "value": "975,555"
+    }
+   ],
+   "tier": 2,
+   "historyBlocks": 13750
+  },
+  {
+   "asset": "p2:18",
+   "name": "pizza",
+   "emoji": "🍕",
+   "kind": "meme",
+   "title": "pizza: Bitcoin Pizza Day, on-chain",
+   "tagline": "Block heights containing 57043",
+   "utility": "The meme with a date",
+   "why": "Block 57,043 carries May 22, 2010, when 10,000 BTC bought two pizzas. This pattern holds that block, its echoes at 157,043 through 957,043 and the run from 570,430 to 570,439: 20 blocks. The next one, block 1,057,043, is about 1.6 years away.",
+   "points": [
+    {
+     "lead": "Every May 22 is its day.",
+     "text": "All of crypto talks about the pizza once a year. This is the token from the pizza block itself."
+    },
+    {
+     "lead": "A small, real club.",
+     "text": "20 blocks means a Pizza Day crew, not a crowd."
+    },
+    {
+     "lead": "One step from live.",
+     "text": "The pattern's element is already inscribed. The next mint creates the token."
+    }
+   ],
+   "facts": [
+    {
+     "label": "Blocks in history",
+     "value": "20"
+    },
+    {
+     "label": "Next block",
+     "value": "1,057,043"
+    }
+   ],
+   "related": [
+    {
+     "asset": "p2:2142",
+     "name": "pizzaday"
+    },
+    {
+     "asset": "p2:1302",
+     "name": "pizzablock"
+    }
+   ],
+   "highlightBlocks": [
+    "57043"
+   ],
+   "tier": 5,
+   "historyBlocks": 20
+  }
+ ],
+ "tierNote": "Tiers on this page count every matching block in Bitcoin's history: T5 up to 100 blocks, T4 up to 1,000, T3 up to 10,000, T2 up to 100,000, T1 more."
+}

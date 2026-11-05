@@ -230,6 +230,57 @@ an independent release gate; 500 public reads alone do not satisfy it.
 
 ## Recovery and integer boundary
 
+Gateway and signer reader configuration accepts
+`financialChain: { shallowReorgLimit: 6, rebaseBatchLimit: 1024 }`. The defaults
+allow six losing Bitcoin headers and a gap of 1024 accepted batches after the
+anchor batch. A zero header limit disables rebasing; a zero batch limit permits
+only an anchor in the latest accepted batch. Set the same values for every
+reader. This is operator configuration because accepted settings documents
+reject additional keys without a contract parser release.
+
+A shallow rebase requires the current stamp to be canonical, a fork point
+within that header budget, and complete accepted provenance without money
+evidence. The reader inspects the accepted batch named by `fp/chain`
+provenance, including all inputs before and after the pointer. Its checkpoint
+chain must start at a proved canonical boundary and end at the current financial
+anchor. Only reservations, capacity reservations/releases, and credit expiries
+with no money evidence qualify; unknown operations, payments, receipts, custody,
+escrow, refunds backed by external evidence, surplus and public/bulk funding
+remain fenced. The normal checkpoint records the new canonical anchor and the
+hash of the previous losing anchor. Ethereum verification is unchanged.
+Unfunded beneficiary allocations in reservation fee terms are allowed; a
+custody payment key, claimable state or settlement proof is refused.
+
+Deployment-open and deployment-add inputs also qualify only when the reader
+independently proves the named inscription's reveal transaction is confirmed
+in the current canonical chain at or before the stamp tip. The existing Bitcoin
+inclusion adapter verifies the transaction, block and retained header view;
+the accepted input's old confirmation count is insufficient. Missing,
+unconfirmed, unavailable or orphaned reveals refuse rebasing. Each reader
+caches one successful inclusion per deployment with the anchor proof. A new
+stamp must still contain that verified block; no transaction is fetched again
+per input. A transient source failure can retry without rereading accepted files.
+
+An unchanged checkpoint does not update existing record provenance. The reader
+therefore authenticates every subsequent accepted batch through the pinned
+accepted tip, within `rebaseBatchLimit`. Financial inputs must bind exactly to
+the file's operation suffix. The remaining operations may contain only ordinary
+game account actions: credits, crafts, transfers and compound merges. An
+unannotated `fp` operation or financial account action such as `reserve-n`,
+`consume`, `release-many` or `refund` refuses recovery. Bound financial inputs
+at the unchanged anchor must satisfy the same money-free rule as the anchor
+batch. No unaccepted local financial state proves safety.
+
+Each gateway or signer reader caches a compact authenticated proof by losing
+anchor identity. Concurrent and subsequent inputs reuse verified batches;
+advancing the accepted tip verifies only the new tail. Restarting a reader
+rebuilds the bounded proof. Missing headers/archives, over-limit gaps, unknown
+effects and incomplete predecessor chains retain
+`financial_chain_recovery_required`. It never searches before the provenance
+batch or beyond the configured gap.
+No contract change, settings amendment, state rewrite or automatic financial
+recovery is performed. Both the gateway and signers need the reader code.
+
 V2 journal progress uses canonical decimal strings in a separate SQLite TEXT
 checkpoint. Existing numeric journal frames remain readable. New writes and
 recovery compare/increment without Number conversion, including counters beyond

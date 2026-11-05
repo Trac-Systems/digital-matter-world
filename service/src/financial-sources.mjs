@@ -23,6 +23,7 @@ import { legacyMintBinding, legacyLinkBinding } from './pending-financial.mjs';
 import { installLegacyLinkSources } from './legacy-link-sources.mjs';
 import { installPublicMintSources } from './public-mint-sources.mjs';
 import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
+import { verifyDirectHolder } from './direct-deployer.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const feeKey = financialFeeKey;
@@ -81,6 +82,21 @@ export function installFinancialSources(reads, options) {
     recordKey(key);
     return await record(key, at) ?? null;
   };
+  reads.financialRegistryQuery = async (transition, at) => {
+    if (transition.type === 'reserve') {
+      const row = await request(transition.id);
+      return { asset: row.request.asset, deploymentId: row.quote?.feeQuote?.deploymentId ?? row.request.deployment ?? null };
+    }
+    if (transition.type === 'consume') {
+      const source = await record('fi/source/' + transition.id, at) ?? await reservation(transition.id, at);
+      return { asset: source.request.asset, deploymentId: source.deployment.id };
+    }
+    if (transition.type === 'bulk-consume') {
+      const funding = await record('fp/' + transition.id, at);
+      return { asset: funding.manifest.asset, deploymentId: funding.manifest.deployment };
+    }
+    return null;
+  };
   reads.financialRecords = async (keys, at) => {
     pointBatch(keys); keys.forEach(recordKey);
     if (options.recordMany) {
@@ -120,10 +136,12 @@ export function installFinancialSources(reads, options) {
     const price = rules.feeFor(kind, terms.baseFee, context.tier, terms.feeSettings, at?.executionHeight ?? counted);
     const options = { kind, linked: !!holder, discovered: !!(row.quote.feeQuote.settingsHash ? context.beneficiaries?.discoverer ?? context.discoverer : context.discoverer) };
     const baseSplit = row.quote.feeQuote.settingsHash ? financialSplit(price, options, original) : rules.splitFee(price, options);
+    const direct = await verifyDirectHolder(reads, row.quote.feeQuote, d, original, { rail: row.kind, at, bitcoinNetwork });
     const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind, deployment: d,
-      document: row.quote.feeQuote.settingsHash ? original : null, height: at?.executionHeight ?? counted, bitcoinNetwork });
+      document: row.quote.feeQuote.settingsHash ? original : null, height: at?.executionHeight ?? counted, bitcoinNetwork, direct });
     const destinations = { treasury: context.treasury, finder: context.finderAddress ?? null, firstMaker: context.firstMakerAddress ?? null,
-      landowner: row.kind === 'ethereum' ? context.landownerAddress ?? null : holder?.address ?? null, discoverer: context.discoverer ?? null };
+      landowner: row.kind === 'ethereum' ? context.landownerAddress ?? null : holder?.address ?? null, discoverer: context.discoverer ?? null,
+      ...(direct?.to ? { deployer: direct.to } : {}) };
     const plan = row.quote.feeQuote.settingsHash ? reads.financialFeePlan({ split, destinations, beneficiaries: context.beneficiaries, id, payer: row.payer, rail: row.kind }) :
       { fees: reads.identifyFinancialFees(rules.mintFeeItems(split, destinations, id, row.payer, row.kind, bitcoinNetwork), row.kind), custody: [] }, items = plan.fees;
     check(same(items, row.quote.fees) && price === row.quote.price && same(context.payouts, row.quote.feeQuote.payouts), 'financial_fee_destinations');

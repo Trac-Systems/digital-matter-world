@@ -26,6 +26,7 @@ import { serve } from '../src/http.mjs';
 import { heightKey } from '../src/util.mjs';
 import { chain } from '../../contract/tests/helpers/chain.mjs';
 import { temp, secret, gateway, fixtureHistory, agent } from './helpers.mjs';
+import { CLAIM_CAPACITY_VALUES } from '../../deploy/host-157/settings-successor.mjs';
 
 async function setup(t, { manualFence = true, receiptCount = 2, deferBoundaryRefresh = false, beforeBoundary,
   receiptProtocol = 1, documentValues = {}, successorValues = {}, separateReceipts = false, withFinancial = false, pipelineDepth = 1, deferRecovery = false } = {}) {
@@ -201,6 +202,28 @@ test('background receipt certification preserves the same renewal across restart
   assert.equal((await f.reads.rulesContext()).receiptRenewal, null);
   assert.equal(f.runtime.settings.settingsHash, r.hashObject(f.successor));
   for (let i = 0; i < f.packets.length; i++) assert.deepEqual(await f.runtime.intake.namedAdmission.accept(f.packets[i]), f.receipts[i]);
+});
+
+test('claim capacity reaches the gateway and all signer policies together after the receipt boundary', async t => {
+  const f = await setup(t, { manualFence: false, successorValues: { ...CLAIM_CAPACITY_VALUES,
+    commitLifetime: r.SETTINGS_PROFILE.commitLifetime, revealBudget: r.SETTINGS_PROFILE.revealBudget } });
+  assert.deepEqual(f.successor.values, { ...f.document.values, ...CLAIM_CAPACITY_VALUES });
+  assert.equal(r.requiresReceiptCutoff(f.document, f.successor), false);
+  await f.tick();
+  assert.equal(f.store.get('batches', heightKey('3')).batch.settingsHash, r.hashObject(f.document));
+  await f.reopen(); await f.tick();
+  const oldExecution = f.store.get('batches', heightKey('4')).batch;
+  assert.equal(oldExecution.settingsHash, r.hashObject(f.document));
+  assert.equal(f.runtime.settings.settingsHash, r.hashObject(f.successor));
+  assert.equal((await f.reads.rulesContext()).receiptRenewal, null);
+  assert.equal((await f.runtime.intake.namedAdmission.accept(f.packet(30))).settingsHash, r.hashObject(f.successor));
+  await f.tick();
+  const batch = f.store.get('batches', heightKey('5')).batch;
+  assert.equal(batch.settingsHash, r.hashObject(f.successor));
+  assert.equal(f.runtime.settings.closureWorkBudget, CLAIM_CAPACITY_VALUES.closureWorkBudget);
+  assert.equal(f.runtime.settings.settlementPagesPerObservation, CLAIM_CAPACITY_VALUES.settlementPagesPerObservation);
+  // setup submits every batch through five independent Policy instances and
+  // the contract; their signing digests must agree before a batch is accepted.
 });
 
 test('certified renewal advances once, executes original receipts/terms, and admits successor work after restart', async t => {

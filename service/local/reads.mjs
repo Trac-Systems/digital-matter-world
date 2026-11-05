@@ -4,6 +4,7 @@ import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
 import { BitmapIndex } from '../prod/bitmap-index.mjs';
 import { installFinancialSources, acceptedFinancialReservation } from '../src/financial-sources.mjs';
 import { installFinancialChain } from '../src/financial-chain.mjs';
+import { createFinancialRebaseVerifier } from '../src/financial-chain-provenance.mjs';
 import { acceptedFinancialRecord } from '../src/financial-inventory.mjs';
 import { financialMintId, verifyFinancialMintRequest } from '../../rules/src/financial-mint.js';
 import { TapLookupIndex, installTapLookups } from '../prod/tap-index.mjs';
@@ -289,7 +290,10 @@ export async function localReads(config, suppliedStore, { gateway } = {}) {
     ethereumRPC: ethRPC, payout: id => store.get('financialCustodyPayments', id) });
   reads.inscription = id => client.source.request('/inscription/' + id);
   if (config.v2) {
-    installFinancialChain(reads, { bitcoinHash: async (height, at) => (await views.view(at.tip, at.tipHash)).hashAt(height), canonicalBitcoinHash: height => client.blockHash(height), ethereumRPC: ethRPC });
+    const bitcoinHash = async (height, at) => (await views.view(at.tip, at.tipHash)).hashAt(height), canonicalBitcoinHash = height => client.blockHash(height);
+    const rebaseSafe = createFinancialRebaseVerifier({ store, audits, bitcoinHash, canonicalBitcoinHash, deploymentIncluded: included, settings: config.financialChain });
+    installFinancialChain(reads, { bitcoinHash, canonicalBitcoinHash, bitcoinHeader: hash => views.get.get(hash), settings: config.financialChain,
+      rebaseSafe, ethereumRPC: ethRPC });
     reads.financialInventoryPage = (range, at) => trac('financialPage', [range, at]);
     reads.financialRecordProvenance = (key, value) => acceptedFinancialRecord({ store, audits, key, value });
     reads.financialBeaconConfig = () => trac('deployment');

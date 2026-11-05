@@ -47,6 +47,21 @@ test('v2 provisioning retains imported ledger identity and the v1 inscription fo
   assert.equal((await f.reads.registry()).assets['p2:1'].id, pure.entry.id);
 });
 
+test('one asset whose definition changed never holds back the rest of the provisioning sweep', async t => {
+  const f = await fixture(t);
+  const names = 'bcdefghij';
+  for (let i = 2; i <= 10; i++) await f.store.put('patternsByAsset', `p2:${i}`, { ...f.pure, number: String(i), name: 'dmwsweep' + names[i - 2], key: String(i).padStart(2, '0').repeat(32) });
+  await f.operator.tick();
+  // p2:1 is first in the page; its pattern no longer matches its open job.
+  await f.store.put('patternsByAsset', 'p2:1', { ...f.pure, pat: '789' });
+  await f.store.put('meta', 'provisioningCursor', { pattern: 0, type: '', named: '', compound: '' });
+  await f.store.put('patternsByAsset', 'p2:9', { ...f.pure, number: '9', name: 'dmwsweeplate', key: '99'.repeat(32) });
+  await assert.rejects(f.operator.tick(), /provisioning_definition_changed/);
+  assert.notEqual(f.store.get('meta', 'provisioningCursor').named, '', 'the cursor moves past the failing page');
+  await f.operator.tick().catch(() => {});
+  assert.ok(f.store.get('provisioning', 'p2:9'), 'a later asset is still reached');
+});
+
 test('deployment-state reads are local and never enqueue or advance; p2 prepare and registration routes work', async t => {
   const f = await fixture(t);
   const http = await serve({ intake: { store: f.store }, files: { serve: async () => false }, operator: { provisioner: f.operator } });

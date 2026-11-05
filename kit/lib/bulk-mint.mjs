@@ -1,5 +1,5 @@
 import { hashObject, stableJSON } from '../../rules/src/core.js';
-import { tapAtoms } from '../../rules/src/fees.js';
+import { tapAtoms, formatTapAmount } from '../../rules/src/fees.js';
 import { reserveNonceDigest } from '../../contract/root-accounts.js';
 import { check, nonce, sha256 } from './check.mjs';
 import { signBytes } from './signing.mjs';
@@ -108,6 +108,13 @@ export async function payBulkMint(agent, { orderId }) {
   const terms = validateBulkTerms(response.terms); validateBulkFees(terms, response.feeManifest);
   check(status.orderId === orderId && response.orderId === orderId && hashObject(terms) === status.termsHash &&
     bulkOrderId(terms.network, terms.owner, terms.nonce) === orderId && terms.network === agent.network && terms.bitcoinNetwork === agent.bitcoinNetwork, 'Bulk payment terms mismatch');
-  return { orderId, status, paymentLink: bulkPaymentLink(agent, orderId), items: bulkWalletItems(terms),
+  // The ticker deployer is paid by one more transfer in the same approval, next to the fee groups.
+  const side = response.deployerPayment, items = bulkWalletItems(terms);
+  if (side) {
+    check(side.dta === `dmw-bulk-deployer-v1|${orderId}` && typeof side.to === 'string' && side.to !== terms.payer && tapAtoms(side.amount) > 0n &&
+      stableJSON(side) === stableJSON(status.deployerPayment ?? null), 'Bulk deployer payment mismatch');
+    items.push({ address: side.to, tick: 'tap', amt: formatTapAmount(side.amount), dta: side.dta });
+  }
+  return { orderId, status, paymentLink: bulkPaymentLink(agent, orderId), items,
     extraOutputs: [{ address: terms.mintFunding.address, satoshis: terms.mintFunding.satoshis, label: terms.mintFunding.label }], sent: false };
 }

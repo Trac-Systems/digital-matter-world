@@ -51,6 +51,7 @@ async function fixture(t, bitcoinNetwork = 'mainnet') {
   for (let h = 0; h < history.length; h++) ops.push({ space: 'headers', id: heightKey(h), value: { fields: history.get(h), hash: history.hashAt(h) } });
   await store.transact(ops);
   const views = new PublicViews({ store, files, history, reads, mints, network }), api = createPublicAPI({ views, files });
+  await views.readIndex.sync();
   const http = await serve({ intake: { store }, files, mints, publicAPI: api });
   t.after(async () => { await http.close(); await store.close(); });
   const get = async path => { const r = await fetch(http.url + path); assert.equal(r.status, 200, path + ' ' + await r.clone().text()); const value = await r.json(); assertPublicIdentities(value); return value; };

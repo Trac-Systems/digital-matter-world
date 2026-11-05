@@ -201,14 +201,14 @@ test('gateway startup installs the configured pool and shutdown joins it', { tim
 
 test('workers wait out a short projection window and answer after the bound when it stays', async t => {
   const f = await publicWorkerFixture({ settings: { pendingWaitMs: 1500, pendingPollMs: 20 } }); t.after(f.close);
-  const insert = () => f.store.db.prepare('INSERT OR IGNORE INTO projectionPending VALUES(?,?)').run('fixture/', 'event');
-  const clear = () => f.store.db.prepare('DELETE FROM projectionPending WHERE event=?').run('event');
-  insert(); setTimeout(clear, 300);
+  const insert = () => f.store.put('feedEvents', 'event', {});
+  const clear = () => f.store.put('feedEvents', 'event');
+  await insert(); setTimeout(clear, 300);
   let started = Date.now(), response = await fetch(f.threaded.url + '/finds?limit=1', { headers: { accept: 'application/json' } });
   assert.equal(response.status, 200); await response.arrayBuffer();
   assert.ok(Date.now() - started >= 250, 'the read waited for the window to close');
-  insert();
+  await insert();
   started = Date.now(); response = await fetch(f.threaded.url + '/finds?limit=1', { headers: { accept: 'application/json' } }); await response.arrayBuffer();
-  const waited = Date.now() - started; clear();
+  const waited = Date.now() - started; await clear();
   assert.ok(waited >= 1400 && waited < 5000, `a stuck projection is answered after the bound (${waited} ms)`);
 });

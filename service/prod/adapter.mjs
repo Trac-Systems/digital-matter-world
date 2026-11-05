@@ -9,6 +9,8 @@ import { ethereumPayments } from '../src/ethereum.mjs';
 import { check, atomicWrite, hash, heightKey } from '../src/util.mjs';
 import { FeeQuotes, issueFeeTerms } from '../src/fees.mjs';
 import { HeaderRelay } from './header-relay.mjs';
+import { encodeReplayContext } from '../src/replay-context.mjs';
+import { rules } from '../src/rules.mjs';
 
 export async function createAdapters({ config, store, history, runtime }) {
   const reads = await productionReads(config, store, { runtime }), { manifest, trac, ethRPC } = reads, clock = ordinalCodec(!!config.v2);
@@ -35,7 +37,9 @@ export async function createAdapters({ config, store, history, runtime }) {
       gateway: draft.items[0]?.input.gateway ?? draft.proposal.batch.renewal?.cutoff.gateway, settings: draft.settings, limits: draft.limits, headers: draft.headers,
       ...(draft.activation ? { activation: draft.activation, previousRoot: draft.previousRoot } : {}),
       inputs: draft.items.map(i => ({ ...i.input, state: undefined, patterns: undefined, settings: undefined })) };
-    const bytes = JSON.stringify(context), digest = hash(bytes);
+    const contextLimit = Math.min(config.v2?.resources?.values?.archiveObjectBytes ?? rules.RESOURCE_PROFILE.archiveObjectBytes,
+      config.prod.evidenceSettings?.maxObjectBytes ?? rules.RESOURCE_PROFILE.archiveObjectBytes);
+    const bytes = encodeReplayContext(context, contextLimit), digest = hash(bytes);
     await atomicWrite(join(config.prod.contexts, digest + '.json'), bytes);
     if (!config.v2) await atomicWrite(join(config.prod.contexts, n + '.json'), bytes);
     await store.put('evidenceContexts', String(n), { path: digest + '.json', hash: digest });

@@ -1,4 +1,5 @@
 import { rules } from './rules.mjs';
+import { directHolderTerms, verifyDirectHolder } from './direct-deployer.mjs';
 import { PAYMENT_TIMING_DEFAULTS } from '../../rules/src/payment-timing.js';
 import { check } from './util.mjs';
 import { mintFeeScope } from './fees.mjs';
@@ -88,15 +89,18 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const holder = c.link ? c.bitmapHolder ?? await reads.bitmap(block, at) : null;
     if (rules.bitmapMintOpenActive(document, resolved.height) && c.link) check(typeof holder?.address === 'string' && holder.address.length > 0, 'bitmap_missing');
     check(resolved.state === 'finder' || rules.bitmapMintOpenActive(document, resolved.height) || !c.link || holder?.address === tapAddress, 'bitmap_holder_only', 409);
-    const q = feeQuote ?? await reads.feeQuotes.issue(mintFeeScope(asset, block, 'tap'), resolved.height, c.payouts, c.deployment.id);
+    const q = feeQuote ?? await reads.feeQuotes.issue(mintFeeScope(asset, block, 'tap'), resolved.height, c.payouts, c.deployment.id,
+      undefined, await directHolderTerms(reads, c.deployment, document, { at, bitcoinNetwork }));
     await reads.feeQuotes.validate(q, mintFeeScope(asset, block, 'tap'));
     const original = await reads.financialSettings(q.settingsHash);
     check(rules.publicMintActive(original, q.validFrom) && q.deploymentId === c.deployment.id && same(q.payouts, c.payouts), 'public_quote_binding');
     const price = rules.feeFor('find', q.baseFee, c.tier, q.feeSettings, at?.executionHeight ?? resolved.height), baseSplit = financialSplit(price,
       { kind: 'find', publicMint: !(rules.perTickerSupplyActive(at?.executionHeight ?? resolved.height) && c.find), linked: !!holder, discovered: !!(c.beneficiaries?.discoverer ?? c.discoverer) }, original);
+    const direct = await verifyDirectHolder(reads, q, c.deployment, original, { at, bitcoinNetwork, changed: 'public_quote_changed' });
     const { split, legacyDeploy, deployer } = rules.deploymentHolderFee(price, baseSplit, { kind: 'find', deployment: c.deployment,
-      document: original, height: at?.executionHeight ?? resolved.height, bitcoinNetwork });
-    const destinations = { treasury: c.treasury, finder: rules.perTickerSupplyActive(at?.executionHeight ?? resolved.height) ? c.finderAddress ?? null : null, firstMaker: null, landowner: holder?.address ?? null, discoverer: c.discoverer ?? null };
+      document: original, height: at?.executionHeight ?? resolved.height, bitcoinNetwork, direct });
+    const destinations = { treasury: c.treasury, finder: rules.perTickerSupplyActive(at?.executionHeight ?? resolved.height) ? c.finderAddress ?? null : null, firstMaker: null, landowner: holder?.address ?? null, discoverer: c.discoverer ?? null,
+      ...(direct?.to ? { deployer: direct.to } : {}) };
     const plan = reads.financialFeePlan({ split, destinations, beneficiaries: c.beneficiaries, id: null, payer: tapAddress, rail: 'tap' });
     return { ...resolved, feeQuote: q, price, split, ...(legacyDeploy ? { legacyDeploy } : {}), ...(deployer ? { deployer } : {}), destinations, beneficiaries: c.beneficiaries, plan };
   };

@@ -3,9 +3,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { rules, processObservation } from './rules.mjs';
 import { NodeEvidence } from './node-evidence.mjs';
 import { PublicMintPrefetch } from '../../rules/src/public-mint-prefetch.js';
+import { POINT_BATCH_SIZE } from '../../rules/src/point-read-batch.js';
 import { ClaimStorage } from '../../rules/src/claim-state.js';
 import { recordGet } from '../../rules/src/record-index.js';
+import { IndexRowCache, immutableIndexRow, indexRowHash } from '../../rules/src/index-row-cache.js';
+import { ReplayNodeReader } from './replay-node-reader.mjs';
 const CLOSURE_LOOKAHEAD = 1500, CLOSURE_HINTS = 3000;
+let retainedNodes;
 parentPort.on('message', ({ id, input, headers, length, database, branch, shared, publicMintShared, headerPageSize, claimDatabase, claimCacheKiB, claimNodes, namedNodes, headerCachePages = 8, cacheKiB = 4096 }) => {
   let db, claimDb;
   try {
@@ -69,21 +73,28 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
       if (f === 4) return String(h);
       const row = get(h); return (f === 10 ? row.nonce : row.bits).toString(dt === 'h' ? 16 : 10);
     } };
-    let claimNodeGet, namedNodeGet;
-    const claimProof = input.settings?.document && new NodeEvidence(input.settings.document.values.auditTotalBytes, input.claimEvidence);
+    let claimNodeGet, namedNodeGet, closureHints;
+    // Structured cloning gives this worker ownership of supplied proof rows.
+    // Retries keep their exact bytes while sharing size/hash validation locally.
+    for (const [, row] of input.claimEvidence?.nodes ?? []) immutableIndexRow(row);
+    for (const [, row] of input.namedEvidence?.nodes ?? []) immutableIndexRow(row);
+    const claimProof = input.settings?.document && new NodeEvidence(input.settings.document.values.auditTotalBytes, input.claimEvidence, 65536);
     const namedProof = input.settings?.document && new NodeEvidence(input.settings.document.values.proofBytes, input.namedEvidence);
     if (claimDatabase) {
       if (!Number.isSafeInteger(claimCacheKiB) || claimCacheKiB < 1) throw Error('claim_cache_setting');
       claimDb = new DatabaseSync(claimDatabase, { readOnly: true }); claimDb.exec(`PRAGMA cache_size=-${claimCacheKiB}; BEGIN`);
-      const query = claimDb.prepare("SELECT value FROM records WHERE space='claimNodes' AND id=?"), staged = new Map(claimNodes);
-      const namedQuery = claimDb.prepare("SELECT value FROM records WHERE space='namedNodes' AND id=?"), namedStaged = new Map(namedNodes);
-      namedNodeGet = id => {
-        const raw = namedStaged.has(id) ? null : namedQuery.get(id);
-        const row = namedStaged.get(id) ?? (raw ? JSON.parse(raw.value) : undefined);
+      const staged = new Map(claimNodes), namedStaged = new Map(namedNodes);
+      const entries = input.settings.document.values.proofDepth * 128, bytes = Math.min(67108864, input.settings.document.values.auditTotalBytes * 32);
+      const cacheKey = JSON.stringify([claimDatabase, entries, bytes]);
+      if (retainedNodes?.key !== cacheKey) retainedNodes = { key: cacheKey, cache: new IndexRowCache(entries, bytes) };
+      const reader = new ReplayNodeReader(claimDb, { cache: retainedNodes.cache,
+        staged: { claimNodes: staged, namedNodes: namedStaged } });
+      namedNodeGet = (id, ancestors) => {
+        const row = reader.get('namedNodes', id, ancestors);
         namedProof.add(id, row); publicMints.node(row); return row;
       };
-      claimNodeGet = id => {
-        const raw = staged.has(id) ? null : query.get(id), row = staged.get(id) ?? (raw ? JSON.parse(raw.value) : undefined);
+      claimNodeGet = (id, ancestors) => {
+        const row = reader.get('claimNodes', id, ancestors);
         claimProof.add(id, row); publicMints.node(row);
         return row;
       };
@@ -91,8 +102,10 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
       // read one plot per round trip. Look ahead over the next groups with a
       // separate reader that records no evidence and charges no budget; hints
       // only schedule reads in pages and never supply answers.
-      if (input.settings?.document) try {
-        const look = new ClaimStorage({ get: id => staged.get(id) ?? (raw => raw ? JSON.parse(raw.value) : undefined)(staged.has(id) ? null : query.get(id)),
+      // A retry already carries the first replay's public answers. Any new
+      // plot still has the normal on-demand path; an inactive feature needs no hints.
+      if (publicMints.enabled && input.publicMintEvidence === undefined) closureHints = (function* () {
+        const look = new ClaimStorage({ get: (id, ancestors) => reader.get('claimNodes', id, ancestors),
           cacheSize: input.settings.document.values.proofDepth });
         const state = look.load(input.state, { decimal: true });
         let budget = CLOSURE_LOOKAHEAD;
@@ -104,6 +117,7 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
             for (let n = BigInt(c.phase === 'winners' ? c.slot ?? '0' : '0'), end = BigInt(c.slots ?? '0'); n < end && budget > 0 && publicMints.hints.size < CLOSURE_HINTS; n++, budget--) {
               const id = recordGet(state.claimInputs, prefix + 'slots/' + n), slot = id && recordGet(state.claimSlots, `${round.window}/${id}`);
               if (slot?.asset !== undefined && slot.block !== undefined) publicMints.hint(slot.asset, String(slot.block));
+              yield;
             }
             continue;
           }
@@ -112,13 +126,42 @@ parentPort.on('message', ({ id, input, headers, length, database, branch, shared
           for (let g = BigInt(c.group ?? '0'), end = BigInt(c.groups ?? '0'); g < end && budget > 0 && publicMints.hints.size < CLOSURE_HINTS; g++, budget--) {
             const key = recordGet(state.claimInputs, prefix + 'groups/' + g), group = key && recordGet(state.claimInputs, prefix + 'group/' + key);
             if (group?.claim) publicMints.plot(group.claim);
+            yield;
           }
         }
-      } catch { /* Hints are optional; the closure reads everything it needs on demand. */ }
+      })();
     }
-    const publicMintGet = (asset, block, deployment) => publicMints.get(asset, block, deployment);
+    const publicMintGet = (asset, block, deployment) => {
+      if (closureHints && !publicMints.answers.has(rules.mintPlotKey(asset, block, deployment))) {
+        let pending = 0;
+        for (const pair of publicMints.hints.values()) {
+          if (pair[0].startsWith('p2:') === asset.startsWith('p2:')) pending++;
+          if (pending >= POINT_BATCH_SIZE) break;
+        }
+        // Fill the next point-read page only when it is needed. A window can
+        // contain many groups for the same plots; scanning them all each time
+        // adds no useful hints once those public answers are cached.
+        if (pending < POINT_BATCH_SIZE) try {
+          for (let n = 0; n < POINT_BATCH_SIZE && closureHints; n++) if (closureHints.next().done) closureHints = null;
+        } catch { closureHints = null; /* Optional hints never supply answers. */ }
+      }
+      return publicMints.get(asset, block, deployment);
+    };
     const output = processObservation({ ...input, history, hashAt: h => raw(h) ? get(h).hash : null }, { claimNodeGet, namedNodeGet, publicMintGet });
-    parentPort.postMessage({ id, output: claimDatabase ? { ...output, claimEvidence: claimProof.value(), namedEvidence: namedProof.value() } : output });
+    if (claimDatabase) {
+      // Generated content-addressed rows are useful to the next predecessor,
+      // even when its root differs. This is a bounded read cache, not a commit:
+      // each replay still authenticates its input root and honors draft overlays.
+      for (const row of [...output.claimWrites, ...output.namedWrites]) {
+        const key = row.space + '/' + row.id, cached = retainedNodes.cache.get(key);
+        let verified = false;
+        try { verified = !!cached && indexRowHash(cached) === row.id; } catch { /* Replace an unused malformed neighbor. */ }
+        if (!verified) retainedNodes.cache.set(key, row.value);
+      }
+    }
+    const claimReadHints = claimProof && claimProof.overflowValue();
+    parentPort.postMessage({ id, output: claimDatabase ? { ...output, claimEvidence: claimProof.value(), namedEvidence: namedProof.value(),
+      ...(claimReadHints ? { claimReadHints } : {}) } : output });
   } catch (e) { parentPort.postMessage({ id, error: e.message }); }
   finally { db?.close(); claimDb?.close(); }
 });

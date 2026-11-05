@@ -65,3 +65,4 @@ export * from './deployer-share.js';
 export * from './bulk-mint.js';
 export * from './bulk-execution.js';
 export * from './per-ticker-supply-activation.js';
+export * from './account-revisions.js';

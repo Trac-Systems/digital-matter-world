@@ -149,6 +149,41 @@ test('a partial quorum cannot activate a binding; retry uses its original durabl
   assert.equal(f.journals[0].records.length, 1);
 });
 
+test('an original-format replacement that missed its endorsement minute is retried as a fresh attempt', async t => {
+  const store = await Store.open(await temp('payout-stale-retry-')); t.after(() => store.close());
+  let now = Date.now(); const f = bindingFixture(store, { now: () => now }), who = agent(31);
+  const first = await f.bind(who, 'tap', who.secret.toString('hex'), '1'); now += 10;
+  const { walletSignature, ...body } = f.packet(who, 'tap', agent(32).secret.toString('hex'), '2'), pending = await f.bindings.request(body);
+  f.committee.bindPayout = record => Promise.all([0, 1].map(i => f.endorse(record, i)));
+  await assert.rejects(f.bindings.complete({ id: pending.id, walletSignature }), /binding_quorum/);
+  assert.throws(() => f.bindings.resolve(who.address, 'tap', null, 'finder'), /binding_transition/);
+  // Signers refuse the original time a minute later; the two that endorsed it keep their record.
+  now += 61000;
+  f.committee.bindPayout = async record => (await Promise.allSettled(f.members.map((_, i) => f.endorse(record, i)))).flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
+  const accepted = await f.bindings.complete({ id: pending.id, walletSignature });
+  assert.equal(accepted.acceptedAt, now); assert.equal(accepted.attestations.length, 3);
+  assert.equal(f.bindings.resolve(who.address, 'tap', null, 'finder').id, pending.id);
+  assert.equal(f.bindings.resolve(who.address, 'tap', { issuedAt: now - 1, payouts: { finder: first.id } }, 'finder').id, first.id);
+});
+
+test('an expired or stale replacement that can never activate stops blocking quotes; the current binding stays', async t => {
+  const store = await Store.open(await temp('payout-stale-clear-')); t.after(() => store.close());
+  let now = Date.now(); const f = bindingFixture(store, { now: () => now });
+  for (const [n, wait, state] of [[33, 121000, 'stale'], [35, 0, 'expired']]) {
+    const who = agent(n); f.committee.bindPayout = record => Promise.all(f.members.map((_, i) => f.endorse(record, i)));
+    const first = await f.bind(who, 'tap', who.secret.toString('hex'), '1'); now += 10;
+    const { walletSignature, ...body } = f.packet(who, 'tap', agent(n + 1).secret.toString('hex'), '2', now + (state === 'stale' ? 3600000 : 30000)), pending = await f.bindings.request(body);
+    f.committee.bindPayout = record => Promise.all([0, 1].map(i => f.endorse(record, i)));
+    await assert.rejects(f.bindings.complete({ id: pending.id, walletSignature }), /binding_quorum/);
+    now += wait || 30001;
+    await f.bindings.tick();
+    assert.equal(f.bindings.resolve(who.address, 'tap', null, 'finder').id, first.id);
+    assert.equal(store.get('payoutAttempts', pending.id), null);
+    assert.equal(store.get('payoutAttemptStatus', pending.id).state, state);
+    if (state === 'expired') assert.equal(f.bindings.pending(pending.id).disposition.nextAction, 'request_new_binding');
+  }
+});
+
 // Public CC0 vector from bitcoin/bips bip-0322/generated-test-vectors.json.
 test('BIP-322 Taproot matches the independent published reference vector', () => {
   const message = 'PURVOQ544B6HUATVBJZN5EZJUU', address = 'bc1pcquvhrqv0q68t4m0hfq6tpn006qrskyc7yrqnp2uyrf2emg3wynsdjyk38';

@@ -101,9 +101,10 @@ export class WebCheckout {
     }
     check(row, 'request_not_found', 404);
     if (type === 'mint' && row.publicMint) {
-      const raw = this.mints ? this.mints.public(id, requesterSecret) : publicMint(row);
+      const counted = await this.reads.counted();
+      const raw = this.mints ? this.mints.public(id, requesterSecret) : publicMint(row, counted);
       const status = publicMintTargetVisible(this.store, row, requesterSecret) ? raw : privatePublicMintView(raw);
-      return publicIdentities({ ...status, type, target: this.target, counted: await this.reads.counted(), deadline: row.expiry,
+      return publicIdentities({ ...status, type, target: this.target, counted, deadline: row.expiry,
         refundAfter: null, networkFee: null, submit: '/mint/payment', walletPreparation: false, bitcoinWalletRequired: true,
         redeem: { items: status.payable && !status.blocked.length ? rules.walletFeeItems(status.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] } });
     }
@@ -123,7 +124,7 @@ export class WebCheckout {
       networkFee: mint ? { address: row.networkFeeAddress, sats: quote.networkFeeSats } : null,
       submit: `/${type}/payment`, walletPreparation: false };
     if (mint) {
-      Object.assign(plan, this.mints ? this.mints.public(id) : publicMint(row), { refundAfter: null, networkFee: null });
+      Object.assign(plan, this.mints ? this.mints.public(id) : publicMint(row, counted), { refundAfter: null, networkFee: null });
       plan.bitcoinWalletRequired = true;
       plan.redeem = { items: row.kind === 'tap' && plan.payable && !plan.blocked.length ? rules.walletFeeItems(plan.missing, this.target.bitcoinNetwork) : [], data: '', actions: [] };
     } else if (kind === 'tap' && row.terms.hash) {

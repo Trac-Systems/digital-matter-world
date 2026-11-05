@@ -14,6 +14,8 @@ import { compareOrdinal } from '../../rules/src/integers-v2.js';
 import { applyBeaconRecovery } from '../../contract/beacon/recovery.js';
 import { claimsNeverCloseActive } from '../../rules/src/public-mint.js';
 import { bulkBatchWork } from '../../rules/src/bulk-execution.js';
+import { warmBatchRegistry } from '../../service/src/financial-registry.mjs';
+import { phase } from '../../service/src/lifecycle.mjs';
 
 // Read accepted financial records from the independent notary snapshot, not
 // from gateway replay context. Sequential simulation checks each page against
@@ -26,6 +28,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
       (at.revision === undefined || at.revision === snapshot.revision) && (at.tipHash === undefined || at.tipHash === snapshot.tipHash), 'financial_snapshot_changed');
     at = snapshot;
   }
+  await warmBatchRegistry(reads, files, network, at);
   const changed = new Map(), store = { get: async key => changed.has(key) ? changed.get(key) : await reads.financialRecord(key, at),
     put: (key, value) => changed.set(key, value), del: key => changed.set(key, null) }, settings = accountSettings(document);
   const reservations = new Map(), sources = reads.financialScope?.({ record: store.get, reservations }) ?? reads;
@@ -59,7 +62,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
       if (group[0].reserveGroup !== undefined) {
         groupEvidence = []; const plans = [];
         for (const input of group) {
-          const evidence = await sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at);
+          const evidence = await phase('prepare.financial_evidence', () => sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at));
           check(equal(evidence, input.evidence), 'financial_evidence_read');
           groupEvidence.push(evidence);
           plans.push(await financialPlan({ transition: input.transition, evidence }, { read: store.get, height, document }));
@@ -67,7 +70,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
         groupPlans = mergedReservePlans(plans);
       }
       for (const [index, input] of group.entries()) {
-        let evidence = groupEvidence ? groupEvidence[index] : await sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at);
+        let evidence = groupEvidence ? groupEvidence[index] : await phase('prepare.financial_evidence', () => sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at));
         if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
           // Full rules replay already derived this decision after agent closure
           // and moves. The external scan is read at the accepted predecessor and
@@ -76,7 +79,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
         }
         check(equal(evidence, input.evidence), 'financial_evidence_read');
         const chainAnchor = reads.financialChainAnchor && input.transition.type !== 'beacon-recovery' && !input.transition.action?.type?.startsWith('recovery-') ?
-          await reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor }) : undefined;
+          await phase('prepare.financial_chain', async () => reads.financialChainAnchor({ at, prior: await store.get('fp/chain'), ethereum: evidence.ethereumAnchor })) : undefined;
         check(equal(chainAnchor ?? null, input.chainAnchor ?? null), 'financial_chain_evidence');
         const plan = groupPlans ? [...groupPlans[index], ...(chainAnchor ? [{ op: 'fp', v: 2, type: 'checkpoint', id: input.transition.id,
           previous: hashObject(await store.get('fp/chain') ?? null), anchor: chainAnchor }] : [])] :

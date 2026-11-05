@@ -33,7 +33,7 @@ test('evidence canonical bytes retain JSON normalization for every supported val
 
 async function fixture(t) {
   const directory = await mkdtemp(join(process.env.DMW_BUILD_ROOT ?? tmpdir(), 'projection-writes-'));
-  const store = await Store.open(directory);
+  const store = await Store.openForMaintenance(directory);
   t.after(async () => { await store.close(); await rm(directory, { recursive: true, force: true }); });
   await store.put('meta', 'ruleState', { batchVersion: 2 });
   return store;

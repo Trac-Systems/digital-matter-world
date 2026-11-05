@@ -1,5 +1,7 @@
 import { hashObject } from './core.js';
 import { namedRoot, EMPTY_NAMED_ROOT } from './named-index.js';
+import { indexRowHash, indexRowCommitment } from './index-row-cache.js';
+import { storedBranchHash } from './index-commitment.js';
 
 // Persist only changed radix paths. Each row contains child hashes, never an
 // embedded subtree. Cold loads are lazy and the cache is a bounded local
@@ -20,15 +22,15 @@ export class NamedStorage {
   }
   readRow(root, ancestors) {
     let row = this.cache.get(root);
+    if (row && this.latest === root) return row;
     if (!row) {
-      row = this.get(root, ancestors); if (!row || hashObject(['dmw-stored-index-v2', row]) !== root) throw Error('named_storage_integrity');
+      row = this.get(root, ancestors); if (!row || indexRowHash(row) !== root) throw Error('named_storage_integrity');
       if (row.commitment) {
-        const commitment = hashObject(row.children ? ['dmw-named-branch-v2', row.prefix,
-          Object.keys(row.children).sort().map(k => [k, row.children[k].commitment])] : ['dmw-named-leaf-v2', row.prefix, row.key, row.value]);
+        const commitment = indexRowCommitment(row);
         if (commitment !== row.commitment) throw Error('named_storage_commitment');
       }
     }
-    this.cache.delete(root); this.cache.set(root, row);
+    this.latest = root; this.cache.delete(root); this.cache.set(root, row);
     if (this.cache.size > this.cacheSize) this.cache.delete(this.cache.keys().next().value);
     return row;
   }
@@ -65,7 +67,7 @@ export class NamedStorage {
         kind === 'named' ? { storage: node(child, kind), commitment: namedRoot(child) } : node(child, kind)])) } :
         { key: value.key, value: kind === 'evidence' ? node(value.value, 'named') : value.value }),
         ...(kind === 'named' ? { commitment: namedRoot(value) } : {}) };
-      const root = hashObject(['dmw-stored-index-v2', row]); writes.set(root, row); staged.set(value, root); acknowledged.push([value, root]); return root;
+      const root = children && kind === 'named' ? storedBranchHash(row) : hashObject(['dmw-stored-index-v2', row]); writes.set(root, row); staged.set(value, root); acknowledged.push([value, root]); return root;
     };
     const evidence = value => {
       if (!value?.$dmwIndex) {

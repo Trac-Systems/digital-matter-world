@@ -137,7 +137,19 @@ async function route() {
   } catch (e) {
     if (sequence !== routeSequence) return;
     console.error(e);
-    clear(mainEl, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${e.message}`)));
+    if (reloadAfterModuleFailure(e)) return;
+    clear(mainEl, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${e.message} `,
+      h('button.btn', { onclick: () => location.reload() }, 'Reload'))));
   }
 }
 export function go(path) { location.hash = `#/${path}`; }
+// A screen whose module failed to download (usually a dropped connection) loads after one page reload.
+// The browser keeps a failed module for the life of the page, so importing it again in place cannot work.
+function reloadAfterModuleFailure(e) {
+  if (!/dynamically imported module|Importing a module script failed/i.test(String(e?.message))) return false;
+  try {
+    if (Date.now() - (Number(sessionStorage.getItem('dmw-module-reload')) || 0) < 60000) return false;
+    sessionStorage.setItem('dmw-module-reload', String(Date.now()));
+  } catch { return false; }
+  location.reload(); return true;
+}

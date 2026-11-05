@@ -10,9 +10,15 @@ export const ASSET_RESOURCES = Object.freeze({
   // payment sent in time can still confirm and mint with the existing operations.
   bulkLateBlocks: 24,
   // How long a move waits for admission to reopen while a batch is signed, and how often it checks.
-  admissionWaitMs: 8000, admissionPollMs: 200,
+  // The wait plus the receipt witness round must end well inside the kit's 10 s request timeout.
+  admissionWaitMs: 4000, admissionPollMs: 200,
   // How long a move refused that way gets the retryable busy answer before the final refusal.
   admissionBusyMs: 150000,
+  // One later batch can collect receipts while its predecessor is signed.
+  admissionFutureBatches: 1,
+  // Claim payout rows the gateway proposes per observation; 0 uses the full settings allowance.
+  // A smaller proposal is valid for every signer and keeps batches short when payouts are large.
+  settlementDeliveryRows: 0,
 });
 export function assetResources(overrides = {}) {
   const settings = { ...ASSET_RESOURCES, ...overrides };
@@ -21,7 +27,8 @@ export function assetResources(overrides = {}) {
       if (typeof value !== 'boolean') throw Error('asset_resource_setting');
       continue;
     }
-    if (!Object.hasOwn(ASSET_RESOURCES, key) || !Number.isSafeInteger(value) || value < (['bulkLateBlocks', 'admissionBusyMs'].includes(key) ? 0 : 1) ||
+    if (!Object.hasOwn(ASSET_RESOURCES, key) || !Number.isSafeInteger(value) || value < (['bulkLateBlocks', 'admissionBusyMs', 'admissionFutureBatches', 'settlementDeliveryRows'].includes(key) ? 0 : 1) ||
+        (key === 'admissionFutureBatches' && value > 1) ||
         (['workPage', 'creditPage', 'outboxPage'].includes(key) && value > 4096)) throw Error('asset_resource_setting');
   }
   // The v1 independent reader's declared compatibility envelope. V2 funding

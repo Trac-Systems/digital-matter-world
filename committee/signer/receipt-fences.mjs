@@ -1,5 +1,6 @@
 import { rules } from './adapter.mjs';
 import { check, equal } from './crypto.mjs';
+import { receiptAdmissionSettings } from './receipt-settings.mjs';
 
 const snapshot = value => Object.fromEntries(['ready', 'manifestHash', 'settingsHash', 'last', 'claimsRoot', 'catalogRoot', 'scheduledSettings']
   .concat('receiptRenewal', 'receiptProtocol').map(key => [key, value?.[key] ?? null]));
@@ -7,8 +8,9 @@ const snapshot = value => Object.fromEntries(['ready', 'manifestHash', 'settings
 // Calls share one gate with each other; the service also serializes them with
 // prepare/root witnessing. Journal writes precede every returned attestation.
 export class ReceiptFences {
-  constructor({ journal, reads, network, gateway, signer, secret, members }) {
+  constructor({ journal, reads, network, gateway, signer, secret, members, admission }) {
     Object.assign(this, { journal, reads, network, gateway, signer, secret, membersPin: members });
+    this.admission = receiptAdmissionSettings(admission);
     this.tail = Promise.resolve(); this.receipts = new Map(); this.byBatch = new Map(); this.fences = new Map(); this.pageProgress = new Map(); this.pageMembers = new Map();
     for (const row of journal.records) this.apply(row);
   }
@@ -19,6 +21,7 @@ export class ReceiptFences {
       this.receipts.set(row.receipt.sequence, row);
       if (!this.byBatch.has(row.receipt.batch)) this.byBatch.set(row.receipt.batch, new Map());
       this.byBatch.get(row.receipt.batch).set(row.receipt.sequence, row.receipt);
+      if (!this.latestBatch || rules.compareUint(row.receipt.batch, this.latestBatch) > 0) this.latestBatch = row.receipt.batch;
     }
     if (row.type === 'receipt-cutoff-start') {
       this.fences.set(row.cutoff.settingsHash, row);
@@ -56,18 +59,33 @@ export class ReceiptFences {
     }
     let accepted = await this.reads.rulesContext(), clock = await this.reads.tip(), authority = await this.reads.authority();
     // Warm shared reads can trail a new block or batch by a few seconds; re-read once before refusing.
-    if (rules.compareUint(receipt.tip, rules.decimalV2(clock.tip)) > 0 || receipt.batch !== rules.nextUint(rules.decimalV2(accepted?.last?.n ?? '0'))) {
+    const cachedNext = rules.nextUint(rules.decimalV2(accepted?.last?.n ?? '0'));
+    if (rules.compareUint(receipt.tip, rules.decimalV2(clock.tip)) > 0 || rules.compareUint(receipt.batch, cachedNext) < 0 ||
+      rules.compareUint(receipt.batch, rules.addUint(cachedNext, String(this.admission.futureBatches))) > 0 ||
+      checkpoint && rules.claimStateRoot(checkpoint) !== accepted?.claimsRoot) {
       [accepted, clock, authority] = await Promise.all([(this.reads.rulesContext.fresh ?? this.reads.rulesContext)(), (this.reads.tip.fresh ?? this.reads.tip)(), (this.reads.authority.fresh ?? this.reads.authority)()]);
     }
     check(!accepted?.receiptRenewal, 'renewal_pending');
+    const next = rules.nextUint(rules.decimalV2(accepted?.last?.n ?? '0'));
     check(accepted?.ready && rules.hashObject(accepted.settings) === accepted.settingsHash &&
-      receipt.batch === rules.nextUint(rules.decimalV2(accepted.last.n)), 'receipt_admission_predecessor');
+      rules.compareUint(receipt.batch, next) >= 0 &&
+      rules.compareUint(receipt.batch, rules.addUint(next, String(this.admission.futureBatches))) <= 0, 'receipt_admission_predecessor');
     check(checkpoint && rules.claimStateRoot(checkpoint) === accepted.claimsRoot &&
       rules.compareUint(receipt.sequence, rules.uintV2(checkpoint.hot.namedSequence)) > 0, 'receipt_admission_checkpoint');
     const document = rules.effectiveSettings(accepted.settings, accepted.scheduledSettings, receipt.batch, rules.decimalV2(clock.tip));
     check(rules.hashObject(document) === accepted.settingsHash, 'receipt_policy_boundary');
-    check(rules.compareUint(receipt.sequence, rules.addUint(checkpoint.hot.namedSequence, String(Math.min(document.values.receiptSegmentEntries, document.values.observationBudget)))) <= 0,
+    // A scheduled amendment can consume the next slot for receipt renewal.
+    // Drain lookahead before authorizing an amendment under that protocol.
+    check(receipt.batch === next || !accepted.scheduledSettings, 'receipt_policy_boundary');
+    const capacity = Math.min(document.values.receiptSegmentEntries, document.values.observationBudget);
+    check(rules.compareUint(receipt.sequence, rules.addUint(checkpoint.hot.namedSequence, String(BigInt(capacity) * (BigInt(receipt.batch) - BigInt(next) + 1n)))) <= 0 &&
+      (this.byBatch.get(receipt.batch)?.size ?? 0) < capacity,
       'receipt_admission_capacity');
+    for (const batch of [next, rules.nextUint(next)]) {
+      if (batch === receipt.batch) continue;
+      for (const prior of this.byBatch.get(batch)?.values() ?? []) check(rules.compareUint(prior.sequence, receipt.sequence) === rules.compareUint(batch, receipt.batch),
+        'receipt_admission_order');
+    }
     check(receipt.settingsHash === rules.hashObject(document) && rules.compareUint(receipt.tip, rules.decimalV2(clock.tip)) <= 0,
       'receipt_admission_policy');
     check(!this.journal.slots.has(`batch/${authority.epoch}/${receipt.batch}`), 'receipt_batch_reserved');
@@ -81,6 +99,7 @@ export class ReceiptFences {
     const old = this.fences.get(cutoff.settingsHash);
     if (old) { check(equal(old.cutoff, cutoff), 'receipt_cutoff_conflict'); if (old.vote) return old.vote; }
     const accepted = await this.reads.rulesContext();
+    this.checkCutoffBatches(rules.nextUint(rules.decimalV2(accepted?.last?.n ?? '0')));
     check(accepted?.ready && cutoff.settingsHash === accepted.settingsHash && equal(evidence.document, accepted.settings) &&
       cutoff.predecessor.n === rules.decimalV2(accepted.last.n) && cutoff.predecessor.claims === accepted.claimsRoot &&
       cutoff.predecessor.catalog === accepted.catalogRoot && cutoff.predecessor.root ===
@@ -111,6 +130,9 @@ export class ReceiptFences {
     await this.persist('receipt-cutoff', { cutoff, vote, members: [...members].map(([sequence, r]) => [sequence, rules.hashObject(r)]) });
     return vote;
   }); }
+  checkCutoffBatches(batch) {
+    check(!this.latestBatch || rules.compareUint(this.latestBatch, batch) <= 0, 'receipt_future_pending');
+  }
   async cutoffPage(cutoff, evidence, accepted, old) {
     rules.validateReceiptCutoffShape(cutoff, this);
     const initial = rules.validatePagedCutoffEvidence(cutoff, evidence), settingsHash = cutoff.settingsHash;
@@ -145,6 +167,12 @@ export class ReceiptFences {
     await this.persist('receipt-cutoff', { cutoff, vote });
     return vote;
   }
+  // True when this witness durably acknowledged every receipt in a non-empty
+  // segment at admission, before any later tip. Such a segment can be
+  // witnessed after its window (e.g. after gateway downtime) without backdating.
+  admittedAll(receipts) {
+    return !this.failed && receipts.length > 0 && receipts.every(r => { const old = this.receipts.get(r.sequence); return !!old && equal(old.receipt, r); });
+  }
   checkSegment(seal, receipts) {
     check(!this.failed, 'receipt_journal_uncertain');
     const fence = this.fences.get(seal.settingsHash); if (!fence) return;
@@ -155,6 +183,11 @@ export class ReceiptFences {
   checkBatch(batch, files, renewal) {
     check(!this.failed, 'receipt_journal_uncertain');
     const members = new Map(files.flatMap(f => f.receipts).filter(r => r.v === 2).map(r => [r.sequence, r]));
+    const lastSequence = [...members.keys()].reduce((last, sequence) => rules.compareUint(sequence, last) > 0 ? sequence : last, '0');
+    const successor = rules.nextUint(String(batch.n));
+    check(!this.latestBatch || rules.compareUint(this.latestBatch, successor) <= 0, 'receipt_batch_order');
+    for (const receipt of this.byBatch.get(successor)?.values() ?? [])
+      check(rules.compareUint(lastSequence, receipt.sequence) < 0, 'receipt_batch_order');
     if (renewal) rules.verifyRenewalSegments(renewal, files.map(f => ({ seal: f.receiptRoot, receipts: f.receipts })), String(batch.n), batch.renewal.slice);
     for (const receipt of this.byBatch.get(String(batch.n))?.values() ?? [])
       check(members.has(receipt.sequence) && equal(members.get(receipt.sequence), receipt), 'receipt_batch_omission');

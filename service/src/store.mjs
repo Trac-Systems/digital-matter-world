@@ -1,7 +1,9 @@
 import { indexOfficialNames } from './official-ticker-names.mjs';
 import { payoutIndexOperation } from './payout-index.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { Worker } from 'node:worker_threads';
 import { openSync, closeSync, unlinkSync } from 'node:fs';
+import { bitmapLinkSchema } from './bitmap-link-changes.mjs';
 import { readIndexSchema } from './read-index-storage.mjs';
 import { mkdir, open, readFile, unlink, stat, rmdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -24,9 +26,15 @@ export const STORE_DEFAULTS = Object.freeze({ queueLimit: 4096, groupSize: 128, 
 // The fsynced journal is the acknowledgement boundary. SQLite is a bounded-cache
 // index of both live records and cold history, never a growing in-memory pool.
 export class Store {
-  static async open(directory, options = {}) {
+  static async open(directory, options = {}) { return this.openStore(directory, options, true); }
+  // Offline migrations and connection-level diagnostics hold the same exclusive
+  // lock, but finish all writes on the opening thread before serving requests.
+  static async openForMaintenance(directory, options = {}) { return this.openStore(directory, options, false); }
+  static async openStore(directory, options, writer) {
     const store = new Store(directory, options);
-    try { await store.init(); return store; } catch (e) { await store.close().catch(() => {}); throw e; }
+    store.options = { ...options };
+    try { await store.init(); if (writer) await store.startWriter(); return store; }
+    catch (e) { await store.close().catch(() => {}); throw e; }
   }
   constructor(directory, options = {}) {
     const settings = { ...R3_RESOURCES, ...STORE_DEFAULTS, ...options };
@@ -59,6 +67,7 @@ export class Store {
     this.db = new DatabaseSync(join(this.directory, 'index.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE; CREATE TABLE IF NOT EXISTS records (space TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(space,id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS progress (id INTEGER PRIMARY KEY,sequence INTEGER NOT NULL); INSERT OR IGNORE INTO progress VALUES(1,0)');
     readIndexSchema(this.db);
+    bitmapLinkSchema(this.db);
     projectionSchema(this.db);
     publicProjectionSchema(this.db);
     patternSymbolFillSchema(this.db);
@@ -99,28 +108,7 @@ export class Store {
         UPDATE record_counts SET n=CAST((SELECT n FROM record_counts_decimal WHERE space=OLD.space) AS INTEGER) WHERE space=OLD.space;
       END;`);
     this.db.exec(`PRAGMA cache_size=-${this.sqliteCacheKiB}`);
-    this.getStmt = this.db.prepare('SELECT value FROM records WHERE space=? AND id=?');
-    this.publicProjectionActive = this.db.prepare("SELECT json_extract(value,'$.batchVersion') AS version FROM records WHERE space='meta' AND id='ruleState'").get()?.version === 2;
-    this.putStmt = this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(space,id) DO UPDATE SET value=excluded.value');
-    this.delStmt = this.db.prepare('DELETE FROM records WHERE space=? AND id=?');
-    this.listStmt = this.db.prepare('SELECT id,value FROM records WHERE space=? AND id>? ORDER BY id LIMIT ?');
-    this.countStmt = this.db.prepare('SELECT n FROM record_counts_decimal WHERE space=?');
-    this.stageStmt = this.db.prepare('INSERT INTO staged_transactions VALUES(?,?,?)');
-    this.stagesStmt = this.db.prepare('SELECT part,data FROM staged_transactions WHERE tx=? ORDER BY part');
-    this.clearStagesStmt = this.db.prepare('DELETE FROM staged_transactions WHERE tx=?');
-    this.sequence = this.db.prepare('SELECT sequence FROM progress WHERE id=1').get().sequence;
-    this.db.exec('CREATE TABLE IF NOT EXISTS journal_progress(id INTEGER PRIMARY KEY,sequence TEXT NOT NULL)');
-    const decimalProgress = this.db.prepare('SELECT sequence FROM journal_progress WHERE id=1').get();
-    this.decimalSequence = !!decimalProgress || this.get('meta', 'ruleState')?.batchVersion === 2;
-    if (this.decimalSequence) this.sequence = rules.decimalV2(decimalProgress?.sequence ?? this.sequence);
-    this.evidenceIndex = new AuthenticatedIndex(this.db);
-    this.db.exec('CREATE TABLE IF NOT EXISTS evidence_values(space TEXT,id TEXT,value TEXT,PRIMARY KEY(space,id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS evidence_progress(id INTEGER PRIMARY KEY,ready INTEGER NOT NULL)');
-    this.db.prepare('INSERT OR IGNORE INTO evidence_progress VALUES(1,?)').run(this.db.prepare('SELECT 1 FROM records LIMIT 1').get() ? 0 : 1);
-    this.evidenceReady = this.db.prepare('SELECT ready FROM evidence_progress WHERE id=1').get().ready === 1;
-    this.evidenceDeleteStmt = this.db.prepare('DELETE FROM evidence_values WHERE space=? AND id=?');
-    this.evidencePutStmt = this.db.prepare('INSERT OR REPLACE INTO evidence_values VALUES(?,?,?)');
-    this.decimalProgressStmt = this.db.prepare('INSERT OR REPLACE INTO journal_progress VALUES(1,?)');
-    this.progressStmt = this.db.prepare('UPDATE progress SET sequence=? WHERE id=1');
+    this.prepareConnection();
     // Reserve old symbols before pending journal discoveries can claim them.
     // Startup holds the exclusive writer lock; each fill page commits its own
     // progress and yields, and subsequent opens check only the completion key.
@@ -181,6 +169,100 @@ export class Store {
       } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     }
   }
+  prepareConnection({ initialize = true } = {}) {
+    this.getStmt = this.db.prepare('SELECT value FROM records WHERE space=? AND id=?');
+    this.publicProjectionActive = this.db.prepare("SELECT json_extract(value,'$.batchVersion') AS version FROM records WHERE space='meta' AND id='ruleState'").get()?.version === 2;
+    this.putStmt = this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(space,id) DO UPDATE SET value=excluded.value');
+    this.delStmt = this.db.prepare('DELETE FROM records WHERE space=? AND id=?');
+    this.listStmt = this.db.prepare('SELECT id,value FROM records WHERE space=? AND id>? ORDER BY id LIMIT ?');
+    this.countStmt = this.db.prepare('SELECT n FROM record_counts_decimal WHERE space=?');
+    this.stageStmt = this.db.prepare('INSERT INTO staged_transactions VALUES(?,?,?)');
+    this.stagesStmt = this.db.prepare('SELECT part,data FROM staged_transactions WHERE tx=? ORDER BY part');
+    this.clearStagesStmt = this.db.prepare('DELETE FROM staged_transactions WHERE tx=?');
+    this.sequence = this.db.prepare('SELECT sequence FROM progress WHERE id=1').get().sequence;
+    if (initialize) this.db.exec('CREATE TABLE IF NOT EXISTS journal_progress(id INTEGER PRIMARY KEY,sequence TEXT NOT NULL)');
+    const decimalProgress = this.db.prepare('SELECT sequence FROM journal_progress WHERE id=1').get();
+    this.decimalSequence = !!decimalProgress || this.get('meta', 'ruleState')?.batchVersion === 2;
+    if (this.decimalSequence) this.sequence = rules.decimalV2(decimalProgress?.sequence ?? this.sequence);
+    this.evidenceIndex = new AuthenticatedIndex(this.db, { initialize });
+    if (initialize) this.db.exec('CREATE TABLE IF NOT EXISTS evidence_values(space TEXT,id TEXT,value TEXT,PRIMARY KEY(space,id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS evidence_progress(id INTEGER PRIMARY KEY,ready INTEGER NOT NULL)');
+    if (initialize) this.db.prepare('INSERT OR IGNORE INTO evidence_progress VALUES(1,?)').run(this.db.prepare('SELECT 1 FROM records LIMIT 1').get() ? 0 : 1);
+    this.evidenceReady = this.db.prepare('SELECT ready FROM evidence_progress WHERE id=1').get().ready === 1;
+    this.evidenceDeleteStmt = this.db.prepare('DELETE FROM evidence_values WHERE space=? AND id=?');
+    this.evidencePutStmt = this.db.prepare('INSERT OR REPLACE INTO evidence_values VALUES(?,?,?)');
+    this.decimalProgressStmt = this.db.prepare('INSERT OR REPLACE INTO journal_progress VALUES(1,?)');
+    this.progressStmt = this.db.prepare('UPDATE progress SET sequence=? WHERE id=1');
+  }
+  committedState() {
+    const { sequence, decimalSequence, publicProjectionActive, evidenceReady } = this;
+    return { sequence, decimalSequence, publicProjectionActive, evidenceReady };
+  }
+  async startWriter() {
+    this.db.exec('PRAGMA query_only=ON');
+    this.writerRequests = new Map(); this.writerRequestId = 0;
+    this.writer = new Worker(new URL('./store-writer.mjs', import.meta.url), {
+      workerData: { directory: this.directory, options: this.options },
+    });
+    this.writerExit = new Promise(resolve => this.writer.once('exit', code => {
+      if (!this.writerStopping || code !== 0) this.fail(Object.assign(Error('store_writer_exit'), { code }));
+      resolve();
+    }));
+    this.writer.on('error', error => this.fail(error));
+    this.writer.on('message', message => {
+      const request = this.writerRequests.get(message.id);
+      if (!request) return;
+      if (message.error) {
+        const error = Object.assign(Error(message.error.message), message.error);
+        if (message.fatal) this.fail(error);
+        else { this.writerRequests.delete(message.id); request.reject(error); }
+        return;
+      }
+      // The worker sends state only after COMMIT. Publish it before releasing
+      // callers, whose next synchronous reads see the committed WAL snapshot.
+      Object.assign(this, message.state);
+      this.writerRequests.delete(message.id); request.resolve(message.result);
+    });
+    await this.requestWriter('ready');
+    // Keep the writer open while replacing the startup connection, so closing
+    // that connection cannot perform SQLite's final WAL checkpoint on this thread.
+    const startup = this.db;
+    try {
+      this.db = new DatabaseSync(join(this.directory, 'index.sqlite'), { readOnly: true });
+      this.db.exec(`PRAGMA query_only=ON; PRAGMA cache_size=-${this.sqliteCacheKiB}; PRAGMA temp_store=FILE`);
+      this.prepareConnection({ initialize: false });
+    } finally { if (this.db !== startup) startup.close(); }
+  }
+  fail(error) {
+    this.failed ??= error;
+    for (const job of this.queue.splice(0)) job.reject(this.failed);
+    for (const request of this.writerRequests?.values() ?? []) request.reject(this.failed);
+    this.writerRequests?.clear();
+    return this.failed;
+  }
+  requestWriter(command, data) {
+    if (this.failed) return Promise.reject(this.failed);
+    if (this.writerStopping && command !== 'close') return Promise.reject(Error('store_unavailable'));
+    return new Promise((resolve, reject) => {
+      const id = ++this.writerRequestId;
+      this.writerRequests.set(id, { resolve, reject });
+      try { this.writer.postMessage({ id, command, data }); }
+      catch (error) { this.fail(error); }
+    });
+  }
+  // History branch caches contain only disposable TEMP tables, never a
+  // second connection that can acquire the authoritative database's write lock.
+  scratchDatabase() {
+    if (!this.scratchDB) {
+      this.scratchDB = new DatabaseSync(':memory:');
+      this.scratchDB.exec(`PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-${this.sqliteCacheKiB}`);
+    }
+    return this.scratchDB;
+  }
+  acknowledgeBitmapLinks(rows) {
+    if (this.writer) return this.requestWriter('acknowledgeBitmapLinks', rows);
+    const remove = this.db.prepare('DELETE FROM bitmap_link_changes WHERE id=?');
+    for (const { id, linked } of rows) if (!!this.get('links', id) === linked) remove.run(id);
+  }
   get(space, id) { const row = this.getStmt.get(space, String(id)); return row ? JSON.parse(row.value) : null; }
   list(space, { after = '', limit = this.defaultPageRows } = {}) {
     check(Number.isSafeInteger(limit) && limit >= 1 && limit <= this.storePageRows, 'page_limit');
@@ -210,6 +292,7 @@ export class Store {
     projectTaken(this, op);
   }
   apply(rows) {
+    if (this.writer) return this.requestWriter('apply', rows);
     const previousProjection = this.publicProjectionActive;
     this.db.exec('BEGIN IMMEDIATE');
     this.projectionRevisions = new Map(); this.projectionItems = new Map();
@@ -269,6 +352,7 @@ export class Store {
   // Explicit offline migration. Never run an all-record rebuild from a read
   // request; old stores fail closed until an operator runs this once.
   rebuildEvidenceIndex() {
+    if (this.writer) return this.gate(() => this.requestWriter('rebuildEvidenceIndex'));
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.exec('DELETE FROM evidence_nodes; DELETE FROM evidence_values; UPDATE evidence_root SET key=NULL WHERE id=1');
@@ -335,7 +419,7 @@ export class Store {
         let rows = [], frames = [], bytes = 0;
         const persist = async () => {
           if (!rows.length) return;
-          await this.fd.writeFile(Buffer.concat(frames)); await this.fd.sync(); this.apply(rows); this.journalBytes += bytes;
+          await this.fd.writeFile(Buffer.concat(frames)); await this.fd.sync(); await this.apply(rows); this.journalBytes += bytes;
           rows = []; frames = []; bytes = 0;
         };
         for (const job of jobs) {
@@ -352,29 +436,54 @@ export class Store {
         }
         await persist(); jobs.forEach(job => job.resolve());
         // Intake and feed updates also compact during a stalled Bitcoin clock.
-        if (this.journalBytes >= this.checkpointBytes) await this.checkpoint();
-      } catch (e) { this.failed = e; for (const job of [...jobs, ...this.queue.splice(0)]) job.reject(e); }
+        if (this.journalBytes >= this.checkpointBytes) await this.checkpointJournal();
+      } catch (e) { this.fail(e); for (const job of jobs) job.reject(this.failed); }
     }
   }); }
   async compact() {
     await this.flush();
-    return this.gate(() => this.checkpoint());
+    return this.checkpoint();
   }
-  async checkpoint() {
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  checkpoint() { return this.gate(() => this.checkpointJournal()); }
+  checkpointWAL() {
+    if (this.failed) return Promise.reject(this.failed);
+    return this.writer ? this.requestWriter('checkpoint') : this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  }
+  async checkpointJournal() {
+    const result = await this.checkpointWAL();
+    // Applied rows are already durable in SQLite (synchronous=FULL), so the journal
+    // is truncated even when a pinned reader keeps the WAL from being reset. Live
+    // evidence snapshots overlap constantly; waiting for a quiet moment would let
+    // the journal, and every restart's replay, grow without bound.
     await this.fd.close(); this.fd = null;
     await atomicWrite(this.path, Buffer.alloc(0)); this.fd = await open(this.path, 'a+', 0o600); this.journalBytes = 0;
+    return result;
   }
   async bytes() { return (await stat(this.path)).size; }
-  async close({ checkpoint = false } = {}) {
-    if (this.closed) return; this.closed = true; clearTimeout(this.timer);
-    await this.flush();
-    // A clean service stop can retain the committed SQLite snapshot and leave
-    // only a future crash tail to verify on reopen. Never truncate before the
-    // WAL checkpoint has completed durably.
-    if (checkpoint && this.fd) await this.checkpoint();
-    await this.fd?.close(); this.db?.close();
-    if (this.lock) { await this.lock.close(); const owned = JSON.parse(await readFile(this.lockPath, 'utf8')); check(owned.token === this.lockIdentity?.token, 'store_lock_changed'); await unlink(this.lockPath); }
+  close({ checkpoint = false } = {}) {
+    if (this.closing) return this.closing;
+    this.closed = true; clearTimeout(this.timer);
+    return this.closing = (async () => {
+      try {
+        await this.flush();
+        if (checkpoint && this.fd && !this.failed) await this.checkpoint();
+      } finally {
+        if (this.writer) {
+          if (!this.failed) {
+            this.writerStopping = true;
+            await this.requestWriter('close').catch(error => this.fail(error));
+          }
+          if (this.failed) await this.writer.terminate();
+          await this.writerExit;
+        }
+        await this.fd?.close(); this.scratchDB?.close(); this.db?.close();
+        if (this.lock) {
+          await this.lock.close();
+          const owned = JSON.parse(await readFile(this.lockPath, 'utf8'));
+          check(owned.token === this.lockIdentity?.token, 'store_lock_changed'); await unlink(this.lockPath);
+        }
+      }
+    })();
   }
 }
 

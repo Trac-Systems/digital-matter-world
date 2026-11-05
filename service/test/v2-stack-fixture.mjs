@@ -55,7 +55,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   const genesis = '01000000' + '00'.repeat(32) + '3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a' + 'dae5494dffff7f2002000000';
   const checkpoint = chainFixture?.checkpoint ?? { ...parseHeader(genesis), height: 0, chainwork: workFor(0x207fffff).toString() };
   const raw = chainFixture?.raw ?? [genesis, ...chain(historyLength, checkpoint)]; await writeFile(join(path, 'headers.bin'), Buffer.from(raw.join(''), 'hex'));
-  const history = await (chainFixture ? loadHistory : loadRegtestHistory)(join(path, 'headers.bin')); history.hashAt = h => history.get(Number(h)).hash;
+  const history = await (chainFixture && chainFixture.bitcoinNetwork !== 'regtest' ? loadHistory : loadRegtestHistory)(join(path, 'headers.bin')); history.hashAt = h => history.get(Number(h)).hash;
   const replayHistory = { length: history.length, get: h => history.get(h), raw: h => history.raw(h), field: (...args) => history.field(...args), hashAt: history.hashAt };
   const options = { ...deployment, ...chainFixture?.deployment, network, beacon: { checkpoint, params: chainFixture?.params ?? REGTEST_PARAMS } };
   const old = harness(options);
@@ -249,7 +249,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
     players.push({ agent, directory, proposal: { name: `dmwstack${i}`, pat: regexes[i], fld: 4, dt: 'n' } });
   }
   if (scenario) return scenario({ store, files, contract, document, network, secret, committeeSecret, rulesContext, stamp,
-    financial, drain, history, players, legacyRecord, runtime, reads, committee, pipeline, config, servers, notary, http,
+    financial, drain, history, players, legacyRecord, runtime, reads, committee, pipeline, config, servers, notary, http, receiptFences: fenceReaders,
     async observeNext() { tip++; await contract.advance(1); await observe(); },
     async replayAccepted(n, rebuild = rebuildBatch) {
       const row = store.get('batches', heightKey(n));
@@ -326,7 +326,7 @@ export async function v2StackFixture(t, { scenario, historyLength = 1030, observ
   } tip = 1014;
   await runtime.intake.seal(); await drain();
   assert.equal(store.count('finds'), 800);
-  assert.ok(pipeline.overlap.promoted > 0, JSON.stringify(pipeline.overlap));
+  if (!runtime.intake.namedAdmission.wait.admissionFutureBatches) assert.ok(pipeline.overlap.promoted > 0, JSON.stringify(pipeline.overlap));
   assert.equal(pipeline.overlap.failed, 0, JSON.stringify(pipeline.overlap));
   t.diagnostic(JSON.stringify({ pipelineOverlap: pipeline.overlap }));
   for (const p of players) {

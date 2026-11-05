@@ -34,3 +34,17 @@ test('packed hashes cover a large settlement without increasing its proof budget
   assert(Buffer.byteLength(rules.stableJSON(value)) <= 1500000);
   for (const bad of ['AA==', '!!!!', 'A'.repeat(42) + 'B=']) assert.throws(() => decodeNodeHints(bad), /node_evidence_hints/);
 });
+
+test('immutable row packing preserves exact canonical sizes, eviction order and repeated hints', async () => {
+  const { immutableIndexRow } = await import('../../rules/src/index-row-cache.js');
+  const rows = Array.from({ length: 100 }, (_, i) => [rules.hash(String(i)), { key: String(i), value: { text: 'é😀'.repeat(i + 1), n: i } }]);
+  for (const limit of [2, 128, 1024, 10000]) {
+    const plain = new NodeEvidence(limit), frozen = new NodeEvidence(limit);
+    for (const [id, row] of [...rows, ...rows.slice().reverse(), ...rows]) {
+      plain.add(id, structuredClone(row)); frozen.add(id, immutableIndexRow(row));
+      assert.deepEqual(frozen.value(), plain.value());
+      if (frozen.nodes.has(id)) assert.equal(frozen.sizes.get(id), Buffer.byteLength(rules.stableJSON([id, row])) + 1);
+      assert.equal(frozen.bytes, plain.bytes);
+    }
+  }
+});

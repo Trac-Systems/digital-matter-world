@@ -8,7 +8,7 @@ import { temp, agent } from './helpers.mjs';
 import { rules as r } from '../src/rules.mjs';
 
 test('terminal public import retains legacy agent scores and historical events, resumes and preserves canonical headers', async t => {
-  const store = await Store.open(join(await temp('ms1-public-'), 'gateway')); t.after(() => store.close());
+  const store = await Store.openForMaintenance(join(await temp('ms1-public-'), 'gateway')); t.after(() => store.close());
   const a = agent(9820).address, b = agent(9821).address;
   await store.transact([
     { space: 'meta', id: 'ruleState', value: { counted: 7, discoveryCommits: [{ agent: a }], batchVersion: 1 } },

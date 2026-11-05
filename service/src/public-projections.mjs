@@ -9,10 +9,17 @@ import { publicPageBytes } from './public-page-bytes.mjs';
 import { PUBLIC_SORTS } from './public-projection-index.mjs';
 import { financialBlock } from './financial-status.mjs';
 import { encodeTracAddress } from './public-identities.mjs';
+import { TAP_BURN, tapBurnAddress } from '../../rules/src/tap-burn.js';
 
 const tracAddress = key => { try { return /^[0-9a-f]{64}$/.test(key ?? '') ? encodeTracAddress(key) : null; } catch { return null; } };
 import { patternCatalogId } from './mint-assets.mjs';
 
+// Bulk order payments are grouped by destination and carry no fee role; the destination names it.
+const burnAddresses = new Set([TAP_BURN, tapBurnAddress('regtest')]);
+function groupRole(store, to) {
+  if (burnAddresses.has(to)) return 'burn';
+  return to && to === store.get('publicSummaries', 'treasury')?.bitcoin ? 'treasury' : null;
+}
 const encode = x => Buffer.from(JSON.stringify(x)).toString('base64url');
 const financialKinds = ['balances', 'mints', 'payments', 'ethereum', 'credits', 'custody', 'linkRequests', 'links', 'supply'];
 function paging(params, scope, revision, settings, allowed = []) {
@@ -53,7 +60,12 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   if (kind === 'discoveries') projectionReady(store, 'discoveriesByAgent/' + scope);
   if (kind === 'finds' && scope.startsWith('owner/')) projectionReady(store, 'findsByAgent/' + scope.slice(6));
   projectionReady(store, { events: 'publicEvents', patterns: 'catalogPatterns', compounds: 'catalogTypes', agents: 'catalogAgents' }[kind] ?? kind);
-  const revision = projectionRevision(store, `items/${kind}/${scope}`) + (kind === 'links' || kind === 'bitmaps' ? '/' + projectionRevision(store, 'submittedBitmaps') + '/' + projectionRevision(store, 'links') + '/' + (store.get('meta', 'head')?.hash ?? '') : kind === 'balances' ? '/' + projectionRevision(store, 'publicBalanceHeads/' + scope) + '/' + projectionRevision(store, 'accountRecords/ar/' + scope) : '') +
+  // The full pattern list in number order is read page by page by every agent and takes longer than a
+  // batch. Rows are only ever added and their order never changes, so its cursor stays valid until a pattern
+  // is added instead of expiring whenever a batch rewrites pattern statistics.
+  const steadyCatalog = kind === 'patterns' && !scope && (params.get('sort') ?? 'number') === 'number' &&
+    [...params.keys()].every(k => ['limit', 'cursor', 'order', 'sort'].includes(k));
+  const revision = steadyCatalog ? store.countUint('catalogPatterns') : projectionRevision(store, `items/${kind}/${scope}`) + (kind === 'links' || kind === 'bitmaps' ? '/' + projectionRevision(store, 'submittedBitmaps') + '/' + projectionRevision(store, 'links') + '/' + (store.get('meta', 'head')?.hash ?? '') : kind === 'balances' ? '/' + projectionRevision(store, 'publicBalanceHeads/' + scope) + '/' + projectionRevision(store, 'accountRecords/ar/' + scope) : '') +
     (financialKinds.includes(kind) ? '/' + projectionRevision(store, 'financialHealth') : '') + (kind === 'payouts' && payoutPolicyHash(store) ? '/' + payoutPolicyHash(store) : '');
   const filters = ['asset', 'owner', 'block', 'state', 'action', 'since', 'q', 'tier', 'recipe', 'firstMaker', 'discoverer', 'address', 'nonzero', 'minted', 'pending', 'linked', 'height', 'type', 'actor', 'category', 'payer', 'beneficiary', 'role', 'to', 'status', 'window', 'agent', 'header', 'kind'];
   const p = paging(params, kind + '/' + scope, revision, settings, filters);
@@ -92,6 +104,7 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
       value.current = !value.blocked;
     }
     if (kind === 'finds') value.minted = !!store.get('minted', value.asset + '/' + value.block);
+    if (kind === 'payments' && value.group != null && !value.role) value.role = groupRole(store, value.to);
     const visible = !['balances', 'supply'].includes(kind) || !value.asset?.startsWith('c2:') || !store.get('compoundTypes', value.asset)?.retired;
     const matches = visible && extra.every(k => {
       const expected = params.get(k);
@@ -110,6 +123,11 @@ export function itemPage(store, kind, scope, params, settings = {}, map) {
   }
   const page = finishPage(selected, kind, p, revision, undefined, { sort, examined: budget, continuationMeaning: 'bounded_index_work' });
   if (!page.next && last && examined < rows.length) page.next = page.nextCursor = p.cursor([last.position, last.id]);
+  // Unfiltered lists report their kept item count; filtered ones are only known page by page.
+  if (!filters.some(k => params.has(k)) && !['balances', 'supply'].includes(kind)) {
+    const n = Number(store.db.prepare('SELECT n FROM publicItemCountsV2 WHERE kind=? AND scope=?').get(kind, scope)?.n ?? 0);
+    if (Number.isSafeInteger(n)) page.total = n;
+  }
   return { ...page, sort, examined, continuationMeaning: 'bounded_index_work' };
 }
 const stateOf = store => store.get('meta', 'ruleState');
@@ -133,7 +151,7 @@ export function publicProjectionRevision(store, input) {
     if (kind === 'balances') scopes.push('publicBalanceHeads/' + owner, 'accountRecords/ar/' + owner, 'financialHealth');
   }
   if ((match = /^\/accounts\/([0-9a-f]{64})\//.exec(path))) scopes = ['accountRecords/ar/' + match[1]];
-  if (path.startsWith('/results')) { clock = true; scopes = ['mints', 'linkRequests', 'links', 'submittedBitmaps', 'payoutTotals', 'commissionOwed', 'payoutPaid', 'publicSummaries', 'publicSupply', 'financialHealth', 'publicFinancialHealth', ...['mints', 'payments', 'ethereum', 'credits', 'custody', 'linkRequests'].map(k => 'publicResults/' + k)]; }
+  if (path.startsWith('/results')) { clock = true; scopes = ['mints', 'minted', 'linkRequests', 'links', 'submittedBitmaps', 'payoutTotals', 'commissionOwed', 'payoutPaid', 'publicSummaries', 'publicSupply', 'financialHealth', 'publicFinancialHealth', ...['mints', 'payments', 'ethereum', 'credits', 'custody', 'linkRequests'].map(k => 'publicResults/' + k)]; }
   if (!scopes) return null;
   const payoutPolicy = ['/payouts/beneficiaries', '/results/payouts'].includes(path) ? payoutPolicyHash(store) : '';
   return scopes.map(s => projectionRevision(store, s)).join('/') + (payoutPolicy ? '/' + payoutPolicy : '') + (clock ? '/' + JSON.stringify(clocks(store)) + '/' + (store.get('meta', 'head')?.hash ?? '') : '');
@@ -324,7 +342,10 @@ export function extendedPublicRead(store, url, settings = {}) {
   const event = /^\/(?:events|feed)\/(0|[1-9][0-9]*)$/.exec(path);
   if (event) { const value = store.get('publicEvents', heightKey(event[1])); check(value, 'event_not_found', 404); return value; }
   const kinds = ['mints', 'payments', 'ethereum', 'payouts', 'owed', 'paid', 'links', 'credits', 'custody', 'linkRequests', 'supply'];
-  if (path === '/results') return { v: 3, unit: rules.TAP_UNIT, counts: Object.fromEntries(kinds.map(k => [k, store.db.prepare("SELECT n FROM publicItemCountsV2 WHERE kind=? AND scope=''").get(k)?.n ?? '0'])), collections: Object.fromEntries(kinds.map(k => [k, '/results/' + k])),
+  // Inscriptions on Bitcoin: every minted block (single or bulk) plus every minted compound. Mint requests that
+  // were never paid or expired are rows of /results/mints but not inscriptions.
+  const inscriptions = () => String(BigInt(store.countUint('minted')) + BigInt(store.db.prepare("SELECT count(*) AS n FROM publicOrderV2 INDEXED BY publicOrderV2State WHERE kind='mints' AND scope='' AND sort='block' AND state='minted' AND key=''").get().n));
+  if (path === '/results') return { v: 3, unit: rules.TAP_UNIT, counts: { ...Object.fromEntries(kinds.map(k => [k, store.db.prepare("SELECT n FROM publicItemCountsV2 WHERE kind=? AND scope=''").get(k)?.n ?? '0'])), inscriptions: inscriptions() }, collections: Object.fromEntries(kinds.map(k => [k, '/results/' + k])),
     treasury: store.get('publicSummaries', 'treasury'), burn: store.get('publicSummaries', 'burn'),
     outstandingSupply: { ...store.get('publicSummaries', 'outstandingSupply'), ...store.get('publicSummaries', 'externalSupply') },
     financialRecovery: store.get('accountRecords', 'fr/active') ?? store.get('meta', 'financialRecoveryActive') ?? null,

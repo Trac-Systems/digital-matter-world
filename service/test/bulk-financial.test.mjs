@@ -259,7 +259,7 @@ test('bulk member funding remains compatible with public-winner point reads', as
   assert.equal(await f.reads.financialRecord('fp/' + b.bulkMemberId(q.orderId, 0)), null, 'canonical records never synthesize member funding');
 });
 
-test('bulk maximum 64-member 131-group lifecycle fits audits and accrues pinned holder shares at finish', async t => {
+test('bulk maximum 64-member 131-group lifecycle fits audits and pays the deployment holder directly', async t => {
   const f = await fixture(t, { baseFee: '1000000000000000000', values: {
     legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '100', deployerShareBps: 500 } });
   for (let i = 0; i < 64; i++) {
@@ -270,7 +270,8 @@ test('bulk maximum 64-member 131-group lifecycle fits audits and accrues pinned 
   }
   const q = await f.bulk.quote(f.input(64)), id = q.orderId;
   assert.equal(q.terms.members.length, 64); assert.equal(q.terms.groups.length, 131);
-  assert.equal(q.feeManifest[0].deferred.deployer, '50000000000000000');
+  assert.equal(q.feeManifest[0].deferred.deployer, '0');
+  assert.equal(q.deployerPayment.amount, '3200000000000000000');
   const sizes = [], record = result => { sizes.push(Buffer.byteLength(r.stableJSON(result.inputs))); return result; };
   await f.bulk.request(f.sign(q)); record(await f.execute());
   await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null }); record(await f.execute());
@@ -279,10 +280,10 @@ test('bulk maximum 64-member 131-group lifecycle fits audits and accrues pinned 
   for (let start = 0; start < 64; start += 16) {
     await f.bulk.finish({ orderId: id, members: await f.reveal(id, Array.from({ length: 16 }, (_, i) => start + i)) });
     const result = record(await f.execute());
-    assert.ok(result.inputs[0].evidence.members.every(m => m.commissions[0].to === address(151) && m.commissions[0].id === m.memberId));
-    await f.store.transact(payouts.accruals(result.draft)); assert.deepEqual(payouts.accruals(result.draft), []);
+    assert.ok(result.inputs[0].evidence.members.every(m => !m.commissions?.length));
+    assert.deepEqual(payouts.accruals(result.draft), []);
   }
-  assert.equal(f.store.count('commissionOwed'), 64);
+  assert.equal(f.store.count('commissionOwed'), 0);
   assert.equal((await f.bulk.status(id)).state, 'minted');
   assert.ok(sizes.reduce((a, n) => a + n, 0) < 1500000); assert.ok(f.count() < 30);
   t.diagnostic(JSON.stringify({ members: 64, groups: 131, signedRequestBytes: Buffer.byteLength(r.stableJSON(f.sign(q))),
@@ -364,4 +365,111 @@ for (const pending of ['bulk-fund', 'bulk-consume']) test(`expired ${pending} pr
   const credit = f.store.get('accountRecords', 'fc/' + b.bulkReceiptKey(f.bitcoinNetwork, reference));
   assert.equal(credit.fees.reduce((n, fee) => n + BigInt(fee.amount), 0n).toString(), q.terms.payableFeeAtoms);
   assert.equal(balance(f).held, '0'); assert.equal(balance(f).available, '100000');
+});
+
+for (const missing of [false, true]) test(`bulk refuses an unpaid side item and recovers only manifest groups; missing=${missing}`, async t => {
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1' } });
+  const q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  assert.deepEqual(q.deployerPayment, { to: address(5), amount: '1000', dta: `dmw-bulk-deployer-v1|${id}` });
+  assert.equal(q.terms.grossFeeAtoms, '19000');
+  for (const m of q.feeManifest) {
+    assert.deepEqual(m.deferred, { deployer: '0', legacyDeploy: '0' });
+    assert.equal(m.shares.some(s => s.role === 'deployer'), false);
+    assert.equal(m.shares.find(s => s.role === 'burn').gross, '3000');
+    assert.equal(m.shares.find(s => s.role === 'treasury').gross, '3500');
+  }
+  await f.bulk.request(f.sign(q)); await f.execute();
+  assert.deepEqual((await f.bulk.terms(id)).deployerPayment, q.deployerPayment);
+  assert.deepEqual((await f.bulk.status(id)).deployerPayment, q.deployerPayment);
+  assert.deepEqual((await f.bulk.senderItem(id)).deployerPayment, q.deployerPayment);
+  const reference = f.payment(missing ? { ...q, deployerPayment: null } : q, 'unpaid', [q.terms.groups.length]);
+  assert.equal((await f.independent.bulkReceipt(id, reference, f.stamp())).deployerPaid, false);
+  await assert.rejects(f.independent.bulkEvidence({ type: 'bulk-fund', id, reference }, f.stamp()), /bulk_deployer_unpaid/);
+  await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
+  assert.equal(f.store.get('accountRecords', 'fp/' + id).state, 'bulk-open');
+  assert.equal((await f.bulk.status(id)).state, 'partly_paid');
+  f.height(String(BigInt(q.terms.expires) + 1n)); await f.bulk.tick(); await f.execute();
+  await f.bulk.tick(); await f.execute();
+  const credit = f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, reference));
+  assert.equal(credit.state, 'credited'); assert.equal(credit.groups.reduce((n, g) => n + BigInt(g.amount), 0n), BigInt(q.terms.payableFeeAtoms));
+  assert.equal(f.store.count('commissionOwed'), 0);
+});
+
+test('bulk payer holding the deployment has no side payment and keeps the same five-role manifest', async t => {
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' } });
+  const input = f.input(); f.holderAddress(input.payer);
+  const q = await f.bulk.quote(input);
+  assert.equal(q.deployerPayment, undefined); assert.equal(q.terms.grossFeeAtoms, '9500');
+  b.validateBulkFees(q.terms, q.feeManifest);
+  await f.bulk.request(f.sign(q)); await f.execute();
+  await f.bulk.payment({ orderId: q.orderId, paymentId: f.payment(q), commitTxid: null, revealTxid: null }); await f.execute();
+  assert.equal(f.store.get('accountRecords', 'fp/' + q.orderId).state, 'bulk-funded');
+});
+
+test('bulk holder and same-receipt transfer binding are rechecked independently before funding and consumption', async t => {
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' } });
+  const q = await f.bulk.quote(f.input()), id = q.orderId;
+  f.holderAddress(address(6));
+  await assert.rejects(f.bulk.request(f.sign(q)), /bulk_fees_changed/);
+  f.holderAddress(q.deployerPayment.to);
+  await f.bulk.request(f.sign(q)); await f.execute();
+  f.holderAddress(address(6));
+  const reference = f.payment(q), tx = f.transactions.get(reference.slice(0, 64)), side = tx.transfers.at(-1).value;
+  for (const [key, value] of [['addr', address(6)], ['taddr', address(6)], ['amt', '1'], ['dta', 'different-order'], ['int', false]]) {
+    const old = side[key]; side[key] = value;
+    await assert.rejects(f.independent.bulkEvidence({ type: 'bulk-fund', id, reference }, f.stamp()), /bulk_payment_(binding|unknown)/);
+    side[key] = old;
+  }
+  tx.transfers.push(structuredClone(tx.transfers.at(-1)));
+  await assert.rejects(f.independent.bulkEvidence({ type: 'bulk-fund', id, reference }, f.stamp()), /bulk_payment_unknown/);
+  tx.transfers.pop();
+  await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null }); await f.execute();
+  assert.equal(f.store.get('accountRecords', 'fp/' + id).state, 'bulk-funded');
+  side.fail = true;
+  await assert.rejects(f.independent.bulkEvidence({ type: 'bulk-consume', id }, f.stamp()), /bulk_deployer_unpaid/);
+});
+
+test('retained bulk kit and dashboard accept new terms and ignore the top-level side payment', { skip: !process.env.DMW_OLD_ROOT }, async t => {
+  const { pathToFileURL } = await import('node:url');
+  const old = path => import(pathToFileURL(process.env.DMW_OLD_ROOT + '/' + path));
+  const { quoteBulkMint, makeBulkMint, payBulkMint } = await old('kit/lib/bulk-mint.mjs');
+  const { bulkPaymentPlan } = await old('kit/lib/tap-wallet-bulk-mint.mjs');
+  const { DashboardState } = await old('kit/lib/dashboard-state.mjs');
+  const { Journal } = await old('kit/lib/journal.mjs');
+  const { testWallet } = await old('kit/test/helpers.mjs');
+  const { validateBulkFees } = await old('rules/src/bulk-mint.js');
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 1000, legacyDeployPayoutMinAtoms: '1' } });
+  const journal = await Journal.open(f.store.directory + '/old-kit', 'bulk'); t.after(() => journal.close());
+  const agent = { journal, wallet: testWallet(13), owner: f.owner, network: f.network, bitcoinNetwork: f.bitcoinNetwork, dryRun: false,
+    service: { bulkMintQuote: input => f.bulk.quote(input), requestBulkMint: body => f.bulk.request(body), bulkMintStatus: id => f.bulk.status(id),
+      bulkMintTerms: id => f.bulk.terms(id), paymentLink: id => '/mint/bulk/' + id } };
+  const { owner, nonce, v, ...input } = f.input(2);
+  const q = await quoteBulkMint(agent, { actionId: 'direct-bulk', ...input });
+  validateBulkFees(q.terms, q.feeManifest);
+  assert.ok(q.deployerPayment);
+  await makeBulkMint(agent, { actionId: 'direct-bulk', quoteId: q.quoteId, maxPayableFeeAtoms: '20000', maxSetAsideSats: 100000 });
+  await f.execute();
+  const status = await f.bulk.status(q.orderId), response = await f.bulk.terms(q.orderId);
+  const plan = bulkPaymentPlan(q.orderId, status, response, f.bitcoinNetwork);
+  assert.equal(plan.items.length, q.terms.groups.length);
+  assert.equal((await payBulkMint(agent, { orderId: q.orderId })).sent, false);
+  const dashboard = new DashboardState({ agent });
+  assert.deepEqual((await dashboard.bulkTerms(q.orderId)).deployerPayment, q.deployerPayment);
+  assert.deepEqual((await dashboard.bulkStatus(q.orderId)).deployerPayment, q.deployerPayment);
+});
+
+test('a retained gateway bulk quote completes with its original deferred holder share', { skip: !process.env.DMW_OLD_ROOT }, async t => {
+  const { pathToFileURL } = await import('node:url');
+  const { BulkMints } = await import(pathToFileURL(process.env.DMW_OLD_ROOT + '/service/src/bulk-mints.mjs'));
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' } });
+  const old = new BulkMints({ ...f.bulk }), q = await old.quote(f.input()), id = q.orderId;
+  assert.equal(q.deployerPayment, undefined); assert.equal(q.feeManifest[0].deferred.deployer, '500');
+  await f.bulk.request(f.sign(q)); await f.execute();
+  await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null }); await f.execute();
+  await f.bulk.tick(); await f.execute(); await f.bulk.tick();
+  f.holderAddress(address(8));
+  await f.bulk.finish({ orderId: id, members: await f.reveal(id) }); const finished = await f.execute();
+  assert.deepEqual(finished.inputs[0].evidence.members[0].commissions[0], { id: b.bulkMemberId(id, 0), role: 'deployer',
+    deployment: q.terms.deployment, to: address(8), amount: '500', payoutMinAtoms: '1' });
+  assert.equal((await f.bulk.status(id)).state, 'minted');
 });

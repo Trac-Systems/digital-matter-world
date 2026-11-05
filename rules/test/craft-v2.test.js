@@ -26,6 +26,14 @@ function signed(state, inputs = [['p2:0', '2'], ['p2:1', '2']], nonce = r.hash('
 const execute = (state, move, doc = settings, extra = {}) => r.executeNamedMove(state, { move, settings: doc, tip: snapshot.height, counted: snapshot.height,
   receiptPosition: '1', hashAt: () => snapshot.hash, ...extra });
 
+test('a queued craft deterministically rejects changed account revisions and expiry at execution', () => {
+  const state = fixture(), { move } = signed(state), root = r.namedStateRoot(state);
+  assert.throws(() => execute(state, move, settings, { accountRevisions: new Map([[owner, '1']]) }), /account_revision_changed/);
+  assert.throws(() => execute(state, move, settings, { executionHeight: '10002' }), /craft_authorization/);
+  assert.equal(r.namedStateRoot(state), root);
+  assert.ok(execute(state, move, settings, { accountRevisions: new Map([[owner, '0']]) }).craft);
+});
+
 test('craft-v2 pins exact metadata, proportional output, owner authorization and nonce without mutating parent catalog', () => {
   const state = fixture(), root = r.namedStateRoot(state), { move, preview } = signed(state);
   const result = execute(state, move);

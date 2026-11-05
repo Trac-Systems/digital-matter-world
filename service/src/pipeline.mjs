@@ -15,6 +15,7 @@ import { buildCreditAccounts, AccountBatchOverlay } from './account-batch.mjs';
 import { publicFinancialOperations } from './public-financial.mjs';
 import { publishReceiptRenewal } from './receipt-renewal.mjs';
 import { readPublicWinner, prefetchingWinnerBatch, publicClaimReaders } from './public-claim-readers.mjs';
+import { timingLog } from './read-timing.mjs';
 export class Pipeline {
   constructor({ store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns = [], settings = {}, limits = {}, replay = new Replay(), archiveWritePage = 256, pipelineDepth = 1 }) {
     Object.assign(this, { store, files, history, intake, committee, outbox, reads, operations, links, financial, patterns, settings, limits, replay, archiveWritePage });
@@ -22,17 +23,40 @@ export class Pipeline {
     this.overlap = { started: 0, promoted: 0, discarded: 0, failed: 0, buildMs: 0, overlapMs: 0 };
     this.replay.resources ??= intake?.namedAdmission?.resources;
   }
-  async saveDraft(draft) {
+  // Each step's wall time is added up per tick and written to the timing log, so a slow batch shows
+  // which step it waited on. Speculative successor builds are not counted here.
+  get step() { return this.currentStep; }
+  set step(value) {
+    const prior = this.currentStep, now = Date.now();
+    if (prior && !this.speculative) (this.stepTimes ??= {})[prior[0]] = (this.stepTimes[prior[0]] ?? 0) + now - prior[1];
+    this.currentStep = value;
+  }
+  logSteps() {
+    if (this.speculative) return;
+    this.step = ['idle', Date.now()];
+    const steps = this.stepTimes ?? {}; this.stepTimes = {};
+    const ms = Object.entries(steps).reduce((n, [name, value]) => name === 'idle' ? n : n + value, 0);
+    delete steps.idle;
+    if (ms >= 1000) timingLog({ event: 'batch_steps', ms, steps });
+  }
+  async saveDraft(draft, { admissionSequence } = {}) {
     const text = JSON.stringify(draft), digest = hash(text), directory = join(this.store.directory, 'drafts');
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await atomicWrite(join(directory, digest + '.json'), text);
     const save = () => {
+      if (admissionSequence !== undefined && (this.store.get('meta', 'namedReceiptSequence') ?? '0') !== admissionSequence) return false;
+      if (admissionSequence !== undefined) {
+        const batch = String(draft.proposal.batch.n), reserved = this.store.get('namedDrafts', batch);
+        const included = draft.items.reduce((count, item) => count + item.input.entries.filter(e => e.receipt.batch === batch).length, 0);
+        if (reserved && included !== reserved.work.entries) return false;
+      }
       check(!draft.settings?.document || !this.store.get('namedFences', draft.settings.settingsHash) || draft.proposal.batch.renewal,
         'receipt_admission_fenced', 503);
-      return this.store.put('meta', 'draft', { version: 3, external: digest, proposal: { batch: draft.proposal.batch } });
+      return this.store.put('meta', 'draft', { version: 3, external: digest, proposal: { batch: draft.proposal.batch },
+        ...(draft.items ? { observations: draft.items.map(i => i.observation.id) } : {}) });
     };
-    if (this.intake?.namedAdmission) await this.intake.namedAdmission.exclusive(save); else await save();
-    await pruneDrafts(this.store);
+    const result = this.intake?.namedAdmission ? await this.intake.namedAdmission.exclusive(save) : await save();
+    await pruneDrafts(this.store); return result;
   }
   async loadDraft() {
     const saved = this.store.get('meta', 'draft'); if (!saved) return null;
@@ -59,6 +83,7 @@ export class Pipeline {
       for (const { value: row } of page) {
         if (String(row.batch?.n) !== String(batch.n) || String(row.batch?.epoch) !== String(batch.epoch)) continue;
         if (counted !== undefined && rules.compareOrdinal(counted, row.batch.deadline) > 0) continue;
+        if (this.committee?.retirementFor?.(row.batch)) continue;
         check(/^[0-9a-f]{64}$/.test(row.evidence?.id), 'draft_reference');
         const text = await readFile(join(this.store.directory, 'retired-drafts', row.evidence.id + '.json'), 'utf8');
         check(hash(text) === row.evidence.hash, 'draft_checksum');
@@ -86,9 +111,25 @@ export class Pipeline {
     const archived = await this.retiredBatchDrafts(batch, { counted });
     const candidates = [...(draft ? [{ draft, proposal: draft.proposal }] : []), ...archived.map(row => ({ ...row, proposal: row.draft.proposal }))];
     if (!candidates.length) return { draft, accepted: false };
-    const plan = await this.committee.batchReservationPlan(key, candidates, { epoch, counted });
     const checkSnapshot = async () => check(rules.stableJSON(last) === rules.stableJSON(await this.reads.batchLast()) &&
       rules.compareOrdinal(epoch, await this.reads.committeeEpoch()) === 0, 'draft_snapshot_changed', 503);
+    if (this.committee.retireStaleFinancial) {
+      for (const candidate of candidates) {
+        const retirement = await this.committee.retireStaleFinancial(candidate.proposal, () => this.reads.batchStamp?.());
+        if (!retirement || draft && candidate.draft !== draft) continue;
+        if (retirement.ready) {
+          await checkSnapshot();
+          await this.archiveDraft(candidate.draft, { reason: 'financial_snapshot_retired', epoch, counted, last, root,
+            digest: retirement.certificate.target.digest });
+          return { draft: null, accepted: false };
+        }
+        draft ??= candidate.draft;
+        if (!this.store.get('meta', 'draft')) await this.saveDraft(draft);
+        await this.committee.waitForBatch(key, draft.proposal, { counted, retirement: retirement.certificate.target.digest }, 'batch_retirement_wait');
+        return { draft, accepted: false, waiting: true };
+      }
+    }
+    const plan = await this.committee.batchReservationPlan(key, candidates, { epoch, counted });
     const activation = this.settings.batchVersion === 2 && this.settings.activation;
     const anchored = draft && activation && String(batch.n) === String(activation.sequence) && String(draft.execution) === String(activation.height);
     const changed = draft && !anchored && counted !== undefined && rules.compareOrdinal(draft.execution, counted) !== 0;
@@ -272,8 +313,13 @@ export class Pipeline {
     observationsLoop: for (const observation of observations) {
       const history = this.history.view?.(observation.tip, observation.hash) ?? this.history;
       const originalEntries = this.store.list('intake/' + observation.id, { limit: 1000 }).map(r => r.value);
+      if (settings.document && !renewal && originalEntries.some(e => rules.compareUint(e.receipt.batch, String(clock.add(last.n))) > 0)) break;
       let entries = originalEntries, receiptRoot = observation.receiptRoot, rootAttestations = [], missed = null;
       if (entries.length || version2) {
+        if (version2 && !this.speculative && this.intake.namedAdmission && entries.length) {
+          this.step = ['acknowledgeReceipts', Date.now()];
+          await this.intake.namedAdmission.acknowledgePending(entries);
+        }
         this.step = ['attestRoot', Date.now()];
         try { if (this.store.get('missedReceipts', observation.id)) throw Error('receipt_quorum_unavailable'); rootAttestations = await this.committee.attestRoot(receiptRoot); }
         catch (e) {
@@ -290,6 +336,8 @@ export class Pipeline {
         entries, receiptRoot, rootAttestations, priorOperations: rules.budgetOperations(items.map(i => i.output.file)), state: structuredClone(state), patterns, settings, mintOperations: [] };
       if (settings.document) {
         input.financialPlanning = true;
+        const deliveryCap = this.financial?.resources?.settlementDeliveryRows, allowance = rules.batchSettings(settings);
+        if (deliveryCap) input.deliveryRows = Math.min(deliveryCap, allowance.settlementPageRows * allowance.settlementPagesPerObservation);
         input.batchSequence = String(clock.add(last.n));
         if (renewal) input.renewal = renewal;
         input.settingsDocuments = this.settings.settingsDocuments ?? [];
@@ -302,6 +350,8 @@ export class Pipeline {
           settingsDocuments: input.settingsDocuments, batch: input.batchSequence, gateway: this.intake.gateway, history, counted: observation.counted, renewal });
         input.claimEvidence = { nodes: [] };
         input.settingsDocuments = input.namedEvidence.settingsDocuments;
+        const owners = rules.accountRevisionOwners(entries);
+        if (owners.length) input.accountRevisions = owners.map(owner => [owner, accountStore.get('accountRecords', 'ar/' + owner)?.revision ?? '0']);
       }
       const publicClaimsActive = settings.document && rules.claimsNeverCloseActive(settings, execution);
       this.step = ['publicReads', Date.now()];
@@ -311,9 +361,12 @@ export class Pipeline {
         ...(publicClaimsActive ? { publicMintGet: publicMintRead,
           publicMintBatch: prefetchingWinnerBatch({ store: accountStore, reads: publicReads, at: { counted: execution, last }, claims: this.speculative ? null : this.store }) } : {}) } : undefined;
       const replay = async () => {
-        const { claimEvidence, namedEvidence, ...output } = await this.replay.run(input, history, claimReads);
+        const { claimEvidence, namedEvidence, claimReadHints, deliveryRows, ...output } = await this.replay.run(input, history, claimReads);
         if (claimEvidence) input.claimEvidence = claimEvidence;
         if (namedEvidence) input.namedEvidence = namedEvidence;
+        if (claimReadHints) input.claimReadHints = claimReadHints;
+        else delete input.claimReadHints;
+        if (deliveryRows !== undefined) input.deliveryRows = deliveryRows;
         if (publicClaimsActive) input.publicMintEvidence = output.file.publicMintEvidence;
         // Keep proof tables once in the input, rather than serializing another
         // full copy into every persisted output/draft.
@@ -373,6 +426,7 @@ export class Pipeline {
       items.push({ observation, input, output, originalEntries, missed: !!missed }); state = output.state; patterns = output.patterns;
       for (const row of output.claimWrites ?? []) claimNodes.set(row.id, row.value);
     }
+    if (!items.length) return null;
     const headers = this.reads.batchHeaders ? await this.reads.batchHeaders(items.map(i => i.observation)) : items.flatMap(i => i.observation.headers ?? []);
     check(headers.length <= (version2 ? rules.batchSettings(settings).maxHeaders : 20), 'header_catchup_required', 503);
     const batchLimits = version2 && rules.batchSettings(settings);
@@ -427,12 +481,15 @@ export class Pipeline {
     if (this.pipelineDepth < 2 || !predecessor.settings.document || this.operations || this.links ||
       predecessor.proposal.batch.renewal || this.store.get('namedFences', predecessor.settings.settingsHash)) return null;
     const last = { n: predecessor.proposal.batch.n, to: predecessor.proposal.batch.to };
+    const admissionSequence = this.store.get('meta', 'namedReceiptSequence') ?? '0';
     const overlay = successorStore(this.store, predecessor);
+    if (this.intake.entries?.().length) return null;
     const more = predecessor.items.at(-1).output.state.rounds?.some(r => r.closed || r.closing);
     if (!overlay.store.hasRows('observations') && !more) return null;
-    // Admission remains pinned to the accepted head. Only witnessed, empty
-    // continuation segments can be introduced while that head is in flight.
+    // A successor remains speculative until every receipt admitted during
+    // signing is accounted for. Promotion checks the sequence under the gate.
     if (!overlay.store.hasRows('observations')) {
+      if (this.intake.namedAdmission?.wait?.admissionFutureBatches) return null;
       if (this.intake.count || this.intake.rotating) return null;
       await this.intake.seal({ continuation: true });
     }
@@ -440,8 +497,11 @@ export class Pipeline {
     // before asking those signers to audit the predecessor; only local build
     // and replay overlap the signing lane.
     const certificates = new Map();
-    for (const { value: observation } of overlay.store.list('observations', { limit: rules.batchSettings(this.settings).observationsPerBatch }))
+    for (const { value: observation } of overlay.store.list('observations', { limit: rules.batchSettings(this.settings).observationsPerBatch })) {
+      const entries = this.store.list('intake/' + observation.id, { limit: 1000 }).map(r => r.value);
+      if (entries.length && this.intake.namedAdmission) await this.intake.namedAdmission.acknowledgePending(entries);
       certificates.set(rules.hashObject(observation.receiptRoot), await this.committee.attestRoot(observation.receiptRoot));
+    }
     const builder = Object.assign(Object.create(Pipeline.prototype), this, { store: overlay.store, speculative: true,
       committee: { ...this.committee, attestRoot: async root => { const certificate = certificates.get(rules.hashObject(root)); check(certificate, 'speculative_receipt_changed'); return certificate; } },
       predecessorClaimNodes: overlay.claimNodes, predecessorNamedNodes: overlay.namedNodes, financial: null,
@@ -451,12 +511,15 @@ export class Pipeline {
     });
     return async () => {
       this.overlap.started++; const started = performance.now();
-      try { return await builder.build(); }
+      try { const draft = await builder.build(); return draft && { ...draft, admissionSequence }; }
       finally { this.overlap.buildMs += performance.now() - started; }
     };
   }
   async promoteSuccessor(predecessor, draft) {
     if (!draft) return;
+    if (draft.admissionSequence !== undefined && draft.admissionSequence !== (this.store.get('meta', 'namedReceiptSequence') ?? '0')) {
+      this.overlap.discarded++; return;
+    }
     const last = await this.reads.batchLast(), epoch = await this.reads.committeeEpoch(), counted = await this.reads.counted();
     const reason = await this.reads.batchRoot(predecessor.proposal.batch.n) !== predecessor.proposal.batch.root ? 'acceptance' :
       successorMismatch({ predecessor, draft, last, epoch, counted, settings: this.settings,
@@ -466,7 +529,9 @@ export class Pipeline {
     if (active && rules.hashObject(rules.effectiveSettings(active.settings, active.scheduledSettings, String(draft.proposal.batch.n), String(draft.execution))) !== draft.settings.settingsHash) {
       this.overlap.discarded++; return;
     }
-    await this.publishDraft(draft); await this.saveDraft(draft); this.overlap.promoted++;
+    await this.publishDraft(draft);
+    if (await this.saveDraft(draft, { admissionSequence: draft.admissionSequence }) === false) { this.overlap.discarded++; return; }
+    this.overlap.promoted++;
   }
   async buildReceiptRenewal(fence) {
     check(fence.phase === 'certified', 'receipt_cutoff_incomplete', 503);
@@ -589,7 +654,7 @@ export class Pipeline {
         { space: 'batches', id: heightKey(draft.proposal.batch.n), value: { batch: draft.proposal.batch, publications: draft.items.map(i => i.publication) } },
         { space: 'meta', id: 'latest', value: final.publication }, { space: 'meta', id: 'draft' });
       operations.push(...(this.operations?.acceptedOperations?.(draft) ?? []), ...(this.links?.acceptedOperations(draft) ?? []));
-      if (draft.settings.document) operations.push({ space: 'assetCheckpoint', id: 'current', value: assetCheckpoint(state) }, { space: 'meta', id: 'namedReservedBatch' }, { space: 'meta', id: 'v2Last', value: { n: draft.proposal.batch.n, to: draft.proposal.batch.to } });
+      if (draft.settings.document) operations.push({ space: 'assetCheckpoint', id: 'current', value: assetCheckpoint(state) }, { space: 'meta', id: 'v2Last', value: { n: draft.proposal.batch.n, to: draft.proposal.batch.to } });
       if (draft.proposal.batch.renewal?.kind === 'execute') {
         const renewal = draft.settings.receiptRenewal;
         operations.push(...await publishReceiptRenewal(this, draft));
@@ -602,6 +667,9 @@ export class Pipeline {
       // A concurrent request cannot be lost between the read and checkpoint.
       const commit = () => payoutGate(this.store, () => {
         const accrued = [...operations, ...new Payouts(this).accruals(draft)];
+        const reserved = this.store.get('meta', 'namedReservedBatch');
+        if (draft.settings.document && (!reserved || rules.compareUint(reserved, String(draft.proposal.batch.n)) <= 0))
+          accrued.push({ space: 'meta', id: 'namedReservedBatch' });
         return this.financial ? this.financial.gate(() => {
           const accepted = [...accrued, ...this.financial.acceptedOperations(draft)];
           return this.store.transact([...accepted, ...publicFinancialOperations(this.store, draft, accepted)]);
@@ -622,7 +690,7 @@ export class Pipeline {
       this.step = ['compact', Date.now()];
       if (await this.store.bytes() > this.store.checkpointBytes) await this.store.compact(); return final.publication;
     } catch (error) { this.speculation = null; throw error; }
-    finally { if (speculative && this.speculation?.promise !== speculative) { if (await speculative) this.overlap.discarded++; } this.running = false; }
+    finally { if (speculative && this.speculation?.promise !== speculative) { if (await speculative) this.overlap.discarded++; } this.running = false; this.logSteps(); }
   }
   async close() { await this.speculation?.promise; this.speculation = null; await this.replay.close(); }
 }

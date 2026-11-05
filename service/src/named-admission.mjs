@@ -5,10 +5,9 @@ import { NamedStorage } from './named-storage.mjs';
 import { Limiter } from './limiter.mjs';
 import { buildCreditAccounts } from './account-batch.mjs';
 
-// context() is supplied by the activated pipeline, after its accepted manifest
-// and healthy capable quorum checks. It pins the next batch and accepted state.
-// R3's sequencer must include all entries in this reserved batch or produce an
-// explicit rejection. Switching a batch with admitted entries is not allowed.
+// context() pins an unsealed batch and accepted state. A later batch may admit
+// while its predecessor is signed; replay preserves each receipt's target and
+// records deterministic execution refusals if that predecessor changes state.
 const CLOSED = new Set(['reserved_batch_pending', 'ruleset_not_ready', 'reservation_context_changed']);
 // Closed only while a batch is signed and accepted; deployed kits resend on the busy answer.
 const SIGNING = new Set(['reserved_batch_pending', 'reservation_context_changed']);
@@ -49,6 +48,15 @@ export class NamedAdmission {
     this.closedSince.set(key, now); return true;
   }
   exclusive(fn) { const result = this.tail.then(fn); this.tail = result.catch(() => {}); return result; }
+  acknowledgePending(entries) {
+    return this.exclusive(async () => {
+      // A sealed observation is bounded and already ordered by receipt sequence.
+      for (const { receipt } of entries) {
+        const record = this.store.get('namedDedupe', receipt.move);
+        if (record?.witnessPending) await this.acknowledge(receipt.move, record);
+      }
+    });
+  }
   async acknowledge(id, record) {
     if (!record.witnessPending) return record.receipt;
     const accepted = this.store.get('namedAccepted', id);
@@ -74,14 +82,30 @@ export class NamedAdmission {
     check(rules.namedStateRoot(accepted) === acceptedRoot, 'admission_state_root');
     rules.uintV2(batch); rules.uintV2(tip); rules.uintV2(counted);
     check(settingsHistory.at(batch, tip) === settings || rules.hashObject(settingsHistory.at(batch, tip)) === rules.hashObject(settings), 'admission_settings');
-    check(!ctx.sealed, 'reserved_batch_pending', 503);
+    check(!ctx.sealed, ctx.future ? 'next_batch_work_capacity' : 'reserved_batch_pending', ctx.future ? 429 : 503);
     rules.validateMoveV2(move, settings);
     check(!rules.checkMoveV2(move, { settings, tip, hashAt: this.hashAt }), 'invalid_move');
     check(!this.limiter || this.limiter.take(move.a), 'sender_rate', 429);
     const active = this.store.get('meta', 'namedReservedBatch');
-    check(!active || active === batch, 'reserved_batch_pending', 503);
-    const draft = this.store.get('namedDrafts', batch);
-    check(!draft || draft.acceptedRoot === acceptedRoot && draft.settingsHash === rules.hashObject(settings), 'reservation_context_changed', 503);
+    check(!active || active === batch || ctx.future && rules.nextUint(active) === batch, 'reserved_batch_pending', 503);
+    let draft = this.store.get('namedDrafts', batch), rebased;
+    const accountRoot = this.store.get('meta', 'ruleState')?.accountRoot ?? null;
+    check(!draft || draft.settingsHash === rules.hashObject(settings), 'reservation_context_changed', 503);
+    if (draft && (draft.acceptedRoot !== acceptedRoot || (draft.accountRoot ?? null) !== accountRoot || draft.counted !== undefined && draft.counted !== counted)) {
+      // The bounded pending batch may have been admitted before its predecessor
+      // committed. Rebase its speculative state; never replace its receipts.
+      const entries = this.store.list('namedIntake/' + batch, { limit: this.resources.values.intakeEntries }).map(r => r.value);
+      check(entries.length === draft.work.entries, 'admission_rebase_entries');
+      const base = ctx.snapshot ? this.persistence.load(ctx.snapshot) : accepted;
+      check(rules.namedStateRoot(base) === acceptedRoot, 'admission_state_root');
+      const prepared = rules.mergeCompoundCatalogV4(base, { network: settings.network, height: counted }).state;
+      const replayed = rules.replayNamedEntries(prepared, { entries, settings, settingsHistory, batch, gateway: entries[0].receipt.gateway,
+        counted, lastSequence: '0', history: this.history, hashAt: this.hashAt, craftCatalog: prepared,
+        accountRevisions: this.accountRevisions(entries) });
+      rebased = replayed.state;
+      draft = { ...draft, acceptedRoot, crafts: replayed.outcomes.flatMap(o => o.craft ? [o.craft] : []),
+        transfers: replayed.outcomes.flatMap(o => o.transfers ?? []) };
+    }
     const s = settings.values, local = this.resources.values;
     const pairs = (move.p.matches?.length ?? 0) + (move.p.plots?.reduce((n, p) => n + p.patterns.length, 0) ?? 0), reveal = move.t === 'discovery-reveal-v2' ? 1 : 0, challenge = move.t === 'challenge-count-v2' ? 1 : 0;
     const bytes = Buffer.byteLength(text), old = draft?.work ?? { entries: 0, pairs: 0, reveals: 0, challenges: 0, bytes: local.intakeReserveBytes };
@@ -117,7 +141,7 @@ export class NamedAdmission {
     // Lazy handles belong to their loader's persistence map. Saving handles
     // from context()'s separate loader used to traverse and rewrite the entire
     // accepted catalog and occurrence history on the first move of each batch.
-    const starting = draft ? this.persistence.load(draft.snapshot) : ctx.snapshot ? this.persistence.load(ctx.snapshot) : accepted;
+    const starting = rebased ?? (draft ? this.persistence.load(draft.snapshot) : ctx.snapshot ? this.persistence.load(ctx.snapshot) : accepted);
     if (!draft) check(rules.namedStateRoot(starting) === acceptedRoot, 'admission_state_root');
     const migration = rules.mergeCompoundCatalogV4(accepted, { network: settings.network, height: counted });
     const prepared = rules.mergeCompoundCatalogV4(starting, { network: settings.network, height: counted }).state;
@@ -130,6 +154,8 @@ export class NamedAdmission {
     work.bytes += Buffer.byteLength(rules.stableJSON(publicResult));
     check(work.bytes <= s.auditTotalBytes, 'next_batch_byte_capacity', 429);
     if (result.craft || result.transfers) {
+      work.bytes += Buffer.byteLength(rules.stableJSON([...this.accountRevisions([{ move }])]));
+      check(work.bytes <= s.auditTotalBytes, 'next_batch_byte_capacity', 429);
       const crafts = [...(draft?.crafts ?? []), ...(result.craft ? [result.craft] : [])];
       const transfers = [...(draft?.transfers ?? []), ...(result.transfers ?? [])];
       // Reserve the whole owner's debits/nonces and account proof capacity
@@ -174,12 +200,15 @@ export class NamedAdmission {
       { space: 'namedIntake/' + batch, id: rules.uintKeyV2(sequence), value: { move, receipt, result: publicResult } },
       ...(ctx.observation ? [{ space: 'intake/' + ctx.observation, id: rules.uintKeyV2(sequence), value: { move, receipt } }] : []),
       { space: 'namedDedupe', id, value: { receipt, ...(this.committee ? { witnessPending: true } : {}) } },
-      { space: 'namedDrafts', id: batch, value: { acceptedRoot, settingsHash: rules.hashObject(settings), resourceHash: rules.hashObject(this.resources), snapshot: saved.snapshot, work,
+      { space: 'namedDrafts', id: batch, value: { acceptedRoot, accountRoot, counted, settingsHash: rules.hashObject(settings), resourceHash: rules.hashObject(this.resources), snapshot: saved.snapshot, work,
         crafts: [...(draft?.crafts ?? []), ...(result.craft ? [result.craft] : [])],
         ...(result.transfers || draft?.transfers ? { transfers: [...(draft?.transfers ?? []), ...(result.transfers ?? [])] } : {}) } },
       { space: 'resourceHistory', id: rules.hashObject(this.resources), value: this.resources },
       { space: 'meta', id: 'namedReservedBatch', value: batch }, { space: 'meta', id: 'namedReceiptSequence', value: sequence }
     ]);
     saved.committed(); return this.acknowledge(id, this.store.get('namedDedupe', id));
+  }
+  accountRevisions(entries) {
+    return new Map(rules.accountRevisionOwners(entries).map(owner => [owner, this.store.get('accountRecords', 'ar/' + owner)?.revision ?? '0']));
   }
 }

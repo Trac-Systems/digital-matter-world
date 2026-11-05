@@ -18,7 +18,9 @@ const VIEWS = {
   feed: { label: 'Live feed', short: 'Feed', href: '/feed', load: () => import('./console/js/views/feed.js') },
   results: { label: 'Results', href: '/results', load: () => import('./console/js/views/results.js') },
   records: { label: 'Records', href: '/records', load: () => import('./records.js') },
-  money: { label: 'Mint', title: 'Mint & wallets', href: '/mint', sep: true, load: async () => ({ mount: moneyPage }) },
+  // Hand-written picks are a page of the site; the local dashboard does not show them yet.
+  ...(globalThis.DMW_LOCAL_AGENT === true ? {} : { picks: { label: "Editor's Picks", short: 'Picks', href: '/editors-picks', sep: true, load: () => import('./picks.js') } }),
+  money: { label: 'Mint', title: 'Mint & wallets', href: '/mint', sep: globalThis.DMW_LOCAL_AGENT === true, load: async () => ({ mount: moneyPage }) },
 };
 // An agent owner's local dashboard (kit `dmw dashboard`) serves these pages and adds its own page.
 if (globalThis.DMW_LOCAL_AGENT === true) VIEWS.mine = { label: 'My agent', title: 'My agent', href: '/me', load: () => import('/local/agent.js') };
@@ -46,6 +48,7 @@ function resolve(path) {
     case 'event': return { id: 'feed', params: { e: page.n } };
     case 'results': return { id: 'results', params: { tab: page.collection } };
     case 'records': return { id: 'records', params: {} };
+    case 'picks': return VIEWS.picks ? { id: 'picks', params: {} } : { id: null, params: {} };
     case 'batch': return { id: 'records', params: { batch: page.n } };
     // /link and /bind-payout without a request link are sections of the one Mint & wallets page.
     case 'money': return { id: 'money', params: page, anchor: page.id ? null : { link: 'bitmap', 'bind-payout': 'wallets' }[page.type] ?? null };
@@ -141,8 +144,20 @@ async function show() {
   } catch (e) {
     if (sequence !== routeSequence) return;
     console.error(e);
-    clear(mainEl, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${e.message}`)));
+    if (reloadAfterModuleFailure(e)) return;
+    clear(mainEl, h('div.page', {}, h('div.note.bad', {}, `This screen failed to load: ${e.message} `,
+      h('button.btn', { onclick: () => location.reload() }, 'Reload'))));
   }
+}
+// A screen whose module failed to download (usually a dropped connection) loads after one page reload.
+// The browser keeps a failed module for the life of the page, so importing it again in place cannot work.
+function reloadAfterModuleFailure(e) {
+  if (!/dynamically imported module|Importing a module script failed/i.test(String(e?.message))) return false;
+  try {
+    if (Date.now() - (Number(sessionStorage.getItem('dmw-module-reload')) || 0) < 60000) return false;
+    sessionStorage.setItem('dmw-module-reload', String(Date.now()));
+  } catch { return false; }
+  location.reload(); return true;
 }
 // An event address opens the live feed with that event in the Inspect drawer.
 async function afterMount(id, params) {

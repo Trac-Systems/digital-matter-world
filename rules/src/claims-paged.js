@@ -188,6 +188,17 @@ export class CreditBudget {
   }
   add(winner) {
     const old = this.owners.get(winner.winner) ?? { balances: new Map(), bytes: 0, ops: [] };
+    const previous = old.balances.get(winner.asset);
+    if (previous !== undefined) {
+      // Decimal amounts are ASCII strings. Updating an existing asset changes
+      // only its digit count, preserving asset order and operation boundaries.
+      const amount = previous + BigInt(winner.count), delta = String(amount).length - String(previous).length, s = this.settings;
+      if (this.bytes + delta > s.maxBatchBytes - s.batchEnvelopeReserveBytes || this.ops + 2 > s.maxOps || this.assets > s.maxAssets) return false;
+      const balances = new Map(old.balances); balances.set(winner.asset, amount);
+      const ops = old.ops.map(op => op.assets.some(([asset]) => asset === winner.asset)
+        ? { ...op, assets: op.assets.map(row => row[0] === winner.asset ? [row[0], String(amount)] : row) } : op);
+      this.bytes += delta; this.owners.set(winner.winner, { balances, bytes: old.bytes + delta, ops }); return true;
+    }
     const balances = new Map(old.balances); balances.set(winner.asset, (balances.get(winner.asset) ?? 0n) + BigInt(winner.count));
     const ops = this.ownerOps(winner.winner, balances), bytes = ops.reduce((n, op) => n + utf8(stableJSON(op)).length + 1, 0), s = this.settings;
     if (this.bytes - old.bytes + bytes > s.maxBatchBytes - s.batchEnvelopeReserveBytes || this.ops - old.ops.length + ops.length + 2 > s.maxOps || this.assets - old.balances.size + balances.size > s.maxAssets) return false;

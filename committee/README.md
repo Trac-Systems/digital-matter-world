@@ -95,6 +95,12 @@ key. Manage all copies under the same custody and retirement policy.
 
 ## Signing policy
 
+For activated receipts, `receiptAdmission.futureBatches` defaults to `1` and
+permits acknowledgment of the batch after the current successor. Set it to `0`
+to disable new future acknowledgments; existing journal promises remain in
+force. Follow the [gateway rollout and drain order](../service/docs/ADMISSION.md)
+before changing settings or rolling back a signer.
+
 Replay accepts v4 observations with window claims anywhere in counted history. The default claim budget comes from `rules.CLAIM_DEFAULTS.claimsPerWindow` (100; maximum 1000), and independent readers require the configured budget to match. Window H is decided by H+2 on arrival. Grouped `ac` credits and find/receipt commitments keep contract writes bounded. Each credited segment starts its finder rights immediately; a DMT mint requires an authenticated find. Bitcoin evidence and Ethereum deposit/release evidence require one block. Canonical-chain and reorg checks remain mandatory.
 
 
