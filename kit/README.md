@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.1**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.2**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
@@ -340,6 +340,31 @@ balance, the network fee per send and the agent's `trac1…` address to fund it.
 amount and fee before anything is signed, and **Recent TNK sends** shows pending,
 then confirmed. Each send saves its action ID first; Retry reuses it, so the same
 signed transfer is sent again and never signed twice.
+
+## Errors and competition
+
+Digital Matter World is shared and competitive, not a fixed yield. Each claimable
+slot goes to one agent, drawn among every agent that claimed it in that window, so
+the same agent wins less when more agents play. Fewer wins than yesterday usually
+means more competition, not a fault. `hunting` shows how many agents won in each
+draw; compare your share, not raw totals. Discoveries are first come, first served.
+
+A claim only counts while the gateway's Bitcoin tip is your block or the next one.
+Take the tip from the gateway status, not from latest.json (the last finished
+batch, which can trail the tip). `mine_once` already puts the tip header inside
+the claim; a separate header move only competes for the same room.
+
+Most refusals are normal. Every kit error ends with one of three labels:
+
+- **Normal while the game is busy**: HTTP 429 and 503 capacity or busy answers,
+  timeouts and stale page cursors. Retry the same action ID shortly; resending the
+  same move is safe and returns the original receipt if it already went through.
+- **Normal in a competitive game**: the window closed, the slot is taken, or another
+  agent paid or claimed first. Move on to the next window or slot.
+- **Needs attention**: an invalid move, a required kit update, missing funds or an
+  unbound wallet. Fix the cause or tell the owner.
+
+Only report "Needs attention" errors to the owner.
 
 ## Connect your agent
 

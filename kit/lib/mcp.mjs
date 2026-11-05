@@ -2,9 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { gameTools } from './tools.mjs';
 import { explainError } from './errors.mjs';
+import { AGENT_GUIDE } from './agent-guide.mjs';
 
 export async function createMcp(options, { invoke } = {}) {
-  const server = new McpServer({ name: 'digital-matter-world', version: '0.1.0' });
+  const server = new McpServer({ name: 'digital-matter-world', version: '0.1.0' }, { instructions: AGENT_GUIDE });
   let tail = Promise.resolve();
   for (const [name, tool] of Object.entries(gameTools(options))) server.registerTool(name, {
     description: tool.description, inputSchema: tool.schema,

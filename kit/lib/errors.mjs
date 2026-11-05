@@ -37,6 +37,11 @@ export const errorMeanings = Object.freeze({
   transfer_capacity: 'This transfer exceeds the accepted account action or leaf limit. Reduce the number of assets before signing.',
   transfer_balance: 'The independent account balance reader returned an invalid amount. No transfer was prepared.',
   v2_batch_verifier_required: 'Automatic saved-move reconciliation needs an independent v2 accepted batch verifier. Keep the original packet; receipt admission is not a final game outcome.',
+  service_busy: 'The gateway is busy, often while a batch is being signed.',
+  read_not_ready: 'The gateway could not finish this read in time.',
+  request_pending: 'The gateway is still working on this request.',
+  reserved_batch_pending: 'A batch is being signed; new moves go into the next one.',
+  taken_snapshot_stale: 'A new batch changed the taken list during the download. Start the snapshot again without a cursor; the kit does this by itself.',
   next_batch_work_capacity: 'The next batch has no remaining work reservation. Retry the same action after it completes.',
   next_batch_byte_capacity: 'The next batch has no remaining byte reservation. Retry the same action after it completes.',
   closure_backlog_capacity: 'Earlier claim windows are still settling. Wait for Retry-After, then retry the same saved action.',
@@ -91,6 +96,32 @@ const moveRefusals = Object.freeze({ request_rate: 429, sender_rate: 429, reveal
   audit_capacity: 429, body_limit: 413, content_type: 415, move_type: 400, invalid_move: 400,
   tip_transition: 503, receipt_window_sealed: 503, discovery_history_adapter_required: 503, pending_capacity: 503 });
 export const isMoveRefusal = (status, code) => Object.hasOwn(moveRefusals, code) && moveRefusals[code] === status;
+// What an agent should do with an answer that is not a success. In a busy shared game most
+// refusals are normal: retry the same action, or move on once its window or slot is gone.
+// Only the rest need a fix or the owner's attention.
+export const ERROR_KINDS = Object.freeze({
+  retry: 'Normal while the game is busy, not a failure: retry the same action ID shortly and do not alert the owner.',
+  moved_on: 'Normal in a competitive game, not a failure: this window or slot is gone or another agent got it first. Move on to the next one.',
+  attention: 'Needs attention: fix the cause before retrying, or tell the owner.'
+});
+const RETRY_CODES = new Set(['request_pending', 'service_busy', 'http_capacity', 'resource_busy', 'financial_snapshot_changed', 'read_snapshot_changed',
+  'tap_snapshot_changed', 'trac_snapshot_changed', 'read_not_ready', 'request_rate', 'sender_rate', 'next_batch_work_capacity', 'next_batch_byte_capacity',
+  'next_batch_account_capacity', 'closure_backlog_capacity', 'reserved_batch_pending', 'reservation_context_changed', 'ruleset_not_ready', 'tip_transition',
+  'receipt_window_sealed', 'pending_capacity', 'audit_capacity', 'craft_capacity', 'named_proof_budget', 'compound_work_budget', 'account_operation',
+  'account_operation_bytes', 'account_proof_budget', 'account_leaf_budget', 'public_projection_pending', 'taken_index_pending', 'page_cursor_stale',
+  'claimed_cursor_stale', 'taken_snapshot_stale', 'taken_revision_gone', 'invalid_cursor', 'binding_transition', 'binding_quorum_unavailable', 'reveal_capacity',
+  'tnk_validators', 'tnk_fee_unavailable', 'tnk_balance_unavailable', 'public_scan_pending', 'holder_unavailable', 'mint_capacity', 'receipt_quorum_unavailable',
+  'transport_error', 'timeout', 'TimeoutError', 'AbortError']);
+const MOVED_ON_CODES = new Set(['claim_deadline', 'claim_window', 'public_minted', 'claimed_first', 'someone_paid_first', 'already_minted', 'block_pending',
+  'claimed', 'mint_finder', 'financial_mint_right']);
+const LOCAL_MOVED_ON = /^(Header window is closed|Claim window is closed|Claim event is closed or reorganized)$/;
+export function errorKind(status, code) {
+  if (RETRY_CODES.has(code)) return 'retry';
+  if (MOVED_ON_CODES.has(code)) return 'moved_on';
+  // No answer, a timeout (numeric codes such as 23), pacing and server-side busy answers are retried unchanged.
+  if (status === undefined || status === 429 || status >= 500 && !errorMeanings[code] || /^-?[0-9]+$/.test(String(code))) return 'retry';
+  return 'attention';
+}
 export function safeCode(value, fallback = 'transport_error') {
   if (Number.isSafeInteger(value)) return String(value);
   return typeof value === 'string' && /^(?:[a-zA-Z][a-zA-Z0-9_]{0,80}|-?[0-9]{1,12})$/.test(value) ? value : fallback;
@@ -98,9 +129,14 @@ export function safeCode(value, fallback = 'transport_error') {
 export function serviceError({ service, origin, route, method = 'GET', status, code, reason, submission = false }) {
   code = safeCode(code);
   const http = status === undefined ? 'no HTTP response' : `HTTP ${status}`;
-  return Object.assign(new Error(`${service} ${origin} ${method} ${route}: ${http}, code ${code}; ${errorMeanings[code] ?? reason ?? 'request refused'}${submission ? '; submission outcome may be unknown; retry the same action ID and intent' : ''}`),
-    { status, code, service, route });
+  const kind = errorKind(status, code);
+  return Object.assign(new Error(`${service} ${origin} ${method} ${route}: ${http}, code ${code}; ${errorMeanings[code] ?? reason ?? 'request refused'}${submission ? '; submission outcome may be unknown; retry the same action ID and intent' : ''}. ${ERROR_KINDS[kind]}`),
+    { status, code, service, route, kind });
 }
 export function explainError(error) {
-  return errorMeanings[error.message] ? `Local signer validation (code ${error.message}): ${errorMeanings[error.message]}` : error.message;
+  if (errorMeanings[error.message]) return `Local signer validation (code ${error.message}): ${errorMeanings[error.message]}`;
+  return LOCAL_MOVED_ON.test(error.message) ? `${error.message}. ${ERROR_KINDS.moved_on}` : error.message;
+}
+export function explainedKind(error) {
+  return error?.kind ?? (LOCAL_MOVED_ON.test(error?.message) ? 'moved_on' : errorMeanings[error?.message] ? errorKind(400, error.message) : null);
 }

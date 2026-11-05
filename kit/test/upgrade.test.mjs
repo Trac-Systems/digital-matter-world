@@ -28,8 +28,8 @@ test('HTTP upgrade notice fits the installed client and names the exact release 
 });
 
 test('accepted manifest minimum kit version refuses future versions without numerical rounding', () => {
-  for (const minimum of ['0.1.0', '0.2.0', '0.2.1']) requireKitVersion(minimum);
-  for (const minimum of ['0.2.2', '1.0.0', '99999999999999999999.0.0']) assert.throws(() => requireKitVersion(minimum), /upgrade_required/);
+  for (const minimum of ['0.1.0', '0.2.0', '0.2.1', '0.2.2']) requireKitVersion(minimum);
+  for (const minimum of ['0.2.3', '1.0.0', '99999999999999999999.0.0']) assert.throws(() => requireKitVersion(minimum), /upgrade_required/);
   assert.throws(() => requireKitVersion('remote text'), /Invalid minimum kit version/);
 });
 

@@ -3,6 +3,7 @@ import { assertClaimOpen } from '../../rules/src/public-mint.js';
 import { submitFinancialCredit } from './financial-credit.mjs';
 import { claimFinancialCustody } from './financial-custody.mjs';
 import { encodeTracAddress, decodeTracAddress, publicIdentities, wireIdentities } from '../../rules/src/trac-address.js';
+import { COMPETITION_NOTE } from './agent-guide.mjs';
 import { stableJSON, validatePayload, patternAmount, compound, patternProperties, patternAsset, claimWindow, acceptMintRequest, evaluateDiscovery, discoveryCommitment, DISCOVERY_LIMITS, verifyRootAttestations, linkId, CLAIM_DEFAULTS, moveId } from '../../rules/src/index.js';
 import { financialMintId as pendingId } from '../../rules/src/financial-mint.js';
 import { makeFinancialMint } from './financial-mint.mjs';
@@ -231,18 +232,21 @@ export class Agent {
           if (row.ruleset === 'dmw-v2') {
             // V3 draws are individual winner rows, not v1 aggregate rounds.
             // Empty pages cannot prove a loss while deferred awards exist.
-            const observedWins = [];
+            const observedWins = [], winners = new Set(); let drawn = 0;
             for (const plot of tracked) {
               let cursor; const seen = new Set();
               do {
                 const page = await this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 50, cursor });
                 check(page.v === 3 && Array.isArray(page.draws), 'Invalid v2 draw page');
-                for (const winner of page.draws) if (readInteger(winner.window) === row.window && readInteger(winner.block) === plot.block &&
-                  winner.winner === this.address && (plot.patterns.includes(readInteger(winner.pattern)) || winner.source === 'header' && row.headerBlock === plot.block)) observedWins.push(winner);
+                for (const winner of page.draws) if (readInteger(winner.window) === row.window && readInteger(winner.block) === plot.block) {
+                  drawn++; winners.add(winner.winner);
+                  if (winner.winner === this.address && (plot.patterns.includes(readInteger(winner.pattern)) || winner.source === 'header' && row.headerBlock === plot.block)) observedWins.push(winner);
+                }
                 cursor = nextCursor(page); check(!cursor || !seen.has(cursor), 'Repeated draw cursor'); seen.add(cursor);
               } while (cursor);
             }
             items.push({ ...row, phase: observedWins.length ? 'won_pending_settlement' : 'check_settlement', observedWins, settlementComplete: false,
+              ...(drawn ? { competition: { agentsWon: winners.size, slotsWon: drawn, yours: observedWins.length, note: COMPETITION_NOTE } } : {}),
               next: { tool: 'window_eligibility', arguments: { window: row.window } } });
             continue;
           }
@@ -265,7 +269,7 @@ export class Agent {
       items.push({ ...row, phase: settlement?.phase ?? phase, ...(settlement ? { settlement } : {}) });
     }
     return { ...page, items, owner: this.address, tip: head.tip.height, counted: head.counted, source: 'local-journal',
-      note: 'Won/lost uses public settled draws. Other phases estimate timing; check block and verify_claim for evidence. A reorg never reopens a closed claim window.' };
+      note: 'Won/lost uses public settled draws. Other phases estimate timing; check block and verify_claim for evidence. A reorg never reopens a closed claim window. ' + COMPETITION_NOTE };
   }
   async catalog() {
     const rows = [], cursors = new Set(); let cursor, total, version, revision, pages = 0;
