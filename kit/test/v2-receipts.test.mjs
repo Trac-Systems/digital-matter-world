@@ -42,13 +42,27 @@ test('v2 receipt lookup follows empty cursor pages without a legacy height filte
   assert.equal(calls.length, 2); assert.equal(calls[1].cursor, 'continue');
 });
 
-test('v2 status exposes the specific missing accepted-batch verifier and preserves its packet', async () => {
-  const saved = { body: move, state: 'received', result: file.receipts[0] };
-  const agent = { journal: { get: () => saved, evidence: () => ({ outcome: null }) }, reconcileAction: Agent.prototype.reconcileAction };
-  assert.deepEqual(await Agent.prototype.reconcileActions.call(agent, ['header/' + file.tip]), [
-    { id: 'header/' + file.tip, reason: 'v2_batch_verifier_required' }
-  ]);
-  assert.deepEqual(saved.body, move);
+test('v2 saved moves are never flagged forever: received stays delivered, an unanswered packet is retried while fresh, then closed', async () => {
+  const moveTip = BigInt(move.b), settled = new Map();
+  const agentAt = (saved, tip) => ({
+    journal: { get: () => saved, evidence: id => ({ outcome: null, settlement: settled.get(id) ?? null }), settle: (id, value) => settled.set(id, value) },
+    trac: { head: async () => ({ tip: { height: String(tip) } }), hashAt: async height => { assert.equal(String(height), move.b); return move.h; } },
+    namedContext: async () => ({ settings: { values: { moveFreshnessTips: '2' } } }),
+    reconcileAction: Agent.prototype.reconcileAction, closeExpiredMove: Agent.prototype.closeExpiredMove
+  });
+  const id = 'header/' + file.tip;
+  const received = { body: move, state: 'received', result: file.receipts[0] };
+  assert.deepEqual(await Agent.prototype.reconcileActions.call(agentAt(received, moveTip + 10n), [id]), []);
+  assert.equal(settled.size, 0, 'a received move is delivered, not closed');
+  const unanswered = { body: move, state: 'unknown', result: null };
+  assert.deepEqual(await Agent.prototype.reconcileActions.call(agentAt(unanswered, moveTip + 2n), [id]), []);
+  assert.equal(settled.size, 0, 'a fresh packet stays open for a retry with the same action ID');
+  for (const state of ['unknown', 'sending']) {
+    settled.clear(); const saved = { body: move, state, result: null };
+    assert.deepEqual(await Agent.prototype.reconcileActions.call(agentAt(saved, moveTip + 3n), [id]), []);
+    assert.equal(settled.get(id).state, 'closed'); assert.equal(settled.get(id).reason, 'packet_expired');
+    assert.equal(saved.state, state, 'the saved state and packet are kept'); assert.deepEqual(saved.body, move);
+  }
 });
 
 test('legacy replay refuses activated settings or named catalogs before making v1 settlement assumptions', async () => {

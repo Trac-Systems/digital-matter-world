@@ -105,7 +105,7 @@ export async function validatePlayerConfig(config, { pins } = {}) {
   }
   pins ??= await readNetworkJSON(MAINNET_FILE);
   validateMainnet(pins);
-  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin', 'headerManifestTrust', 'headerChunkLimits', 'headerHTTPSettings', 'miningReads', 'maxBlocks', 'linkConcurrency', 'journalPacing']), 'Unpinned production config field');
+  check(own(config, [...NETWORK_FIELDS, 'directory', 'owner', 'headers', 'strategy', 'bitcoin', 'headerManifestTrust', 'headerChunkLimits', 'headerHTTPSettings', 'miningReads', 'maxBlocks', 'linkConcurrency', 'linkPacing', 'journalPacing']), 'Unpinned production config field');
   if (config.bitcoin !== undefined) {
     check(own(config.bitcoin, ['authority', 'funding']), 'Only a public token authority ID and cardinal funding outpoints belong in Bitcoin config');
     check(config.bitcoin.authority === undefined || /^[0-9a-f]{64}i[0-9]+$/.test(config.bitcoin.authority), 'Invalid token authority inscription ID');

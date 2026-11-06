@@ -100,6 +100,16 @@ outcomes. A definite refusal before acceptance can retry its original intent
 after Retry-After. Unknown sends preserve the exact signed packet. A later
 refusal does not clear an earlier uncertainty or authorize a replacement send.
 
+A v2 move with no recorded answer (state `sending` or `unknown`) is resent by
+calling the same action ID again while its packet is fresh (within the accepted
+`moveFreshnessTips` Bitcoin blocks, currently 2). The kit sends the identical
+packet; the gateway answers with the original receipt, so the move can never
+count twice. Once the packet is too old to send, `status` closes it
+(`settlement.state:"closed"`, reason `packet_expired`) instead of listing it in
+`reconciliationPending`. The packet stays in the journal; the kit cannot verify
+that move's final result, so check the public game record. A `received` move was
+delivered; its final result appears in the public records.
+
 `verify_claim {window,publication?}` accepts publication provenance from block
 claims: `{height,observation,audit:{path,hash,bytes}}`. Height/observation can be
 v2 decimal strings; bytes is a numeric resource length. The height is the audit

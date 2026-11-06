@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.5**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.6**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
@@ -908,11 +908,13 @@ and retry. The worker never pays a fee; a non-free quote fails as `link_not_free
 
 Optional player config settings are `maxBlocks` (default 500),
 `linkConcurrency` (default 8), and
-`journalPacing: {"intervalMs":1000,"perTip":12}`. The first two and `perTip` must
-be positive safe integers; `intervalMs` must be a nonnegative safe integer.
-The job limit applies to entries before duplicate removal. Bulk links and mining
-share the normal journal pacing and the agent's turn queue; a waiting link gives
-up its turn. The gateway currently permits at most eight pending links per agent,
+`linkPacing: {"intervalMs":500,"perTip":120}` for links and
+`journalPacing: {"intervalMs":1000,"perTip":12}` for mining moves. The first two
+and each `perTip` must be positive safe integers; each `intervalMs` must be a
+nonnegative safe integer. The job limit applies to entries before duplicate
+removal. Bulk links have their own pacing, so mining never uses up the links'
+budget and links never use up mining's; both still take turns in the agent's
+queue, and a waiting link gives up its turn. The gateway currently permits at most eight pending links per agent,
 so raising local concurrency does not raise gateway capacity. Pending requests
 expire after the accepted settings' `pendingBlocks` Bitcoin blocks.
 

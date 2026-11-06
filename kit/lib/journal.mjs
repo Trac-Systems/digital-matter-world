@@ -48,22 +48,23 @@ export class Journal {
       this.db.exec('COMMIT'); return this.get(id);
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  take(tip) {
+  // `pace` names a separate budget (scope, intervalMs, perTip), e.g. bulk links beside mining.
+  take(tip, { scope, intervalMs, perTip } = this) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const at = this.now(), old = this.db.prepare('SELECT * FROM rates WHERE scope=?').get(this.scope);
-      if (old && at < old.at + this.intervalMs) throw Object.assign(Error('Local rate limit; retry later'), { retryAfterMs: old.at + this.intervalMs - at });
+      const at = this.now(), old = this.db.prepare('SELECT * FROM rates WHERE scope=?').get(scope);
+      if (old && at < old.at + intervalMs) throw Object.assign(Error('Local rate limit; retry later'), { retryAfterMs: old.at + intervalMs - at });
       const count = old?.tip === tip ? old.count + 1 : 1;
-      if (count > this.perTip) throw Object.assign(Error(`Local per-tip move limit: waiting for the next Bitcoin block (${old.count}/${this.perTip} used)`),
-        { retryAfterMs: 250, code: 'waiting_for_bitcoin_block', used: old.count, limit: this.perTip, tip });
-      this.db.prepare('INSERT OR REPLACE INTO rates VALUES(?,?,?,?)').run(this.scope, tip, count, at); this.db.exec('COMMIT');
+      if (count > perTip) throw Object.assign(Error(`Local per-tip move limit: waiting for the next Bitcoin block (${old.count}/${perTip} used)`),
+        { retryAfterMs: 250, code: 'waiting_for_bitcoin_block', used: old.count, limit: perTip, tip });
+      this.db.prepare('INSERT OR REPLACE INTO rates VALUES(?,?,?,?)').run(scope, tip, count, at); this.db.exec('COMMIT');
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
-  async waitTurn(getHead, wait = sleep, { waitForTurn = true } = {}) {
+  async waitTurn(getHead, wait = sleep, { waitForTurn = true, pace = this } = {}) {
     let reportedTip;
     for (;;) {
       const head = await getHead();
-      try { this.take(head.tip.height); return head; }
+      try { this.take(head.tip.height, pace); return head; }
       catch (error) {
         if (error.retryAfterMs === undefined) throw error;
         // Background work releases the agent's queue while it waits so a
@@ -77,10 +78,10 @@ export class Journal {
       }
     }
   }
-  finishTurn() {
+  finishTurn({ scope, intervalMs } = this) {
     // Disk writes and submission can outlast the reservation interval. Keep
     // the next send spaced from this completed attempt, including failures.
-    if (this.intervalMs > 0) this.db.prepare('UPDATE rates SET at=MAX(at,?) WHERE scope=?').run(this.now(), this.scope);
+    if (intervalMs > 0) this.db.prepare('UPDATE rates SET at=MAX(at,?) WHERE scope=?').run(this.now(), scope);
   }
   mark(id, state, result = null) {
     check(['sending', 'unknown', 'refused', 'received', 'submitted', 'accepted', 'rejected'].includes(state), 'Invalid journal state');

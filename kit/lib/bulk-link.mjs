@@ -35,6 +35,7 @@ export function previewLinkJob(agent, input, settings = agent?.linkSettings) {
 
 // One worker per journal scope. Each pass submits at most one item through the
 // agent's FIFO queue; rate waits release that queue instead of holding mining.
+// Links have their own per-block budget (linkPacing), so mining never uses it up.
 export class BulkLinkWorker {
   constructor(agent, { settings = agent.linkSettings, journal = agent.journal.rateJournal ?? agent.journal, pollMs = 5000 } = {}) {
     linkCheck(Number.isSafeInteger(pollMs) && pollMs > 0, 'invalid_link_poll_interval');
@@ -65,9 +66,11 @@ export class BulkLinkWorker {
     };
     this.service = service;
     this.sender = Object.assign(Object.create(agent), { journal: paced, service });
+    // Links count against their own budget, not the one mining moves use.
+    const pace = { scope: journal.scope + '/links', ...this.jobs.settings.linkPacing };
     this.sender.exclusive = fn => abortable(agent.exclusive(async () => {
-      await Journal.prototype.waitTurn.call(journal, () => readHead(() => agent.trac.head()), undefined, { waitForTurn: false });
-      try { return await fn(); } finally { if (!signal.aborted) journal.finishTurn(); }
+      await Journal.prototype.waitTurn.call(journal, () => readHead(() => agent.trac.head()), undefined, { waitForTurn: false, pace });
+      try { return await fn(); } finally { if (!signal.aborted) journal.finishTurn(pace); }
     }), signal);
   }
   create(input) {

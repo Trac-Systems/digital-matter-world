@@ -6,8 +6,10 @@ import { dashboardJournal } from '../lib/dashboard-state.mjs';
 import { linkFixture } from './fixtures/link-service.mjs';
 import { cleanup, bitcoinAddress } from './helpers.mjs';
 
+const unpaced = { linkPacing: { intervalMs: 0, perTip: 100 } };
 async function fixture(t, options = {}) {
-  const f = await linkFixture(t), worker = new BulkLinkWorker(f.agent, { pollMs: 1, ...options }); cleanup(t, () => worker.close());
+  const f = await linkFixture(t), worker = new BulkLinkWorker(f.agent, { pollMs: 1, ...options,
+    settings: { ...options.settings, linkPacing: { intervalMs: 0, perTip: 100, ...options.settings?.linkPacing } } }); cleanup(t, () => worker.close());
   return { ...f, worker, create: blocks => worker.create({ blocks }).job,
     due() { f.journal.db.prepare('UPDATE link_job_items SET retry_at=0').run(); f.journal.db.prepare('DELETE FROM link_job_backoff').run(); } };
 }
@@ -19,7 +21,7 @@ test('bulk jobs resume after reopening SQLite and observe links completed while 
   // The fixture owns its initial connection; open a new connection like restart.
   const journal = await Journal.open(f.directory, f.journal.scope, { intervalMs: 0, perTip: 100 }); cleanup(t, () => journal.close());
   f.agent.journal = dashboardJournal(journal); f.linkRecords.get(id).state = 'accepted';
-  const resumed = new BulkLinkWorker(f.agent, { pollMs: 1 }); cleanup(t, () => resumed.close());
+  const resumed = new BulkLinkWorker(f.agent, { pollMs: 1, settings: unpaced }); cleanup(t, () => resumed.close());
   f.due(); await resumed.step();
   assert.equal(resumed.jobs.detail(job.id).items[0].state, 'linked');
   assert.equal(f.linkPackets.length, 4); assert.equal(resumed.jobs.get(job.id).counts.inProgress, 1);
@@ -73,8 +75,8 @@ test('cancel does not renew sent requests after expiry', async t => {
   assert.equal(f.worker.jobs.get(job.id).state, 'cancelled'); assert.equal(f.worker.jobs.get(job.id).counts.cancelled, 2);
 });
 
-test('journal pacing releases the FIFO queue for mining and shutdown', async t => {
-  const f = await fixture(t); f.journal.perTip = 1; f.create(['1', '2']);
+test('link pacing releases the FIFO queue for mining and shutdown', async t => {
+  const f = await fixture(t, { settings: { linkPacing: { perTip: 1 } } }); f.create(['1', '2']);
   await f.worker.step(); f.due(); await f.worker.step();
   assert.equal(f.linkRecords.size, 1);
   let mined = false; await f.agent.exclusive(() => { mined = true; }); assert.equal(mined, true);
@@ -122,14 +124,16 @@ test('a refusal after uncertainty cannot authorize a replacement until absence a
   assert.notEqual(f.worker.jobs.active()[0].action_id, first.action_id);
 });
 
-test('mining queued during a link gets the next shared paced turn', async t => {
-  const f = await fixture(t); f.journal.perTip = 2; f.create(['1', '2']); let mining;
+test('mining and links each keep their own per-block budget', async t => {
+  const f = await fixture(t, { settings: { linkPacing: { perTip: 2 } } }); f.journal.perTip = 1; f.create(['1', '2', '3']); let mining;
   f.onPacket(() => {
     mining ??= f.agent.exclusive(async () => { await f.journal.waitTurn(() => f.agent.trac.head()); f.journal.finishTurn(); return 'mined'; });
   });
-  await f.worker.step(); assert.equal(await mining, 'mined'); f.due(); await f.worker.step();
-  assert.equal(f.linkRecords.size, 1);
-  assert.equal(f.journal.db.prepare('SELECT count FROM rates WHERE scope=?').get(f.journal.scope).count, 2);
+  await f.worker.step(); assert.equal(await mining, 'mined', 'mining gets its turn while links run');
+  for (let i = 0; i < 3; i++) { f.due(); await f.worker.step(); }
+  assert.equal(f.linkRecords.size, 2, 'links stop at their own budget, not at the one mining used');
+  const count = scope => f.journal.db.prepare('SELECT count FROM rates WHERE scope=?').get(scope).count;
+  assert.equal(count(f.journal.scope), 1); assert.equal(count(f.journal.scope + '/links'), 2);
 });
 
 test('future blocks fail as not_a_bitmap; transient snapshot refusals retry', async t => {
@@ -145,13 +149,13 @@ test('gateway Retry-After delays every job and survives a worker restart', async
   f.busy({ status: 503, code: 'link_capacity' }); await f.worker.step();
   for (let n = 0; n < 4; n++) await f.worker.step();
   assert.equal(f.linkCalls.length, 1);
-  await f.worker.close(); const resumed = new BulkLinkWorker(f.agent); cleanup(t, () => resumed.close());
+  await f.worker.close(); const resumed = new BulkLinkWorker(f.agent, { settings: unpaced }); cleanup(t, () => resumed.close());
   await resumed.step(); assert.equal(f.linkCalls.length, 1);
   f.busy(null); f.due(); await resumed.step(); assert.equal(f.linkRecords.size, 1);
 });
 
 test('a full local block allowance delays new quotes but still polls sent links', async t => {
-  const f = await fixture(t, { pollMs: 60000 }); f.journal.perTip = 1; f.create(['1', '2', '3']);
+  const f = await fixture(t, { pollMs: 60000, settings: { linkPacing: { perTip: 1 } } }); f.create(['1', '2', '3']);
   await f.worker.step(); await f.worker.step(); const before = f.linkCalls.length;
   await f.worker.step(); assert.equal(f.linkCalls.length, before);
   const [id, record] = [...f.linkRecords][0]; record.state = 'accepted';
@@ -161,8 +165,8 @@ test('a full local block allowance delays new quotes but still polls sent links'
 });
 
 test('local send delay uses configured pacing instead of the slower status polling interval', async t => {
-  const f = await fixture(t, { pollMs: 5000 }); let now = 10000;
-  f.journal.now = () => now; f.journal.intervalMs = 1000; f.create(['1', '2']);
+  const f = await fixture(t, { pollMs: 5000, settings: { linkPacing: { intervalMs: 1000 } } }); let now = 10000;
+  f.journal.now = () => now; f.create(['1', '2']);
   await f.worker.step(); await f.worker.step(); assert.equal(f.worker.jobs.delayUntil('send'), 11000);
   now = 11000; await f.worker.step(); assert.equal(f.linkRecords.size, 2);
 });

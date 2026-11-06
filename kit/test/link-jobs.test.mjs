@@ -32,7 +32,7 @@ test('cancel affects waiting items only and a sent item still finishes', async t
 });
 
 test('block and settings defaults and validation are applied to player configs', async t => {
-  assert.deepEqual(linkSettings(), { maxBlocks: 500, linkConcurrency: 8 });
+  assert.deepEqual(linkSettings(), { maxBlocks: 500, linkConcurrency: 8, linkPacing: { intervalMs: 500, perTip: 120 } });
   assert.deepEqual(journalPacing(), { intervalMs: 1000, perTip: 12 });
   const config = { localOnly: true, adapter: '/test/adapter.mjs', gateway: 'http://127.0.0.1:1' };
   await validatePlayerConfig({ ...config, maxBlocks: 2, linkConcurrency: 1, journalPacing: { intervalMs: 0, perTip: 1 } });
@@ -41,7 +41,11 @@ test('block and settings defaults and validation are applied to player configs',
     await assert.rejects(validatePlayerConfig({ ...config, linkConcurrency: value }), /linkConcurrency/);
     assert.throws(() => journalPacing({ perTip: value }));
   }
-  for (const value of [null, [], { unknown: 1 }, { intervalMs: -1 }, { intervalMs: '1' }]) assert.throws(() => journalPacing(value));
+  for (const value of [null, [], { unknown: 1 }, { intervalMs: -1 }, { intervalMs: '1' }]) {
+    assert.throws(() => journalPacing(value));
+    await assert.rejects(validatePlayerConfig({ ...config, linkPacing: value }), /linkPacing/);
+  }
+  await validatePlayerConfig({ ...config, linkPacing: { intervalMs: 0, perTip: 500 } });
   const journal = await Journal.open(await temp(t), 'validate'); cleanup(t, () => journal.close());
   const jobs = new LinkJobs(journal, { maxBlocks: 2 });
   for (const blocks of [[], null, [1], ['01'], ['1.5'], ['-1'], ['1e2']]) assert.throws(() => jobs.create({ blocks, payer: 'p' }), /invalid_blocks/);

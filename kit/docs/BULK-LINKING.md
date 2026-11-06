@@ -90,6 +90,7 @@ Optional top-level player config fields:
 {
   "maxBlocks": 500,
   "linkConcurrency": 8,
+  "linkPacing": { "intervalMs": 500, "perTip": 120 },
   "journalPacing": { "intervalMs": 1000, "perTip": 12 }
 }
 ```
@@ -99,8 +100,9 @@ be zero, and the others must be positive. These are local settings, not gateway
 or contract changes. All jobs share one concurrency allowance. In-progress items
 count even while the response is uncertain. The worker submits one item at a time
 through the agent's FIFO turn queue and releases that queue when rate-limited,
-so queued mining can run. Both use the journal's durable interval and per-block
-allowance. Dashboard human financial clicks retain their prior pacing behavior.
+so queued mining can run. Links use their own durable interval and per-block
+allowance (`linkPacing`); mining moves use `journalPacing`. Neither uses up the
+other's allowance. Dashboard human financial clicks retain their prior pacing behavior.
 
 The gateway independently caps pending links at eight per agent and also has a
 global capacity bound. A completed or expired request frees its place. Increasing

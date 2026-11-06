@@ -24,7 +24,7 @@ import { bindingMessage, bindingId, payoutAddress, verifyBinding } from '../../r
 import { signBytes } from './signing.mjs';
 import { PlayerMint } from './player-mint.mjs';
 import { proposeNamed, revealNamed, addNamedOccurrences, sendNamedMove } from './named-discovery.mjs';
-import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RESOURCE_PROFILE, validateResources, safeNumberV2 } from '../../rules/src/index.js';
+import { validateSettingsDocument, hashObject, activationManifest, moveIdV2, RESOURCE_PROFILE, validateResources, safeNumberV2, decimalV2 } from '../../rules/src/index.js';
 import { requireKitVersion, resumeLegacyFinancial } from './upgrade.mjs';
 import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './api-values.mjs';
 import { tnkBalance, prepareTnkTransfer, sendTnkTransfer, tnkTransferStatus } from './tnk.mjs';
@@ -59,7 +59,7 @@ export class Agent {
     this.tail = result.catch(() => {});
     return result;
   }
-  async reconcileAction(id) {
+  async reconcileAction(id, cache = {}) {
     const row = this.journal.get(id);
     if (id.startsWith('tnk/')) { await tnkTransferStatus(this, id.slice(4)); return; }
     if (!row || ['prepared', 'refused', 'accepted', 'rejected'].includes(row.state)) return;
@@ -100,7 +100,7 @@ export class Agent {
         this.journal.observe(id, 'accepted', { source: 'public_catalog', asset: patternId(found) });
       }
     } else if (row.body.t) {
-      if (row.body.v === 2) throw Object.assign(new Error('V2 accepted batch inclusion verifier required; saved packet retained'), { code: 'v2_batch_verifier_required' });
+      if (row.body.v === 2) return this.closeExpiredMove(id, row, cache);
       const proof = await this.receiptInclusion(row.body, { receipt: row.result ?? undefined });
       const state = proof.reportedOutcome === 'accepted' ? 'accepted' : 'rejected';
       const evidence = { source: 'witnessed_audit', reason: proof.reportedOutcome, publication: proof.publication, contractCommitted: proof.contractCommitted };
@@ -112,10 +112,22 @@ export class Agent {
       if (['accepted', 'rejected'].includes(result.state)) this.journal.observe(id, result.state, { source: 'transaction_status', tx: row.body.tx, state: result.state, reason: result.reason ?? null });
     }
   }
+  // A v2 move's final game result needs an accepted-batch verifier the kit does not have yet.
+  // A received move is delivered. A move whose delivery is unknown is resent with the same action
+  // ID while its packet is fresh; once the packet can no longer be sent it is closed (outcome not
+  // verified) instead of being reported as pending forever. The saved packet is kept either way.
+  async closeExpiredMove(id, row, cache) {
+    if (!['sending', 'unknown'].includes(row.state) || this.journal.evidence(id).settlement?.state === 'closed') return;
+    cache.head ??= await this.trac.head(); cache.context ??= await this.namedContext();
+    const tip = BigInt(decimalV2(cache.head.tip.height)), freshness = BigInt(cache.context?.settings.values.moveFreshnessTips ?? 2);
+    if (tip - BigInt(row.body.b) <= freshness && await this.trac.hashAt(safeNumberV2(row.body.b)) === row.body.h) return;
+    this.journal.settle(id, { state: 'closed', reason: 'packet_expired', tip: String(tip),
+      note: 'This packet can no longer be sent and the kit cannot verify its outcome; check the public game record.' });
+  }
   async reconcileActions(ids) {
-    const unavailable = [];
+    const unavailable = [], cache = {};
     for (const id of ids) {
-      try { await this.reconcileAction(id); }
+      try { await this.reconcileAction(id, cache); }
       catch (error) { unavailable.push({ id, reason: error.code ?? 'public_outcome_unavailable' }); }
     }
     return unavailable;
@@ -136,8 +148,9 @@ export class Agent {
       }
       if (kind === 'tnk') return { ...row, ...evidence, tx: savedMove.body.packet?.tx ?? null,
         statusTool: { name: 'tnk_transfer_status', arguments: { actionId: row.id.slice(4) } } };
-      if (savedMove.body.t && ['unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: (savedMove.body.v === 2 ? moveIdV2 : moveId)(savedMove.body),
-        ...(row.state === 'refused' ? { refusal: savedMove.result, retry: 'Retry the original action ID and intent; the kit will refresh the refused packet.' } : {}) };
+      if (savedMove.body.t && ['sending', 'unknown', 'refused'].includes(row.state)) return { ...row, ...evidence, move: (savedMove.body.v === 2 ? moveIdV2 : moveId)(savedMove.body),
+        ...(row.state === 'refused' ? { refusal: savedMove.result, retry: 'Retry the original action ID and intent; the kit will refresh the refused packet.' } :
+          evidence.settlement?.state === 'closed' ? {} : { retry: 'No answer was recorded. Retry the same action ID soon: the kit resends the identical packet and the gateway answers with its original receipt, never a duplicate.' }) };
       if (kind.startsWith('bitcoin-')) {
         const saved = this.journal.get(row.id), plan = saved.body.plan, deploy = kind === 'bitcoin-deploy';
         return { ...row, ...evidence, requestId: saved.body.requestId, ...(deploy ? { asset: saved.body.asset } : {}),
