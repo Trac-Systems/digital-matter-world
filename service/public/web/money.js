@@ -701,6 +701,8 @@ async function mintPublic(row, notify, { deployment = null, ticker = null } = {}
 // On an agent owner's local dashboard the agent signs the link request with
 // one click; the link's payment page then proves the Bitmap and takes the fee.
 // Several blocks (typed, pasted or picked) go to the agent as one job it links in the background.
+const LINK_REFUSALS = { bitmap_agent_binding: 'This Bitmap is not in your agent’s TAP wallet. Ask your agent to bind the wallet that holds it as its TAP wallet, then link again.',
+  not_in_wallet: 'The connected TAP Wallet does not hold this Bitmap.', bitmap_missing: 'There is no Bitmap for this block.', not_a_bitmap: 'There is no Bitmap for this block.', link_exists: 'This Bitmap is already linked.' };
 function localLink(initial) {
   const free = feePrice(store.status?.feePolicy, 'link') === 'Free';
   const grow = () => { height.style.height = 'auto'; height.style.height = Math.min(height.scrollHeight + 2, 160) + 'px'; };
@@ -721,12 +723,26 @@ function localLink(initial) {
     if (!start.disabled) start.textContent = label(blocks.length);
   }
   const reset = () => { start.disabled = false; start.classList.remove('busy'); update(); };
+  // The game links a Bitmap only from the TAP wallet the agent is bound to. Say so before
+  // asking the agent, when TAP Wallet is connected with another address (or none is bound).
+  const agentWallet = async () => {
+    try { const r = await fetch('/api/info', { credentials: 'same-origin', headers: { accept: 'application/json' } }); return r.ok ? (await r.json()).payoutAddress ?? null : undefined; }
+    catch { return undefined; }
+  };
+  const bindText = (bound, connected, many) => {
+    const it = many ? 'these Bitmaps' : 'this Bitmap', type = connected.startsWith('bc1p') ? '' : ' Agents on kit 0.2.5 or newer can bind this address type.';
+    return bound === null
+      ? `Your agent has no TAP wallet yet. Ask your agent to bind ${connected} as its TAP wallet and approve once in TAP Wallet, then link ${it}.${type}`
+      : `Your agent’s TAP wallet is ${bound}, but TAP Wallet is connected with ${connected}. To link ${it} from ${connected}, ask your agent to bind it as its TAP wallet and approve once in TAP Wallet. Or switch TAP Wallet to ${bound}.${type}`;
+  };
   const start = h('button.btn.primary', { onclick: async () => {
     const { blocks, bad } = chosen();
     if (bad) { say(bad, 'bad'); return; }
     if (!blocks.length) { say('Enter the block number of your Bitmap.', 'bad'); return; }
     if (!wallet.tap) { say(`Connect the TAP Wallet that holds the ${blocks.length > 1 ? 'Bitmaps' : 'Bitmap'} first (Connect wallet, top right).`, 'bad'); return; }
     typedBad = false;
+    const bound = await agentWallet();
+    if (bound !== undefined && bound !== wallet.tap.address) { say(bindText(bound, wallet.tap.address, blocks.length > 1), 'bad'); return; }
     if (blocks.length > 1) {
       start.disabled = true; start.textContent = 'Your agent is starting…'; start.classList.add('busy'); say(`Asking your agent to link ${bitmapCount(blocks.length)}…`, 'busy');
       try {
@@ -744,7 +760,7 @@ function localLink(initial) {
       if (!free) await oneTxReady(wallet.tap.address);
       const response = await fetch('/api/link', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ height: value, payer: wallet.tap.address }) });
       const result = await response.json().catch(() => ({ error: 'request_failed' }));
-      if (!response.ok) throw Error(String(result.error ?? 'request_failed').replace(/_/g, ' '));
+      if (!response.ok) throw Error(LINK_REFUSALS[result.error] ?? String(result.error ?? 'request_failed').replace(/_/g, ' '));
       const link = new URL(result.paymentLink, location.href);
       go(link.pathname + link.search);
     } catch (error) { say(error.message, 'bad'); reset(); }

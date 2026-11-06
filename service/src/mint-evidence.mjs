@@ -37,6 +37,22 @@ export async function winningMint(reads, row, entry, recovered, view) {
     ...(d.kind === 'dmt' ? { block: row.request.v === 2 ? rules.decimalV2(payload.blk) : Number(payload.blk) } : {}) };
 }
 
+// Signers keep no site (public) mint rows. Rebuild one from the accepted source
+// record and the deterministic permit plan for that accepted payment; only the
+// committee signature comes from the winning inscription, and winningMint checks
+// it against the committee key like every other field.
+export async function acceptedPublicMintRow(reads, id, at) {
+  const source = await reads.financialRecord('fi/source/' + id, at);
+  if (source?.publicMint !== true || source.requestId !== id || !source.deployment) return null;
+  const { permit: p } = await reads.publicMintPermit(id, at), d = source.deployment;
+  const expected = { ...p.payload, prv: { address: p.address, salt: p.salt, hash: p.digest } };
+  const holder = d.kind === 'dmt' ? await reads.tap('getDmtMintHolderByBlock/' + encodeURIComponent('dmt-' + d.tick) + '/' + source.request.block)
+    : d.kind === 'compound' && typeof reads.mintByPermit === 'function' ? await reads.mintByPermit(source.receiver, d.tick, expected.dta, source.request.amount) : null;
+  const payload = holder?.ins ? await reads.content(holder.ins) : null, { sig, ...prv } = payload?.prv ?? {};
+  const permit = payload && sig && rules.stableJSON({ ...payload, prv }) === rules.stableJSON(expected) ? payload : expected;
+  return { id, publicMint: true, request: source.request, receiver: source.receiver, context: { deployment: d }, permit };
+}
+
 // An accepted financial batch runs at its final counted height. The callback
 // verifies the audit's Merkle root against Trac before any frozen term is used.
 export async function admittedMint({ store, reads, audits, network, id }) {

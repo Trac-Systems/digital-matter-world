@@ -7,6 +7,14 @@ import * as rules from '../../rules/src/index.js';
 
 export const DEFAULT_MARGIN = '6';
 export const DEFAULT_PROPOSAL_MARGIN = '2';
+export const CLAIM_CAPACITY_VALUES = Object.freeze({ closureWorkBudget: 12288, closureReadBudget: 262144,
+  closureByteBudget: 536870912, settlementPagesPerObservation: 64 });
+// Operator limits a claim-profile amendment may retune alongside its work and page allowances.
+export const CLAIM_TUNABLE_KEYS = Object.freeze(['closureWorkBudget', 'settlementPagesPerObservation', 'closureBacklogPairs',
+  'closureBacklogBytes', 'closureBacklogWindows', 'batchDeadlineTips', 'requestMinBlocks']);
+const TUNING_ARGUMENTS = Object.freeze({ closureWork: 'closureWorkBudget', settlementPages: 'settlementPagesPerObservation',
+  backlogPairs: 'closureBacklogPairs', backlogBytes: 'closureBacklogBytes', backlogWindows: 'closureBacklogWindows',
+  batchDeadline: 'batchDeadlineTips', requestMin: 'requestMinBlocks' });
 export function need(value, code, details = {}) {
   if (!value) throw Object.assign(Error(code), { details });
 }
@@ -77,12 +85,12 @@ function tickerFeeValues(current, changes) {
 export function buildSuccessor(snapshot, {
   activationHeight, publicPaymentV2Height, bitmapMintOpenHeight, margin = DEFAULT_MARGIN, proposalMargin = DEFAULT_PROPOSAL_MARGIN, effectiveBatch, sourceRps,
   feePolicyRevision, linkMultiplier, legacyDeployShareBps, legacyDeployPayoutMinAtoms, deployerShareBps, tickerDeployMultiplier, tickerDeployBurnBps, linkBurnBps,
-  bulkCapacity = false, pendingBlocks,
+  bulkCapacity = false, claimCapacity = false, pendingBlocks, ...tuning
 } = {}) {
   const { current, last, head, resources } = snapshot;
   rules.validateSettingsDocument(current);
   if (pendingBlocks !== undefined) {
-    need(pendingBlocks === 6 && !bulkCapacity && [activationHeight, publicPaymentV2Height, bitmapMintOpenHeight, feePolicyRevision,
+    need(pendingBlocks === 6 && !bulkCapacity && !claimCapacity && [activationHeight, publicPaymentV2Height, bitmapMintOpenHeight, feePolicyRevision,
       linkMultiplier, legacyDeployShareBps, legacyDeployPayoutMinAtoms, deployerShareBps, tickerDeployMultiplier,
       tickerDeployBurnBps, linkBurnBps, sourceRps].every(value => value === undefined), 'successor_pending_arguments');
     positive(proposalMargin);
@@ -93,16 +101,21 @@ export function buildSuccessor(snapshot, {
     return describeSuccessor(snapshot, rules.settingsRevision({ network: current.network, previous: current,
       effectiveBatch, effectiveBitcoinWindow, values: { ...current.values, pendingBlocks } }), resources, margin);
   }
-  if (bulkCapacity) {
-    // Capacity only: the bulk batch budget and byte limit at the next batch and current Bitcoin window, no waiting height.
+  if (bulkCapacity || claimCapacity) {
+    // Capacity amendments use the same next-batch / counted-plus-margin boundaries.
+    need(!(bulkCapacity && claimCapacity), 'successor_capacity_arguments');
     need([activationHeight, publicPaymentV2Height, bitmapMintOpenHeight, feePolicyRevision, linkMultiplier, legacyDeployShareBps, deployerShareBps,
-      tickerDeployMultiplier, tickerDeployBurnBps, linkBurnBps, sourceRps].every(value => value === undefined), 'successor_capacity_arguments');
+      legacyDeployPayoutMinAtoms, tickerDeployMultiplier, tickerDeployBurnBps, linkBurnBps, sourceRps].every(value => value === undefined), 'successor_capacity_arguments');
     positive(proposalMargin);
     const effectiveBitcoinWindow = maximum(current.effectiveBitcoinWindow, rules.addUint(rules.decimalV2(head.counted), proposalMargin));
     const minimumBatch = maximum(rules.nextUint(rules.decimalV2(last.n)), rules.nextUint(current.effectiveBatch));
     effectiveBatch ??= minimumBatch; rules.uintV2(effectiveBatch);
     need(rules.compareUint(effectiveBatch, minimumBatch) >= 0, 'successor_batch_boundary', { minimumBatch });
-    return describeSuccessor(snapshot, rules.bulkCapacitySuccessor(current, { effectiveBatch, effectiveBitcoinWindow }), resources, margin);
+    const document = claimCapacity ? rules.settingsRevision({ network: current.network, previous: current,
+      effectiveBatch, effectiveBitcoinWindow, values: { ...current.values, ...CLAIM_CAPACITY_VALUES,
+        ...Object.fromEntries(Object.entries(TUNING_ARGUMENTS).filter(([name]) => tuning[name] !== undefined).map(([name, key]) => [key, tuning[name]])) } }) :
+      rules.bulkCapacitySuccessor(current, { effectiveBatch, effectiveBitcoinWindow });
+    return describeSuccessor(snapshot, document, resources, margin);
   }
   const explicit = Object.entries({ publicPaymentV2Height, bitmapMintOpenHeight }).filter(([, value]) => value !== undefined);
   const fees = feePolicyRevision !== undefined, legacyDeploy = legacyDeployShareBps !== undefined || deployerShareBps !== undefined;
@@ -144,8 +157,15 @@ export function describeSuccessor(snapshot, document, resourceDocument, margin =
   const fees = document.values.feePolicyRevision !== current.values.feePolicyRevision, legacyDeploy = legacyDeployChanged(current, document), tickerFees = tickerFeesChanged(current, document);
   need(!fees || !legacyDeploy && !tickerFees, 'successor_unexpected_settings_change');
   const pending = document.values.pendingBlocks !== current.values.pendingBlocks;
-  if (pending || Object.keys(rules.BULK_CAPACITY_VALUES).some(key => document.values[key] !== current.values[key])) {
-    need(same(document.values, pending ? { ...current.values, pendingBlocks: 6 } : { ...current.values, ...rules.BULK_CAPACITY_VALUES }), 'successor_unexpected_settings_change');
+  const claims = [...Object.keys(CLAIM_CAPACITY_VALUES), ...CLAIM_TUNABLE_KEYS].some(key => document.values[key] !== current.values[key]);
+  if (pending || claims || Object.keys(rules.BULK_CAPACITY_VALUES).some(key => document.values[key] !== current.values[key])) {
+    // Once the claim profile is active, its work and page allowances may be retuned;
+    // read and byte ceilings and every other value stay unchanged.
+    const profile = values => ['closureReadBudget', 'closureByteBudget'].every(key => values[key] === CLAIM_CAPACITY_VALUES[key]);
+    const tuned = claims && !pending && profile(current.values) && same(document.values,
+      { ...current.values, ...Object.fromEntries(CLAIM_TUNABLE_KEYS.map(key => [key, document.values[key]])) });
+    need(tuned || same(document.values, pending ? { ...current.values, pendingBlocks: 6 } :
+      { ...current.values, ...(claims ? CLAIM_CAPACITY_VALUES : rules.BULK_CAPACITY_VALUES) }), 'successor_unexpected_settings_change');
     need(same(resources, resourceDocument), 'successor_resource_changed');
     const activationHeight = document.effectiveBitcoinWindow;
     return { version: 1, operation: 'ad_settings', document, hash: rules.hashObject(document),
@@ -209,7 +229,8 @@ export async function prepareApplication(snapshot, confirmHash) {
   await simulateAdministration(snapshot, 'ad_apply', { id: 'settings' });
   return { operation: 'ad_apply', hash: confirmHash, earliestApplyHeight, counted,
     effectiveBatch: action.value.effectiveBatch, effectiveBitcoinWindow: action.value.effectiveBitcoinWindow,
-    activationHeight: action.value.values.feePolicyRevision !== snapshot.current.values.feePolicyRevision || legacyDeployChanged(snapshot.current, action.value) || tickerFeesChanged(snapshot.current, action.value) ? action.value.effectiveBitcoinWindow :
+    activationHeight: Object.keys(CLAIM_CAPACITY_VALUES).some(key => action.value.values[key] !== snapshot.current.values[key]) ||
+      action.value.values.feePolicyRevision !== snapshot.current.values.feePolicyRevision || legacyDeployChanged(snapshot.current, action.value) || tickerFeesChanged(snapshot.current, action.value) ? action.value.effectiveBitcoinWindow :
       action.value.values.publicPaymentV2Height ?? action.value.values.bitmapMintOpenHeight ?? action.value.values.claimsNeverCloseHeight ?? action.value.values.publicMintActivationHeight, contractValidation: 'accepted' };
 }
 
@@ -221,13 +242,17 @@ export function parseArguments(args) {
     'pending-blocks': 'pendingBlocks', 'fee-policy-revision': 'feePolicyRevision', 'link-multiplier': 'linkMultiplier',
     'deployer-share-bps': 'deployerShareBps', 'legacy-deploy-share-bps': 'legacyDeployShareBps', 'legacy-deploy-payout-min-atoms': 'legacyDeployPayoutMinAtoms',
     'ticker-deploy-multiplier': 'tickerDeployMultiplier', 'ticker-deploy-burn-bps': 'tickerDeployBurnBps', 'link-burn-bps': 'linkBurnBps',
-    'admin-key': 'adminKey', journal: 'journal' };
+    'admin-key': 'adminKey', journal: 'journal', 'closure-work': 'closureWork', 'settlement-pages': 'settlementPages',
+    'backlog-pairs': 'backlogPairs', 'backlog-bytes': 'backlogBytes', 'backlog-windows': 'backlogWindows',
+    'batch-deadline': 'batchDeadline', 'request-min': 'requestMin' };
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const match = /^--([a-z0-9-]+)(?:=(.*))?$/.exec(args[i]);
     need(match, 'successor_usage'); const [, name, inline] = match;
     need(!seen.has(name), 'successor_duplicate_argument'); seen.add(name);
-    if (name === 'bulk-capacity') { need(inline === undefined, 'successor_usage'); result.bulkCapacity = true; continue; }
+    if (name === 'bulk-capacity' || name === 'claim-capacity') {
+      need(inline === undefined, 'successor_usage'); result[name === 'bulk-capacity' ? 'bulkCapacity' : 'claimCapacity'] = true; continue;
+    }
     if (['dry-run', 'send', 'apply', 'help'].includes(name)) {
       need(inline === undefined, 'successor_usage');
       if (name === 'help') result.help = true;
@@ -256,12 +281,17 @@ export function parseArguments(args) {
   need(heights.length <= 1, 'successor_activation_arguments');
   if (result.mode === 'apply') need(!heights.length && !result.proposal && !seen.has('source-rps')
     && !seen.has('effective-batch') && !seen.has('margin') && !seen.has('proposal-margin'), 'successor_apply_arguments');
-  else need(heights.length || result.proposal || result.bulkCapacity || result.pendingBlocks !== undefined, 'successor_activation_required');
+  else need(heights.length || result.proposal || result.bulkCapacity || result.claimCapacity || result.pendingBlocks !== undefined, 'successor_activation_required');
   if (result.pendingBlocks !== undefined) {
-    need(result.pendingBlocks === '6' && result.mode === 'dry-run' && !heights.length && !result.proposal && !result.bulkCapacity && !fees && !legacyDeploy && !tickerFees && !seen.has('source-rps'), 'successor_pending_arguments');
+    need(result.pendingBlocks === '6' && result.mode === 'dry-run' && !heights.length && !result.proposal && !result.bulkCapacity && !result.claimCapacity && !fees && !legacyDeploy && !tickerFees && !seen.has('source-rps'), 'successor_pending_arguments');
     result.pendingBlocks = Number(result.pendingBlocks);
   }
-  if (result.bulkCapacity) need(result.mode === 'dry-run' && !heights.length && !result.proposal && !fees && !legacyDeploy && !tickerFees && !seen.has('source-rps'), 'successor_capacity_arguments');
+  if (result.bulkCapacity || result.claimCapacity) need(!(result.bulkCapacity && result.claimCapacity) && result.mode === 'dry-run' &&
+    !heights.length && !result.proposal && !fees && !legacyDeploy && !tickerFees && !seen.has('source-rps'), 'successor_capacity_arguments');
+  for (const key of Object.keys(TUNING_ARGUMENTS)) if (result[key] !== undefined) {
+    need(result.claimCapacity && /^[1-9][0-9]*$/.test(result[key]) && Number.isSafeInteger(Number(result[key])), 'successor_capacity_arguments');
+    result[key] = Number(result[key]);
+  }
   if (result.proposal) need(!heights.length && !seen.has('source-rps') && !seen.has('effective-batch')
     && !seen.has('margin') && !seen.has('proposal-margin'), 'successor_proposal_arguments');
   if (result.mode !== 'dry-run') need(/^[0-9a-f]{64}$/.test(result.confirmHash ?? '') && result.adminKey && result.journal, 'successor_confirmation_required');
@@ -299,11 +329,15 @@ export const USAGE = `Usage: settings-successor.mjs --config FILE --activation-h
   --config FILE --ticker-deploy-multiplier N --ticker-deploy-burn-bps BPS [--link-burn-bps BPS] --activation-height HEIGHT [--dry-run]
   --config FILE --link-burn-bps BPS --activation-height HEIGHT [--dry-run]
   --config FILE --bulk-capacity [--effective-batch BATCH] [--dry-run]
+  --config FILE --claim-capacity [--effective-batch BATCH] [--dry-run]
   --config FILE --pending-blocks 6 [--effective-batch BATCH] [--dry-run]
   [--margin 6] [--proposal-margin 2] [--effective-batch BATCH] [--source-rps RATE]
   --config FILE --proposal REVIEWED_JSON --send --confirm-hash HASH --admin-key FILE --journal DIRECTORY
   --config FILE --apply --confirm-hash HASH --admin-key FILE --journal DIRECTORY
 
+The claim-capacity mode prepares 12,288 closure work units, 262,144 authenticated
+reads, 536,870,912 charged bytes and 64 settlement pages. All other settings and
+resources are preserved. Send the reviewed JSON with --proposal.
 The pending-blocks mode prepares only a six-block successor; it cannot send or apply.
 Both single and bulk mint payment windows use this setting. No new activation gate.
 Dry-run is the default. It reads a fresh accepted Trac view and prints JSON.

@@ -100,3 +100,19 @@ for (const wrongMember of [false, true]) test(`bulk detached results ${wrongMemb
     }
   } finally { await store.close(); }
 });
+
+test('a permit waits while a batch is pending, unless it is already running', async () => {
+  const store = await Store.open(await temp('committee-permit-yield-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const proposal = { network, kind: 'mint', version: 'public-v1', id: '12'.repeat(32), receiver: 'receiver' }, key = 'mint/' + proposal.id;
+    const asked = []; committee.request = async (signer, path) => { asked.push(path); throw Error('committee_signer_busy'); };
+    await store.put('meta', 'draft', { proposal: { batch: { n: '1' } } });
+    assert.equal(await committee.signature(key, proposal), null); assert.deepEqual(asked, [], 'no signer is asked while the batch is pending');
+    await store.put('ceremonies', key, { id: 'ab'.repeat(32), proposal, digest: '34'.repeat(32), peers: ['s0', 's1', 's2'], stage: 'running', started: Date.now() });
+    committee.request = async (signer, path) => { asked.push(path); return { digest: '34'.repeat(32), status: 'running' }; };
+    assert.equal(await committee.signature(key, proposal), null);
+    assert.ok(asked.length === 3 && asked.every(p => p === '/status'), 'a running permit keeps polling its signers');
+  } finally { await store.close(); }
+});

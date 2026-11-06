@@ -6,6 +6,7 @@ import { newStore } from './helpers.mjs';
 import { rules } from '../src/rules.mjs';
 import { FinancialExecution } from '../src/financial-execution.mjs';
 import { publicScanKey } from '../../contract/public-mint.js';
+import { KeyedWork } from '../src/keyed-work.mjs';
 
 async function fixture(t, workPage = 2) {
   const store = await newStore();
@@ -42,6 +43,26 @@ test('bounded checkout cleanup resumes after restart and releases losing checkou
   assert.deepEqual(f.store.list('publicMintRefundsByRequest/b', { limit: 1 })[0].value, refund);
 });
 
+test('the permit lane signs accepted public winners page by page and skips issued permits', async t => {
+  const f = await fixture(t, 2), signed = [];
+  f.parent.document = { values: { publicMintActivationHeight: '100' } };
+  f.parent.mintWork = new KeyedWork();
+  f.parent.reads = { batchStamp: async () => ({ counted: '103' }) };
+  f.parent.committee = { signature: async (key, proposal) => { signed.push(proposal.id);
+    return { payload: { prv: { hash: rules.hash('permit/' + proposal.id), address: 'receiver-' + proposal.id } } }; } };
+  for (const [id, block] of [['a', '1'], ['b', '2'], ['c', '3']]) {
+    const row = await f.add(id, '120', block), plot = rules.publicPlotId('p2:0', block);
+    await f.store.transact([{ space: 'mints', id, value: { ...row, receiver: 'receiver-' + id, ...(id === 'b' ? { permit: { issued: true }, state: 'permit_issued' } : {}) } },
+      { space: 'publicMintPaidPlots', id: plot, value: { asset: 'p2:0', block, through: '102' } },
+      { space: 'accountRecords', id: publicScanKey(plot), value: { winner: { id, permitHash: rules.hash('permit/' + id) } } }]);
+  }
+  await f.mints.issuePending(); await f.mints.issuePending();
+  assert.deepEqual(signed.sort(), ['a', 'c']);
+  for (const id of ['a', 'c']) assert.equal(f.store.get('mints', id).state, 'permit_issued');
+  await f.mints.issuePending(); await f.mints.issuePending();
+  assert.equal(signed.length, 2, 'issued permits are never signed again');
+});
+
 test('opaque registration retries are durable, bounded, and continue beyond the first request page', async t => {
   const f = await fixture(t, 1), submitted = [];
   f.parent.document = { values: { publicMintActivationHeight: '100', publicPaymentV2Height: '103', publicMintScanBlocks: 1 } };
@@ -73,7 +94,24 @@ test('gateway publishes the saved preimage only after the independent reader val
   await new PublicMints(f.parent).tick(); assert.equal(submitted.length, 0);
   confirmed = true; await new PublicMints(f.parent).tick();
   assert.equal(validations, 2);
-  assert.deepEqual(submitted, [{ type: 'public-payment', id: commitment, action: 'reveal', intent, reference }]);
+  const plot = rules.publicPlotId('p2:0', '1');
+  assert.deepEqual(submitted, [{ type: 'public-payment', id: commitment, action: 'reveal', intent, reference },
+    { type: 'public-scan', id: plot, asset: 'p2:0', block: '1', previous: rules.hashObject(null) }], 'the scan joins its reveal in the same batch');
+});
+
+test('a queued identical scan step is not read again by every mint tick', async t => {
+  const f = await fixture(t); let scans = 0; const queued = new Map(), deferred = [];
+  f.parent.document = { values: { publicMintActivationHeight: '100', publicPaymentV2Height: '103', publicMintScanBlocks: 4 } };
+  f.parent.financial = { submit: async transition => { queued.set(rules.hashObject(['dmw-financial-transition-v2', transition]), transition); },
+    existing: id => queued.has(id) ? { id, state: 'queued' } : null };
+  f.parent.reads = { batchStamp: async () => ({ counted: '104' }), financialRecord: async () => null, publicMintScan: async () => { scans++; return {}; } };
+  await f.store.put('meta', 'ruleState', { counted: '104' });
+  await f.mints.queuePlot('p2:0', '1', '104');
+  for (let i = 0; i < 3; i++) await new PublicMints(f.parent).tick();
+  assert.equal(scans, 1); assert.equal(queued.size, 1);
+  // A queued step that waits on an unrevealed payment is read again, so its reveal is queued.
+  const [work] = queued.keys(); await f.store.put('financialDeferred', work, { reason: 'public_payment_unrevealed' });
+  await new PublicMints(f.parent).tick(); assert.equal(scans, 2);
 });
 
 test('expired opaque registrations release queue capacity while uncertain drafts and paid reveals remain durable', async t => {

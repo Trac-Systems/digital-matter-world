@@ -85,6 +85,23 @@ test('a busy gateway delays site pages but never answers them with a JSON busy r
   assert.equal(data.status, 503); assert.deepEqual(await data.json(), { error: 'service_busy', retryable: true });
 });
 
+test('a busy gateway delays immutable header files but never fails them as busy or not ready', async t => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const chunk = '/headers/chunks/' + 'a'.repeat(64) + '.gz';
+  const pool = { handles: req => req.url.startsWith('/headers/'), serve: async (req, res) => {
+    if (req.url !== chunk) return new Promise(() => {});
+    await delay(150); res.setHeader('Content-Type', 'application/gzip'); res.end('bytes');
+  } };
+  const http = await serve({ intake: {}, files: { serve: async () => false }, responseTimeoutMs: 50, maxInFlight: 1, readPool: pool,
+    mints: { quote: async () => { await pending; return { state: 'ready' }; } } });
+  t.after(async () => { release(); await http.close(); });
+  const quote = await fetch(http.url + '/mint/quote', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal((await quote.json()).error, 'request_pending');
+  const file = await fetch(http.url + chunk);
+  assert.equal(file.status, 200); assert.equal(await file.text(), 'bytes');
+  const manifest = await fetch(http.url + '/headers/manifest-v2.json');
+  assert.equal(manifest.status, 503); assert.equal((await manifest.json()).error, 'service_busy');
+});
 test('source saturation and dependency timeouts are clear retryable HTTP failures', async t => {
   let entered;
   const started = new Promise(resolve => { entered = resolve; });

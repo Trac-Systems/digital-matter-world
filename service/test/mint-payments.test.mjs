@@ -113,3 +113,32 @@ test('regtest reader requires an executed transfer to the network-correct burn a
   const missing = await f.reads.mintPayment(f.row.id);
   assert.deepEqual(rules.paymentProgress(missing.fees, missing.receipts).missing.map(f => f.role), ['burn']);
 });
+test('block transactions with a bare input (pay-to-anchor spend) still parse with the exact txid',async()=>{
+  const { inscriptionContents, transactionId } = await import('../src/mint-payments.mjs');
+  const { createHash } = await import('node:crypto'), { createRequire } = await import('node:module');
+  const { Transaction } = createRequire(new URL('../../rules/package.json', import.meta.url))('@scure/btc-signer');
+  const sha=b=>createHash('sha256').update(b).digest(), varint=n=>Buffer.from([n]), push=b=>Buffer.concat([varint(b.length),b]);
+  const body=Buffer.from(JSON.stringify({p:'tap',op:'token-auth',redeem:{items:[]}}));
+  const script=Buffer.concat([Buffer.from([0x00,0x63]),push(Buffer.from('ord')),Buffer.from([0x01,0x01]),push(Buffer.from('text/plain')),Buffer.from([0x00]),push(body),Buffer.from([0x68])]);
+  const control=Buffer.concat([Buffer.from([0xc0]),Buffer.alloc(32,7)]);
+  const input=(fill,vout,seq)=>Buffer.concat([Buffer.alloc(32,fill),Buffer.from([vout,0,0,0]),Buffer.from([0]),Buffer.from(seq,'hex')]);
+  const legacy=w=>Buffer.concat([Buffer.from('03000000','hex'),...(w?[Buffer.from('0001','hex')]:[]),Buffer.from([2]),input(0xaa,0,'ffffffff'),input(0xbb,1,'fdffffff'),
+    Buffer.from([1]),Buffer.alloc(8),Buffer.from([1,0x6a]),...(w?[Buffer.from([0]),Buffer.from([2]),push(script),push(control)]:[]),Buffer.alloc(4)]);
+  const raw=legacy(true).toString('hex'), expected=Buffer.from(sha(sha(legacy(false)))).reverse().toString('hex');
+  const tx=Transaction.fromRaw(Buffer.from(raw,'hex'),{allowUnknownInputs:true,allowUnknownOutputs:true,disableScriptCheck:true});
+  assert.throws(()=>tx.id,/not finalized/);
+  assert.equal(transactionId(tx),expected);
+  for(const scan of [true,false]){const parsed=inscriptionContents(raw,undefined,{scan});assert.equal(parsed.txid,expected);assert.deepEqual(parsed.contents,[JSON.parse(body)]);}
+  const signed=Transaction.fromRaw(Buffer.from(raw,'hex'),{allowUnknownInputs:true,allowUnknownOutputs:true,disableScriptCheck:true});
+  signed.updateInput(0,{finalScriptWitness:[Uint8Array.of(1)]},true);
+  assert.equal(transactionId(signed),signed.id);
+});
+test('block transactions with any version number still parse with the exact txid',async()=>{
+  const { inscriptionContents } = await import('../src/mint-payments.mjs');
+  const { createHash } = await import('node:crypto');
+  const sha=b=>createHash('sha256').update(b).digest();
+  const legacy=Buffer.from('78e1fa51'+'01'+'aa'.repeat(32)+'00000000'+'00'+'ffffffff'+'01'+'0000000000000000'+'016a'+'00000000','hex');
+  const parsed=inscriptionContents(legacy.toString('hex'),undefined,{scan:true});
+  assert.equal(parsed.txid,Buffer.from(sha(sha(legacy))).reverse().toString('hex'));
+  assert.deepEqual(parsed.contents,[]);
+});

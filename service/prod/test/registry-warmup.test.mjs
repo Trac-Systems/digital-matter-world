@@ -15,7 +15,7 @@ import { rules } from '../../src/rules.mjs';
 mock.module('../../src/deployments.mjs', { exports: { verifyDeployment: async () => ({
   inclusion: { height: 100 }, authorityKey: 'committee', deployment: { max: '100', lim: '0' }
 }) } });
-const { syncRegistry, registryReply, HOST_REGISTRY_CAPACITY, HOST_REGISTRY_REQUEST_TIMEOUT_MS } = await import('../../../deploy/host-157/registry.mjs');
+const { syncRegistry, registryReply, HOST_REGISTRY_CAPACITY, HOST_REGISTRY_REQUEST_TIMEOUT_MS, HOST_REGISTRY_WARM_WAIT_MS } = await import('../../../deploy/host-157/registry.mjs');
 const { jsonRequest } = await import('../../../deploy/host-157/admission.mjs');
 const { installCapacitySources } = await import('../../src/financial-capacity-sources.mjs');
 const { buildFinancialExecution } = await import('../../src/financial-execution.mjs');
@@ -54,7 +54,7 @@ async function fixture(t, count, options = {}) {
   };
   const local = sources(gatewayState), reads = sources(signerState); opened.push(reads);
   const calls = [], reply = body => registryReply({ state: gatewayState, roster: [member] }, publicConfig, body, gateway);
-  await syncRegistry({ state: signerState }, { id: 'one', public: publicConfig, ...options.config }, reads, identity,
+  await syncRegistry({ state: signerState }, { id: 'one', public: publicConfig, registryWarmWaitMs: 0, ...options.config }, reads, identity,
     async (body, transport) => { calls.push(body.query); return options.request ? options.request(body, transport, reply) : reply(body); });
   const transitions = [];
   for (const asset of Object.keys(assets)) {
@@ -83,6 +83,23 @@ for (const count of [40, 80]) test(`one refused signer attempt warms all ${count
   assert.equal(f.calls.length, count, 'the next attempt reuses every ready key, including beyond the old 64-key limit');
   const forged = structuredClone(files); forged[0].financialOperations[0].evidence.confirmations++;
   await assert.rejects(f.verify(forged), /financial_evidence_read/, 'warming never substitutes for independent evidence');
+});
+
+test('a cold signer waits for its warm-up and verifies the proposal on the first attempt', async t => {
+  const f = await fixture(t, 40, { config: { registryWarmWaitMs: HOST_REGISTRY_WARM_WAIT_MS } }), normal = await f.build();
+  const files = [{ ops: normal.inputs.flatMap(i => i.operations), financialOperations: normal.inputs }];
+  await f.verify(files);
+  assert.equal(f.calls.length, 40);
+  assert.ok(f.reads.registrySync.status().every(row => row.ready));
+  const forged = structuredClone(files); forged[0].financialOperations[0].evidence.confirmations++;
+  await assert.rejects(f.verify(forged), /financial_evidence_read/, 'waiting never substitutes for independent evidence');
+});
+
+test('a warm-up that outlasts the wait still refuses explicitly', async t => {
+  const f = await fixture(t, 2, { config: { registryWarmWaitMs: 200 }, request: () => new Promise(() => {}) });
+  const started = Date.now();
+  await assert.rejects(f.reads.ensureRegistryAsset('c0'), /host_registry_warming/);
+  assert.ok(Date.now() - started >= 200);
 });
 
 test('strict and deferred financial builders discover the entire cold set', async t => {

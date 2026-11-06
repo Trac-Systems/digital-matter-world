@@ -108,7 +108,10 @@ export class SegmentedIntake extends Intake {
           ...(this.settings.settingsHash ? { settingsHash: this.settings.settingsHash } : {}) }, this.secret);
         const receiptBatch = entries[0]?.receipt.batch;
         check(entries.every(e => e.receipt.batch === receiptBatch), 'receipt_batch_mixed');
-        sealed = { ...this.head, receiptRoot, count: entries.length, ...(receiptBatch ? { receiptBatch } : {}) };
+        // A new block the contract has counted also counts the window it closes: the
+        // moves keep their tip, and the batch that carries them reaches the newest block.
+        const counted = !head.force && clock.compare(head.counted, this.head.counted) > 0 && this.hashAt(this.head.tip) === this.head.hash && this.hashAt(head.counted) ? head.counted : this.head.counted;
+        sealed = { ...this.head, counted, receiptRoot, count: entries.length, ...(receiptBatch ? { receiptBatch } : {}) };
         ops.push({ space: 'observations', id: this.head.id, value: sealed },
           { space: 'receiptObservations', id: rules.receiptSegmentKey(receiptRoot), value: { seal: receiptRoot, receipts: entries.map(e => e.receipt) } },
           { space: 'receiptSegmentHeads', id: key, value: { segment: receiptRoot.segment, hash: rules.receiptSegmentHash(receiptRoot) } });

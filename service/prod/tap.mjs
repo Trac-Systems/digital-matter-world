@@ -11,11 +11,14 @@ export class TapReader {
   bulkCache = { key: null, rows: new Map(), bytes: 0 };
   constructor({ sources, agreement = 2, bitcoin, settings }) { check(sources.length >= agreement && agreement >= 1, 'tap_sources'); Object.assign(this, { sources, agreement, bitcoin }); this.settings = lookupSettings(settings); }
   rememberBulk(cache, key, value) {
+    const result = value && Object.hasOwn(value, 'result') ? value.result : value;
+    if (result === null || result === undefined || Array.isArray(result) && !result.length ||
+        result === false && !key.includes('/getPrivilegeAuthCancelled/') && !key.includes('/getAuthCancelled/')) return;
     const encoded = JSON.stringify(value);
     if (encoded === undefined || cache.rows.has(key)) return;
     const bytes = Buffer.byteLength(key) + Buffer.byteLength(encoded), cap = this.settings;
     if (bytes > cap.bulkReadCacheBytes) return;
-    cache.rows.set(key, { value, bytes }); cache.bytes += bytes;
+    cache.rows.set(key, { value, bytes, at: Date.now() }); cache.bytes += bytes;
     while (cache.rows.size > cap.bulkReadCacheEntries || cache.bytes > cap.bulkReadCacheBytes) {
       const first = cache.rows.keys().next().value; cache.bytes -= cache.rows.get(first).bytes; cache.rows.delete(first);
     }
@@ -25,7 +28,11 @@ export class TapReader {
     if (scope?.active) {
       const key = JSON.stringify([path, options ?? null]);
       const saved = scope.staged.rows.get(key) ?? scope.cache.rows.get(key);
-      if (saved) return structuredClone(saved.value);
+      if (saved && Date.now() - saved.at < 60000) return structuredClone(saved.value);
+      for (const cache of [scope.staged, scope.cache]) {
+        const old = cache.rows.get(key);
+        if (old) { cache.rows.delete(key); cache.bytes -= old.bytes; }
+      }
       let pending = scope.pending.get(key);
       if (!pending) {
         pending = this.bulkScope.exit(() => this.agree(path, options))
@@ -61,6 +68,10 @@ export class TapReader {
     // The reader receives the snapshot's block, so a per-block cache can key on it.
     const value = await read(before); check(rules.stableJSON(before) === rules.stableJSON(await this.stamp()), 'tap_snapshot_changed'); return value;
   }
+  onSnapshotFailure(invalidate) {
+    const scope = this.bulkScope.getStore();
+    if (scope?.active) scope.invalidators.add(invalidate);
+  }
   // A whole candidate scan shares one TAP fence. Only source responses that
   // passed its closing fence survive a Trac batch change. Mutable Trac facts
   // (rights, bindings, links, account locks) are never stored here.
@@ -68,16 +79,19 @@ export class TapReader {
     if (this.bulkScope.getStore()?.active) return this.at(view, read);
     let scope;
     const outcome = await this.at(view, async stamp => {
-      const key = rules.stableJSON([rules.decimalV2(stamp.height), stamp.hash]);
+      const key = rules.stableJSON([rules.decimalV2(stamp.height), stamp.hash, view?.counted ?? null, view?.last ?? null, view?.revision ?? null]);
       if (this.bulkCache.key !== key) this.bulkCache = { key, rows: new Map(), bytes: 0 };
-      scope = { stamp, cache: this.bulkCache, staged: { rows: new Map(), bytes: 0 }, pending: new Map(), active: true };
+      scope = { stamp, cache: this.bulkCache, staged: { rows: new Map(), bytes: 0 }, pending: new Map(), invalidators: new Set(), active: true };
       try { return await this.bulkScope.run(scope, async () => {
         try { return { value: await read(stamp) }; } catch (error) { return { error }; }
       }); } finally {
         scope.active = false;
         await Promise.allSettled([...scope.pending.values()]);
       }
-    }).catch(error => { this.bulkCache = { key: null, rows: new Map(), bytes: 0 }; throw error; });
+    }).catch(error => {
+      for (const invalidate of scope?.invalidators ?? []) invalidate();
+      this.bulkCache = { key: null, rows: new Map(), bytes: 0 }; throw error;
+    });
     // Do not publish a partially read snapshot, or unbounded response data.
     if (scope.cache === this.bulkCache) for (const [key, entry] of scope.staged.rows) this.rememberBulk(scope.cache, key, entry.value);
     if (outcome.error) throw outcome.error;

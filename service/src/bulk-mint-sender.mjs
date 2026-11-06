@@ -65,7 +65,10 @@ export class BulkMintSender {
       terms.payer === row.payer && terms.receiver === row.receiver && terms.mintFunding.address === row.address && terms.mintFunding.satoshis === row.fundingSats &&
       terms.members.length === row.count && item.payer === row.payer && item.receiver === row.receiver && item.fundingAddress === row.address && item.fundingSats === row.fundingSats && item.count === row.count, 'bulk_sender_binding_changed');
     if (deployerPayment) validateDeployerPayment(deployerPayment, terms, id);
-    if ('deployerPayment' in row) check(rules.stableJSON(row.deployerPayment) === rules.stableJSON(deployerPayment), 'bulk_sender_binding_changed');
+    // An order first seen before its reservation was accepted has no side payment yet; the
+    // accepted order then names it. Adopt it once, while nothing is planned or sent for the order.
+    const adopt = row.deployerPayment === null && deployerPayment !== null && !row.plan && !row.returnPlan;
+    if ('deployerPayment' in row && !adopt) check(rules.stableJSON(row.deployerPayment) === rules.stableJSON(deployerPayment), 'bulk_sender_binding_changed');
     else row = this.save(row, { deployerPayment });
     if (row.plan) {
       check(!item.permitRoot || item.permitRoot === row.permitRoot, 'bulk_sender_permit_changed');

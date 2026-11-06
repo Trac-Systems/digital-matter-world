@@ -37,11 +37,14 @@ export function createHTTPHandler({ readPool, manageResponseBudget = true, liste
     // The site's pages, scripts, styles and fonts do not depend on game state. A busy
     // moment only delays them; it never replaces a page with a JSON busy reply.
     let page = false; try { page = staticWebRequest(req); } catch {}
-    if (inFlight >= maxInFlight && !page) {
+    // Header tree nodes and chunks are immutable files; a downloader resumes
+    // thousands of them in a row. A busy moment delays one, never fails it.
+    const immutableHeader = ['GET', 'HEAD'].includes(req.method) && /^\/headers\/(?:tree\/[0-9a-f]{64}\.json|chunks\/[0-9a-f]{64}\.(?:bin|gz))$/.test(req.url);
+    if (inFlight >= maxInFlight && !page && !immutableHeader) {
       res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '1' });
       res.end(JSON.stringify({ error: 'service_busy', retryable: true })); return;
     } inFlight++;
-    const finishBudget = manageResponseBudget && !page && (['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/')) ? responseBudget(req, res, responseTimeoutMs) : () => {};
+    const finishBudget = manageResponseBudget && !page && !immutableHeader && (['GET', 'HEAD'].includes(req.method) || req.url.startsWith('/mint/')) ? responseBudget(req, res, responseTimeoutMs) : () => {};
     try {
       admitRead(req);
       if (!page && readPool?.handles(req)) { await readPool.serve(req, res); return; }

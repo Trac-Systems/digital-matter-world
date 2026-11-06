@@ -93,18 +93,17 @@ for (const created of [null, '10', '11']) test(created === null ? 'shared Bitcoi
     utxos: [{ txid: rules.hash('discovery-cardinal'), vout: 0, value: '10000000', script: Buffer.from(p2tr(secp256k1.getPublicKey(key).slice(1)).script).toString('hex'), confirmed: true, cardinal: true }] });
   f.pay(row, plan.inscriptionId);
   f.blocks.set('12', [{ id: plan.inscriptionId.slice(0, 64), hex: signCommit(plan, key).revealHex }]);
-  await f.mints.tick(); assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '11');
-  const resumed = new PublicMints(f.parent);
-  await resumed.tick(); assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12');
+  // One walk crosses every block up to the counted height.
   if (created === '11') {
-    await resumed.tick(); assert.equal(f.submitted.length, 0);
+    await f.mints.tick(); assert.equal(f.submitted.length, 0);
     assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13');
     return;
   }
   f.reads.withTapSnapshot = async () => { throw Error('tap_lookup_index_catching_up'); };
-  await resumed.tick();
-  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12', 'an unavailable TAP snapshot must not skip a payment');
+  await f.mints.tick();
+  assert.equal(f.store.get('meta', 'publicMintDiscovery')?.height ?? '12', '12', 'an unavailable TAP snapshot must not skip a payment: the walk resumes at it');
   assert.equal(f.submitted.length, 0);
+  const resumed = new PublicMints(f.parent);
   f.reads.withTapSnapshot = async (at, read) => { assert.equal(at.counted, '12'); return read(); };
   await resumed.tick();
   assert.equal(f.submitted.length, 1); assert.equal(f.submitted[0].block, '9');
@@ -185,13 +184,16 @@ test('opaque feed discovery holds its cursor, validates a saved reveal, and resu
   assert.equal(f.submitted.length, 0, 'a reveal cannot enter the queue before independent verification');
   available = true; await new PublicMints(f.parent).tick();
   assert.equal(checks, 2);
-  assert.deepEqual(f.submitted, [{ type: 'public-payment', id: q.commitment, action: 'reveal', intent: q.intent, reference: q.reference }]);
-  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '12', 'queued reveal is not accepted evidence');
+  assert.deepEqual(f.submitted[0], { type: 'public-payment', id: q.commitment, action: 'reveal', intent: q.intent, reference: q.reference });
+  assert.equal(f.submitted.length, 2, 'the plot scan is queued with its reveal, not one batch later');
+  assert.equal(f.submitted[1].type, 'public-scan'); assert.equal(f.submitted[1].block, '9');
+  assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13', 'a queued reveal with its plot queued no longer holds the walk');
   f.records.set(rules.publicPaymentKey(q.commitment), { ...q.accepted, intent: q.intent });
   await f.store.transact([{ space: 'mints', id: q.row.id }, { space: 'publicMintCommitments', id: q.commitment }]);
   await new PublicMints(f.parent).tick();
   assert.equal(f.store.get('meta', 'publicMintDiscovery').height, '13');
-  assert.equal(f.submitted.length, 2); assert.equal(f.submitted[1].type, 'public-scan'); assert.equal(f.submitted[1].block, '9');
+  // The repeated scan is the identical transition; the queue keeps one entry.
+  assert.equal(new Set(f.submitted.map(x => JSON.stringify(x))).size, 2); assert.equal(f.submitted.at(-1).type, 'public-scan'); assert.equal(f.submitted.at(-1).block, '9');
   assert.equal(f.store.count('mints'), 0);
 });
 

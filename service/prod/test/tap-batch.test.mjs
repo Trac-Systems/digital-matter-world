@@ -39,7 +39,7 @@ async function fixture(t, n = 16) {
     bitcoinTransaction: async txid => { rawCalls++; const r = transactions.get(txid); return r && { txid, hex: r.hex }; },
   }, index);
   return { f, plan, calls, rows, reads, transactions, index, indexer, get inclusionCalls() { return inclusionCalls; }, get rawCalls() { return rawCalls; },
-    reorg: () => { hash = '88'.repeat(32); }, get at() { return { tip: height, tipHash: hash }; } };
+    reorg: (next = '88'.repeat(32)) => { hash = next; }, get at() { return { tip: height, tipHash: hash }; } };
 }
 
 test('bulk known 64 reveals use four transaction reads and one outer before/after stamp pair', async t => {
@@ -99,6 +99,27 @@ test('bulk reorg invalidates cached evidence and a changing outer fence returns 
   f.indexer.stamp = async () => { const value = await original(); if (++stamps === 2) value.hash = '99'.repeat(32); return value; };
   await assert.rejects(f.reads.withBulkSnapshot(f.at, async view => { escaped = view; return f.reads.bulkTransactions([id], { kinds: ['mints'], view }); }), /tap_snapshot_changed/);
   await assert.rejects(f.reads.bulkTransactions([id], { kinds: ['mints'], view: escaped }), /bulk_snapshot_required/);
+});
+
+test('a shared financial TAP fence also invalidates nested bulk transaction caches', async t => {
+  const f = await fixture(t, 1), id = f.plan.reveals[0].txid;
+  await assert.rejects(f.indexer.bulkAt(f.at, async () => {
+    await f.reads.withBulkSnapshot(f.at, view => f.reads.bulkTransactions([id], { kinds: ['mints'], view }));
+    f.reorg();
+  }), /tap_snapshot_changed/);
+  f.reorg('77'.repeat(32));
+  await f.reads.withBulkSnapshot(f.at, view => f.reads.bulkTransactions([id], { kinds: ['mints'], view }));
+  assert.equal(f.inclusionCalls, 2, 'the failed outer fence cannot leave a reusable inner result');
+});
+
+test('bulk transaction caches expire by age and retry empty indexed results', async t => {
+  const f = await fixture(t, 1), id = f.plan.reveals[0].txid; let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  const read = () => f.reads.withBulkSnapshot(f.at, view => f.reads.bulkTransactions([id], { kinds: ['transfers'], view }));
+  await read(); await read();
+  assert.equal(f.inclusionCalls, 1);
+  assert.equal(f.calls.filter(path => path.includes('TransferredListLength/')).length, 2, 'absence is not retained');
+  now = 60000; await read(); assert.equal(f.inclusionCalls, 2);
 });
 
 test('bulk detached DMT recovery checks successful exact transaction rows and payload hashes', async t => {

@@ -17,6 +17,7 @@ export const b = await import('../../rules/src/bulk-mint.js');
 const { Store } = await import('../src/store.mjs');
 const { AccountExecution } = await import('../src/account-batch.mjs');
 const { FinancialExecution, buildFinancialExecution } = await import('../src/financial-execution.mjs');
+const { verifyFinancialExecution } = await import('../../committee/signer/financial-execution.mjs');
 const { BulkMints } = await import('../src/bulk-mints.mjs');
 const { installFinancialSources } = await import('../src/financial-sources.mjs');
 const { FeeQuotes, createFeePolicy } = await import('../src/fees.mjs');
@@ -97,6 +98,8 @@ export async function fixture(t, options = {}) {
         templateBytes: members.map(() => 800), commitVsize: 200, revealVsizes: [1000] };
     } };
   const financial = new FinancialExecution({ store, reads, document, resources: { bulkMintEnabled: true } });
+  // The two-batch path remains for a consume that does not fit its fund's batch.
+  if (options.sameBatchConsume === false) financial.sameBatchConsume = false;
   const committee = { signature: async (key, proposal) => {
     assert.equal(key, 'mint/' + b.bulkMemberId(proposal.orderId, proposal.index));
     active++; maxActive = Math.max(maxActive, active);
@@ -121,10 +124,17 @@ export async function fixture(t, options = {}) {
     assert.equal(result.deferred.length, 0, JSON.stringify(result.deferred));
     // Each signer reconstructs evidence independently, never using gateway
     // evidence as an oracle. The shared planner binds it to the same effects.
-    for (const i of result.inputs) assert.deepEqual(await independent.financialEvidence(i.transition, stamp()), i.evidence);
+    // A follow-up consume reads the state its fund left in this same batch, as
+    // the signer verifies it; every other input reads the accepted predecessor.
+    const followed = new Set(result.inputs.filter((i, n) => i.transition.type === 'bulk-consume' &&
+      result.inputs.slice(0, n).some(p => p.transition.type === 'bulk-fund' && p.transition.id === i.transition.id)));
+    for (const i of result.inputs) if (!followed.has(i)) assert.deepEqual(await independent.financialEvidence(i.transition, stamp()), i.evidence);
+    if (followed.size) await verifyFinancialExecution({ files: [{ ops: result.inputs.flatMap(i => i.operations), financialOperations: result.inputs }],
+      reads: independent, document, network, height });
     const draft = { proposal: { batch: { n: String(++revision) } }, items: [{ output: { accountWrites: result.writes, file: { observation: '1', financialOperations: result.inputs } } }] };
     for (const i of result.inputs) if (i.transition.type === 'reserve-many') accepted.set(i.transition.id, structuredClone(i.evidence));
-    await store.transact([...result.writes, ...financial.acceptedOperations(draft)]);
+    const writes = [...result.writes, ...financial.acceptedOperations(draft)];
+    if (writes.length) await store.transact(writes);
     return { ...result, draft };
   };
   const payment = (quote, label = 'payment', failed = [], paymentHeight = height) => {

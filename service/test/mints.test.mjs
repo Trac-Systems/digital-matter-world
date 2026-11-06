@@ -91,3 +91,16 @@ test('a stalled mint worker excludes only its owner and leaves status and other 
   } finally { release(); await tick; }
   assert.deepEqual(new Set(visited), new Set([f.id, sibling]), 'same-owner jobs progress in order without starvation');
 });
+
+test('a confirmed mint matches its row whether the block is stored as text or as a number', () => {
+  const pk = '03' + 'a'.repeat(64), permit = { dta: 'd', prv: { hash: 'h', address: 'bc1qreceiver' } };
+  const row = { receiver: 'bc1qreceiver', permit, request: { asset: 'p0', block: '106409', amount: '1' },
+    context: { deployment: { id: 'e'.repeat(64) + 'i0', tick: 'dmwflorite', kind: 'dmt', privilegePublicKey: pk } } };
+  const minted = { accepted: true, fail: false, confirmations: 1, inscription: 'f'.repeat(64) + 'i0', deployment: row.context.deployment.id, tick: 'dmwflorite',
+    receiver: 'bc1qreceiver', amount: '1', dta: 'd', permitHash: 'h', committee: pk, block: 106409 };
+  const verify = Mints.prototype.verifyMint;
+  assert.equal(verify(row, minted), true, 'a site mint row (text block) completes');
+  assert.equal(verify({ ...row, request: { ...row.request, block: 106409 } }, minted), true, 'an agent row (number block) completes');
+  assert.equal(verify(row, { ...minted, block: 106410 }), false, 'another block never completes');
+  assert.equal(verify(row, { ...minted, block: 'x' }), false, 'an unreadable block never completes');
+});

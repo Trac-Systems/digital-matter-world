@@ -24,6 +24,20 @@ const flatSettings = { tierMultipliers: flat.tierMultipliers, compoundMinimum: f
 
 import { publicMintSourceFixture as fixture } from './public-mint-source-fixture.mjs';
 
+test('a resumed scan overlaps payment reads but preserves the initial context refusal', { timeout: 2000 }, async () => {
+  const f = fixture({ legacyPolicy: true }); f.context.publicClaims.unsettled = false;
+  const quote = await f.reads.publicMintQuote(f.input, { counted: '103' }); f.pay(quote);
+  f.reads.financialSnapshot = () => ({ counted: '103' });
+  let release, paymentStarted = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.reads.publicMintContext = async (_asset, _block, _at, _quote, options) => {
+    if (options.scanning) { await gate; throw Error('initial_context_refusal'); }
+    paymentStarted = true; release(); throw Error('later_payment_refusal');
+  };
+  await assert.rejects(f.scan(), /initial_context_refusal/);
+  assert.equal(paymentStarted, true);
+});
+
 test('field-value quote amount equals TAP dmt-mint numeric amount and refuses before activation', async () => {
   const f = fixture();
   f.input.block = '973506';
@@ -65,7 +79,7 @@ for (const legacyAsset of [false, true]) test(`public quote source refuses befor
 for (const legacyAsset of [false, true]) test(`public quote after the finder window has no deadline and ignores unrelated unsettled rounds; legacy asset=${legacyAsset}`, async () => {
   const f = fixture({ legacyAsset }), quote = await f.reads.publicMintQuote(f.input);
   assert.equal(quote.amount, '3'); assert.equal(Object.hasOwn(quote, 'claimDeadline'), false); assert.equal(Object.hasOwn(quote.intent, 'claimDeadline'), false);
-  const scan = await f.scan(); assert.equal(scan.start, '100'); assert.deepEqual(f.calls, ['100'], 'only the bounded payment prefix is read');
+  const scan = await f.scan(); assert.equal(scan.start, '100'); assert.deepEqual(f.calls, ['100', '101'], 'one step reads whole confirmed blocks below the newest two');
   f.context.find = { count: '3' };
   await assert.rejects(f.reads.publicMintQuote(f.input), /claimed/);
   f.context.find = null; f.records.set(plotKey(f.input.asset, f.input.block), 'winner');
@@ -586,4 +600,38 @@ for (const opaque of [false, true]) test(`new public quotes pay the deployment h
   const result = await f.settle(), winner = result.payments.find(p => p.complete);
   assert.ok(winner); assert.equal(winner.source.deployer, undefined); assert.equal(winner.source.legacyDeploy, undefined);
   assert.equal(winner.source.feeItems.find(f => f.role === 'deployer').to, holder);
+});
+
+test('payments for other blocks do not end a plot scan step; only payments for the scanned block count', async () => {
+  const f = fixture({ publicPaymentV2Height: '103' }); f.context.publicClaims.unsettled = false;
+  let at = 103n;
+  const paid = async block => {
+    f.setHeight(String(at)); const quote = await f.reads.publicMintQuote({ ...f.input, block });
+    await f.register(quote); at++; f.setHeight(String(at));
+    const reference = f.pay(quote); await f.reveal(quote, reference); at++;
+    return { quote, reference };
+  };
+  for (let n = 0; n < 8; n++) await paid(String(10 + n));
+  const own = await paid(f.input.block);
+  f.records.delete(publicScanKey(r.publicPlotId(f.input.asset, f.input.block)));
+  f.setHeight(String(at + 2n));
+  const step = await f.scan();
+  assert.deepEqual(step.from, { height: '100', transactionIndex: '0', inscriptionIndex: '0' });
+  assert.deepEqual(step.payments.map(p => p.reference), [own.reference], 'eight other buyers cost no extra step');
+  assert.equal(step.payments[0].complete, true);
+});
+
+test('one scan step crosses every confirmed block below the newest two and a block index skips repeated downloads', async () => {
+  const f = fixture(); f.context.publicClaims.unsettled = false; f.setHeight('200');
+  const first = await f.scan();
+  assert.deepEqual(first.from, { height: '100', transactionIndex: '0', inscriptionIndex: '0' });
+  assert.deepEqual(first.next, { height: '199', transactionIndex: '0', inscriptionIndex: '0' });
+  assert.equal(f.calls.length, 99); assert.equal(first.blockHash, r.hash('block/100'));
+  f.reads.publicScanCache = new Map(); f.calls.length = 0;
+  const cold = await f.scan(), warm = await f.scan();
+  assert.equal(f.calls.length, 99, 'the second identical step reads no block again');
+  assert.equal(r.stableJSON(cold), r.stableJSON(warm)); assert.equal(r.stableJSON(cold), r.stableJSON(first));
+  f.records.set(publicScanKey(r.publicPlotId(f.input.asset, f.input.block)), { next: first.next, scannedHeight: '100', blockHash: r.hash('block/100'), winner: null });
+  const tip = await f.scan();
+  assert.deepEqual(tip.next, { height: '200', transactionIndex: '0', inscriptionIndex: '0' }, 'the newest blocks advance one per step');
 });

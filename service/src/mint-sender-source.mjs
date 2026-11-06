@@ -3,7 +3,7 @@ import { readTapSourceURL } from './source-url.mjs';
 import { check } from './util.mjs';
 import { btc } from './mint-sender-keys.mjs';
 import { hex, unhex, networkFor } from '../../kit/lib/inscription-core.mjs';
-import { inscriptionContents } from './mint-payments.mjs';
+import { inscriptionContents, transactionId } from './mint-payments.mjs';
 import { rules } from './rules.mjs';
 import { sideWalletItem, validateDeployerPayment } from './direct-deployer.mjs';
 
@@ -48,7 +48,7 @@ export class MintSenderBitcoin {
       const raw = await this.http.request('/tx/' + coin.txid + '/hex', { text: true });
       check(typeof raw === 'string', 'mint_sender_transaction_missing');
       const tx = btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true, allowUnknownOutputs: true }), output = tx.getOutput(coin.vout);
-      check(tx.id === coin.txid && hex(output.script) === script && output.amount === BigInt(coin.value), 'mint_sender_coin_binding');
+      check(transactionId(tx) === coin.txid && hex(output.script) === script && output.amount === BigInt(coin.value), 'mint_sender_coin_binding');
       result.push({ txid: coin.txid, vout: coin.vout, value: String(coin.value), script, confirmed: coin.status?.confirmed === true, cardinal: true });
     }
     return result;
@@ -58,7 +58,7 @@ export class MintSenderBitcoin {
     const raw = await this.http.request('/tx/' + reference.slice(0, 64) + '/hex', { text: true });
     check(typeof raw === 'string', 'mint_sender_transaction_missing');
     const payment = btc.Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true, allowUnknownOutputs: true });
-    check(payment.id === reference.slice(0, 64), 'mint_sender_transaction_binding');
+    check(transactionId(payment) === reference.slice(0, 64), 'mint_sender_transaction_binding');
     const parents = new Set(Array.from({ length: payment.inputsLength }, (_, i) => hex(payment.getInput(i).txid)));
     // TAP Wallet extraOutputs are siblings of the payment's commit output.
     // Never charge another payment's set-aside, even for the same request id.
@@ -107,7 +107,7 @@ export class MintSenderBitcoin {
       const parentRaw = await this.http.request('/tx/' + parent + '/hex', { text: true });
       check(typeof parentRaw === 'string' && parentRaw.length / 2 <= BULK_LIMITS.rawTransactionBytes, 'bulk_transaction_bytes');
       const tx = btc.Transaction.fromRaw(unhex(parentRaw), { allowUnknownInputs: true, allowUnknownOutputs: true });
-      check(tx.id === parent, 'bulk_funding_parent');
+      check(transactionId(tx) === parent, 'bulk_funding_parent');
       const script = hex(btc.OutScript.encode(btc.Address(networkFor(this.network)).decode(terms.mintFunding.address))), matching = [];
       for (let i = 0; i < tx.outputsLength; i++) if (hex(tx.getOutput(i).script) === script) matching.push(i);
       check(matching.length === 1 && matching[0] !== spentVout && tx.getOutput(matching[0]).amount === BigInt(terms.mintFunding.satoshis), 'bulk_funding_output');

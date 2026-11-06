@@ -11,6 +11,7 @@ import { msbIdentity } from './mainnet.mjs';
 import { isApplicationNotaryKey } from '../../contract/runtime/notary-records.js';
 import { lifecycleSignal, abortable } from '../src/lifecycle.mjs';
 import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
+import { financialReadCheckout } from './financial-read-checkout.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 export const tracBinding = (config, deployment) => hash(rules.stableJSON({ config: {
   bootstrap: config.bootstrap, msbBootstrap: config.msbBootstrap, networkId: config.networkId }, deployment }));
@@ -77,6 +78,10 @@ export async function createTrac({ runtime, config, deployment, store, network }
   // Pin reads to the batch clock (counted, tip, last). The raw subnet version also moves on
   // unrelated appends, which made every long prepare fail on a live network.
   const batchClock = s => ({ counted: s.counted, tip: s.tip, tipHash: s.tipHash, last: s.last });
+  const financialCheckout = financialReadCheckout({
+    stamp: at => at?.revision === undefined && at?.admissionPolicy ? financialSnapshot() : stamp(),
+    open: revision => peer.base.view.checkout(sourceSeek(revision))
+  });
   const pinned = async (at, read) => {
     // Only the explicit gateway preview stamp lacks revision and has policy.
     // Ordinary and signer reads continue to acquire their original strict stamp.
@@ -133,9 +138,13 @@ export async function createTrac({ runtime, config, deployment, store, network }
     },
     renewalSlice: n => api.dmwReceiptRenewalSlice(n),
     settingsByHash: hash => api.dmwSettingsByHash(hash),
-    read: (key, at) => pinned(at, () => raw(key)),
+    read: (key, at) => financialCheckout.active() ? financialCheckout.read(key, at) : pinned(at, () => raw(key)),
     readMany: async (keys, at) => {
       pointBatch(keys);
+      if (financialCheckout.active()) {
+        const rows = await pointResults(keys, key => financialCheckout.read(key, at));
+        return rows.map(row => { if (row.error) throw Error(row.error); return row.value; });
+      }
       const many = async before => {
         const view = peer.base.view.checkout(sourceSeek(before.revision));
         try {
@@ -190,6 +199,19 @@ export async function createTrac({ runtime, config, deployment, store, network }
     signal?.throwIfAborted(); check(Object.hasOwn(methods, method), 'trac_method');
     return abortable(methods[method](...args), signal);
   };
+  // One preflight can read hundreds of owner roots and quarantine records.
+  // Keep them on one immutable view instead of updating the peer twice per
+  // record. The same fresh batch-clock fences still surround the whole read.
+  call.withReadSnapshot = (at, action) => {
+    signal?.throwIfAborted();
+    return abortable(pinned(at, async before => {
+      signal?.throwIfAborted();
+      const view = peer.base.view.checkout(sourceSeek(before.revision));
+      try { return await action(async key => { signal?.throwIfAborted(); return (await view.get(key))?.value ?? null; }); }
+      finally { await view.close(); }
+    }), signal);
+  };
+  call.withFinancialReadSnapshot = financialCheckout.run;
   call.close = () => runtime.close?.(); call.methods = methods; return call;
 }
 export async function configuredTrac(config, store, runtime) {

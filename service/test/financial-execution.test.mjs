@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ed25519 } from '../../contract/node_modules/@noble/curves/ed25519.js';
 import { Store } from '../src/store.mjs';
 import { AccountExecution } from '../src/account-batch.mjs';
-import { buildFinancialExecution, FinancialExecution } from '../src/financial-execution.mjs';
+import { buildFinancialExecution, FinancialExecution, completingFundFollowUp } from '../src/financial-execution.mjs';
 import { verifyFinancialExecution } from '../../committee/signer/financial-execution.mjs';
 import { accountActionDigest, reserveNonceDigest } from '../../contract/root-accounts.js';
 import { applyRootAccounts } from '../../contract/root-accounts.js';
@@ -21,8 +21,8 @@ async function fixture(t) {
   await seed.accounts([{ type: 'credit', owner: alice.address, asset: 'p2:0', amount: '100' }]); await store.transact(seed.result().writes);
   const sources = new Map(), reads = { financialRecord: async key => store.get('accountRecords', key),
     financialEvidence: async transition => { const row = sources.get(r.hashObject(transition)); if (row instanceof Error) throw row; assert.ok(row, 'independent source fixture exists'); return structuredClone(row); } };
-  const execute = async transitions => {
-    const result = await buildFinancialExecution({ store, transitions, reads, document, height: 10 });
+  const execute = async (transitions, extra = {}) => {
+    const result = await buildFinancialExecution({ store, transitions, reads, document, height: 10, ...extra });
     await verifyFinancialExecution({ files: [{ ops: result.operations, financialOperations: result.inputs }], reads, document, network, height: 10 });
     // Re-run exactly the same operations through the contract implementations.
     const changed = new Map(), adapter = { get: async key => changed.get(key) ?? reads.financialRecord(key), put: (key, value) => changed.set(key, value) };
@@ -82,6 +82,87 @@ test('v2 financial execution reserves, funds 65 fragments, consumes and preserve
   assert.deepEqual(readAccountLeaf(root, new AccountAvailability(f.store).prove(root, [key]), key), { issued: '100', burned: '7' });
   assert.equal(f.store.get('publicSummaries', 'outstandingSupply').matter, '93');
   assert.equal(f.store.get('publicSupply', 'p2:0').burned, '7');
+});
+
+test('a fund that completes the payment carries its consume in the same batch', async t => {
+  const f = await fixture(t), reserve = f.reserve(1), id = reserve.id;
+  await f.execute([reserve]);
+  // Consume evidence is read from the batch-local view, after the fund before it.
+  const base = f.reads.financialEvidence;
+  f.reads.batchStamp = async () => ({ counted: '10', last: null });
+  f.reads.financialScope = ({ record }) => ({ ...f.reads, financialEvidence: async transition => {
+    if (transition.type !== 'consume') return base(transition);
+    const funding = await record('fp/' + id);
+    return { requestId: id, owner: alice.address, terms: funding.terms, state: 'authorized', permitHash: transition.permitHash, fundingRoot: funding.root };
+  }, financialPermit: async () => ({ permit: { digest: nonce(900) } }) });
+  const fund = (n, amount) => { const items = [{ key: nonce(n), fee: nonce(500), total: amount, amount }];
+    return f.source({ type: 'fund', id, items }, f.evidence(id, { items, state: 'settled', confirmations: 1 })); };
+  const partial = await f.execute([fund(100, '64')], { followUp: completingFundFollowUp });
+  assert.deepEqual(partial.inputs.map(i => i.transition.type), ['fund'], 'an incomplete payment waits for the rest');
+  const complete = await f.execute([fund(101, '1')], { followUp: completingFundFollowUp });
+  assert.deepEqual(complete.inputs.map(i => i.transition.type), ['fund', 'consume']);
+  assert.deepEqual(complete.inputs[1].transition, { type: 'consume', id, permitHash: nonce(900) });
+  assert.equal(f.store.get('accountRecords', 'ao/' + id).state, 'consumed');
+  assert.equal(f.store.get('accountRecords', 'fp/' + id).state, 'consumed');
+  assert.deepEqual(f.balance(), { available: '93', held: '0' });
+});
+
+test('parallel evidence preserves serialized mixed execution and dependent consumes', async t => {
+  const f = await fixture(t), reserves = [];
+  for (const n of [1, 2, 3]) { const reserve = f.reserve(n); reserves.push(reserve); await f.execute([reserve]); }
+  const base = f.reads.financialEvidence;
+  let running = 0, maximum = 0;
+  f.reads.batchStamp = async () => ({ counted: '10', last: null });
+  f.reads.financialScope = ({ record }) => ({ ...f.reads, financialEvidence: async transition => {
+    running++; maximum = Math.max(maximum, running);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      if (transition.type !== 'consume') return base(transition);
+      const funding = await record('fp/' + transition.id);
+      assert.deepEqual(funding.paid, ['65'], 'consume observes its preceding fund');
+      return { requestId: transition.id, owner: alice.address, terms: funding.terms, state: 'authorized', permitHash: transition.permitHash, fundingRoot: funding.root };
+    } finally { running--; }
+  } });
+  const fund = (id, n) => {
+    const items = [{ key: nonce(n), fee: nonce(500), total: '65', amount: '65' }];
+    return f.source({ type: 'fund', id, items }, f.evidence(id, { items, state: 'settled', confirmations: 1 }));
+  };
+  const transitions = [fund(reserves[0].id, 101), { type: 'consume', id: reserves[0].id, permitHash: nonce(900) },
+    fund(reserves[1].id, 102), { type: 'consume', id: reserves[1].id, permitHash: nonce(901) },
+    f.source({ type: 'refund', id: reserves[2].id, reason: 'credit' }, f.evidence(reserves[2].id, { state: 'credit', expiry: 9 }))];
+  const build = evidenceConcurrency => buildFinancialExecution({ store: f.store, reads: f.reads, document: f.document,
+    height: 10, transitions, evidenceConcurrency });
+  const sequential = await build(1); assert.equal(maximum, 1);
+  maximum = 0;
+  const parallel = await build(4);
+  assert.equal(r.stableJSON(parallel), r.stableJSON(sequential));
+  assert.ok(maximum > 1 && maximum <= 4); assert.equal(running, 0);
+  const files = [{ ops: parallel.operations, financialOperations: parallel.inputs }];
+  for (const evidenceConcurrency of [1, 4]) {
+    maximum = 0;
+    await verifyFinancialExecution({ files, reads: f.reads, document: f.document, network, height: 10, evidenceConcurrency });
+    assert.ok(evidenceConcurrency === 1 ? maximum === 1 : maximum > 1 && maximum <= 4);
+    assert.equal(running, 0);
+  }
+});
+
+test('batches without payment steps do not acquire extra source fences', async t => {
+  const f = await fixture(t);
+  f.reads.withFinancialSnapshot = () => assert.fail('no financial read scope is needed');
+  const result = await buildFinancialExecution({ store: f.store, transitions: [], reads: f.reads, document: f.document, height: 10 });
+  await verifyFinancialExecution({ files: [{ ops: result.operations, financialOperations: result.inputs }],
+    reads: f.reads, document: f.document, network, height: 10 });
+});
+
+test('a deferred build stops starting steps when its time is up and leaves the rest queued', async t => {
+  const f = await fixture(t), reserve = f.reserve(1);
+  const other = f.source({ type: 'fund', id: nonce(77), items: [] }, Error('source_unavailable'));
+  const build = stopAfter => buildFinancialExecution({ store: f.store, transitions: [reserve, other], reads: f.reads, document: f.document, height: 10, defer: true, stopAfter });
+  const stopped = await build(0);
+  assert.deepEqual(stopped.inputs.map(i => i.transition.type), ['reserve'], 'at least one step always runs');
+  assert.equal(stopped.unprocessed, 1); assert.deepEqual(stopped.deferred, [], 'an untried step is not set aside');
+  const open = await build(null);
+  assert.equal(open.unprocessed, 0); assert.deepEqual(open.deferred.map(d => d.reason), ['source_unavailable']);
 });
 
 test('verified escrow refund releases reserved units once without also issuing fee credits', async t => {

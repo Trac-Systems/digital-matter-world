@@ -1,21 +1,34 @@
 import { lookupSettings } from '../prod/lookup-settings.mjs';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { rules } from './rules.mjs';
 import { check, hash } from './util.mjs';
 import { escrowSplitForItems, ZERO_ADDRESS } from '../../committee/signer/escrow.mjs';
 const require = createRequire(new URL('../../rules/package.json', import.meta.url));
 const { Transaction, Script } = require('@scure/btc-signer');
+const { RawTx, RawOldTx } = require('@scure/btc-signer/script');
 const { secp256k1 } = require('@noble/curves/secp256k1');
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const inscription = value => typeof value === 'string' && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(value);
 const notFound = e => e.status === 404 || e.rpcCode === -5 || ['escrow_payer', 'payment_unconfirmed'].includes(e.message);
+const settledRead = read => Promise.resolve().then(read).then(value => ({ value }), error => ({ error }));
+const readResult = result => { if (result.error) throw result.error; return result.value; };
 
+// Bitcoin accepts inputs with neither scriptSig nor witness (e.g. pay-to-anchor
+// spends), but the library refuses an id for such a transaction. Hash the
+// serialization without witnesses directly; it equals tx.id whenever that exists.
+export function transactionId(tx) {
+  const sha = bytes => createHash('sha256').update(bytes).digest();
+  return Buffer.from(sha(sha(tx.toBytes(true, false)))).reverse().toString('hex');
+}
 export function inscriptionContents(raw, settings, { scan = false } = {}) {
   const limits = lookupSettings(settings);
-  const tx = Transaction.fromRaw(Buffer.from(raw, 'hex'), { allowUnknownInputs: true, allowUnknownOutputs: true, disableScriptCheck: true });
+  // Decode the raw serialization directly: Bitcoin accepts any version and
+  // inputs without scriptSig or witness, which the Transaction class refuses.
+  const tx = RawTx.decode(Buffer.from(raw, 'hex'));
   const contents = [];
-  for (let n = 0; n < tx.inputsLength; n++) {
-    let witness = tx.getInput(n).finalScriptWitness;
+  for (let n = 0; n < tx.inputs.length; n++) {
+    let witness = tx.witnesses?.[n];
     if (!witness || witness.length < 2) continue;
     if (scan) {
       if (witness.at(-1)[0] === 0x50) witness = witness.slice(0, -1);
@@ -44,7 +57,8 @@ export function inscriptionContents(raw, settings, { scan = false } = {}) {
       i = j;
     }
   }
-  return { txid: tx.id, contents };
+  const sha = bytes => createHash('sha256').update(bytes).digest();
+  return { txid: Buffer.from(sha(sha(RawOldTx.encode(tx)))).reverse().toString('hex'), contents };
 }
 function recovered(payload, field) {
   const digest = hash(JSON.stringify(payload[field]) + payload.salt);
@@ -52,6 +66,13 @@ function recovered(payload, field) {
   const compact = ['r', 's'].map(k => BigInt(payload.sig[k]).toString(16).padStart(64, '0')).join('');
   return secp256k1.Signature.fromCompact(compact).addRecoveryBit(Number(payload.sig.v)).recoverPublicKey(digest).toHex(true);
 }
+// v2 readers name heights as decimal strings, so an inclusion's depth can be
+// "82". Payment progress counts integer confirmations; a string failed every
+// public scan with payment_evidence. Both sides of the batch read this helper.
+const confirmationCount = value => {
+  const n = typeof value === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(value) ? Number(value) : value;
+  check(Number.isSafeInteger(n) && n >= 0, 'payment_evidence'); return n;
+};
 export async function tapReceipts(reads, row, paymentIds, settings, { at, confirmedOnly = false } = {}) {
   const limits = lookupSettings(settings);
   const receipts = [];
@@ -66,8 +87,13 @@ export async function tapReceipts(reads, row, paymentIds, settings, { at, confir
   check(ids.size <= limits.paymentIds, 'payment_item_limit');
   for (const id of ids) {
     check(inscription(id), 'payment_id');
+    // Confirmed financial evidence already has an outer chain fence. These
+    // independent reads can overlap; consume errors in the original order so
+    // an absent inclusion still skips the receipt without a content failure.
+    const early = confirmedOnly ? await Promise.all([settledRead(() => reads.included(id, at)),
+      settledRead(() => reads.content(id)), settledRead(() => reads.paymentTransfers(id))]) : null;
     let inclusion;
-    try { inclusion = await reads.included(id, at); } catch (e) { if (notFound(e)) continue; throw e; }
+    try { inclusion = early ? readResult(early[0]) : await reads.included(id, at); } catch (e) { if (notFound(e)) continue; throw e; }
     if (!inclusion) {
       if (confirmedOnly) continue;
       let tx;
@@ -89,10 +115,10 @@ export async function tapReceipts(reads, row, paymentIds, settings, { at, confir
       }
       continue;
     }
-    const payload = await reads.content(id);
+    const payload = early ? readResult(early[1]) : await reads.content(id);
     check(payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items), 'payment_redeem');
     check(typeof reads.paymentTransfers === 'function', 'tap_payment_lookup_required');
-    const transfers = await reads.paymentTransfers(id);
+    const transfers = early ? readResult(early[2]) : await reads.paymentTransfers(id);
     for (const { index, value: transfer } of transfers) {
       check(Number.isSafeInteger(index) && index >= 0, 'payment_item_location');
       if (transfer.ins !== id || transfer.fail !== false || transfer.int !== true || transfer.addr !== row.payer) continue;
@@ -101,7 +127,7 @@ export async function tapReceipts(reads, row, paymentIds, settings, { at, confir
       const fee = row.quote.fees.find(f => f.tt === 'a' && f.dta === transfer.dta && f.to === transfer.taddr && f.ticker === transfer.tick);
       if (!fee) continue;
       check(payload.redeem.items.some(i => i.dta === fee.dta && i.address === fee.to && i.tick === fee.ticker && rules.parseTapAmount(i.amt) === transfer.amt), 'payment_item_binding');
-      receipts.push({ ...fee, key: rules.paymentItemKey('tap', id + '/' + index), amount: transfer.amt, accepted: true, confirmations: inclusion.confirmations, origin: row.id, reference: id, ...(confirmedOnly && inclusion.height !== undefined ? { verifiedHeight: rules.decimalV2(inclusion.height) } : {}) });
+      receipts.push({ ...fee, key: rules.paymentItemKey('tap', id + '/' + index), amount: transfer.amt, accepted: true, confirmations: confirmationCount(inclusion.confirmations), origin: row.id, reference: id, ...(confirmedOnly && inclusion.height !== undefined ? { verifiedHeight: rules.decimalV2(inclusion.height) } : {}) });
     }
   }
   return receipts;

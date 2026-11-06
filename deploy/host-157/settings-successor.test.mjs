@@ -330,3 +330,75 @@ test('six-block payment successor is dry-run only and changes only the existing 
   const changed = structuredClone(plan.document); changed.values.finderWindow++;
   assert.throws(() => describeSuccessor(snapshot, changed, resources), /unexpected_settings_change/);
 });
+
+test('claim capacity changes only closure and page allowances at both exact settings boundaries', () => {
+  const options = parseArguments(['--config', 'c.json', '--claim-capacity']);
+  assert.equal(options.mode, 'dry-run'); assert.equal(options.claimCapacity, true);
+  const plan = buildSuccessor(snapshot, options);
+  assert.deepEqual(plan.diff.settings, [
+    { key: 'closureByteBudget', before: 67108864, after: 536870912 },
+    { key: 'closureReadBudget', before: 131072, after: 262144 },
+    { key: 'closureWorkBudget', before: 2048, after: 12288 },
+    { key: 'settlementPagesPerObservation', before: 2, after: 64 },
+  ]);
+  assert.deepEqual(plan.document.values, { ...current.values, closureWorkBudget: 12288, closureReadBudget: 262144,
+    closureByteBudget: 536870912, settlementPagesPerObservation: 64 });
+  assert.deepEqual(r.validateSettings(plan.document.values), plan.document.values);
+  assert.deepEqual(plan.resourceDocument, resources); assert.deepEqual(plan.diff.resources, []);
+  assert.equal(plan.resourceInstallRequired, false);
+  assert.equal(plan.effectiveBatch, '10'); assert.equal(plan.effectiveBitcoinWindow, '1002'); assert.equal(plan.activationHeight, '1002');
+  assert.deepEqual(describeSuccessor(snapshot, plan.document, resources), plan);
+  for (const [batch, height, expected] of [['9', '1002', current], ['10', '1001', current], ['10', '1002', plan.document]])
+    assert.deepEqual(r.effectiveSettings(current, plan.document, batch, height), expected);
+  for (const [key, value] of Object.entries({ closureReadBudget: 524288, closureByteBudget: 1073741824,
+    settlementPageRows: 50, finderWindow: 1, pendingBlocks: 6, mintOperationBudget: 128, linkMultiplier: 7 })) {
+    const changed = { ...plan.document, values: { ...plan.document.values, [key]: value } };
+    assert.throws(() => describeSuccessor(snapshot, changed, resources), /unexpected_settings_change/, key);
+  }
+  for (const key of ['closureWorkBudget', 'closureReadBudget', 'closureByteBudget', 'settlementPagesPerObservation']) {
+    const changed = { ...plan.document, values: { ...plan.document.values, [key]: current.values[key] } };
+    assert.throws(() => describeSuccessor(snapshot, changed, resources), /unexpected_settings_change/);
+  }
+  assert.throws(() => describeSuccessor(snapshot, plan.document, sourceRateSuccessor(resources, 100)), /resource_changed/);
+  assert.throws(() => buildSuccessor(snapshot, { claimCapacity: true, effectiveBatch: '9' }), /batch_boundary/);
+  for (const extra of [{ bulkCapacity: true }, { pendingBlocks: 6 }, { activationHeight: '1020' },
+    { sourceRps: 100 }, { legacyDeployPayoutMinAtoms: '100' }])
+    assert.throws(() => buildSuccessor(snapshot, { claimCapacity: true, ...extra }), /arguments/);
+  const large = { ...snapshot, last: { n: '9007199254740993', to: '9007199254740993' }, head: { counted: '9007199254740993' } };
+  const exact = buildSuccessor(large, { claimCapacity: true });
+  assert.equal(exact.effectiveBatch, '9007199254740994'); assert.equal(exact.effectiveBitcoinWindow, '9007199254740995');
+});
+
+test('claim capacity CLI only prepares a reviewable proposal and rejects mixed kinds or arbitrary settings', () => {
+  const args = ['--config', 'c.json', '--claim-capacity'];
+  for (const extra of [['--send'], ['--apply'], ['--proposal', 'p.json'], ['--bulk-capacity'], ['--pending-blocks', '6'],
+    ['--activation-height', '1020'], ['--source-rps', '100'], ['--closure-read-budget', '262144'],
+    ['--legacy-deploy-payout-min-atoms', '100'], ['--claim-capacity'], ['--claim-capacity=true']])
+    assert.throws(() => parseArguments([...args, ...extra]));
+  assert.equal(parseArguments([...args, '--effective-batch', '100']).effectiveBatch, '100');
+});
+
+test('an active claim profile retunes backlog limits, batch deadline and request minimum and nothing else', () => {
+  const live = { ...current, values: { ...current.values, closureWorkBudget: 4096, closureReadBudget: 262144,
+    closureByteBudget: 536870912, settlementPagesPerObservation: 16 } };
+  const tuned = { ...snapshot, current: live };
+  const options = parseArguments(['--config', 'c.json', '--claim-capacity', '--closure-work', '4096', '--settlement-pages', '16',
+    '--backlog-pairs', '500000', '--backlog-bytes', '100663296', '--backlog-windows', '144', '--batch-deadline', '2', '--request-min', '1']);
+  const plan = buildSuccessor(tuned, options);
+  assert.deepEqual(plan.diff.settings, [
+    { key: 'batchDeadlineTips', before: live.values.batchDeadlineTips, after: 2 },
+    { key: 'closureBacklogBytes', before: live.values.closureBacklogBytes, after: 100663296 },
+    { key: 'closureBacklogPairs', before: live.values.closureBacklogPairs, after: 500000 },
+    { key: 'closureBacklogWindows', before: live.values.closureBacklogWindows, after: 144 },
+    { key: 'requestMinBlocks', before: live.values.requestMinBlocks, after: 1 },
+  ]);
+  assert.deepEqual(r.validateSettings(plan.document.values), plan.document.values);
+  assert.equal(plan.resourceInstallRequired, false);
+  assert.deepEqual(describeSuccessor(tuned, plan.document, resources), plan);
+  for (const [key, value] of Object.entries({ closureReadBudget: 524288, finderWindow: 1, pendingBlocks: 6, linkMultiplier: 7, requestMaxBlocks: 9 })) {
+    const changed = { ...plan.document, values: { ...plan.document.values, [key]: value } };
+    assert.throws(() => describeSuccessor(tuned, changed, resources), /unexpected_settings_change/, key);
+  }
+  assert.throws(() => parseArguments(['--config', 'c.json', '--backlog-pairs', '500000', '--activation-height', '1020']));
+  assert.throws(() => parseArguments(['--config', 'c.json', '--claim-capacity', '--request-min', '0']));
+});

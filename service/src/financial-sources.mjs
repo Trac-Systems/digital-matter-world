@@ -22,8 +22,11 @@ import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { legacyMintBinding, legacyLinkBinding } from './pending-financial.mjs';
 import { installLegacyLinkSources } from './legacy-link-sources.mjs';
 import { installPublicMintSources } from './public-mint-sources.mjs';
+import { acceptedPublicMintRow } from './mint-evidence.mjs';
 import { pointBatch, pointResults } from '../../rules/src/point-read-batch.js';
 import { verifyDirectHolder } from './direct-deployer.mjs';
+import { installFinancialReadScope } from './financial-read-scope.mjs';
+import { financialRecordProjection } from './financial-evidence-prefetch.mjs';
 
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
 const feeKey = financialFeeKey;
@@ -42,8 +45,11 @@ export async function acceptedFinancialReservation({ store, audits, id }) {
 // Shared code, separate reader instances and independent chain/notary clients.
 // No gateway evidence field is a substitute for one of these source reads.
 export function installFinancialSources(reads, options) {
-  const { network, document, bitcoinNetwork = 'mainnet', escrow, suspense = {}, ethereumRPC, payout = async () => null, lookupSettings, recoveryVersion, request, reservation, record } = options;
-  check(document?.network === network && typeof request === 'function' && typeof reservation === 'function' && typeof record === 'function', 'financial_source_config');
+  const { network, document, bitcoinNetwork = 'mainnet', escrow, suspense = {}, ethereumRPC, payout = async () => null, lookupSettings, recoveryVersion, request, reservation, record: readRecord } = options;
+  installFinancialReadScope(reads);
+  const record = options.scoped ? readRecord : (key, at) => reads.financialSnapshot() ?
+    reads.memoFinancialRead('record', [key], () => readRecord(key, at), at ?? reads.financialSnapshot()) : readRecord(key, at);
+  check(document?.network === network && typeof request === 'function' && typeof reservation === 'function' && typeof readRecord === 'function', 'financial_source_config');
   installTickerPaymentSources(reads, options);
   reads.feeQuotes.document = document;
   reads.identifyFinancialFees = (fees, rail, custody = []) => identifyFinancialFees(fees, { network, rail, bitcoinNetwork, escrow, custody });
@@ -78,9 +84,9 @@ export function installFinancialSources(reads, options) {
   const recordKey = key => {
     check(/^(?:(?:ar|al|ao|fp|fc|fl|bc|fd|dc|fr|fq|fm|fi)\/[a-z0-9:._/-]+|k\/link\/[0-9a-z]+|bt\/(?:last|observation)|br\/[0-9a-f]{64}\/[a-z0-9:/]+|b\/[a-z0-9/]+|s\/beaconRecovery|recoveryApproved\/[0-9a-f]{64})$/.test(key), 'financial_record_key');
   };
-  reads.financialRecord = async (key, at) => {
+  reads.financialRecord = async (key, at, fields) => {
     recordKey(key);
-    return await record(key, at) ?? null;
+    return financialRecordProjection(await record(key, at, fields) ?? null, fields);
   };
   reads.financialRegistryQuery = async (transition, at) => {
     if (transition.type === 'reserve') {
@@ -159,7 +165,10 @@ export function installFinancialSources(reads, options) {
     const publicSource = await reads.financialRecord('fi/source/' + id, at);
     if (publicSource?.publicMint) {
       const { source, funding } = await reads.publicMintPermit(id, at);
-      return { source, funding, row: { ...await request(id), id, request: source.request, payer: source.payer, receiver: source.receiver, kind: 'tap', quote: { fees: source.feeItems } } };
+      // Signers keep no site mint rows: rebuild one from the accepted records.
+      const local = typeof reads.localMint !== 'function' || await reads.localMint(id);
+      const base = local ? await request(id) : await acceptedPublicMintRow(reads, id, at);
+      return { source, funding, row: { ...base, id, request: source.request, payer: source.payer, receiver: source.receiver, kind: 'tap', quote: { fees: source.feeItems } } };
     }
     const row = await signedRequest(id, publicSource), funding = await reads.financialRecord('fp/' + id, at);
     const source = publicSource ?? await reservation(id, at);
@@ -294,18 +303,17 @@ export function installFinancialSources(reads, options) {
   for (const name of ['financialReservation', 'financialReceipts', 'financialPermit', 'financialEscrow', 'financialEvidence', 'financialDeployment', 'financialDeploymentState', 'financialLinkReservation', 'financialLinkQuote', 'publicMintScan', 'publicMintPayment', 'publicMintPermit']) {
     const original = reads[name], index = ['financialReceipts', 'financialEscrow'].includes(name) ? 2 : 1;
     reads[name] = async (...args) => {
-      const before = await reads.batchStamp(), at = args[index];
-      check(!at || rules.compareOrdinal(at.counted, before.counted) === 0 && same(at.last, before.last) && (at.revision === undefined || at.revision === before.revision), 'financial_snapshot_changed');
-      args[index] = at?.executionHeight === undefined ? before : { ...before, executionHeight: at.executionHeight };
-      const result = ['publicMintScan', 'publicMintPayment'].includes(name) && reads.withTapSnapshot ?
-        await reads.withTapSnapshot(before, () => original(...args)) : await original(...args);
-      check(same(before, await reads.batchStamp()), 'financial_snapshot_changed');
-      return result;
+      const at = args[index];
+      return reads.withFinancialSnapshot(at, before => {
+        args[index] = at?.executionHeight === undefined ? before : { ...before, executionHeight: at.executionHeight };
+        return ['publicMintScan', 'publicMintPayment'].includes(name) && reads.withTapSnapshot ?
+          reads.withTapSnapshot(before, () => original(...args)) : original(...args);
+      });
     };
   }
   // Rebuild closures over a batch-local view. Each verifier supplies only its
   // own already-verified effects; concurrent requests keep the original view.
-  reads.financialScope = ({ record, reservations }) => installFinancialSources({ ...reads }, { ...options, record, recordMany: undefined,
+  reads.financialScope = ({ record, reservations }) => installFinancialSources({ ...reads }, { ...options, scoped: true, record, recordMany: undefined,
     reservation: (id, at) => reservations.has(id) ? reservations.get(id) : reservation(id, at) });
   return reads;
 }

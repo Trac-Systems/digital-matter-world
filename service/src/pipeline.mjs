@@ -351,6 +351,9 @@ export class Pipeline {
         input.financialPlanning = true;
         const deliveryCap = this.financial?.resources?.settlementDeliveryRows, allowance = rules.batchSettings(settings);
         if (deliveryCap) input.deliveryRows = Math.min(deliveryCap, allowance.settlementPageRows * allowance.settlementPagesPerObservation);
+        // Start near the payout rows that fit last time (doubling, so free room is used again)
+        // instead of halving down from the full allowance: each refused size costs a replay.
+        else if (this.deliveryHint !== undefined) input.deliveryRows = Math.min(Math.max(1, this.deliveryHint * 2), allowance.settlementPageRows * allowance.settlementPagesPerObservation);
         input.batchSequence = String(clock.add(last.n));
         if (renewal) input.renewal = renewal;
         input.settingsDocuments = this.settings.settingsDocuments ?? [];
@@ -392,7 +395,7 @@ export class Pipeline {
           try {
             const publicReaders = publicClaimsActive ? publicClaimReaders({ input, store: accountStore, claimNodes, publicMintRead }) : undefined;
             const publicClaims = publicReaders && rules.publicClaimProjection(output, input, publicReaders.readers);
-            const accounts = this.financial && !renewal && !anchored && clock.compare(execution, observation.counted) === 0
+            const accounts = this.financial && !renewal && !anchored && clock.compare(execution, observation.counted) === 0 && clock.compare(observation.tip, execution) === 0
               ? await this.financial.build({ credits: output.file.ops, crafts: output.file.crafts, transfers: output.file.transfers, compoundMerge: output.file.compoundMerge, height: observation.counted, at: { counted: execution, last }, accountStore,
                 ...(publicClaims ? { publicClaims, preparePublicMint: publicReaders.prepare } : {}),
                 priorLinkInputs: items.reduce((n, i) => n + (i.output.file.financialOperations ?? []).filter(f => f.transition.action?.type?.startsWith('link-')).length, 0),
@@ -415,6 +418,7 @@ export class Pipeline {
             }
             output = { ...rules.finalizeBlockV2Accounts(output, input, publicReaders?.readers), accountWrites: accounts.writes, accountAssetTouches: accounts.assetTouches };
             publicReaders?.collect();
+            this.deliveryHint = input.deliveryRows;
             break;
           } catch (error) {
             const rows = input.deliveryRows ?? settings.settlementPageRows * settings.settlementPagesPerObservation;
@@ -462,7 +466,9 @@ export class Pipeline {
       }
     }
     const final = items.at(-1);
-    if (!renewal && (this.operations || this.links) && clock.compare(execution, final.input.height) === 0) {
+    // Signers check paid work against the newest block's snapshot: it rides only in a file
+    // whose tip is that block, never in an older window sealed when the newest was counted.
+    if (!renewal && (this.operations || this.links) && clock.compare(execution, final.input.height) === 0 && clock.compare(final.input.tip, execution) === 0) {
       const view = { observation: final.output.file.observation, height: execution, tip: final.input.tip, tipHash: final.input.tipHash };
       const linkOperations = await this.links?.inputs(view) ?? [];
       if (linkOperations.length) {

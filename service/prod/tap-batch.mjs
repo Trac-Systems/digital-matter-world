@@ -31,6 +31,7 @@ export function installTapBatchReads(reads, index) {
   }
   function context(view) { check(view && contexts.has(view), 'bulk_snapshot_required'); return view; }
   reads.withBulkSnapshot = async (at, fn) => {
+    source.onSnapshotFailure?.(clear);
     try {
       return await source.at(at, async stamp => {
         check(hash(stamp.hash), 'bulk_snapshot_stamp');
@@ -68,6 +69,7 @@ export function installTapBatchReads(reads, index) {
     return work.run(key, async () => {
       context(view);
       let entry = cache.get(key);
+      if (entry && Date.now() - entry.at >= 60000) { cache.delete(key); cacheBytes -= entry.bytes; entry = null; }
       if (!entry) {
         let inclusion = null, tx;
         try {
@@ -80,7 +82,7 @@ export function installTapBatchReads(reads, index) {
         check(parsed.txid === txid && parsed.contents.length <= cap.members, 'bulk_transaction_binding');
         if (inclusion) check(hash(inclusion.blockHash ?? inclusion.hash) && BigInt(inclusion.height) <= BigInt(view.stamp.height) && BigInt(inclusion.confirmations) > 0n, 'bulk_transaction_inclusion');
         entry = { base: { txid, stamp: view.stamp, inclusion: inclusion ? { height: rules.decimalV2(inclusion.height), hash: inclusion.blockHash ?? inclusion.hash, confirmations: count(inclusion.confirmations) } : null,
-          inscriptions: parsed.contents.map((content, i) => ({ id: `${txid}i${i}`, content })) }, kinds: {}, bytes: 0 };
+          inscriptions: parsed.contents.map((content, i) => ({ id: `${txid}i${i}`, content })) }, kinds: {}, bytes: 0, at: Date.now() };
       }
       for (const kind of kinds) if (!entry.kinds[kind]?.complete) {
         const stem = kind === 'transfers' ? 'Transferred' : 'Minted';
@@ -92,7 +94,8 @@ export function installTapBatchReads(reads, index) {
         });
         entry.kinds[kind] = result;
       }
-      if (entry.base.inclusion && view.epoch === epoch && lastStamp === rules.stableJSON(view.stamp)) remember(key, entry, cap);
+      if (entry.base.inclusion && view.epoch === epoch && lastStamp === rules.stableJSON(view.stamp)) remember(key,
+        { ...entry, kinds: Object.fromEntries(Object.entries(entry.kinds).filter(([, result]) => result.complete && result.rows.length)) }, cap);
       return structuredClone({ ...entry.base, transfers: entry.kinds.transfers?.rows ?? [], mints: entry.kinds.mints?.rows ?? [],
         complete: { transfers: entry.kinds.transfers?.complete === true, mints: entry.kinds.mints?.complete === true } });
     }, { after: true });

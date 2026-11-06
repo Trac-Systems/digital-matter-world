@@ -81,8 +81,16 @@ async function fixture(t, resources = {}, chainOptions = {}) {
       const minted = r.hash('mint/' + row.id) + 'i0';
       await bulk.inscriptions(id, { inscriptions: [{ requestId: row.id, inscription: minted }] }, secret);
       parent.verifyMint = () => true; reads.mint = async () => ({ accepted: true });
+      // Confirmed on Bitcoin: minted at once, while the contract's finish waits for a batch.
+      const finishes = []; parent.financial.submit = async t => { finishes.push(t); return { id: 'queued', state: 'queued' }; };
+      chain.records.set('dc/' + row.id, { ...chain.records.get('dc/' + row.id), state: 'issued' });
+      await single.issue(winner, await reads.batchStamp());
+      assert.equal(store.get('mints', row.id).state, 'minted'); assert.equal(store.get('mints', row.id).finishing, true);
+      assert.deepEqual(finishes.map(t => t.action.type), ['capacity-finish']);
       chain.records.set('dc/' + row.id, { ...chain.records.get('dc/' + row.id), state: 'minted' });
       await single.issue(winner, await reads.batchStamp());
+      assert.equal(store.get('mints', row.id).state, 'minted'); assert.equal(store.get('mints', row.id).finishing, undefined);
+      delete parent.financial.submit;
     }
   };
   return { chain, store, reads, parent, single, bulk, input, secret, start, register, pay, reveal, settle, complete, rows, setHeight, sync,

@@ -2,6 +2,7 @@ import { officialName } from '../src/official-ticker-names.mjs';
 import { selectedDeployment } from '../src/registry.mjs';
 import { phase, lifecycleSignal } from '../src/lifecycle.mjs';
 import { acceptedAssetProvenance } from '../src/asset-provenance.mjs';
+import { PublicScanIndex } from './public-scan-index.mjs';
 import { patternCatalogId } from '../src/mint-assets.mjs';
 import { lookupMaintenance } from './lookup-maintenance.mjs';
 import { installFinancialSources, acceptedFinancialReservation } from '../src/financial-sources.mjs';
@@ -22,7 +23,7 @@ import { EvidenceStore } from './evidence.mjs';
 import { closureTimeouts } from '../../rules/src/closure-timeouts.js';
 import { collectMigrationEvidence } from './migration-export.mjs';
 import { verifyDeployment } from '../src/deployments.mjs';
-import { winningMint, admittedMint } from '../src/mint-evidence.mjs';
+import { winningMint, admittedMint, acceptedPublicMintRow } from '../src/mint-evidence.mjs';
 import { auditedFind } from '../src/find-evidence.mjs';
 import { EvidenceBindings } from './evidence-bindings.mjs';
 import { Bindings } from '../src/bindings.mjs';
@@ -48,6 +49,7 @@ import { AcceptedAssetSupply } from './asset-supply.mjs';
 import { walletBitmaps } from '../src/bitmaps.mjs';
 import { publicTreasury, publicEscrow, bitmapOwner, deploymentHolders } from './public-reads.mjs';
 import { installPublicSummarySources } from './public-summary-sources.mjs';
+import { snapshotMemo } from '../src/snapshot-memo.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { FeeQuotes, validateFeePolicy, mintFeeScope, currentFee, feeSettingsField, validateQuotedTerms, mintOwnershipMatches } from '../src/fees.mjs';
@@ -101,6 +103,10 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     if (!cache.has(key)) cache.set(key, Promise.resolve().then(fn));
     return cache.get(key);
   };
+  // Every plot scan of one batch verifies the same deployment at the same
+  // snapshot, in the gateway and in each signer. Reuse that verification for
+  // the identical snapshot; a new snapshot or a failure reads the source again.
+  const snapshotRead = snapshotMemo();
   const registry = () => candidateRead('registry', async () => { const value = await readRegistry(config.prod.registry, config.prod.registrySettings); check(value instanceof KeyedRegistry, 'registry_migration_required'); return value; });
   await registry();
 
@@ -134,10 +140,23 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const ethRPC = ethereum.rpc, escrow = ethereum.escrow;
   const quotedTerms = (kind, row) => validateQuotedTerms(reads, kind, row);
   const tap = path => indexer.tap(path);
-  const content = id => indexer.content(id);
+  let content = id => indexer.content(id);
   const request = async id => {
     const row = await store.get('mints', id);
     if (row?.context?.kind === 'bulk-v1') return row;
+    // A public (TAP Wallet) mint carries no agent signature. Its accepted source
+    // record binds every field the mint check reads; the permit itself is bound
+    // by the committee signature and the accepted permit hash.
+    // Rows projected before the marker was exported lack publicMint; the accepted
+    // source record decides then. Agent rows always carry a payer authorization.
+    const source = row && (row.publicMint || !row.authorization) && typeof reads.financialRecord === 'function' ? await reads.financialRecord('fi/source/' + id) : null;
+    if (row && (row.publicMint || source?.publicMint === true)) {
+      const d = row.context?.deployment;
+      check(source?.publicMint === true && source.requestId === id && same(source.request, { asset: row.request?.asset, block: row.request?.block, amount: row.request?.amount }) &&
+        source.receiver === row.receiver && d && source.deployment?.id === d.id && source.deployment.tick === d.tick &&
+        source.deployment.privilegePublicKey === d.privilegePublicKey, 'public_mint_source');
+      return row;
+    }
     check(row && verifyPayer(config.network, { request: row.request, receiver: row.receiver, payer: row.payer, kind: row.kind, feeQuote: row.requestedFeeQuote, authorization: row.authorization }), 'payer_authorization');
     check(verifyFinancialMintRequest(config.network, row.request, row.signature, row.request.until) && financialMintId(config.network, row.request) === id, 'owner_signature'); return row;
   };
@@ -206,7 +225,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     refreshEvidence: store instanceof EvidenceStore ? () => store.refresh() : undefined,
     feeQuotes: new FeeQuotes({ network: config.network, gateway, registry, settingsHistory: { get: hash => trac('settingsByHash', [hash]) } }),
     validateFeeTerms: quotedTerms,
-    preflight: async (batch, at) => preflightBatch(batch, at, { read: key => trac('read', [key, at]), deployment: await trac('deployment') }),
+    preflight: async (batch, at) => preflightBatch(batch, at, { read: key => trac('read', [key, at]), withReadSnapshot: trac.withReadSnapshot, deployment: await trac('deployment') }),
     receiptCutoffPage: (settingsHash, index) => store.get('receiptCutoffPages', `${settingsHash}/${index}`),
     receiptObservation: async (tip, tipHash, segment) => {
       const r = await store.get('receiptObservations', `${tip}/${tipHash}${segment === undefined ? '' : '/' + segment}`); check(r, 'receipt_observation_missing');
@@ -300,9 +319,11 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       // The outer TAP fence has not closed yet. Keep semantic verification in
       // this scan's cache so a failed fence cannot populate the long-lived
       // deployment cache; only independently fenced source responses survive.
-      const { deployment, authority } = await timeStep('ctx.verifyDeployment', candidateRead(rules.stableJSON(['deployment', registered, viewOrKind ?? null]),
+      const deploymentKey = rules.stableJSON(['deployment', registered, viewOrKind ?? null]), verifyRegistered =
         () => verifyDeployment(candidateScope.getStore()?.active ? Object.create(reads) : reads, registered,
-          { view: typeof viewOrKind === 'object' ? viewOrKind : undefined })));
+          { view: typeof viewOrKind === 'object' ? viewOrKind : undefined });
+      const { deployment, authority } = await timeStep('ctx.verifyDeployment', candidateScope.getStore()?.active || reads.financialSnapshot?.() || typeof viewOrKind !== 'object' || viewOrKind === null
+        ? candidateRead(deploymentKey, verifyRegistered) : snapshotRead(deploymentKey, verifyRegistered));
       const publicKey = await candidateRead('privilege/' + registered.privilege + '/' + (registered.authorityKey ?? ''), async () => {
         const auth = await timeStep('ctx.privilegeContent', content(registered.privilege)), authorityHash = hash(JSON.stringify(auth.auth) + auth.salt), key = recovered(authorityHash, auth.sig);
         check(auth.hash === authorityHash && key === (registered.authorityKey ?? (await trac('authority')).committee), 'privilege_binding');
@@ -377,6 +398,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
       const r = await tap('getDmtMintHolderByBlock/' + encodeURIComponent('dmt-' + tick) + '/' + block);
       if (!r) return false; check(await included(r.ins, view), 'indexed_mint_unconfirmed'); return true;
     },
+    localMint: async id => !!await store.get('mints', id),
     payer: async id => (await request(id)).payer,
     mintPayoutSnapshot: async id => (await reads.mintFeeTerms(id)).payoutSnapshot,
     async mintFeeTerms(id) {
@@ -390,7 +412,9 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     tapPayment: payment,
     escrowDeposit: (payer, id, hint) => escrow.deposit(payer, id, hint),
     async mint(id, view) {
-      const row = await request(id), entry = row.mintInscription ? { id: row.mintInscription } : null;
+      const local = await store.get('mints', id);
+      const row = !local && typeof reads.publicMintPermit === 'function' ? await acceptedPublicMintRow(reads, id, view) ?? await request(id) : await request(id);
+      const entry = row.mintInscription ? { id: row.mintInscription } : null;
       return winningMint(reads, row, entry, recovered, view);
     },
     async mintAuthorization(id) {
@@ -424,6 +448,8 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
   const batchClock = s => ({ counted: s.counted, tip: s.tip, tipHash: s.tipHash, last: s.last });
   reads.preflight = async (...args) => { const before = await trac('stamp'), result = await originalPreflight(...args); check(same(batchClock(before), batchClock(await trac('stamp'))), 'trac_snapshot_changed'); return result; };
   installTapLookups(reads, lookups);
+  reads.withTapReadSnapshot = (at, task) => indexer.bulkAt(at, task);
+  reads.withNotaryReadSnapshot = trac.withFinancialReadSnapshot;
   reads.bitmapInventory = new BitmapIndex({ lookups, store });
   if (suppliedStore) reads.submittedBitmaps = new SubmittedBitmaps({ store: suppliedStore, settings: config.prod.lookupSettings,
     verify: async (block, inscription) => {
@@ -453,6 +479,12 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     check(expected && await client.blockHash(rules.safeNumberV2(height)) === expected, 'public_payment_reorg'); return expected;
   };
   reads.publicBitcoinBlock = async (height, at) => client.block(await reads.publicBitcoinHash(height, at), { withTransactions: true });
+  reads.publicHeaderHash = async (height, at) => {
+    check(BigInt(height) <= BigInt(at.counted), 'public_scan_pending');
+    const expected = (await views.view(at.tip, at.tipHash)).hashAt(height); check(expected, 'public_payment_reorg'); return expected;
+  };
+  // Parsed public payment candidates by block hash, shared by every financial scope.
+  reads.publicScanCache = new PublicScanIndex(join(config.prod.readerData, 'public-scan.sqlite'));
   const mintEth = ethereumPayments({ rpc: ethRPC, escrow: config.prod.ethereum });
   reads.escrowSettled = (payer, id, hint) => mintEth.settled('ethereum', id, payer, hint);
   if (config.v2) installFinancialSources(reads, { network: config.network, document: config.v2.document, recoveryVersion: config.assetRecoveryVersion,
@@ -460,6 +492,7 @@ export async function productionReads(config, suppliedStore, { runtime, gateway,
     reservation: id => acceptedFinancialReservation({ store, audits, id }), record: (key, at) => trac('read', [key, at]),
     recordMany: (keys, at) => trac('readMany', [keys, at]),
     ethereumRPC: ethRPC, payout: id => store.get('financialCustodyPayments', id) });
+  content = reads.content;
   reads.inscription = id => indexer.inscription(id);
   if (config.v2) {
     const bitcoinHash = async (height, at) => (await views.view(at.tip, at.tipHash)).hashAt(height), canonicalBitcoinHash = height => client.blockHash(height);

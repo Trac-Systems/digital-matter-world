@@ -291,6 +291,11 @@ export class Committee {
     check(proposal.kind !== 'batch' || !this.retirementFor(proposal.batch), 'batch_digest_rejected', 503);
     let session = this.store.get('ceremonies', key);
     if (session?.recovery?.waiting) return null;
+    // A permit never takes signers from a pending batch: two ceremonies each holding
+    // part of the same signers wait on each other forever. Its partial preparations
+    // stay reserved; the batch signs with the free signers and the permit resumes
+    // after it. A permit that is already running finishes first.
+    if (proposal.kind === 'mint' && !['running', 'complete'].includes(session?.stage) && this.store.get('meta', 'draft')) return null;
     if (!this.activeSigning) {
       this.activeSigning = new Set(); let after = '';
       for (;;) {

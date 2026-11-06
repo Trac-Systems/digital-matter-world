@@ -193,7 +193,7 @@ test('six-block bulk expiry releases slots while reported payment is still uncon
 });
 
 for (const stage of ['bulk-fund', 'bulk-consume']) test(`six-block expiry retires an unsigned queued ${stage} and releases the order`, async t => {
-  const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  const f = await fixture(t, { values: { pendingBlocks: 6 }, sameBatchConsume: false }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); await f.execute();
   await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null });
   if (stage === 'bulk-consume') { await f.execute(); await f.bulk.tick(); }
@@ -235,11 +235,10 @@ test('a bulk payment sent in time but confirmed after the payment window mints w
   await f.bulk.request(f.sign(q)); await f.execute();
   const late = String(from + 20n); f.height(late);
   await f.bulk.payment({ orderId: id, paymentId: f.payment(q, 'payment', [], late), commitTxid: null, revealTxid: null });
-  const types = [f.store.list('financialQueue', { limit: 1 })[0].value.type];
-  await f.execute(); await f.bulk.tick();
-  types.push(f.store.list('financialQueue', { limit: 1 })[0].value.type);
-  await f.execute(); await f.bulk.tick();
-  assert.deepEqual(types, ['bulk-fund', 'bulk-consume']);
+  assert.equal(f.store.list('financialQueue', { limit: 1 })[0].value.type, 'bulk-fund');
+  const paid = await f.execute(); await f.bulk.tick();
+  assert.deepEqual(paid.inputs.map(i => i.transition.type), ['bulk-fund', 'bulk-consume'], 'one batch funds and consumes');
+  assert.equal(f.store.count('financialQueue'), 0);
   assert.equal((await f.bulk.status(id)).state, 'permit_issued');
   assert.equal(f.store.get('accountRecords', 'fp/bulk-credit/' + b.bulkReceiptKey(f.bitcoinNetwork, digest('payment') + 'i0')), null);
 });

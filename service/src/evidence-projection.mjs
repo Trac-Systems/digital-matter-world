@@ -1,6 +1,6 @@
 import { check } from './util.mjs';
 const projections = {
-  mints: ['id','request','signature','receiver','payer','kind','authorization','requestedFeeQuote','quote','context','feeAuthorization','paymentId','paymentIds','creditIds','permit','mintInscription'],
+  mints: ['id','request','signature','receiver','payer','kind','authorization','requestedFeeQuote','quote','context','feeAuthorization','paymentId','paymentIds','creditIds','permit','mintInscription','publicMint'],
   batches: ['batch','publications'], receiptObservations: ['seal','receipts','archive'],
   financialLinks: ['id','request','signature','payer','receiver','kind','requestedFeeQuote','quote','feeAuthorization','legacyLink'],
   linkRequests: ['id','request','sig','terms','paymentId'],

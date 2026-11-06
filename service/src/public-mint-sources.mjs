@@ -7,6 +7,7 @@ import { financialFees } from './financial-sources.mjs';
 import { financialSplit } from '../../rules/src/financial-fees.js';
 import { payoutAddress } from '../../rules/src/payout-bindings.mjs';
 import { tapReceipts, inscriptionContents } from './mint-payments.mjs';
+import { lookupSettings as lookupLimits } from '../prod/lookup-settings.mjs';
 import { permit } from '../../committee/signer/adapter.mjs';
 import { publicScanKey } from '../../contract/public-mint.js';
 import { plotKey } from '../../contract/financial-capacity.js';
@@ -14,6 +15,8 @@ import { randomBytes } from 'node:crypto';
 const DOMAIN = 'dmw-public-mint-quote-v1', PREFIX = 'dmw-public-pay-v1|';
 const PREFIX_V2 = 'dmw-public-pay-v2|';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
+const takeRead = result => { if (result.status === 'rejected') throw result.reason; return result.value; };
+const readTogether = reads => Promise.allSettled(reads.map(read => Promise.resolve().then(read)));
 export const publicPaymentData = (intent, role) => intent.paymentVersion === 2
   ? PREFIX_V2 + rules.publicPaymentCommitment(intent) + '|' + role
   : PREFIX + Buffer.from(rules.stableJSON(intent)).toString('base64url') + '|' + role;
@@ -26,6 +29,39 @@ export function publicPaymentIntent(data, maxBytes) {
   const parts = data.split('|'); if (parts.length !== 3) return null;
   try { return JSON.parse(Buffer.from(parts[1], 'base64url').toString()); } catch { return null; }
 }
+// Candidate TAP payments of one Bitcoin block. A production reader supplies a
+// persistent publicScanCache: block hashes commit to their transactions, so a
+// cached block is reused by every plot scan and the discovery walk without
+// being downloaded and parsed again.
+export async function publicScanBlock(reads, height, at, settings) {
+  const cache = reads.publicScanCache, limit = lookupLimits(settings).inscriptionBytes;
+  // The local verified header chain names the block; no network round trip per block.
+  const known = cache && await (reads.publicHeaderHash ?? reads.publicBitcoinHash)(height, at), hit = known && cache.get(known + '|' + limit);
+  if (hit) return { hash: known, candidates: hit };
+  const b = await reads.publicBitcoinBlock(height, at);
+  check(rules.decimalV2(b.height) === height && Array.isArray(b.transactions) && b.transactions.length === b.tx.length && (!known || b.hash === known), 'public_block_evidence');
+  const candidates = [];
+  for (let ti = 0; ti < b.transactions.length; ti++) {
+    const parsed = inscriptionContents(b.transactions[ti], settings, { scan: true });
+    check(parsed.txid === b.tx[ti], 'public_block_transaction');
+    parsed.contents.forEach((payload, ii) => {
+      if (payload?.p === 'tap' && payload.op === 'token-auth' && Array.isArray(payload.redeem?.items)) candidates.push(Object.freeze({ ti, ii, txid: parsed.txid, payload }));
+    });
+  }
+  Object.freeze(candidates);
+  if (cache) cache.set(b.hash + '|' + limit, candidates);
+  return { hash: b.hash, candidates };
+}
+// Only DMW payment items need notary reads to resolve; other candidates are free.
+// A payment for the scanned plot costs TAP and settings reads; a payment for
+// another plot costs one record read. A step must finish well inside one batch
+// interval, or a batch landing mid-read changes the snapshot and discards it;
+// the next step resumes at its cursor. The gateway and every signer derive the
+// same step from these constants, so other buyers' payments never multiply the
+// steps one plot needs.
+export const PUBLIC_SCAN_STEP_CANDIDATES = 5;
+export const PUBLIC_SCAN_STEP_READS = 100;
+export const dmwCandidate = c => c.payload.redeem.items.some(i => typeof i?.dta === 'string' && i.dta.startsWith('dmw-public-pay-'));
 // Only accepted registrations/reveals resolve payment bytes. A local preimage
 // can propose a reveal, but cannot stand in for consensus evidence here.
 export async function resolvePublicPaymentIntent(reads, item, { document, height, reference, at }) {
@@ -56,7 +92,11 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     check(rules.publicMintActive(context.settings, height), 'public_mint_inactive'); return { document: context.settings, height };
   };
   reads.publicMintContext = async (asset, block, at, feeQuote, { settled = false, scanning = false, deployment } = {}) => {
-    const { document, height } = await active(at), context = await reads.assetContext(asset, block, at ?? 'tap', feeQuote, undefined, deployment);
+    const loadContext = () => reads.assetContext(asset, block, at ?? 'tap', feeQuote, undefined, deployment);
+    // Each result is independently bound to the same fenced snapshot. Wait
+    // for all work, then surface errors in the original validation order.
+    const early = reads.financialSnapshot?.() ? await readTogether([() => active(at), loadContext, () => reads.publicMintHeader(block, at)]) : null;
+    const { document, height } = early ? takeRead(early[0]) : await active(at), context = early ? takeRead(early[1]) : await loadContext();
     check(context.pattern && context.publicClaims && context.deployment?.active && context.deployment.kind === 'dmt', 'public_index_warming', 503);
     const scope = rules.tickerSupplyScope(context.deployment, at?.executionHeight ?? height);
     const shared = rules.multiTickerActive(at?.executionHeight ?? height) && !settled && (await reads.financialRecord(rules.capacityPlotKey(asset, rules.decimalV2(block), scope), at) || await reads.financialRecord(plotKey(asset, block, scope), at));
@@ -77,7 +117,7 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     check(scanning && !legacy || right.state === 'public' || right.state === 'finder', settled && !legacy && right.state === 'claimed' ? 'claimed_first' : right.state, 409);
     check(!legacy || !context.publicClaims.unsettled, 'public_scan_pending', 503);
     check(!rules.fieldValueMode(context.pattern) || rules.fieldValueAmountActive(height), 'pattern_amount_inactive');
-    const amount = rules.patternAmount(context.pattern, await reads.publicMintHeader(block, at));
+    const amount = rules.patternAmount(context.pattern, early ? takeRead(early[2]) : await reads.publicMintHeader(block, at));
     check(BigInt(amount) > 0n, 'mint_no_match');
     return { context, document, height, amount, ...right };
   };
@@ -165,7 +205,9 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     const d = result.context.deployment;
     check(scope === rules.tickerSupplyScope(d, at?.executionHeight ?? height), 'public_quote_binding');
     const request = { asset: signed.asset, block: signed.block, amount: signed.amount };
-    const generation = await reads.financialRecord(d.officialDeployment ? 'fd/external/' + rules.hashObject(d.id) : 'fd/asset/' + signed.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at);
+    // Only the immutable deployment binding is evidence here. Capacity counters
+    // change when a preceding scan is applied and are checked by the plan.
+    const generation = await reads.financialRecord(d.officialDeployment ? 'fd/external/' + rules.hashObject(d.id) : 'fd/asset/' + signed.asset, at), registered = generation && await reads.financialRecord('fd/' + generation, at, ['deployment']);
     check(registered?.deployment === d.id, 'financial_deployment_pending');
     const source = { publicMint: true, requestId: id, owner: null, request, asset: signed.asset, amount: signed.amount, receiver: signed.tapAddress,
       payer: signed.tapAddress, rail: 'tap', deployment: d, quote: signed.feeQuote, intent, feeItems, fees: financialFees(feeItems),
@@ -207,45 +249,58 @@ export function installPublicMintSources(reads, { network, bitcoinNetwork = 'mai
     check(!scope || rules.perTickerSupplyActive(at?.executionHeight ?? height), 'per_ticker_supply_inactive');
     check(transition.id === id, 'public_scan_identity');
     const old = await reads.financialRecord(publicScanKey(id), at);
-    const ctx = old?.winner ? null : await reads.publicMintContext(asset, block, at, undefined, { scanning: true, deployment: scope ?? undefined });
-    const start = old?.next?.height ?? (ctx?.claimDeadline !== undefined && BigInt(ctx.claimDeadline) > BigInt(document.values.publicMintActivationHeight) ? ctx.claimDeadline : document.values.publicMintActivationHeight);
-    const from = old?.next ?? { height: start, transactionIndex: '0', inscriptionIndex: '0' };
-    check(BigInt(from.height) <= BigInt(height), 'public_scan_pending');
-    if (old) check(await reads.publicBitcoinHash(old.scannedHeight, at) === old.blockHash, 'public_payment_reorg');
-    const b = await reads.publicBitcoinBlock(from.height, at);
-    check(rules.decimalV2(b.height) === from.height && Array.isArray(b.transactions) && b.transactions.length === b.tx.length, 'public_block_evidence');
-    const payments = []; let ti = Number(from.transactionIndex), ii = Number(from.inscriptionIndex), work = 0;
-    for (; ti < b.transactions.length && work < document.values.publicMintPageSize; ti++) {
-      const parsed = inscriptionContents(b.transactions[ti], lookupSettings, { scan: true });
-      check(parsed.txid === b.tx[ti], 'public_block_transaction');
-      if (!parsed.contents.length) { work++; ii = 0; continue; }
-      for (; ii < parsed.contents.length && work < document.values.publicMintPageSize; ii++, work++) {
-        const payload = parsed.contents[ii];
-        if (payload?.p !== 'tap' || payload.op !== 'token-auth' || !Array.isArray(payload.redeem?.items)) continue;
-        const intents = new Map();
-        for (const item of payload.redeem.items) {
-          const intent = await resolvePublicPaymentIntent(reads, item, { document, height: from.height, reference: parsed.txid + 'i' + ii, at });
-          if (intent?.asset === asset && intent.block === block &&
-              (rules.perTickerSupplyActive(at?.executionHeight ?? height) ? intent.supplyScope ?? null : null) === scope) intents.set(rules.publicRequestId(network, intent), intent);
+    const context = () => old?.winner ? null : reads.publicMintContext(asset, block, at, undefined, { scanning: true, deployment: scope ?? undefined });
+    const parallel = old?.next?.height && reads.financialSnapshot?.();
+    const scanPayments = async ctx => {
+      const early = parallel ? await readTogether([() => reads.publicBitcoinHash(old.scannedHeight, at),
+        () => publicScanBlock(reads, old.next.height, at, lookupSettings)]) : null;
+      const start = old?.next?.height ?? (ctx?.claimDeadline !== undefined && BigInt(ctx.claimDeadline) > BigInt(document.values.publicMintActivationHeight) ? ctx.claimDeadline : document.values.publicMintActivationHeight);
+      const from = old?.next ?? { height: start, transactionIndex: '0', inscriptionIndex: '0' };
+      check(BigInt(from.height) <= BigInt(height), 'public_scan_pending');
+      if (old) check((early ? takeRead(early[0]) : await reads.publicBitcoinHash(old.scannedHeight, at)) === old.blockHash, 'public_payment_reorg');
+      const pageSize = document.values.publicMintPageSize, payments = [], budget = PUBLIC_SCAN_STEP_CANDIDATES;
+      // One step crosses every confirmed block below the newest two; those are
+      // scanned one per step so the next step's reorg check covers them. The
+      // step ends early at the contract's payment page, after `budget` payments
+      // for this plot, or after PUBLIC_SCAN_STEP_READS DMW payment candidates.
+      const last = BigInt(from.height) < BigInt(height) - 2n ? BigInt(height) - 2n : BigInt(from.height);
+      let blockHash = null, next = null, work = 0, reads_ = 0;
+      scan: for (let h = BigInt(from.height); h <= last; h++) {
+        const first = h === BigInt(from.height), position = String(h), b = first && early && old.next?.height ? takeRead(early[1]) : await publicScanBlock(reads, position, at, lookupSettings);
+        blockHash ??= b.hash;
+        for (const c of b.candidates) {
+          if (first && (c.ti < Number(from.transactionIndex) || c.ti === Number(from.transactionIndex) && c.ii < Number(from.inscriptionIndex))) continue;
+          if (work >= budget || reads_ >= PUBLIC_SCAN_STEP_READS || payments.length >= pageSize) { next = { height: position, transactionIndex: String(c.ti), inscriptionIndex: String(c.ii) }; break scan; }
+          if (dmwCandidate(c)) reads_++;
+          const intents = new Map(), reference = c.txid + 'i' + c.ii;
+          for (const item of c.payload.redeem.items) {
+            const intent = await resolvePublicPaymentIntent(reads, item, { document, height: position, reference, at });
+            if (intent?.asset === asset && intent.block === block &&
+                (rules.perTickerSupplyActive(at?.executionHeight ?? height) ? intent.supplyScope ?? null : null) === scope) intents.set(rules.publicRequestId(network, intent), intent);
+          }
+          // One public checkout per inscription gives an unambiguous position.
+          if (intents.size !== 1) continue;
+          work++;
+          const intent = [...intents.values()][0];
+          try {
+            const p = await payment(intent, reference, { height: position, transactionIndex: String(c.ti), inscriptionIndex: String(c.ii) }, at);
+            if (p) payments.push(p);
+          } catch (error) {
+            // Invalid user payloads cannot halt scanning. Missing independent
+            // chain/index/settings evidence must halt it instead of skipping.
+            if (!['fee_quote_signature', 'public_quote_binding', 'payment_redeem', 'payment_item_binding', 'public_payment_activation'].includes(error.message)) throw error;
+          }
         }
-        // One public checkout per inscription gives an unambiguous position.
-        if (intents.size !== 1) continue;
-        const intent = [...intents.values()][0];
-        try {
-          const p = await payment(intent, parsed.txid + 'i' + ii, { height: from.height, transactionIndex: String(ti), inscriptionIndex: String(ii) }, at);
-          if (p) payments.push(p);
-        } catch (error) {
-          // Invalid user payloads cannot halt scanning. Missing independent
-          // chain/index/settings evidence must halt it instead of skipping.
-          if (!['fee_quote_signature', 'public_quote_binding', 'payment_redeem', 'payment_item_binding', 'public_payment_activation'].includes(error.message)) throw error;
-        }
+        next = { height: String(h + 1n), transactionIndex: '0', inscriptionIndex: '0' };
       }
-      if (ii < parsed.contents.length) break;
-      ii = 0;
-    }
-    const next = ti === b.transactions.length ? { height: String(BigInt(from.height) + 1n), transactionIndex: '0', inscriptionIndex: '0' } :
-      { height: from.height, transactionIndex: String(ti), inscriptionIndex: String(ii) };
-    return { requestId: id, asset, block, ...(scope ? { deployment: scope } : {}), start, previous: rules.hashObject(old ?? null), from, next, blockHash: b.hash, payments };
+      return { requestId: id, asset, block, ...(scope ? { deployment: scope } : {}), start, previous: rules.hashObject(old ?? null), from, next, blockHash, payments };
+    };
+    if (!parallel) return scanPayments(await context());
+    // An accepted cursor already fixes the scan range. Check its current mint
+    // right alongside the independent payment reads, but report that check's
+    // error first and never return evidence until both have finished.
+    const [checked, scanned] = await readTogether([context, () => scanPayments(null)]);
+    takeRead(checked); return takeRead(scanned);
   };
   reads.publicMintPermit = async (id, at) => {
     if (reads.financialChainAnchor) await reads.financialChainAnchor({ at, prior: await reads.financialRecord('fp/chain', at) });

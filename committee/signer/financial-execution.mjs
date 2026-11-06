@@ -16,11 +16,16 @@ import { claimsNeverCloseActive } from '../../rules/src/public-mint.js';
 import { bulkBatchWork } from '../../rules/src/bulk-execution.js';
 import { warmBatchRegistry } from '../../service/src/financial-registry.mjs';
 import { phase } from '../../service/src/lifecycle.mjs';
+import { financialEvidencePrefetch } from '../../service/src/financial-evidence-prefetch.mjs';
 
 // Read accepted financial records from the independent notary snapshot, not
 // from gateway replay context. Sequential simulation checks each page against
 // predecessor effects and verifies all root proofs before signing.
-export async function verifyFinancialExecution({ files, reads, document, network, height, at }) {
+export async function verifyFinancialExecution(options) {
+  return options.files.some(file => file.financialOperations?.length) && options.reads.withFinancialSnapshot ?
+    options.reads.withFinancialSnapshot(options.at, () => verifyExecution(options)) : verifyExecution(options);
+}
+async function verifyExecution({ files, reads, document, network, height, at, evidenceConcurrency = 4 }) {
   check(typeof reads.financialRecord === 'function' && typeof reads.financialEvidence === 'function', 'financial_source_adapter_required');
   if (reads.financialScope) {
     const snapshot = await reads.batchStamp();
@@ -32,6 +37,9 @@ export async function verifyFinancialExecution({ files, reads, document, network
   const changed = new Map(), store = { get: async key => changed.has(key) ? changed.get(key) : await reads.financialRecord(key, at),
     put: (key, value) => changed.set(key, value), del: key => changed.set(key, null) }, settings = accountSettings(document);
   const reservations = new Map(), sources = reads.financialScope?.({ record: store.get, reservations }) ?? reads;
+  const evidenceAt = legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at;
+  const evidenceFor = financialEvidencePrefetch({ transitions: files.flatMap(file => (file.financialOperations ?? []).map(input => input.transition)),
+    reads, sources, record: store.get, reservations, at: evidenceAt, concurrency: evidenceConcurrency });
   await bulkBatchWork(files.flatMap(f => f.financialOperations ?? []), { read: store.get });
   const apply = async op => {
     if (op.op === 'ar') await applyRootAccounts(store, op, { network, height, settings });
@@ -62,7 +70,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
       if (group[0].reserveGroup !== undefined) {
         groupEvidence = []; const plans = [];
         for (const input of group) {
-          const evidence = await phase('prepare.financial_evidence', () => sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at));
+          const evidence = await phase('prepare.financial_evidence', () => evidenceFor(input.transition));
           check(equal(evidence, input.evidence), 'financial_evidence_read');
           groupEvidence.push(evidence);
           plans.push(await financialPlan({ transition: input.transition, evidence }, { read: store.get, height, document }));
@@ -70,7 +78,7 @@ export async function verifyFinancialExecution({ files, reads, document, network
         groupPlans = mergedReservePlans(plans);
       }
       for (const [index, input] of group.entries()) {
-        let evidence = groupEvidence ? groupEvidence[index] : await phase('prepare.financial_evidence', () => sources.financialEvidence(input.transition, legacyDeployShareActive(height) || multiTickerActive(height) || freeLinkActive(height) ? { ...at, executionHeight: height } : at));
+        let evidence = groupEvidence ? groupEvidence[index] : await phase('prepare.financial_evidence', () => evidenceFor(input.transition));
         if (input.transition.type === 'public-scan' && claimsNeverCloseActive(document, height)) {
           // Full rules replay already derived this decision after agent closure
           // and moves. The external scan is read at the accepted predecessor and

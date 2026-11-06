@@ -5,6 +5,7 @@ import { executeNonceReservations, financialTransitionPlan } from './nonce-reser
 import { nonceReservation as singleNonceReservation } from '../../rules/src/financial-execution.js';
 import { isBulkTransition, bulkAdmissionWrites } from './bulk-mint-admission.mjs';
 import { bulkAcceptedWrites } from './bulk-mints.mjs';
+import { bulkSchema } from './bulk-mint-sources.mjs';
 import { rules } from './rules.mjs';
 import { check, serial } from './util.mjs';
 import { assetResources } from './asset-resources.mjs';
@@ -15,6 +16,7 @@ import { readPublicWinner, publicClaimReaders } from './public-claim-readers.mjs
 import { paymentTiming } from '../../rules/src/payment-timing.js';
 import { surplusCreditId } from '../../contract/payment-pages.js';
 import { warmFinancialRegistry } from './financial-registry.mjs';
+import { financialEvidencePrefetch } from './financial-evidence-prefetch.mjs';
 const nonceReservation = t => t?.type === 'reserve-many' && t.action?.type === 'reserve-n' || singleNonceReservation(t);
 // These source results invalidate an earlier local full-payment observation.
 // HTTP/snapshot failures alone do not establish that confirmed money vanished.
@@ -37,7 +39,10 @@ async function bulkWork(execution, operations) {
 // Explicit source adapter: it must reconstruct fees, rights, chain settlement,
 // permit recovery and exits from independent point reads. There is no fallback
 // that treats a gateway-supplied evidence object as a source verification.
-export async function buildFinancialExecution({ store, credits = [], crafts = [], transfers = [], compoundMerge = null, transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0, publicClaims, preparePublicMint }) {
+export async function buildFinancialExecution(options) {
+  return options.transitions?.length && options.reads.withFinancialSnapshot ? options.reads.withFinancialSnapshot(options.at, () => buildExecution(options)) : buildExecution(options);
+}
+async function buildExecution({ store, credits = [], crafts = [], transfers = [], compoundMerge = null, transitions, reads, document, height, at, defer = false, priorOperations = [], priorAssetTouches = 0, priorLinkInputs = 0, publicClaims, preparePublicMint, followUp = null, stopAfter = null, evidenceConcurrency = 4 }) {
   check(typeof reads.financialEvidence === 'function', 'financial_source_adapter_required');
   check(Array.isArray(transitions) && transitions.length <= document.values.mintOperationBudget, 'financial_batch_budget');
   if (reads.financialScope) {
@@ -56,8 +61,20 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
   const creditOperations = [...execution.operations], inputs = [], deferred = [];
   let linkInputs = priorLinkInputs;
   const handled = new Set();
+  // A follow-up (the consume after a completing fund) joins this batch right
+  // behind its predecessor; signers verify it against the same batch-local view.
+  const known = new Set(transitions.map(t => rules.hashObject(['dmw-financial-transition-v2', t]))), followUps = new Set();
+  // A deferred build stops starting new work once the batch is full or its time is
+  // up: the rest stays queued for the next batch instead of costing evidence reads
+  // that can only be set aside, while the next Bitcoin block makes the batch stale.
+  let attempted = 0, full = false, unprocessed = 0;
+  const evidenceAt = rules.legacyDeployShareActive(height) || rules.multiTickerActive(height) || rules.freeLinkActive(height) ? { ...at, executionHeight: height } : at;
+  const evidenceFor = financialEvidencePrefetch({ transitions, reads, sources, record: key => execution.getAsync(key), reservations, at: evidenceAt,
+    concurrency: evidenceConcurrency, canStart: () => !defer || !full && (stopAfter === null || Date.now() < stopAfter) });
   for (const transition of transitions) {
     if (handled.has(transition)) continue;
+    if (defer && !followUps.has(transition) && attempted > 0 && (full || stopAfter !== null && Date.now() >= stopAfter)) { unprocessed++; continue; }
+    attempted++;
     if (nonceReservation(transition)) {
       const snapshot = () => ({ records: new Map(execution.changed), nodes: new Map(execution.availability.pending),
         balances: new Map(execution.balances), operations: [...execution.operations], touches: execution.assetTouches });
@@ -97,7 +114,7 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     try {
     const link = /^(?:legacy-)?link-/.test(transition.action?.type ?? '');
     check(!link || linkInputs < document.values.linkOperationBudget, 'financial_link_budget');
-    let evidence = await sources.financialEvidence(transition, rules.legacyDeployShareActive(height) || rules.multiTickerActive(height) || rules.freeLinkActive(height) ? { ...at, executionHeight: height } : at);
+    let evidence = await evidenceFor(transition);
     if (transition.type === 'public-scan' && rules.claimsNeverCloseActive(document, height)) {
       check(publicClaims && preparePublicMint, 'public_claim_projection_required');
       const { pattern, asset } = rules.publicPatternForAsset(publicClaims.patterns, transition.asset);
@@ -126,13 +143,38 @@ export async function buildFinancialExecution({ store, credits = [], crafts = []
     inputs.push({ ...input, operations });
     if (transition.type === 'reserve' || transition.action?.type === 'link-reserve') reservations.set(transition.id, evidence);
     if (link) linkInputs++;
+    if (followUp) {
+      const next = await followUp(transition, { record: key => execution.getAsync(key), sources, at }).catch(() => null);
+      const key = next && rules.hashObject(['dmw-financial-transition-v2', next]);
+      if (next && !known.has(key)) { known.add(key); followUps.add(next); transitions.push(next); }
+    }
     } catch (error) {
       if (!defer) throw error;
       execution.changed = checkpoint.records; execution.availability.pending = checkpoint.nodes; execution.balances = checkpoint.balances; execution.operations.length = checkpoint.count; execution.assetTouches = checkpoint.touches;
-      deferred.push({ id: rules.hashObject(['dmw-financial-transition-v2', transition]), reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_evidence_unavailable' });
+      if (['financial_batch_bytes', 'financial_batch_assets'].includes(error.message)) full = true;
+      // An unqueued follow-up that does not fit is queued normally after acceptance.
+      if (!followUps.has(transition)) deferred.push({ id: rules.hashObject(['dmw-financial-transition-v2', transition]), reason: /^[a-z][a-z0-9_]{0,80}$/.test(error.message) ? error.message : 'financial_evidence_unavailable' });
     }
   }
-  return { ...execution.result(), creditOperations, inputs, deferred };
+  return { ...execution.result(), creditOperations, inputs, deferred, unprocessed };
+}
+
+// A fund that completes a mint's payment is followed by its consume in the
+// same batch, so the permit needs one batch after payment instead of two.
+export async function completingFundFollowUp(transition, { record, sources, at }) {
+  if (transition.type === 'fund') {
+    const funding = await record('fp/' + transition.id);
+    if (funding?.state !== 'open' || !funding.fees.every((f, i) => f.amount === funding.paid[i])) return null;
+    const { permit } = await sources.financialPermit(transition.id, at);
+    return { type: 'consume', id: transition.id, permitHash: permit.digest };
+  }
+  if (transition.type === 'bulk-fund') {
+    const funding = await record('fp/' + transition.id);
+    if (funding?.state !== 'bulk-funded') return null;
+    const b = await bulkSchema();
+    return { type: 'bulk-consume', id: transition.id, permitRoot: b.bulkPermitPlans(funding.manifest, funding.receiptRoot).permitRoot };
+  }
+  return null;
 }
 
 export class FinancialExecution {
@@ -295,7 +337,16 @@ export class FinancialExecution {
     return release;
   }
   transitions() {
-    const after = this.store.get('meta', 'financialCursor') ?? '', limit = Math.min(this.resources.workPage, this.document.values.mintOperationBudget);
+    const after = this.store.get('meta', 'financialCursor') ?? '', budget = Math.min(this.resources.workPage, this.document.values.mintOperationBudget);
+    // A public payment's reveal and its plot scan can share one batch: the
+    // batch-local view lets the scan read the reveal applied before it. Up to
+    // half the page takes queued public steps first, reveals before scans, so
+    // a paid mint never waits one batch per step in hash order.
+    const rank = row => row.value.type === 'public-payment' ? (row.value.action === 'register' ? 0 : 1) : 2;
+    const publicSteps = this.store.list('financialQueue', { limit: this.resources.mintInputCapacity })
+      .filter(row => ['public-payment', 'public-scan'].includes(row.value.type))
+      .map((row, i) => [row, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([row]) => row).slice(0, Math.floor(budget / 2));
+    const taken = new Set(publicSteps.map(row => row.id)), limit = budget - publicSteps.length;
     let rows = this.store.list('financialQueue', { after, limit });
     if (!rows.length && after) rows = this.store.list('financialQueue', { limit });
     else if (after && rows.length < limit && rows.some(row => nonceReservation(row.value))) {
@@ -303,16 +354,22 @@ export class FinancialExecution {
       // does not split one owner's ready reserves across otherwise empty batches.
       rows.push(...this.store.list('financialQueue', { limit: limit - rows.length }).filter(row => row.id <= after));
     }
-    return rows;
+    const page = [...publicSteps, ...rows.filter(row => !taken.has(row.id))];
+    page.cursor = rows.at(-1)?.id ?? '';
+    return page;
   }
   async build(args) {
     await this.linkReconciler.tick(args.height, args.at);
-    const rows = (this.prepared ?? this.transitions()).filter(r => !args.excluded?.has(r.id)).slice(0, args.remaining ?? this.document.values.mintOperationBudget); this.prepared = null;
+    const page = this.prepared ?? this.transitions();
+    const rows = page.filter(r => !args.excluded?.has(r.id)).slice(0, args.remaining ?? this.document.values.mintOperationBudget); this.prepared = null;
     const result = await buildFinancialExecution({ ...args, store: args.accountStore ?? this.store, reads: this.reads, document: this.document,
-      transitions: rows.map(r => r.value), defer: true });
+      transitions: rows.map(r => r.value), defer: true, followUp: this.sameBatchConsume === false ? null : completingFundFollowUp,
+      stopAfter: Date.now() + this.resources.financialBuildMs });
     // Advancing this local work cursor changes no financial state. Deferred
-    // funded work stays durable and cannot starve unrelated requests.
-    await this.store.transact([{ space: 'meta', id: 'financialCursor', value: rows.at(-1)?.id ?? '' },
+    // funded work stays durable and cannot starve unrelated requests. A build
+    // stopped early keeps its cursor, so the untried rows come first next time.
+    const cursor = result.unprocessed ? this.store.get('meta', 'financialCursor') ?? '' : page.cursor ?? rows.at(-1)?.id ?? '';
+    await this.store.transact([{ space: 'meta', id: 'financialCursor', value: cursor },
       ...result.deferred.map(row => ({ space: 'financialDeferred', id: row.id, value: { ...row, height: args.height } }))]);
     return result;
   }

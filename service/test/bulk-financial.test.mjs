@@ -108,11 +108,13 @@ test('bulk restart recovers accepted provenance and drains with ingress disabled
 test('bulk custody and deferred commissions project once from accepted deltas', async t => {
   const f = await fixture(t, { suspense: true }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); const reserve = await f.execute();
-  await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null }); const paid = await f.execute();
-  await f.bulk.tick(); const consume = await f.execute();
+  await f.bulk.payment({ orderId: id, paymentId: f.payment(q), commitTxid: null, revealTxid: null });
+  // The completing fund carries its consume: one batch funds and consumes.
+  const paid = await f.execute(), consume = paid;
+  assert.deepEqual(paid.inputs.map(i => i.transition.type), ['bulk-fund', 'bulk-consume']);
   const claims = consume.writes.filter(w => w.id.startsWith('bc/')); assert.equal(claims.length, 2);
   for (const claim of claims) assert.equal((await f.reads.bulkCustodyOriginal(claim.value, f.stamp())).fee.amount, claim.value.amount);
-  for (const result of [reserve, paid, consume]) await f.store.transact(publicFinancialOperations(f.store, result.draft, result.writes));
+  for (const result of [reserve, paid]) await f.store.transact(publicFinancialOperations(f.store, result.draft, result.writes));
   const burned = q.feeManifest.reduce((n, m) => n + BigInt(m.shares.find(s => s.role === 'burn')?.payable ?? '0'), 0n).toString();
   assert.equal(f.store.get('publicSummaries', 'burn').tap, burned);
   await f.store.transact(publicFinancialOperations(f.store, paid.draft, paid.writes));
@@ -347,7 +349,7 @@ test('late bulk receipt is recovered automatically once and projects a spendable
 });
 
 for (const pending of ['bulk-fund', 'bulk-consume']) test(`expired ${pending} preserves a signed draft and recovers payment after unsigned work retires`, async t => {
-  const f = await fixture(t, { values: { pendingBlocks: 6 } }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
+  const f = await fixture(t, { values: { pendingBlocks: 6 }, sameBatchConsume: false }), q = await f.bulk.quote(f.input(2)), id = q.orderId;
   await f.bulk.request(f.sign(q)); await f.execute();
   const reference = f.payment(q, 'queued-' + pending);
   await f.bulk.payment({ orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
@@ -403,11 +405,11 @@ test('bulk payer holding the deployment has no side payment and keeps the same f
   b.validateBulkFees(q.terms, q.feeManifest);
   await f.bulk.request(f.sign(q)); await f.execute();
   await f.bulk.payment({ orderId: q.orderId, paymentId: f.payment(q), commitTxid: null, revealTxid: null }); await f.execute();
-  assert.equal(f.store.get('accountRecords', 'fp/' + q.orderId).state, 'bulk-funded');
+  assert.equal(f.store.get('accountRecords', 'fp/' + q.orderId).state, 'bulk-consumed');
 });
 
 test('bulk holder and same-receipt transfer binding are rechecked independently before funding and consumption', async t => {
-  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' } });
+  const f = await fixture(t, { baseFee: '10000', values: { deployerShareBps: 500, legacyDeployShareBps: 0, legacyDeployPayoutMinAtoms: '1' }, sameBatchConsume: false });
   const q = await f.bulk.quote(f.input()), id = q.orderId;
   f.holderAddress(address(6));
   await assert.rejects(f.bulk.request(f.sign(q)), /bulk_fees_changed/);

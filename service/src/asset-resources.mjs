@@ -19,6 +19,9 @@ export const ASSET_RESOURCES = Object.freeze({
   // Claim payout rows the gateway proposes per observation; 0 uses the full settings allowance.
   // A smaller proposal is valid for every signer and keeps batches short when payouts are large.
   settlementDeliveryRows: 0,
+  // Time one batch spends starting financial steps; later steps wait for the next batch. Signers
+  // check the same steps again, so a short budget lets a paying batch sign before the next block.
+  financialBuildMs: 12000,
 });
 export function assetResources(overrides = {}) {
   const settings = { ...ASSET_RESOURCES, ...overrides };

@@ -56,7 +56,8 @@ test('bulk unverified HTTP payment hint cannot hide pay or replace accepted refe
   const paid = await http.post('/mint/bulk/payment', { orderId: id, paymentId: reference, commitTxid: null, revealTxid: null });
   assert.equal(paid.status, 202); await f.execute();
   const status = await (await fetch(http.url + '/web-api/mint/bulk/' + id)).json();
-  assert.equal(status.payment.reference, reference); assert.equal(status.state, 'paid');
+  // The batch that accepts the payment also consumes it; permits are next.
+  assert.equal(status.payment.reference, reference); assert.equal(status.state, 'permit_pending');
 });
 
 test('bulk verified finish repeat returns 200 while first report remains 202', async t => {

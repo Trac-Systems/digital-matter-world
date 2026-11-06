@@ -33,18 +33,18 @@ test('bulk TAP reads share nested fences and concurrent source responses, withou
   assert.equal(f.calls.filter(p => p.includes('getDeployment/')).length, 2, 'ordinary reads do not use the bulk cache');
 });
 
-test('verified TAP results survive a Trac failure, but absence and ownership refresh on each new tip or branch', async () => {
+test('TAP absence is retried in the same snapshot and ownership refreshes on each new tip or branch', async () => {
   const f = fixture(), path = 'getDmtMintHolderByBlock/dmt-example/1';
   await assert.rejects(f.reader.bulkAt(f.at, async () => {
     assert.equal(await f.reader.tap(path), null); throw Error('financial_snapshot_changed');
   }), /financial_snapshot_changed/);
   assert.equal(await f.reader.bulkAt(f.at, () => f.reader.tap(path)), null);
-  assert.equal(f.calls.filter(p => p.endsWith(path)).length, 1);
+  assert.equal(f.calls.filter(p => p.endsWith(path)).length, 2);
   f.advance(); f.set({ ins: 'minted' });
   assert.deepEqual(await f.reader.bulkAt(f.at, () => f.reader.tap(path)), { ins: 'minted' });
   f.reorg(); f.set(null);
   assert.equal(await f.reader.bulkAt(f.at, () => f.reader.tap(path)), null);
-  assert.equal(f.calls.filter(p => p.endsWith(path)).length, 3);
+  assert.equal(f.calls.filter(p => p.endsWith(path)).length, 4);
 });
 
 test('a failed TAP fence publishes nothing and source errors are never retained', async () => {
@@ -62,6 +62,7 @@ test('a failed TAP fence publishes nothing and source errors are never retained'
 
 test('bulk TAP cache obeys configurable entry and byte bounds and expires detached scopes', async () => {
   const f = fixture({ bulkReadCacheEntries: 2, bulkReadCacheBytes: 100 });
+  f.set('ok');
   let escaped;
   const later = new Promise(resolve => { escaped = resolve; });
   let detached;
@@ -78,4 +79,14 @@ test('bulk TAP cache obeys configurable entry and byte bounds and expires detach
   f.set('x'.repeat(200));
   await f.reader.bulkAt(f.at, () => f.reader.tap('getBitmap/large'));
   assert.ok(f.reader.bulkCache.bytes <= 100); assert.equal(f.reader.bulkCache.rows.size, 2);
+});
+
+test('successful TAP reads expire by age even when the tip is unchanged', async t => {
+  const f = fixture(); f.set({ ins: 'verified' }); let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  const read = () => f.reader.bulkAt(f.at, () => f.reader.tap('getDeployment/example'));
+  await read(); await read();
+  assert.equal(f.calls.filter(path => path.endsWith('getDeployment/example')).length, 1);
+  now = 60000; await read();
+  assert.equal(f.calls.filter(path => path.endsWith('getDeployment/example')).length, 2);
 });

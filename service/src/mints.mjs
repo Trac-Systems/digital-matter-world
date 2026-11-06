@@ -15,6 +15,8 @@ import { KeyedWork, parallelPage } from './keyed-work.mjs';
 import { paymentTiming } from '../../rules/src/payment-timing.js';
 import { directHolderTerms, verifyDirectHolder } from './direct-deployer.mjs';
 const same = (a, b) => rules.stableJSON(a) === rules.stableJSON(b);
+// Site mints keep their block as a decimal string, agent v1 rows as a number.
+const sameBlock = (a, b) => { try { return rules.decimalV2(a) === rules.decimalV2(b); } catch { return false; } };
 
 export function publicMint(r, counted = r.checkedAt ?? r.created) {
   const state = r.state === 'reserving' ? 'awaiting_payment' : r.state;
@@ -291,6 +293,6 @@ export class Mints {
     return o?.accepted === true && o.fail === false && o.confirmations >= 1 && /^[0-9a-f]{64}i(?:0|[1-9][0-9]{0,9})$/.test(o.inscription) &&
       o.deployment === r.context.deployment.id && o.tick === r.context.deployment.tick && o.receiver === r.receiver && o.amount === r.request.amount &&
       o.dta === r.permit.dta && o.permitHash === r.permit.prv.hash && o.committee === r.context.deployment.privilegePublicKey &&
-      (r.context.deployment.kind !== 'dmt' || o.block === r.request.block);
+      (r.context.deployment.kind !== 'dmt' || sameBlock(o.block, r.request.block));
   }
 }

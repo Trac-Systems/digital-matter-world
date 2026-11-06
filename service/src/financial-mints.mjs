@@ -333,6 +333,19 @@ export class FinancialMints extends Mints {
       });
     } finally { this.running = false; }
   }
+  // Its own lane: request the permit as soon as the consume is accepted, in the
+  // signers' idle gap after a batch, not at the next full mint tick.
+  async issuePermits() {
+    await this.publicMints.issuePending();
+    const after = this.permitCursor ?? '', limit = this.resources.workPage;
+    let page = this.store.list('financialActiveMints', { after, limit }); if (!page.length && after) page = this.store.list('financialActiveMints', { limit });
+    this.permitCursor = page.length === limit ? page.at(-1).id : '';
+    for (const { id } of page) {
+      const row = this.store.get('mints', id);
+      if (!row || row.publicMint || row.permit || this.store.get('accountRecords', 'fp/' + id)?.state !== 'consumed') continue;
+      try { await this.mintWork.run(id, () => this.advance(this.store.get('mints', id))); } catch { /* retried on the next pass */ }
+    }
+  }
   async recoverPayments(row) {
     const sent = this.store.get('inflight', `mint/${row.id}/payment`)?.inscriptionId;
     const references = [...new Set([...(row.paymentReferences ?? []), ...(row.ethereumReferences ?? []),
@@ -428,7 +441,8 @@ export class FinancialMints extends Mints {
       if (!this.verifyMint(row, observation)) return;
       const capacity = this.store.get('accountRecords', 'dc/' + row.id);
       if (capacity?.state === 'issued' || funding.capacity && !funding.minted && this.store.get('accountRecords', 'fi/source/' + row.id)?.legacy) {
-        await this.queue(row, { type: 'lifecycle', id: row.id, action: { type: 'capacity-finish', id: row.id, permitHash: row.permit.prv.hash } }); return;
+        // Confirmed on Bitcoin: it is minted now. The contract records the finish in a later batch.
+        await this.queue({ ...row, state: 'minted', observation }, { type: 'lifecycle', id: row.id, action: { type: 'capacity-finish', id: row.id, permitHash: row.permit.prv.hash } }); return;
       }
       check(!capacity || capacity.state === 'minted', 'financial_capacity_terminal');
       await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, state: 'minted', observation } }, { space: 'financialIssuedMints', id: row.id }]);

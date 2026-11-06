@@ -1,5 +1,6 @@
 import { check, hash } from './util.mjs';
 import { rules } from './rules.mjs';
+import { snapshotMemo } from './snapshot-memo.mjs';
 import { createRequire } from 'node:module';
 const { secp256k1 } = createRequire(new URL('../../local/package.json', import.meta.url))('@noble/curves/secp256k1');
 
@@ -41,26 +42,21 @@ export function generationDigest(entry) {
 // Everything this check reads (TAP's deploy, element and privilege records, inscription contents and confirmations)
 // can only change with a new Bitcoin block. Inside a snapshot whose block is known, a successful check is reused for
 // the same deployment until the block changes; refusals are never kept. Signers verify independently.
-const verified = new WeakMap(), VERIFIED_LIMIT = 512;
-function verifiedCache(reads) { let cache = verified.get(reads); if (!cache) verified.set(reads, cache = { block: null, rows: new Map() }); return cache; }
+const verified = new WeakMap();
+function verifiedCache(reads) { let cache = verified.get(reads); if (!cache) verified.set(reads, cache = snapshotMemo({ limit: 512 })); return cache; }
 export async function verifyDeployment(reads, entry, options = {}) {
-  if (!reads.withTapSnapshot) return verifyDeploymentRecords(reads, entry, options);
-  return reads.withTapSnapshot(options.view, async stamp => {
-    if (!stamp?.hash) return verifyDeploymentRecords(reads, entry, options);
-    const cache = verifiedCache(reads), block = stamp.height + '/' + stamp.hash;
-    if (cache.block !== block) { cache.block = block; cache.rows.clear(); }
-    const key = rules.stableJSON([entry, options.confirmations ?? 1, options.verifyReceiver ?? null,
-      options.view ? options.view.executionHeight ?? options.view.counted ?? null : null]);
-    let pending = cache.rows.get(key);
-    if (!pending) {
-      if (cache.rows.size >= VERIFIED_LIMIT) cache.rows.clear();
-      pending = verifyDeploymentRecords(reads, entry, options);
-      cache.rows.set(key, pending);
-      pending.catch(() => { if (cache.rows.get(key) === pending) cache.rows.delete(key); });
-    }
-    const result = await pending;
-    return { ...result };
-  });
+  const financialSnapshot = reads.financialSnapshot?.();
+  const verify = () => financialSnapshot && reads.memoFinancialRead ? reads.memoFinancialRead('verifiedDeployment',
+    [entry, options, reads.feeQuotes?.document ? rules.hashObject(reads.feeQuotes.document) : null],
+    () => verifyDeploymentRecords(reads, entry, options), options.view ?? financialSnapshot) : verifyDeploymentRecords(reads, entry, options);
+  if (!reads.withTapSnapshot) return verify();
+  try {
+    return await reads.withTapSnapshot(options.view, async stamp => {
+      if (!stamp?.hash || financialSnapshot) return verify();
+      const key = rules.stableJSON([stamp, entry, options.confirmations ?? 1, options.verifyReceiver ?? null, options.view ?? null]);
+      return structuredClone(await verifiedCache(reads)(key, verify));
+    });
+  } catch (error) { verified.get(reads)?.clear(); throw error; }
 }
 // The reads are independent, so they all start at once inside the same TAP snapshot; the checks then run in their
 // original order, and a read error surfaces only where that read was used before, so refusals keep their reasons.

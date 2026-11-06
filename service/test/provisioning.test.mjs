@@ -325,6 +325,8 @@ test('a verified deployment is reused within its Bitcoin block, checked again in
   assert.ok(first > 0);
   await verifyDeployment(f.reads, job.entry); await verifyDeployment(f.reads, job.entry);
   assert.equal(reads, first, 'same block: no new reads');
+  await verifyDeployment(f.reads, job.entry, { view: undefined, confirmations: undefined });
+  assert.equal(reads, first, 'explicit optional defaults share the same verification');
   block = 2; await verifyDeployment(f.reads, job.entry);
   assert.equal(reads, first * 2, 'new block: checked again');
   const forged = { ...job.entry, privilege: 'f'.repeat(64) + 'i0' };
@@ -332,4 +334,17 @@ test('a verified deployment is reused within its Bitcoin block, checked again in
   const after = reads;
   await assert.rejects(verifyDeployment(f.reads, forged), /deployment_binding|privilege/);
   assert.ok(reads > after, 'a refusal is checked again');
+});
+
+test('deployment verification is not retained when its closing TAP fence fails', async t => {
+  const f = await provisioningFixture(t), job = await f.complete();
+  let fail = true, calls = 0;
+  const tap = f.reads.tap; f.reads.tap = async path => { calls++; return tap(path); };
+  f.reads.withTapSnapshot = async (_view, read) => {
+    const result = await read({ height: '1', hash: 'block' });
+    if (fail) throw Error('tap_snapshot_changed'); return result;
+  };
+  await assert.rejects(verifyDeployment(f.reads, job.entry), /tap_snapshot_changed/);
+  const first = calls; fail = false;
+  await verifyDeployment(f.reads, job.entry); assert.equal(calls, first * 2);
 });

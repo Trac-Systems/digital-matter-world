@@ -179,6 +179,7 @@ async function startGateway(config, controller) {
     scheduler.add('provisioning', () => operator?.provisioner?.tick());
     scheduler.add('bulk_mints', () => v2?.bulkMints?.tick());
     scheduler.add('financial_deployments', () => mints?.deploymentTick?.());
+    scheduler.add('permits', () => mints?.issuePermits?.());
     scheduler.add('receipt_recovery', () => v2?.recoverReceipts());
     for (const [name, task] of [['pipeline', () => pipeline.tick()], ['recovery', () => v2?.recovery?.tick()], ['outbox', () => outbox.tick()], ['mints', () => mints?.tick()], ['links', () => links?.tick?.()], ['custody', () => v2?.custody?.tick()],
       ['feeds', () => feeds.tick()], ['public_reads', () => v2 ? undefined : publicIndex.tick()], ['operator', () => operator?.tick()], ['bindings', () => bindings.tick()], ...publicTasks]) scheduler.add(name, task);

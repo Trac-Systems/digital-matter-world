@@ -99,8 +99,11 @@ export async function createV2Runtime({ config, store, secret, history, reads, c
       await refresh();
     }, { join: true });
   };
+  // Named nodes are content-addressed: one reader keeps its row cache across
+  // admissions instead of re-reading the catalog path for every move.
+  const namedReader = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: pin.resources.values.namedNodeCache });
   const context = () => {
-    const state = store.get('meta', 'ruleState'), storage = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: pin.resources.values.namedNodeCache });
+    const state = store.get('meta', 'ruleState'), storage = namedReader;
     const next = rules.nextUint(rules.decimalV2(accepted.last.n)), draft = store.get('meta', 'draft');
     const future = !!(assetResources(config.assetResources).admissionFutureBatches && draft?.observations &&
       String(draft.proposal.batch.n) === next && !draft.proposal.batch.renewal && !accepted.scheduledSettings);

@@ -130,6 +130,20 @@ test('bulk sender retains the side payment across restarts and only permits miss
   assert.equal(calls.at(-1).allowMissingDeployer, true);
 });
 
+test('an order seen before its accepted side payment adopts it once, while nothing is planned', async t => {
+  const f = await senderFixture(t, 1), read = f.gateway.bulkItem; let side = null;
+  f.gateway.bulkItem = async () => ({ ...await read(), ...(side ? { deployerPayment: side } : {}) });
+  const calls = [];
+  f.bitcoin.bulkFunding = async input => { calls.push(input); return null; };
+  await f.sender.process(f.orderId);
+  assert.equal(f.row.deployerPayment, null);
+  side = { to: f.terms.receiver, amount: '5', dta: `dmw-bulk-deployer-v1|${f.orderId}` };
+  await f.sender.process(f.orderId);
+  assert.deepEqual(f.row.deployerPayment, side); assert.deepEqual(calls.at(-1).deployerPayment, side);
+  await f.restart(); side = { ...side, amount: '6' };
+  await assert.rejects(f.sender.process(f.orderId), /bulk_sender_binding_changed/);
+});
+
 for (const point of [0, 1, 2, 3]) for (const when of ['before', 'after']) test(`bulk crash ${when} broadcast ${point} resumes identical saved bytes`, async t => {
   const f = await senderFixture(t, 33), send = f.bitcoin.broadcast; let calls = 0;
   f.bitcoin.broadcast = async (...args) => {

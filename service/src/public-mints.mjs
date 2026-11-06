@@ -154,6 +154,25 @@ export class PublicMints {
       await this.store.transact([...extra, { space: 'publicMintPaidPlots', id, value: { asset, block, through, ...(deployment ? { deployment } : {}) } }]);
     });
   }
+  // A permit is signed as soon as a scan's winner is accepted. This short pass
+  // runs on its own lane, so it reaches the signers in the gap after a batch
+  // instead of waiting for the next full mint tick behind discovery and scans.
+  async issuePending() {
+    if (this.document.values.publicMintActivationHeight === undefined || this.issuing) return;
+    this.issuing = true;
+    try {
+      const after = this.store.get('meta', 'publicMintPermitCursor') ?? '', limit = this.parent.resources.workPage;
+      let plots = this.store.list('publicMintPaidPlots', { after, limit }); if (!plots.length && after) plots = this.store.list('publicMintPaidPlots', { limit });
+      let at = null;
+      for (const { id } of plots) {
+        const winner = this.store.get('accountRecords', publicScanKey(id))?.winner;
+        if (!winner || this.store.get('mints', winner.id)?.permit) continue;
+        at ??= await this.reads.batchStamp();
+        try { await this.parent.mintWork.run(winner.id, () => this.issue(winner, at)); } catch { /* retried on the next pass */ }
+      }
+      await this.store.put('meta', 'publicMintPermitCursor', plots.length === limit ? plots.at(-1).id : '');
+    } finally { this.issuing = false; }
+  }
   async migrateSettledPlots(height) {
     if (this.store.get('meta', 'publicMintPaidPlotsMigrated')) return;
     const limit = this.parent.resources.workPage, after = this.store.get('meta', 'publicMintPaidPlotsMigration') ?? '';
@@ -220,6 +239,7 @@ export class PublicMints {
     const after = this.store.get('meta', 'publicMintCursor') ?? '';
     let plots = this.store.list('publicMintPaidPlots', { after, limit }); if (!plots.length && after) plots = this.store.list('publicMintPaidPlots', { limit });
     for (const { id, value } of plots) {
+      let t = null;
       try {
         const at = await this.reads.batchStamp(), state = await this.reads.financialRecord(publicScanKey(id), at);
         if (state?.winner) {
@@ -227,14 +247,24 @@ export class PublicMints {
           else await this.issue(state.winner, at);
         }
         if (state?.next && BigInt(state.next.height) > BigInt(value.through)) {
-          if (!state.winner || this.store.get('mints', state.winner.id)?.state === 'minted') await this.queueGate(async () => {
+          if (!state.winner || this.store.get('mints', state.winner.id)?.state === 'minted' && !this.store.get('mints', state.winner.id).finishing) await this.queueGate(async () => {
             if (this.store.get('publicMintPaidPlots', id)?.through === value.through) await this.store.transact([{ space: 'publicMintPaidPlots', id }]);
           });
           continue;
         }
-        const t = { type: 'public-scan', id, asset: value.asset, block: value.block, ...(value.deployment ? { deployment: value.deployment } : {}), previous: rules.hashObject(state ?? null) };
+        t = { type: 'public-scan', id, asset: value.asset, block: value.block, ...(value.deployment ? { deployment: value.deployment } : {}), previous: rules.hashObject(state ?? null) };
+        // The batch rebuilds a queued identical step itself; reading it again here only
+        // repeats seconds of evidence reads per plot. A step waiting on a reveal is read
+        // again so the reveal is queued.
+        const work = rules.hashObject(['dmw-financial-transition-v2', t]);
+        if (this.parent.financial.existing?.(work) && this.store.get('financialDeferred', work)?.reason !== 'public_payment_unrevealed') continue;
         await this.reads.publicMintScan(t, at); await this.parent.financial.submit(t);
-      } catch (error) { error = await this.revealPayment(error); if (error.message !== 'public_scan_pending') await this.store.put('publicMintFailures', id, { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' }); }
+      } catch (error) {
+        error = await this.revealPayment(error);
+        // The queued reveal runs before this scan in the same batch.
+        if (error.revealQueued && t) try { await this.parent.financial.submit(t); } catch { /* retried next tick */ }
+        if (error.message !== 'public_scan_pending') await this.store.put('publicMintFailures', id, { reason: /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'public_source_unavailable' });
+      }
     }
     await this.store.put('meta', 'publicMintCursor', plots.at(-1)?.id ?? '');
     } finally { this.running = false; }
@@ -243,13 +273,14 @@ export class PublicMints {
     return this.parent.financial.submit(registrationTransition(row));
   }
   async revealPayment(error) {
-    if (error.message !== 'public_payment_unrevealed') return error;
+    if (error.message !== 'public_payment_unrevealed' || error.revealHandled) return error;
     const requestId = this.store.get('publicMintCommitments', error.commitment), row = requestId && this.store.get('mints', requestId);
     if (row?.intent) {
       const transition = { type: 'public-payment', id: error.commitment, action: 'reveal', intent: row.intent, reference: error.reference };
       try {
         await this.reads.publicMintPayment(transition, await this.reads.batchStamp());
         await this.parent.financial.submit(transition);
+        error.revealQueued = true;
       } catch (revealError) { return revealError; }
     }
     return error;
@@ -265,11 +296,13 @@ export class PublicMints {
     }
     if (row.permit) {
       if (row.mintInscription && this.parent.verifyMint(row, await this.reads.mint(row.id, at))) {
-        const capacity = await this.reads.financialRecord('dc/' + row.id, at);
-        if (capacity?.state === 'issued') {
-          await this.parent.financial.submit({ type: 'lifecycle', id: row.id, action: { type: 'capacity-finish', id: row.id, permitHash: winner.permitHash } }); return;
-        }
-        await this.store.transact([{ space: 'mints', id: row.id, value: { ...row, state: 'minted' } },
+        // Confirmed on Bitcoin: it is minted now. The contract records the finish in a
+        // later batch; until then the plot stays queued so the finish is sent again.
+        const capacity = await this.reads.financialRecord('dc/' + row.id, at), finishing = capacity?.state === 'issued';
+        if (finishing) await this.parent.financial.submit({ type: 'lifecycle', id: row.id, action: { type: 'capacity-finish', id: row.id, permitHash: winner.permitHash } });
+        if (row.state === 'minted' && !!row.finishing === finishing) return;
+        const { finishing: _, ...rest } = row;
+        await this.store.transact([{ space: 'mints', id: row.id, value: { ...rest, state: 'minted', ...(finishing ? { finishing: true } : {}) } },
           { space: 'minted', id: rules.mintPlotKey(row.request.asset, row.request.block, row.intent?.supplyScope ?? row.request.supplyScope), value: { id: row.id, inscription: row.mintInscription } }]);
       }
       return;
