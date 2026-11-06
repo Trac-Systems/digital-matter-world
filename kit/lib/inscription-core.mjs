@@ -21,6 +21,28 @@ export function fundingAddress(publicKey, network) {
   return btc.p2tr(key.length === 33 ? key.slice(1) : key, undefined, networkFor(network)).address;
 }
 const outputScript = (address, network) => btc.OutScript.encode(btc.Address(network).decode(address));
+// A TAP Wallet account may be Taproot, P2WPKH, P2SH-P2WPKH or P2PKH; all use
+// the same compressed account key. Name the account's own output for that key
+// and the PSBT fields its wallet needs to sign a spend of it. vbytes are upper
+// bounds for one signed input and one change output of that type.
+export function walletPayer(publicKey, address, network) {
+  const net = networkFor(network), key = typeof publicKey === 'string' ? unhex(publicKey) : publicKey;
+  ensure(key instanceof Uint8Array && (key.length === 33 || key.length === 32), 'Invalid wallet public key');
+  const internal = key.length === 33 ? key.slice(1) : key, tr = btc.p2tr(internal, undefined, net);
+  if (address === undefined || address === tr.address) return { type: 'tr', address: tr.address, script: tr.script, inputVbytes: 58, changeVbytes: 43,
+    input: coin => ({ witnessUtxo: { script: tr.script, amount: coin.amount }, tapInternalKey: internal }) };
+  ensure(key.length === 33, 'Select the wallet account that matches its public key');
+  const wpkh = btc.p2wpkh(key, net);
+  if (address === wpkh.address) return { type: 'wpkh', address, script: wpkh.script, inputVbytes: 68, changeVbytes: 31,
+    input: coin => ({ witnessUtxo: { script: wpkh.script, amount: coin.amount } }) };
+  const sh = btc.p2sh(wpkh, net);
+  if (address === sh.address) return { type: 'sh', address, script: sh.script, redeemScript: wpkh.script, inputVbytes: 91, changeVbytes: 32,
+    input: coin => ({ witnessUtxo: { script: sh.script, amount: coin.amount }, redeemScript: wpkh.script }) };
+  const pkh = btc.p2pkh(key, net);
+  ensure(address === pkh.address, 'Select the wallet account that matches its public key');
+  return { type: 'pkh', address, script: pkh.script, inputVbytes: 148, changeVbytes: 34,
+    input: coin => { ensure(/^[0-9a-f]+$/.test(coin.rawTx ?? ''), 'Legacy wallet coins need their previous transaction'); return { nonWitnessUtxo: unhex(coin.rawTx) }; } };
+}
 const same = (a, b) => hex(a) === hex(b);
 
 // Wallet callers use confirmed, explicitly cardinal P2TR inputs. The server
@@ -39,17 +61,16 @@ function coinsFor(utxos, script, allowUnconfirmed = false) {
   }).sort((a, b) => a.amount === b.amount ? `${a.txid}:${a.vout}`.localeCompare(`${b.txid}:${b.vout}`) : a.amount > b.amount ? -1 : 1);
 }
 
-export function buildInscription({ text, receiver, publicKey, network, utxos, feeRate, maxFeeSats, postage = 546, secret = schnorr.utils.randomPrivateKey(), changeAddress, allowUnconfirmed = false, allowNoChange = false, dustSats = 546 }) {
+export function buildInscription({ text, receiver, publicKey, payerAddress, network, utxos, feeRate, maxFeeSats, postage = 546, secret = schnorr.utils.randomPrivateKey(), changeAddress, allowUnconfirmed = false, allowNoChange = false, dustSats = 546 }) {
   const net = networkFor(network), content = new TextEncoder().encode(text);
   ensure(typeof text === 'string' && content.length > 0 && content.length <= 80000, 'Inscription must contain 1–80000 UTF-8 bytes');
   ensure(Number.isFinite(feeRate) && feeRate >= 1 && feeRate <= 1000, 'Choose a fee rate between 1 and 1000 sat/vB');
   ensure(typeof maxFeeSats === 'string' && /^[1-9][0-9]{0,9}$/.test(maxFeeSats), 'Set a maximum Bitcoin fee in satoshis');
   ensure(Number.isSafeInteger(postage) && postage >= 546 && postage <= 100000, 'Invalid inscription postage');
-  const pub = typeof publicKey === 'string' ? unhex(publicKey) : publicKey;
-  const internal = pub.length === 33 ? pub.slice(1) : pub;
-  const payer = btc.p2tr(internal, undefined, net), destination = outputScript(receiver, net);
+  const payer = walletPayer(publicKey, payerAddress, network), destination = outputScript(receiver, net);
   ensure(Number.isSafeInteger(dustSats) && dustSats >= 546 && dustSats <= 100000, 'Invalid change dust');
   const changeScript = changeAddress ? outputScript(changeAddress, net) : payer.script;
+  const changeVbytes = changeAddress ? 43 : payer.changeVbytes;
   const chunks = [schnorr.getPublicKey(secret), 'CHECKSIG', 0, 'IF', new TextEncoder().encode('ord'), Uint8Array.of(1), new TextEncoder().encode('text/plain;charset=utf-8'), 0];
   for (let i = 0; i < content.length; i += 520) chunks.push(content.slice(i, i + 520));
   const script = btc.Script.encode([...chunks, 'ENDIF']);
@@ -67,14 +88,14 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
   let selected = [], total = 0n, commitFee = 0n, change = 0n;
   for (const coin of coins.slice(0, 16)) {
     selected.push(coin); total += coin.amount;
-    // Upper bound for key-path P2TR inputs and two P2TR outputs, including a
-    // potentially 65-byte SIGHASH_ALL wallet signature.
-    commitFee = BigInt(Math.ceil((12 + selected.length * 58 + 2 * 43) * feeRate));
+    // Upper bound for the account's signed inputs (a key-path P2TR input with
+    // a 65-byte SIGHASH_ALL signature is 58), the P2TR commit and the change.
+    commitFee = BigInt(Math.ceil((12 + selected.length * payer.inputVbytes + 43 + changeVbytes) * feeRate));
     change = total - commitValue - commitFee;
     if (change >= BigInt(dustSats) || allowNoChange && change >= 0n) break;
   }
   if (!(selected.length > 0 && (change >= BigInt(dustSats) || allowNoChange && change >= 0n))) {
-    const required = commitValue + BigInt(Math.ceil((12 + Math.max(1, selected.length) * 58 + 2 * 43) * feeRate)) + (allowNoChange ? 0n : BigInt(dustSats));
+    const required = commitValue + BigInt(Math.ceil((12 + Math.max(1, selected.length) * payer.inputVbytes + 43 + changeVbytes) * feeRate)) + (allowNoChange ? 0n : BigInt(dustSats));
     throw Object.assign(Error('Fund this wallet with confirmed cardinal BTC (up to 16 inputs)'), {
       code: allowUnconfirmed || allowNoChange ? 'bitcoin_funding_insufficient' : 'player_mint_invalid',
       requiredSats: String(required), availableSats: String(total),
@@ -83,27 +104,42 @@ export function buildInscription({ text, receiver, publicKey, network, utxos, fe
   if (allowNoChange && change < BigInt(dustSats)) { commitFee += change; change = 0n; }
   ensure(commitFee + revealFee <= BigInt(maxFeeSats), 'Bitcoin fee exceeds the approved maximum', 'bitcoin_fee_limit');
   const commit = new btc.Transaction();
-  for (const coin of selected) commit.addInput({ txid: coin.txid, index: coin.vout, sequence: 0xfffffffd, witnessUtxo: { script: payer.script, amount: coin.amount }, tapInternalKey: internal });
+  for (const coin of selected) commit.addInput({ txid: coin.txid, index: coin.vout, sequence: 0xfffffffd, ...payer.input(coin) });
   commit.addOutput({ script: leaf.script, amount: commitValue });
   if (change > 0n) commit.addOutput({ script: changeScript, amount: change });
-  // Segwit signatures do not change the txid. Sign the reveal now and persist
-  // it before allowing a commit broadcast; no ephemeral private key is saved.
-  const commitTxid = hex(sha256(sha256(commit.unsignedTx)).reverse());
-  let child;
-  try { child = reveal(commitTxid, commitValue, true); }
-  finally { secret.fill(0); }
-  ensure(child.weight <= 400000, 'Reveal exceeds standard transaction weight');
-  return { version: 1, network, receiver, payer: payer.address, textHash: digest(text),
-    commitPsbt: hex(commit.toPSBT(0)), commitTxid,
-    revealHex: child.hex, revealTxid: child.id, inscriptionId: `${child.id}i0`,
-    feeRate, feeSats: String(commitFee + revealFee), postage,
-    inputs: selected.map(c => ({ txid: c.txid, vout: c.vout })) };
+  // Segwit signatures do not change the txid, and a P2SH-P2WPKH input's
+  // scriptSig is only its redeem script. Sign the reveal now and persist it
+  // before allowing a commit broadcast; no ephemeral private key is saved.
+  // A legacy P2PKH signature is part of the txid: that reveal is signed in
+  // memory right after the wallet signs (signRevealFor), still before any
+  // broadcast, so an interruption in between leaves nothing on Bitcoin.
+  const body = { version: 1, network, receiver, payer: payer.address, textHash: digest(text), commitPsbt: hex(commit.toPSBT(0)),
+    feeRate, feeSats: String(commitFee + revealFee), postage, inputs: selected.map(c => ({ txid: c.txid, vout: c.vout })) };
+  const signed = txid => {
+    let child;
+    try { child = reveal(txid, commitValue, true); }
+    finally { secret.fill(0); }
+    ensure(child.weight <= 400000, 'Reveal exceeds standard transaction weight');
+    return { commitTxid: txid, revealHex: child.hex, revealTxid: child.id, inscriptionId: `${child.id}i0` };
+  };
+  if (payer.type === 'pkh') {
+    const plan = { ...body, revealAfterCommitSignature: true };
+    Object.defineProperty(plan, 'signRevealFor', { value: signed, enumerable: false });
+    return plan;
+  }
+  let id = commit;
+  if (payer.type === 'sh') { id = commit.clone(); for (let i = 0; i < selected.length; i++) id.updateInput(i, { finalScriptSig: btc.Script.encode([payer.redeemScript]) }, true); }
+  return { ...body, ...signed(payer.type === 'sh' ? id.id : hex(sha256(sha256(commit.unsignedTx)).reverse())) };
 }
 
 export function acceptSignedCommit(plan, signedPsbt) {
   const signed = btc.Transaction.fromPSBT(unhex(signedPsbt));
   const original = btc.Transaction.fromPSBT(unhex(plan.commitPsbt));
   ensure(same(signed.unsignedTx, original.unsignedTx), 'Wallet changed the approved transaction');
+  if (plan.revealAfterCommitSignature && !plan.revealHex) {
+    ensure(signed.isFinal && typeof plan.signRevealFor === 'function', 'Rebuild this inscription: its reveal key is gone, nothing was sent');
+    plan = { ...plan, ...plan.signRevealFor(signed.id) };
+  }
   ensure(signed.isFinal && signed.id === plan.commitTxid, 'Wallet did not finalize the commit');
   ensure(signed.fee === original.fee && signed.fee >= BigInt(Math.ceil(signed.vsize * plan.feeRate)), 'Wallet fee does not match the approved plan');
   return { ...plan, signedCommitPsbt: signedPsbt, commitHex: signed.hex };

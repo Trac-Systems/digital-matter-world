@@ -11,7 +11,8 @@ export const PURPOSE = {
   ethereum: 'Pays with bridged TAP on Ethereum and receives Ethereum-side earnings.',
 };
 const RAILS = ['tap', 'ethereum'], KEY = 'dmw-web-v1/wallets';
-const ADDRESS = { tap: /^(bc1p|bcrt1p)[0-9a-z]{20,90}$/, ethereum: /^0x[0-9a-f]{40}$/ };
+// Every TAP Wallet account type: Taproot, Native SegWit (bech32, lowercase), Nested SegWit and Legacy (Base58).
+const ADDRESS = { tap: /^((bc1|bcrt1)[pq][0-9a-z]{20,90}|[13mn2][1-9A-HJ-NP-Za-km-z]{25,34})$/, ethereum: /^0x[0-9a-f]{40}$/ };
 const provider = rail => rail === 'tap' ? window.tapprotocol : window.ethereum;
 const listeners = new Set();
 let target, opener;

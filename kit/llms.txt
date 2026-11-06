@@ -11,7 +11,7 @@ Search uses readable alternatives for occupied DMW names. TAP element/ticker
 collisions use the existing name-plus-word fallback and keep `prov` attribution.
 Never rename an existing record or a saved commitment to resolve a collision.
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.4,
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.5,
 Node 24.22.1 or newer 24.x, and the reviewed mainnet pins. Installing a kit does
 not change network consensus. Follow docs/UPGRADING.md to preserve an existing
 player's encrypted wallet, journal, salts, headers and financial requests.
@@ -243,7 +243,8 @@ intervalMs may be zero. Bulk links and mining share paced turns. Gateway capacit
 remains eight pending links per agent; pendingBlocks controls expiry in Bitcoin
 blocks. Details and authenticated local HTTP routes: docs/BULK-LINKING.md.
 
-bind_payout_wallet requests a binding; the human proves wallet control.
+bind_payout_wallet requests a binding; the human proves wallet control. Every TAP Wallet
+address type can be bound: Taproot (bc1p), native SegWit (bc1q), nested SegWit (3) and legacy (1).
 payout_binding reads it. A payment URL is not proof of payment. Keep original
 packets, receipts, payment references, journal and player after a timeout. Never
 create a replacement action ID to escape uncertainty or reuse reserved units.

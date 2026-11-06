@@ -1,7 +1,7 @@
 import { checkPaymentWindow, PAYMENT_MIN_BLOCKS } from './payment-window.mjs';
 import { hashObject, stableJSON } from '../../rules/src/core.js';
 import { validateBulkTerms, validateBulkFees, bulkOrderId, bulkWalletItems } from '../../rules/src/bulk-mint.js';
-import { ensure, fundingAddress } from './inscription-core.mjs';
+import { ensure, walletPayer } from './inscription-core.mjs';
 import { BrowserMintJournal, TapWalletMint, mintFundingOutput } from './tap-wallet-mint.mjs';
 import { tapWalletCapabilities, ensureTapAuthority } from './tap-wallet-actions.mjs';
 import { checkTapFunds } from './wallet-funds.mjs';
@@ -35,7 +35,8 @@ export class TapWalletBulkMint {
     const accounts = await this.provider.requestAccounts();
     ensure(await this.provider.getNetwork() === this.network, `Select ${this.network} in TAP Wallet`);
     this.address = accounts?.[0]; this.publicKey = await this.provider.getPublicKey();
-    ensure(this.address === fundingAddress(this.publicKey, this.network), 'Select a Taproot account in TAP Wallet');
+    // Any TAP Wallet account type works: Taproot, P2WPKH, P2SH-P2WPKH or P2PKH of this key.
+    this.payer = walletPayer(this.publicKey, this.address, this.network);
     return { address: this.address, network: this.network };
   }
   async checkAccount() {

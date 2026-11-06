@@ -25,8 +25,13 @@ for (const chain of ['mainnet', 'regtest']) for (const parity of [2, 3]) {
     reject(message, address, packet.walletSignature, chain === 'mainnet' ? 'regtest' : 'mainnet');
     reject(message, btc.p2tr(schnorr.getPublicKey(secp256k1.utils.randomPrivateKey()), undefined, bitcoinNetwork(chain)).address);
     reject(message, address.toUpperCase());
-    reject(message, btc.p2pkh(secp256k1.getPublicKey(key), bitcoinNetwork(chain)).address);
-    reject(message, btc.p2wpkh(secp256k1.getPublicKey(key), bitcoinNetwork(chain)).address);
+    // The same TAP Wallet key owns its P2PKH, P2WPKH and P2SH-P2WPKH outputs too.
+    const net = bitcoinNetwork(chain), pub = secp256k1.getPublicKey(key);
+    for (const owned of [btc.p2pkh(pub, net).address, btc.p2wpkh(pub, net).address, btc.p2sh(btc.p2wpkh(pub, net), net).address])
+      assert.equal(verifyTapMessage(message, owned, packet.walletSignature, chain), true, owned);
+    reject(message, btc.p2pkh(secp256k1.getPublicKey(key, false), net).address);
+    const other = secp256k1.getPublicKey(secp256k1.utils.randomPrivateKey());
+    for (const foreign of [btc.p2pkh(other, net).address, btc.p2wpkh(other, net).address, btc.p2sh(btc.p2wpkh(other, net), net).address]) reject(message, foreign);
     reject(message, btc.Address(bitcoinNetwork(chain)).encode({ type: 'tr', pubkey: schnorr.getPublicKey(key) }));
     const raw = Buffer.from(packet.walletSignature, 'base64'), sig = secp256k1.Signature.fromCompact(raw.subarray(1));
     const high = new secp256k1.Signature(sig.r, secp256k1.CURVE.n - sig.s);

@@ -1,6 +1,6 @@
 import { checkPaymentWindow, PAYMENT_MIN_BLOCKS } from './payment-window.mjs';
 import * as btc from '@scure/btc-signer';
-import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, ensure, digest, checkSavedFee, deploymentContent, checkDeployer, networkFor } from './inscription-core.mjs';
+import { buildInscription, acceptSignedCommit, mintContent, missingItems, transferItems, fundingAddress, walletPayer, ensure, digest, checkSavedFee, deploymentContent, checkDeployer, networkFor } from './inscription-core.mjs';
 import { ensureTapAuthority, noAuthority, GLOBAL_AUTHORITY_NOTICE, tapWalletCapabilities } from './tap-wallet-actions.mjs';
 import { checkTapFunds, checkBitcoinFunds, cardinalCoins, bitcoinFeeRate, readFunds, displayAmount } from './wallet-funds.mjs';
 export { ensureTapAuthority, tapOrderResult, requireAuthorityAPI, GLOBAL_AUTHORITY_NOTICE, noAuthority, TAP_WALLET_MIN_VERSION, TAP_WALLET_TOO_OLD, versionAtLeast, tapWalletCapabilities } from './tap-wallet-actions.mjs';
@@ -71,7 +71,8 @@ export class TapWalletMint {
     const accounts = await this.provider.requestAccounts(), actual = await this.provider.getNetwork();
     ensure(actual === this.network, `Select ${this.network} in TAP Wallet`);
     this.address = accounts?.[0]; this.publicKey = await this.provider.getPublicKey();
-    ensure(this.address === fundingAddress(this.publicKey, this.network), 'Select a Taproot account in TAP Wallet');
+    // Any TAP Wallet account type works: Taproot, P2WPKH, P2SH-P2WPKH or P2PKH of this key.
+    this.payer = walletPayer(this.publicKey, this.address, this.network);
     return { address: this.address, network: actual };
   }
   async checkAccount() {
@@ -85,6 +86,16 @@ export class TapWalletMint {
     return status;
   }
   key(id) { return `${this.network}/${this.address}/${id}`; }
+  async previousTransaction(txid) {
+    ensure(/^[0-9a-f]{64}$/.test(txid), 'Invalid funding transaction');
+    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/tx/';
+    const response = await this.fetchImpl(base + txid + '/hex', { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000) })
+      .catch(() => ensure(false, 'Cannot read a funding coin from mempool.space. Nothing was sent; try again shortly.'));
+    ensure(response.ok, 'Cannot read a funding coin from mempool.space. Nothing was sent; try again shortly.');
+    const raw = (await response.text()).trim();
+    ensure(/^[0-9a-f]+$/.test(raw) && raw.length <= 800000, 'Invalid funding transaction from mempool.space');
+    return raw;
+  }
   // One approval (TAP Wallet 1.0.49): with the request's mintFunding the same
   // payment transaction sets aside the Bitcoin for the server-sent mint.
   async pay(id, { retry = false } = {}) {
@@ -281,11 +292,16 @@ export class TapWalletMint {
     return this.journal.lock(this.key(id), async () => {
       const key = this.key(id);
       let saved = await this.journal.get(key) ?? {}, plan = saved[field];
+      // A legacy-account plan whose reveal key lived only in a closed page was
+      // never broadcast: build a fresh one.
+      if (plan?.revealAfterCommitSignature && !plan.revealHex && typeof plan.signRevealFor !== 'function') plan = null;
       if (!plan) {
         const coins = await cardinalCoins(this.provider, this.address, { fetchImpl: this.fetchImpl });
         const utxos = coins.map(c => ({ txid: c.txid, vout: c.vout, value: String(c.satoshi), script: c.scriptPk, confirmed: true, cardinal: true }));
+        // A legacy (P2PKH) input is signed over its whole previous transaction.
+        if (this.payer?.type === 'pkh') for (const u of utxos.slice(0, 16)) u.rawTx = await this.previousTransaction(u.txid);
         feeRate ??= await this.fees();
-        try { plan = buildInscription({ text, receiver: this.address, publicKey: this.publicKey, network: this.network, utxos, feeRate, maxFeeSats }); }
+        try { plan = buildInscription({ text, receiver: this.address, publicKey: this.publicKey, payerAddress: this.address, network: this.network, utxos, feeRate, maxFeeSats }); }
         catch (error) {
           if (error.requiredSats !== undefined) throw Error(`Not enough Bitcoin for fees: this inscription needs about ${displayAmount(error.requiredSats)} sats including postage and change, your wallet can fund ${displayAmount(error.availableSats)} sats from up to 16 spendable coins. Wallet: ${this.address}. Nothing was sent. Miner fees are an estimate.`);
           throw error;

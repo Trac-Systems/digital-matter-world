@@ -5,6 +5,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import * as btc from '@scure/btc-signer';
 import { assert, exactKeys, hex, integer, stableJSON, networkId, hash, hashBytes, utf8 } from './core.js';
 
+export const TAP_ADDRESS_TYPES = new Set(['tr', 'wpkh', 'sh', 'pkh']);
 export const BINDING_DOMAIN = 'dmw-payout-binding-v1';
 export const BINDING_V2_DEFAULTS = Object.freeze({ freshnessMs: 60000 });
 export const bindingBarrier = record => record.request.v === 2 ? record.blockedAt : record.acceptedAt;
@@ -21,9 +22,12 @@ export function payoutAddress(rail, address, chain) {
   if (rail === 'ethereum') {
     assert(/^0x[0-9a-f]{40}$/.test(address) && !/^0x0{40}$/.test(address), 'binding_address');
   } else {
-    assert(rail === 'tap' && ['mainnet', 'regtest'].includes(chain) && address === address.toLowerCase(), 'binding_address');
+    assert(rail === 'tap' && ['mainnet', 'regtest'].includes(chain), 'binding_address');
+    // TAP Wallet holds TAP on every standard type: P2PKH, P2SH-P2WPKH,
+    // P2WPKH and Taproot. A payout or payer address may be any of them.
+    // Bech32 has one canonical (lowercase) spelling; Base58 is case-exact.
     const decoded = btc.Address(bitcoinNetwork(chain)).decode(address);
-    assert(decoded.type === 'tr', 'binding_taproot_required');
+    assert(TAP_ADDRESS_TYPES.has(decoded.type) && (['pkh', 'sh'].includes(decoded.type) || address === address.toLowerCase()), 'binding_address_type');
   }
   return address;
 }
@@ -74,14 +78,15 @@ export function verifyBip322Simple(message, address, signature, chain) {
   return true;
 }
 // TAP Wallet's signMessage ignores the requested BIP-322 type and returns a
-// legacy Bitcoin Signed Message compact signature of its untweaked account key.
-// Prove control of that key's BIP86 output, never a P2PKH/P2WPKH alternative.
+// legacy Bitcoin Signed Message compact signature of its account key. The
+// recovered key must own exactly the claimed address: its BIP86 output for
+// Taproot, or the P2WPKH, P2SH-P2WPKH or P2PKH output of that same key.
 export function verifyTapMessage(message, address, signature, chain) {
   assert(typeof signature === 'string' && signature.length <= 96, 'binding_wallet_signature');
   const bytes = Buffer.from(signature, 'base64');
   if (bytes.length !== 65) return verifyBip322Simple(message, address, signature, chain);
   try {
-    assert(bytes.toString('base64') === signature && bytes[0] >= 27 && bytes[0] <= 34, 'signature');
+    assert(bytes.toString('base64') === signature && bytes[0] >= 27 && bytes[0] <= 42, 'signature');
     assert(typeof message === 'string' && message.length <= 4096, 'message');
     const body = utf8(message);
     assert(body.length <= 4096, 'message');
@@ -91,8 +96,16 @@ export function verifyTapMessage(message, address, signature, chain) {
     ])));
     const sig = secp256k1.Signature.fromCompact(bytes.subarray(1));
     assert(!sig.hasHighS(), 'signature');
-    const key = sig.addRecoveryBit((bytes[0] - 27) & 3).recoverPublicKey(digest).toRawBytes(true);
-    assert(btc.p2tr(key.subarray(1), undefined, bitcoinNetwork(chain)).address === address, 'signature');
+    const point = sig.addRecoveryBit((bytes[0] - 27) & 3).recoverPublicKey(digest), net = bitcoinNetwork(chain);
+    // Headers 27-34 are what TAP Wallet returns for every type; BIP137 35-42
+    // name a segwit output and are accepted for those addresses only.
+    const type = btc.Address(net).decode(address).type, key = point.toRawBytes(true);
+    assert(bytes[0] <= 34 || ['wpkh', 'sh'].includes(type), 'signature');
+    const owned = type === 'tr' ? btc.p2tr(key.subarray(1), undefined, net).address
+      : type === 'wpkh' ? btc.p2wpkh(key, net).address
+      : type === 'sh' ? btc.p2sh(btc.p2wpkh(key, net), net).address
+      : btc.p2pkh(key, net).address;
+    assert(owned === address, 'signature');
     return true;
   } catch { throw Error('binding_wallet_signature'); }
 }

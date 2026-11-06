@@ -18,7 +18,8 @@ export async function tapAccount(target, expected) {
   if (network !== target.bitcoinNetwork) await tap.switchNetwork(target.bitcoinNetwork);
   if (await tap.getNetwork() !== target.bitcoinNetwork) fail('Switch TAP wallet to Bitcoin, then try again.');
   const accounts = await tap.requestAccounts(), address = accounts?.[0];
-  if (!(target.bitcoinNetwork === 'regtest' ? /^bcrt1p/ : /^bc1p/).test(address ?? '')) fail('Select a Bitcoin Taproot wallet.');
+  // TAP Wallet accounts may be Taproot, Native SegWit, Nested SegWit or Legacy.
+  if (!(target.bitcoinNetwork === 'regtest' ? /^(bcrt1[pq]|[mn2])/ : /^(bc1[pq]|[13])/).test(address ?? '')) fail('Select a Bitcoin account in TAP Wallet.');
   if (expected && address !== expected) fail('Select the TAP payer wallet shown in this request.');
   return { tap, address };
 }

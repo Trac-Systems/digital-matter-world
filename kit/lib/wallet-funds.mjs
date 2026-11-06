@@ -96,7 +96,7 @@ async function tapBalances({ address, ticks, network, fetchImpl, readerPath }, s
 const UNCONFIRMED_SPEND = 'Your last Bitcoin payment from this wallet is still waiting for its block, and TAP Wallet still offers the coins it spent. ' +
   'Wait until that payment confirms (usually within 10 minutes), then try again. Nothing was sent.';
 async function spentWhileWaiting(address, coins, fetchImpl) {
-  const site = /^bc1/i.test(address) ? 'https://mempool.space' : /^tb1/i.test(address) ? 'https://mempool.space/testnet' : null;
+  const site = /^(bc1|[13])/i.test(address) ? 'https://mempool.space' : /^tb1/i.test(address) ? 'https://mempool.space/testnet' : null;
   if (!site || !coins.length || typeof fetchImpl !== 'function') return false;
   try {
     const response = await fetchImpl(`${site}/api/address/${encodeURIComponent(address)}/utxo`, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(5000) });
