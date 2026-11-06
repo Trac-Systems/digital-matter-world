@@ -20,7 +20,7 @@ export class NamedAdmission {
       perSecond: resources.values.senderPerSecond, ttl: resources.values.senderTtlMs });
     this.persistence = new NamedStorage({ get: id => store.get('namedNodes', id), cacheSize: resources.values.namedNodeCache });
     this.tail = Promise.resolve();
-    this.closedSince = new Map();
+    this.closedSince = new Map(); this.outstanding = 0;
   }
   accept(text) {
     const until = Date.now() + this.wait.admissionWaitMs, poll = this.wait.admissionPollMs;
@@ -48,6 +48,19 @@ export class NamedAdmission {
     this.closedSince.set(key, now); return true;
   }
   exclusive(fn) { const result = this.tail.then(fn); this.tail = result.catch(() => {}); return result; }
+  // Busy signers can take longer to acknowledge a receipt than a client waits for its answer. An
+  // admitted move waits a bounded time for its acknowledgements (none while earlier ones are still
+  // outstanding); then its durable receipt is answered and acknowledging finishes in the background.
+  // A segment is still witnessed only after every acknowledgement (acknowledgePending).
+  answer(id, record) {
+    const acknowledged = this.acknowledge(id, record), waitMs = this.wait.admissionAcknowledgeMs;
+    if (!waitMs || !record.witnessPending) return acknowledged;
+    const busy = this.outstanding > 0; this.outstanding++;
+    let timer;
+    const answered = new Promise(resolve => { timer = setTimeout(resolve, busy ? 0 : waitMs, record.receipt); });
+    acknowledged.catch(() => {}).finally(() => { clearTimeout(timer); this.outstanding--; });
+    return Promise.race([acknowledged, answered]);
+  }
   acknowledgePending(entries) {
     return this.exclusive(async () => {
       // A sealed observation is bounded and already ordered by receipt sequence.
@@ -89,7 +102,7 @@ export class NamedAdmission {
     // durable receipt before applying today's admission limits to new work.
     const original = settingsHistory.get(parsed.settingsHash);
     const move = rules.parseMoveV2(text, original), id = rules.moveIdV2(move);
-    const known = this.store.get('namedDedupe', id); if (known) return this.acknowledge(id, known);
+    const known = this.store.get('namedDedupe', id); if (known) return this.answer(id, known);
     check(ctx.ready, 'ruleset_not_ready', 503);
     check(!this.store.get('namedFences', move.settingsHash), 'receipt_admission_fenced', 503);
     check(rules.namedStateRoot(accepted) === acceptedRoot, 'admission_state_root');
@@ -219,7 +232,7 @@ export class NamedAdmission {
       { space: 'resourceHistory', id: rules.hashObject(this.resources), value: this.resources },
       { space: 'meta', id: 'namedReservedBatch', value: batch }, { space: 'meta', id: 'namedReceiptSequence', value: sequence }
     ]);
-    saved.committed(); return this.acknowledge(id, this.store.get('namedDedupe', id));
+    saved.committed(); return this.answer(id, this.store.get('namedDedupe', id));
   }
   accountRevisions(entries) {
     return new Map(rules.accountRevisionOwners(entries).map(owner => [owner, this.store.get('accountRecords', 'ar/' + owner)?.revision ?? '0']));

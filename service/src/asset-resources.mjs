@@ -12,6 +12,9 @@ export const ASSET_RESOURCES = Object.freeze({
   // How long a move waits for admission to reopen while a batch is signed, and how often it checks.
   // The wait plus the receipt witness round must end well inside the kit's 10 s request timeout.
   admissionWaitMs: 4000, admissionPollMs: 200,
+  // How long an admitted move waits for its signer acknowledgements before its receipt is answered;
+  // the rest are collected right after. Busy signers can take longer than the kit waits.
+  admissionAcknowledgeMs: 4000,
   // How long a move refused that way gets the retryable busy answer before the final refusal.
   admissionBusyMs: 150000,
   // One later batch can collect receipts while its predecessor is signed.

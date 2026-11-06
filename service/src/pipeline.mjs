@@ -221,6 +221,9 @@ export class Pipeline {
     if (counted === undefined || counted === null) return;
     for (const { id, value: o } of this.store.list('observations', { limit: 64 })) {
       if (clock.compare(o.counted, counted) >= 0 || Number(o.receiptRoot?.count) !== 0 || this.store.hasRows('intake/' + id)) return;
+      // A numbered segment cannot be dropped: the next segment of its tip names it as predecessor.
+      // It executes at the counted height instead; the moves keep their tip and the seal is unchanged.
+      if (o.receiptRoot?.segment !== undefined) { await this.store.put('observations', id, { ...o, counted, confirmed: clock.min(counted, o.tip) }); continue; }
       await this.store.transact([{ space: 'observationRecovery', id, value: { reason: 'stale_empty_observation', counted: o.counted, tip: o.tip } }, { space: 'observations', id }]);
     }
   }

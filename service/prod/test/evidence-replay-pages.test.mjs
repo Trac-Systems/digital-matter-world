@@ -114,3 +114,14 @@ test('consumed worker neighbors enter the existing demand cache and survive sour
   reader.now = () => 30000;
   await assert.rejects(reader.replayNodes('claimNodes', rows[0][0], [], 128, undefined, [consumed]), /evidence_missing_or_stale/);
 });
+test('node caches stay within their byte budgets, not only their entry counts', async () => {
+  const { reader, rows } = fixture({ pageRows: 8, nodeCacheBytes: 600, prefetchCacheBytes: 400 });
+  const sizes = new Map(rows.map(([id, row]) => [id, Buffer.byteLength(r.stableJSON(row))]));
+  for (const [id] of rows) {
+    await reader.replayNodes('claimNodes', id, [], 8);
+    assert.ok(reader.nodeBytes <= 600 || reader.nodeCache.size === 1); assert.ok(reader.prefetchBytes <= 400 || reader.prefetchCache.size === 1);
+  }
+  const sum = (cache, ids) => [...cache.keys()].reduce((n, key) => n + sizes.get(key.slice('claimNodes/'.length)), 0);
+  assert.equal(reader.nodeBytes, sum(reader.nodeCache)); assert.equal(reader.prefetchBytes, sum(reader.prefetchCache));
+  assert.ok(reader.nodeCache.size < rows.length && reader.nodeCache.size > 1, 'the byte budget, not the entry count, bounds the cache');
+});

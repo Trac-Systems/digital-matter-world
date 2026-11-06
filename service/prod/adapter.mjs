@@ -85,8 +85,11 @@ export async function createAdapters({ config, store, history, runtime }) {
     async observed(observation) {
       await store.put('relayObservations', heightKey(observation.tip) + '/' + observation.hash);
     },
-    async afterObserve(intake) {
-      if (intake.head && newObservations) await intake.seal();
+    async afterObserve(intake, sealed) {
+      // A window just closed at the newly counted block already brings the game there. Sealing the
+      // new block's still-empty window too would cost one more batch; it is sealed when work arrives.
+      const reached = !!sealed && !!intake.head && clock.compare(sealed.counted, intake.head.counted) === 0;
+      if (intake.head && newObservations && !reached) await intake.seal();
       newObservations = false;
     },
     async close() { await reads.close(); }

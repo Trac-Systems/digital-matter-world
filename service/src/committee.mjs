@@ -19,12 +19,13 @@ export async function post(signer, path, value, timeout = 15000, maxBytes = 4000
   return result;
 }
 const validClock = n => Number.isSafeInteger(n) && n >= 0 || typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n);
+const PERMIT_TURN_IDLE_MS = 300000, PERMIT_TURN_STUCK_MS = 900000, PERMIT_RESTART_MS = 30000;
 export class Committee {
   constructor({ store, network, signers, epoch = 1, timeoutMs = 180000, prepareMs = 60000, healthMs = 1000, readyMs = 15000, requestMs = 15000, responseBytes = 4000000, pollMs = 0, historyPage = 256, batchRetryMs = 5000, assetRecoveryVersion = 1 }) {
     check(signers.length === 5 && new Set(signers.map(s => s.id)).size === 5, 'committee_members');
     check([timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, historyPage].every(n => Number.isSafeInteger(n) && n > 0) && Number.isSafeInteger(pollMs) && pollMs >= 0, 'committee_resources');
     check(Number.isSafeInteger(batchRetryMs) && batchRetryMs > 0 && batchRetryMs <= 600000, 'committee_resources');
-    Object.assign(this, { store, network, signers, epoch, timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, pollMs, historyPage, batchRetryMs, assetRecoveryVersion }); this.signatureGate = serial();
+    Object.assign(this, { store, network, signers, epoch, timeoutMs, prepareMs, healthMs, readyMs, requestMs, responseBytes, pollMs, historyPage, batchRetryMs, assetRecoveryVersion }); this.signatureGate = serial(); this.permitTurns = new Map(); this.permitRestarts = new Map();
     this.controller = new AbortController();
     this.signal = lifecycleSignal() ? AbortSignal.any([this.controller.signal, lifecycleSignal()]) : this.controller.signal;
   }
@@ -287,15 +288,27 @@ export class Committee {
     await this.store.transact([{ space: 'batchCeremonyAttempts', id: key + '/' + session.id, value: session }, { space: 'ceremonies', id: key, value: renewed }]);
     this.activeSigning?.delete(key); return null;
   }
-  async sign(key, proposal, snapshot) {
-    check(proposal.kind !== 'batch' || !this.retirementFor(proposal.batch), 'batch_digest_rejected', 503);
-    let session = this.store.get('ceremonies', key);
-    if (session?.recovery?.waiting) return null;
-    // A permit never takes signers from a pending batch: two ceremonies each holding
-    // part of the same signers wait on each other forever. Its partial preparations
-    // stay reserved; the batch signs with the free signers and the permit resumes
-    // after it. A permit that is already running finishes first.
-    if (proposal.kind === 'mint' && !['running', 'complete'].includes(session?.stage) && this.store.get('meta', 'draft')) return null;
+  // One permit at a time asks the signers. Permits that each prepare some of the same three
+  // signers wait on each other forever, and the signers they hold are missing from the next
+  // batch. The oldest permit that can still progress goes first; one whose caller stopped
+  // asking, or that has not finished for a long time, no longer holds up the others.
+  permitTurn(key, session, now = Date.now()) {
+    const turns = this.permitTurns, waiting = s => !s || s.stage === 'prepared' || s.stage === 'blocked' && s.reason === 'prepare_incomplete' &&
+      (s.retryPrepare === true || s.retryBusy === true || !!s.failures?.length && s.failures.every(e => e === 'committee_signer_busy'));
+    turns.set(key, { seen: now, since: turns.get(key)?.since ?? session?.started ?? now });
+    // Permits that have not finished for a long time go after the others, still one at a time.
+    const first = [null, null];
+    for (const [k, turn] of turns) {
+      const current = k === key ? session : this.store.get('ceremonies', k);
+      if (now - turn.seen > PERMIT_TURN_IDLE_MS || !waiting(current)) { if (k !== key) turns.delete(k); continue; }
+      const late = now - (current?.started ?? turn.since) > PERMIT_TURN_STUCK_MS ? 1 : 0, best = first[late];
+      if (!best || turn.since < best.since || turn.since === best.since && k < best.key) first[late] = { key: k, since: turn.since };
+    }
+    const turn = first[0] ?? first[1];
+    return !turn || turn.key === key;
+  }
+  // Ceremonies whose signers are preparing or signing right now.
+  activeCeremonies() {
     if (!this.activeSigning) {
       this.activeSigning = new Set(); let after = '';
       for (;;) {
@@ -305,6 +318,64 @@ export class Committee {
       }
     }
     for (const id of this.activeSigning) if (!['prepared', 'running'].includes(this.store.get('ceremonies', id)?.stage)) this.activeSigning.delete(id);
+    return this.activeSigning;
+  }
+  // Signers outside `unreserved` may hold this permit's preparation, which keeps them out of the next batch.
+  permitHolds(session) {
+    return session.stage === 'prepared' || session.stage === 'blocked' && session.reason === 'prepare_incomplete' && session.peers.some(p => !session.unreserved?.includes(p));
+  }
+  // A permit that is not signing gives its signers back: prepared peers are stopped, peers that
+  // never prepared it are fenced, and a fresh attempt for the same digest is saved ('same-mint-v2').
+  // Any reply that proves nothing (timeout, busy, running, complete) leaves the permit unchanged.
+  async restartPermit(key, session, proposal, states) {
+    if (this.assetRecoveryVersion !== 2 || Date.now() - (this.permitRestarts.get(key) ?? 0) < PERMIT_RESTART_MS) return false;
+    this.permitRestarts.set(key, Date.now());
+    const selected = this.signers.filter(s => session.peers.includes(s.id));
+    check(selected.length === 3, 'ceremony_members', 503);
+    const status = s => this.request(s, '/status', { id: session.id }).then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+    states ??= await Promise.all(selected.map(status));
+    if (states.some(s => s.status === 'fulfilled' ? !['prepared', 'aborted'].includes(s.value.status) : s.reason.message !== 'committee_ceremony_id')) return false;
+    const stopped = await Promise.allSettled(selected.map(async (s, i) => {
+      let state = states[i];
+      if (state.status === 'fulfilled' && state.value.status === 'prepared') { await this.request(s, '/abort', { id: session.id }); state = await status(s); }
+      if (state.status === 'fulfilled') {
+        check(state.value.status === 'aborted' && state.value.id === session.id && /^[0-9a-f]{64}$/.test(state.value.digest), 'permit_restart_state');
+        return state.value.digest;
+      }
+      // An absent session is fenced, so a late preparation can never reserve it.
+      check(state.reason.message === 'committee_ceremony_id', 'permit_restart_state');
+      const reply = await this.request(s, '/retire-unprepared', { network: this.network, id: session.id });
+      check(reply.id === session.id && reply.status === 'retired-unprepared', 'permit_restart_state');
+      return null;
+    }));
+    if (!stopped.every(r => r.status === 'fulfilled')) return false;
+    const digests = [...stopped.map(r => r.value).filter(Boolean), ...(session.digest ? [session.digest] : [])];
+    if (new Set(digests).size > 1) {
+      await this.store.put('ceremonies', key, { ...session, stage: 'blocked', reason: 'signature_disagreement', retryPrepare: false, retryBusy: false });
+      throw Error('signature_disagreement');
+    }
+    const renewed = { id: randomBytes(32).toString('hex'), proposal, peers: session.peers, ...(digests.length ? { digest: digests[0] } : {}),
+      stage: 'blocked', reason: 'prepare_incomplete', retryPrepare: true, unreserved: session.peers,
+      retry: 'same-mint-v2', retryOf: session.id, started: Date.now() };
+    await this.store.transact([{ space: 'mintCeremonyAttempts', id: key + '/' + session.id, value: session },
+      { space: 'ceremonies', id: key, value: renewed }]);
+    this.activeSigning?.delete(key);
+    return true;
+  }
+  async sign(key, proposal, snapshot) {
+    check(proposal.kind !== 'batch' || !this.retirementFor(proposal.batch), 'batch_digest_rejected', 503);
+    let session = this.store.get('ceremonies', key);
+    if (session?.recovery?.waiting) return null;
+    // A permit never takes signers from a pending batch or from the permit whose turn it is:
+    // two ceremonies each holding part of the same signers wait on each other forever. A
+    // waiting permit gives back the signers it partly prepared (unless a batch is signing on
+    // them right now) and later starts afresh. A permit that is already running finishes first.
+    if (proposal.kind === 'mint' && !['running', 'complete'].includes(session?.stage) && (!this.permitTurn(key, session) || this.store.get('meta', 'draft'))) {
+      const signing = [...this.activeCeremonies()].some(id => id !== key);
+      if (session && !signing && this.permitHolds(session)) await this.restartPermit(key, session, proposal);
+      return null;
+    }
+    this.activeCeremonies();
     if (session?.stage !== 'complete' && [...this.activeSigning].some(id => id !== key)) return null;
     if (!session) {
       const at = proposal.kind === 'batch' ? this.batchAt(proposal, snapshot?.counted) : undefined;
@@ -360,6 +431,13 @@ export class Committee {
     // legacy busy refusal). Existing reservations remain untouched.
     const retry = session.stage === 'blocked' && session.reason === 'prepare_incomplete' &&
       (session.retryPrepare === true || session.retryBusy === true || session.failures?.length === selected.length && session.failures.every(e => e === 'committee_signer_busy'));
+    // A permit with a stopped peer, or blocked by a failure that proves nothing, cannot resume its
+    // own session; it starts a fresh attempt for the same digest instead of waiting forever.
+    if (proposal.kind === 'mint' && this.assetRecoveryVersion === 2 && session.stage === 'blocked' && session.reason === 'prepare_incomplete' &&
+      !states.some(s => s.status === 'fulfilled' && s.value.status === 'complete') &&
+      (!retry || states.some(s => s.status === 'fulfilled' && s.value.status === 'aborted'))) {
+      await this.restartPermit(key, session, proposal, states); return null;
+    }
     if (retry && states.some(s => s.status === 'rejected')) {
       // Never prepare through a timeout or sidecar error. An authenticated
       // absent-session reply is needed as well as the earlier refusal proof.

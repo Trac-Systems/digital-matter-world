@@ -19,6 +19,8 @@ export const EVIDENCE_VERSION = 2;
 export const EVIDENCE_DEFAULTS = Object.freeze({ pageRows: 128, pageBytes: 2_000_000, chunkBytes: 256_000,
   migrationPageRows: 1024, migrationPageBytes: 1_000_000, migrationLeaseMs: 300_000, migrationRequestMs: 300_000, requestBytes: 16_384, maxAgeMs: 30_000, clockSkewMs: 1000, maxSnapshots: 16, maxChallenges: 4096, maxProofNodes: 8192,
   maxDepth: 100, maxIdBytes: 1024, cacheEntries: 256, nodeCacheEntries: 65536, prefetchCacheEntries: 16384,
+  // Rows differ widely in size (large claim pages); entries alone let the caches outgrow the heap.
+  nodeCacheBytes: 536_870_912, prefetchCacheBytes: 134_217_728,
   nodePrefetchAncestors: 1, nodeHintEntries: 65536, maxObjectBytes: 8_000_000, requestsPerSecond: 100, walCheckpointBytes: 8_000_000_000 });
 // Kept as a source-compatible name; this bounds ONE RESPONSE, never history.
 export const EVIDENCE_LIMIT = EVIDENCE_DEFAULTS.pageBytes;
@@ -202,7 +204,7 @@ export function evidencePublisher({ config, store, reads, secret, now = Date.now
 }
 
 export class EvidenceStore {
-  constructor(options) { Object.assign(this, options); this.settings = evidenceSettings(this.config.settings); this.gate = serial(); this.exchangeGate = serial(); this.sequence = 0n; this.cache = new Map(); this.nodeCache = new Map(); this.prefetchCache = new Map(); this.nodeHints = new Map(); this.nodePages = new Map(); this.nodePageFor = new Map(); this.nodePageRows = 0; }
+  constructor(options) { Object.assign(this, options); this.settings = evidenceSettings(this.config.settings); this.gate = serial(); this.exchangeGate = serial(); this.sequence = 0n; this.cache = new Map(); this.nodeCache = new Map(); this.prefetchCache = new Map(); this.nodeBytes = 0; this.prefetchBytes = 0; this.nodeHints = new Map(); this.nodePages = new Map(); this.nodePageFor = new Map(); this.nodePageRows = 0; }
   static async open(options) {
     const settings = evidenceSettings(options.config.settings);
     const source = options.source ?? new HttpSource({ ...await endpoint(options.config.endpoint), maxBytes: settings.pageBytes, retries: 0, requestsPerSecond: settings.requestsPerSecond });
@@ -320,9 +322,12 @@ export class EvidenceStore {
   }
   namedNode(id, ancestors) { return this.indexNode('namedNodes', id, ancestors); }
   rememberNode(key, row) {
-    this.prefetchCache.delete(key); this.nodeCache.delete(key); this.nodeCache.set(key, row);
-    if (this.nodeCache.size > this.settings.nodeCacheEntries) this.nodeCache.delete(this.nodeCache.keys().next().value);
+    this.dropPrefetch(key); this.dropNode(key); this.nodeCache.set(key, row); this.nodeBytes += indexRowBytes(row);
+    while (this.nodeCache.size > 1 && (this.nodeCache.size > this.settings.nodeCacheEntries || this.nodeBytes > this.settings.nodeCacheBytes))
+      this.dropNode(this.nodeCache.keys().next().value);
   }
+  dropNode(key) { const row = this.nodeCache.get(key); if (row !== undefined) { this.nodeCache.delete(key); this.nodeBytes -= indexRowBytes(row); } }
+  dropPrefetch(key) { const row = this.prefetchCache.get(key); if (row !== undefined) { this.prefetchCache.delete(key); this.prefetchBytes -= indexRowBytes(row); } }
   async indexNode(space, id, ancestors = []) {
     return structuredClone(await this.readIndexNode(space, id, ancestors));
   }
@@ -358,8 +363,9 @@ export class EvidenceStore {
       const key = space + '/' + hash;
       // Speculative neighbors must not evict nodes the executor actually used.
       if (hash === id || this.nodeCache.has(key)) continue;
-      this.prefetchCache.delete(key); this.prefetchCache.set(key, row);
-      if (this.prefetchCache.size > this.settings.prefetchCacheEntries) this.prefetchCache.delete(this.prefetchCache.keys().next().value);
+      this.dropPrefetch(key); this.prefetchCache.set(key, row); this.prefetchBytes += indexRowBytes(row);
+      while (this.prefetchCache.size > 1 && (this.prefetchCache.size > this.settings.prefetchCacheEntries || this.prefetchBytes > this.settings.prefetchCacheBytes))
+        this.dropPrefetch(this.prefetchCache.keys().next().value);
     }
     this.rememberNode(key, nodes.get(id));
     return nodes.get(id);

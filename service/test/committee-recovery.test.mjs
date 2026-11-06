@@ -116,3 +116,118 @@ test('a permit waits while a batch is pending, unless it is already running', as
     assert.ok(asked.length === 3 && asked.every(p => p === '/status'), 'a running permit keeps polling its signers');
   } finally { await store.close(); }
 });
+test('one permit at a time asks the signers; the next goes when it finishes or is abandoned', async () => {
+  const store = await Store.open(await temp('committee-permit-turns-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const permit = id => ({ network, kind: 'mint', version: 'public-v1', id: id.repeat(32), receiver: 'receiver' });
+    const a = permit('12'), b = permit('34'), keyA = 'mint/' + a.id, keyB = 'mint/' + b.id;
+    // The older permit prepared two signers; the third was busy, so it retries.
+    const held = { id: 'ab'.repeat(32), proposal: a, digest: '56'.repeat(32), peers: ['s0', 's1', 's2'], stage: 'blocked', reason: 'prepare_incomplete',
+      retryPrepare: true, unreserved: ['s2'], failures: ['committee_signer_busy'], started: Date.now() - 1000 };
+    await store.put('ceremonies', keyA, held);
+    const asked = []; committee.request = async (signer, path) => { asked.push(signer.id + path); throw Error('committee_signer_busy'); };
+    assert.equal(await committee.signature(keyA, a), null); const askedByA = asked.length; assert.ok(askedByA > 0, 'the oldest permit asks its signers');
+    assert.equal(await committee.signature(keyB, b), null); assert.equal(asked.length, askedByA, 'a newer permit does not touch the signers the older one holds');
+    await store.put('ceremonies', keyA, { ...held, stage: 'complete', result: {} });
+    await assert.rejects(committee.signature(keyB, b), /committee_quorum_unavailable/); assert.ok(asked.length > askedByA, 'the next permit goes once the older finished');
+    // A permit whose caller stopped asking no longer holds up the others.
+    const turns = new Committee({ store, network, signers, assetRecoveryVersion: 2 }), t0 = Date.now();
+    await store.put('ceremonies', keyA, held);
+    assert.equal(turns.permitTurn(keyA, held, t0), true); assert.equal(turns.permitTurn(keyB, undefined, t0 + 1), false);
+    assert.equal(turns.permitTurn(keyB, undefined, t0 + 300001), true);
+    // Long-unfinished permits yield to newer ones, then still take turns among themselves.
+    const late = new Committee({ store, network, signers, assetRecoveryVersion: 2 }), old = { ...held, started: t0 - 1000000 };
+    const keyC = 'mint/' + '56'.repeat(32), oldC = { ...old, started: t0 - 900500 };
+    await store.put('ceremonies', keyA, old); await store.put('ceremonies', keyC, oldC);
+    assert.equal(late.permitTurn(keyA, old, t0), true); assert.equal(late.permitTurn(keyC, oldC, t0), false, 'the older stuck permit goes first');
+    assert.equal(late.permitTurn(keyB, undefined, t0), true, 'a newer permit is not held up by stuck ones');
+    assert.equal(late.permitTurn(keyA, old, t0), false);
+  } finally { await store.close(); }
+});
+// Fake signers keyed by ceremony ID: absent sessions answer ceremony_id, as the signer does.
+function permitSigners(digest, initial) {
+  const sessions = new Map(Object.entries(initial)), asked = [];
+  const request = async (signer, path, body) => {
+    const id = body.id ?? body.ceremony?.id, k = signer.id + '/' + id; asked.push(signer.id + path);
+    if (sessions.get(signer.id) === 'timeout' && path === '/status') throw Error('committee_timeout');
+    if (path === '/prepare') { sessions.set(k, 'prepared'); asked.push(signer.id + ':retry=' + body.ceremony.retry); return { id, digest }; }
+    if (path === '/go') { sessions.set(k, 'running'); return { ok: true }; }
+    if (path === '/abort') { if (sessions.get(k) !== 'prepared') throw Error('committee_ceremony_id'); sessions.set(k, 'aborted'); return { ok: true }; }
+    if (path === '/retire-unprepared') { if (sessions.has(k)) throw Error('committee_ceremony_reserved'); sessions.set(k + '/fenced', true); return { id, status: 'retired-unprepared' }; }
+    if (path === '/status') { if (!sessions.has(k)) throw Error('committee_ceremony_id'); return { status: sessions.get(k), id, digest }; }
+    throw Error('route');
+  };
+  return { sessions, asked, request };
+}
+test('a waiting permit gives back the signers it partly prepared and later restarts for the same digest', async () => {
+  const store = await Store.open(await temp('committee-permit-release-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const proposal = { network, kind: 'mint', version: 'public-v1', id: '12'.repeat(32), receiver: 'receiver' }, key = 'mint/' + proposal.id;
+    const id = 'ab'.repeat(32), digest = '56'.repeat(32);
+    // Two signers prepared the permit; the third was busy, so a batch now finds only two free signers.
+    const held = { id, proposal, digest, peers: ['s0', 's1', 's2'], stage: 'blocked', reason: 'prepare_incomplete',
+      retryPrepare: true, unreserved: ['s2'], failures: ['committee_signer_busy'], started: Date.now() };
+    await store.put('ceremonies', key, held);
+    const fake = permitSigners(digest, { ['s0/' + id]: 'prepared', ['s1/' + id]: 'prepared' }); committee.request = fake.request;
+    await store.put('meta', 'draft', { proposal: { batch: { n: '1' } } });
+    assert.equal(await committee.signature(key, proposal), null);
+    assert.equal(fake.sessions.get('s0/' + id), 'aborted'); assert.equal(fake.sessions.get('s1/' + id), 'aborted');
+    assert.equal(fake.sessions.get('s2/' + id + '/fenced'), true, 'the signer that never prepared is fenced against a late preparation');
+    const renewed = store.get('ceremonies', key);
+    assert.notEqual(renewed.id, id); assert.equal(renewed.retry, 'same-mint-v2'); assert.equal(renewed.retryOf, id); assert.equal(renewed.digest, digest);
+    assert.deepEqual(renewed.unreserved, ['s0', 's1', 's2']); assert.equal(renewed.retryPrepare, true);
+    assert.deepEqual(store.get('mintCeremonyAttempts', key + '/' + id), held);
+    const count = fake.asked.length;
+    assert.equal(await committee.signature(key, proposal), null); assert.equal(fake.asked.length, count, 'a permit that holds nothing asks no signer while it waits');
+    // After the batch, the permit prepares all three signers afresh for the same digest and starts.
+    await store.transact([{ space: 'meta', id: 'draft' }]);
+    assert.equal(await committee.signature(key, proposal), null);
+    assert.deepEqual(fake.asked.slice(count).filter(a => a.includes(':retry=')), ['s0:retry=same-mint-v2', 's1:retry=same-mint-v2', 's2:retry=same-mint-v2']);
+    assert.equal(store.get('ceremonies', key).stage, 'running'); assert.equal(fake.asked.filter(a => a.endsWith('/go')).length, 3);
+  } finally { await store.close(); }
+});
+test('a permit stuck on a failure that proves nothing restarts on its turn', async () => {
+  const store = await Store.open(await temp('committee-permit-stuck-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const proposal = { network, kind: 'mint', version: 'public-v1', id: '12'.repeat(32), receiver: 'receiver' }, key = 'mint/' + proposal.id;
+    const id = 'ab'.repeat(32), digest = '56'.repeat(32);
+    const stuck = { id, proposal, digest, peers: ['s0', 's1', 's2'], stage: 'blocked', reason: 'prepare_incomplete', retryPrepare: false,
+      unreserved: ['s0', 's2'], failures: ['committee_http_status', 'committee_http_status', 'committee_http_status'], started: Date.now() - 36000000 };
+    await store.put('ceremonies', key, stuck);
+    const fake = permitSigners(digest, { ['s1/' + id]: 'aborted' }); committee.request = fake.request;
+    assert.equal(await committee.signature(key, proposal), null);
+    const renewed = store.get('ceremonies', key);
+    assert.notEqual(renewed.id, id); assert.equal(renewed.retry, 'same-mint-v2'); assert.deepEqual(renewed.unreserved, ['s0', 's1', 's2']);
+    assert.equal(fake.sessions.get('s0/' + id + '/fenced'), true); assert.equal(fake.sessions.get('s2/' + id + '/fenced'), true);
+    assert.equal(await committee.signature(key, proposal), null); assert.equal(store.get('ceremonies', key).stage, 'running');
+  } finally { await store.close(); }
+});
+test('a waiting permit is left unchanged while a reply proves nothing or a batch is signing', async () => {
+  const store = await Store.open(await temp('committee-permit-unproven-'));
+  try {
+    const signers = Array.from({ length: 5 }, (_, i) => ({ id: 's' + i, peer: { id: 's' + i } }));
+    const proposal = { network, kind: 'mint', version: 'public-v1', id: '12'.repeat(32), receiver: 'receiver' }, key = 'mint/' + proposal.id;
+    const id = 'ab'.repeat(32), digest = '56'.repeat(32);
+    const held = { id, proposal, digest, peers: ['s0', 's1', 's2'], stage: 'blocked', reason: 'prepare_incomplete',
+      retryPrepare: true, unreserved: ['s2'], failures: ['committee_signer_busy'], started: Date.now() };
+    await store.put('ceremonies', key, held); await store.put('meta', 'draft', { proposal: { batch: { n: '1' } } });
+    for (const s1 of ['timeout', 'running']) {
+      const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+      const fake = permitSigners(digest, { ['s0/' + id]: 'prepared', ...(s1 === 'timeout' ? { s1: 'timeout', ['s1/' + id]: 'prepared' } : { ['s1/' + id]: 'running' }) }); committee.request = fake.request;
+      assert.equal(await committee.signature(key, proposal), null);
+      assert.deepEqual(store.get('ceremonies', key), held, s1 + ': the permit keeps its session');
+      assert.deepEqual(fake.asked.filter(a => !a.endsWith('/status')), [], s1 + ': no signer is stopped or fenced');
+    }
+    const committee = new Committee({ store, network, signers, assetRecoveryVersion: 2 });
+    const fake = permitSigners(digest, { ['s0/' + id]: 'prepared', ['s1/' + id]: 'prepared' }); committee.request = fake.request;
+    committee.activeSigning = new Set(['batch/0/1']); await store.put('ceremonies', 'batch/0/1', { id: 'cd'.repeat(32), stage: 'running' });
+    assert.equal(await committee.signature(key, proposal), null); assert.deepEqual(fake.asked, [], 'no signer is asked while a batch is signing on them');
+    assert.deepEqual(store.get('ceremonies', key), held);
+  } finally { await store.close(); }
+});

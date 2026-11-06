@@ -61,14 +61,15 @@ export async function observeOnce({ checkDisk = diskCheck, v2, adapters, outbox,
   await outbox.tick();
   // The adapter verifies the local chain and provides every intermediate
   // tip, including the actual confirmed height after a reorganization.
+  let last = null;
   for await (const observation of await adapters.observations(intake.head)) {
     check(observation.chain === chain, 'configured_chain_required');
-    const sealed = await intake.observe(observation);
+    const sealed = await intake.observe(observation); if (sealed) last = sealed;
     if (sealed) await files.json(files.receiptName(sealed.receiptRoot, sealed), sealed.receiptRoot, { immutable: true });
     if (sealed?.count) await committee.attestRoot(sealed.receiptRoot).then(() => workerStatus.succeeded('witness'), e => workerStatus.failed(e, 'witness'));
     await adapters.observed?.(observation);
   }
-  await adapters.afterObserve?.(intake);
+  await adapters.afterObserve?.(intake, last);
   await v2?.refresh();
 }
 

@@ -61,3 +61,32 @@ test('production adapter advances the checkpoint, clears its queued observation 
   await observe(); await pipeline.tick(); await pipeline.tick();
   assert.equal(f.store.count('observations'), 0); assert.equal((await activeReads.batchLast()).to, 46);
 });
+
+test('a new block that the closed window already reached gets no extra empty window', async t => {
+  const f = await relayFixture(t, 45), history = new History(f.store);
+  activeReads = { ...f.reads, manifest: { bitcoin: f.reads.client }, close: async () => {},
+    registry: async () => ({ assets: {}, feePolicy: createFeePolicy('100') }), ethRPC: async () => assert.fail('no Ethereum calls') };
+  const config = { network: deployment.network, epoch: 0, data: f.store.directory, gatewayKey: join(f.root, 'gateway.hex'),
+    committee: [{ id: 'reader', peer: { identity: edPublic(Buffer.alloc(32, 12)) } }],
+    prod: { contexts: join(f.root, 'contexts'), startTip: 1, maxHeadersPerView: 10000,
+      ethereum: { chainId: '1', address: '0x' + '22'.repeat(20), token: '0x' + '33'.repeat(20) } } };
+  await writeFile(config.gatewayKey, secret.toString('hex'), { mode: 0o600 });
+  const adapter = await createAdapters({ config, store: f.store, history }); t.after(() => adapter.close());
+  const intake = new Intake({ store: f.store, network: config.network, secret, hashAt: history.hashAt });
+  const observe = async sealedAt => {
+    let last = null;
+    for (const observation of await adapter.observations(intake.head)) { last = await intake.observe(observation) ?? last; await adapter.observed(observation); }
+    await adapter.afterObserve(intake, last && sealedAt !== undefined ? { ...last, counted: sealedAt(intake.head) } : last);
+  };
+  const now = Date.now();
+  await observe(); await adapter.relayHeaders(f.outbox); for (let i = 0; i < 4; i++) await f.outbox.tick(now + i * 1000);
+  await observe(); const sealed = f.store.count('observations');
+  await f.fork(45, 1); await adapter.relayHeaders(f.outbox);
+  for (let i = 4; i < 8; i++) await f.outbox.tick(now + i * 1000);
+  await observe(head => head.counted);
+  assert.equal(f.store.count('observations'), sealed + 1, 'only the closed window, which already reaches the new block');
+  await f.fork(46, 1); await adapter.relayHeaders(f.outbox);
+  for (let i = 8; i < 12; i++) await f.outbox.tick(now + i * 1000);
+  await observe(head => head.counted - 1);
+  assert.equal(f.store.count('observations'), sealed + 3, 'a closed window behind the new block is followed by the new block');
+});
