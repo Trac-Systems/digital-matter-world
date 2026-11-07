@@ -53,7 +53,7 @@ test('once claims the recorded v2 summary window with activated settings and sav
   const payload = { window: summary.tip, plots: [{ block: '0', patterns: ['0'] }], header: { height: summary.tip, raw: '00' } };
   let claim;
   const agent = { trac: { head: async () => head, hashAt: async () => summary.tipHash, settings: async () => ({ values: { claimsPerWindow: 7 } }) },
-    catalog: async () => [{ number: 0, key: 'ab'.repeat(32) }], journal: { get: () => ({ body: { p: payload } }) },
+    patternDefinitions: async () => [{ number: 0, key: 'ab'.repeat(32) }], journal: { get: () => ({ body: { p: payload } }) },
     service: { latest: async () => latest, publication: async () => summary },
     claim: async args => { claim = args; return { state: 'dry-run', action: 'claim-v2' }; } };
   const result = await Agent.prototype.runOnce.call(agent, { history: { length: head.tip.height + 1, get: () => ({ hash: summary.tipHash }), raw: () => '00' } });

@@ -82,7 +82,7 @@ export class Agent {
       const commitment = discoveryCommitment(row.body.proposal, row.body.salt, this.owner);
       const matches = p => ['name', 'pat', 'fld', 'dt'].every(k => p[k] === row.body.proposal[k]) &&
         (p.amountMode ?? 'count') === (row.body.proposal.amountMode ?? 'count');
-      const found = (await this.catalog()).find(p => p.discoverer === this.address && matches(p));
+      const found = (await this.patternDefinitions()).find(p => p.discoverer === this.address && matches(p));
       let cursor; const seen = new Set();
       do {
         const page = await this.events({ type: 'discovery', order: 'desc', limit: 200, cursor });
@@ -316,6 +316,33 @@ export class Agent {
       cursor = next; if (cursor !== null) cursors.add(cursor);
     } while (cursor !== null);
     check((total === null || rows.length === total) && rows.every(p => integer(p.number)) && new Set(rows.map(p => p.number)).size === rows.length, 'Catalog changed during read'); return rows;
+  }
+  // Mining needs only each pattern's fixed definition, and a new pattern always takes the next number.
+  // Keep the list between passes and read newest first until a known number; any mismatch reads everything.
+  async patternDefinitions() {
+    const saved = this.savedCatalog;
+    if (saved) {
+      try {
+        const added = [], cursors = new Set(); let cursor, first, known = false;
+        do {
+          const page = await this.service.patterns({ cursor, sort: 'number', order: 'desc' }), next = nextCursor(page);
+          first ??= page;
+          check(page.v === 3 && integer(page.total) && page.revision === first.revision && page.total === first.total &&
+            Array.isArray(page.patterns) && (next === null || !cursors.has(next)), 'Catalog changed during read');
+          for (const row of page.patterns) {
+            const number = safeNumberV2(row.number);
+            if (number <= saved.newest) { known = true; break; }
+            check(!added.length || number < added.at(-1).number, 'Catalog changed during read');
+            added.push({ ...row, number });
+          }
+          cursor = next; if (cursor !== null) cursors.add(cursor);
+        } while (!known && cursor !== null && added.length <= 100000);
+        const rows = [...saved.rows, ...added.reverse()];
+        if (rows.length === first.total) { this.savedCatalog = { rows, newest: rows.at(-1)?.number ?? -1 }; return rows; }
+      } catch (error) { if (error.message !== 'Catalog changed during read' && error.code !== 'page_cursor_stale') throw error; }
+    }
+    const rows = await this.catalog();
+    this.savedCatalog = { rows, newest: rows.reduce((n, p) => Math.max(n, p.number), -1) }; return rows;
   }
   async sendMove(id, type, payload, { intent = payload, validate = async () => {} } = {}) {
     if (['header', 'claim'].includes(type)) {
@@ -655,7 +682,7 @@ export class Agent {
     return taken;
   }
   async runOnce({ history, source, strategy = chooseClaims }) {
-    const head = await this.trac.head(), patterns = await this.catalog();
+    const head = await this.trac.head(), patterns = await this.patternDefinitions();
     const sendHeader = () => this.postHeader({ height: head.tip.height, history, source });
     if (!patterns.length) return { state: 'discovery_needed', message: 'No patterns have been accepted into the public table yet, so there is nothing to mine. Test a pattern against verified history, commit it, wait at least two Bitcoin blocks and for witnessed inclusion, then reveal it and wait for evaluation to accept it. A local search success or gateway receipt is not an accepted pattern. This pass can still submit a free header.',
       next: [{ tool: 'search_patterns', arguments: {} }, { tool: 'propose_pattern' }, { tool: 'reveal_pattern' }], header: await sendHeader() };

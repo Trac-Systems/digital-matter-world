@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { atomicWrite, check, hex32, integer, privateRead, sha256 } from './check.mjs';
 import { nextCursor, patternId, readInteger } from './api-values.mjs';
 
-export const MINING_READ_SETTINGS = Object.freeze({ maxRequests: 32, cacheBytes: 64 * 1024 * 1024 });
+export const MINING_READ_SETTINGS = Object.freeze({ maxRequests: 256, cacheBytes: 64 * 1024 * 1024 });
 export function miningReadSettings(overrides = {}) {
   check(overrides && typeof overrides === 'object' && !Array.isArray(overrides), 'Invalid mining read settings');
   const value = { ...MINING_READ_SETTINGS, ...overrides };

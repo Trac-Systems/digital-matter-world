@@ -131,7 +131,7 @@ test('bad chains, unsafe heights and uncertain reads preserve the last valid cac
 test('runOnce sends the header while catching up, never runs strategy on partial data, and resumes saved selections', async () => {
   let strategies = 0, syncs = 0, headers = 0, saved = null;
   const agent = { trac: { head: async () => ({ tip: { height: 10 }, counted: 10 }), hashAt: async () => 'ab'.repeat(32), settings: async () => ({ claimsPerWindow: 1 }) },
-    catalog: async () => patterns, service: { latest: async () => ({ summary: {} }), publication: async () => ({ tip: '10', height: '10', tipHash: 'ab'.repeat(32) }) },
+    catalog: async () => patterns, patternDefinitions: async () => patterns, service: { latest: async () => ({ summary: {} }), publication: async () => ({ tip: '10', height: '10', tipHash: 'ab'.repeat(32) }) },
     journal: { get: () => saved }, takenSlots: async () => { syncs++; return null; }, postHeader: async () => { headers++; return { state: 'dry-run', action: 'header' }; },
     claim: async ({ plots }) => ({ plots }) };
   const args = { history: { length: 11, get: () => ({ hash: 'ab'.repeat(32) }), raw: () => '00' }, strategy: () => { strategies++; return []; } };

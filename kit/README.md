@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.8**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.9**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
@@ -187,15 +187,18 @@ checked before using them. Restarting keeps the cache; journal and signed action
 formats are unchanged. The gateway must support this read before using this kit
 for v2 mining. An older gateway produces an update message.
 
-A pass uses at most 32 found-slot requests, including catch-up and rebuilds.
+A pass uses at most 256 found-slot requests, including catch-up and rebuilds, so a
+first download (about 200 pages on mainnet) usually completes in one pass.
 If more work remains, it sends the header and reports `claimState:taken_syncing`;
 the dashboard continues catching up on its normal polling interval. It selects
 claims only after the whole cache is current. A lost revision chain or corrupt
 cache starts a bounded rebuild; ordinary network errors preserve progress.
-Optional local config `"miningReads":{"maxRequests":32,"cacheBytes":67108864}`
+Optional local config `"miningReads":{"maxRequests":256,"cacheBytes":67108864}`
 controls this request allowance and the cache file size limit. These are local
-resource limits, not game settings. Other reads such as the pattern catalog and
-header verification retain their existing behavior.
+resource limits, not game settings. Mining keeps the pattern list between passes:
+the first pass reads it in full, later passes read only the newest page or two, since a
+new pattern always takes the next number. If the counts ever disagree it reads the full
+list again. Header verification retains its existing behavior.
 
 After setup and connecting your agent, these standalone CLI commands offer the
 same reads and play pass. They use the default config; setup also prints commands

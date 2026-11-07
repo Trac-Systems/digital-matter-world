@@ -31,3 +31,30 @@ test('legacy catalog retains exact total and numeric identity checks', async () 
   await assert.rejects(catalog([{ ...legacy, total: null }]));
   await assert.rejects(catalog([{ ...legacy, patterns: [{ number: '0' }] }]));
 });
+test('pattern definitions are read once, then only the newest pages; any mismatch reads everything again', async () => {
+  let numbers = [0, 1, 2, 3], requests = [], revision = () => String(numbers.length);
+  const rows = list => list.map(n => ({ number: String(n), name: 'p' + n }));
+  const service = { patterns: async params => {
+    requests.push(params.order + (params.cursor ? '+' : ''));
+    const sorted = params.order === 'desc' ? [...numbers].reverse() : numbers, start = params.cursor ? Number(params.cursor) : 0;
+    const next = start + 2 < sorted.length ? String(start + 2) : null;
+    return { v: 3, revision: revision(), total: numbers.length, limit: 2, patterns: rows(sorted.slice(start, start + 2)), next };
+  } };
+  const agent = { service, catalog: Agent.prototype.catalog };
+  const read = () => Agent.prototype.patternDefinitions.call(agent);
+  assert.deepEqual((await read()).map(p => p.number), [0, 1, 2, 3]);
+  assert.deepEqual(requests, ['asc', 'asc+']);
+  // Nothing new: one newest-first page.
+  requests = []; assert.deepEqual((await read()).map(p => p.number), [0, 1, 2, 3]); assert.deepEqual(requests, ['desc']);
+  // Three new patterns: the newest pages until a known number.
+  numbers = [0, 1, 2, 3, 4, 5, 6]; requests = [];
+  assert.deepEqual((await read()).map(p => p.number), [0, 1, 2, 3, 4, 5, 6]); assert.deepEqual(requests, ['desc', 'desc+']);
+  // A count that does not add up (a gap or a removed row) falls back to the full read.
+  numbers = [0, 1, 2, 3, 4, 5, 6, 8]; revision = () => '9'; service.total = 9;
+  const patterns = service.patterns; service.patterns = async params => ({ ...await patterns(params), total: 9 });
+  requests = []; await assert.rejects(read(), /Catalog changed during read/); assert.deepEqual(requests, ['desc', 'asc', 'asc+', 'asc+', 'asc+']);
+  // A revision change between newest-first pages is retried as a full read.
+  service.patterns = patterns; numbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; let calls = 0;
+  revision = () => (calls++ === 1 ? 'x' : String(numbers.length));
+  requests = []; assert.deepEqual((await read()).map(p => p.number), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); assert.equal(requests[0], 'desc'); assert.equal(requests[2], 'asc');
+});

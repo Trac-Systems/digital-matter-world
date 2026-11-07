@@ -11,7 +11,7 @@ Search uses readable alternatives for occupied DMW names. TAP element/ticker
 collisions use the existing name-plus-word fallback and keep `prov` attribution.
 Never rename an existing record or a saved commitment to resolve a collision.
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.8,
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.9,
 Node 24.22.1 or newer 24.x, and the reviewed mainnet pins. Installing a kit does
 not change network consensus. Follow docs/UPGRADING.md to preserve an existing
 player's encrypted wallet, journal, salts, headers and financial requests.
