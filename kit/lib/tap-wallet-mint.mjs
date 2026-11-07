@@ -156,7 +156,7 @@ export class TapWalletMint {
         }
         if (userCancelled(error)) throw Error(`TAP Wallet reports the payment was cancelled. If you did not confirm it in the wallet, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry.`);
         const said = typeof error?.message === 'string' && /missingorspent|missing-inputs|inputs-missing/i.test(error.message)
-          ? ' TAP Wallet tried to spend Bitcoin that your previous payment already used; that payment is still waiting for its block. Wait until it confirms (usually within 10 minutes).'
+          ? ' Bitcoin reports a coin in this payment as already spent by another transaction from this wallet. If that one is still unconfirmed, wait for its block (usually within 10 minutes).'
           : typeof error?.message === 'string' && error.message ? ` TAP Wallet said: “${error.message.slice(0, 300)}”.` : '';
         throw Error(`TAP Wallet did not return a payment receipt.${said} If your wallet shows no sent payment for this request, press ${extra ? 'Pay and mint' : 'Pay missing items'} again and confirm the retry; another payment is never sent automatically.`);
       }
@@ -209,6 +209,22 @@ export class TapWalletMint {
     ensure(job?.officialDeployment && job.receiver === this.address, 'Connect the TAP Wallet that requested this ticker');
     const { text, attemptId, phase } = deploymentContent(job, { validateTicker });
     return { ...await this.inscribeContent(attemptId, text, 'deploy', options), asset: job.asset, phase };
+  }
+  // Bitcoin confirmed another transaction spending one of the saved commit's coins, and the commit itself is
+  // unknown: it can never confirm. Unknown answers (offline, rate limits) count as not dead.
+  async deadCommit(plan) {
+    if (this.network === 'regtest' || !/^[0-9a-f]{64}$/.test(plan.commitTxid ?? '') || !Array.isArray(plan.inputs)) return null;
+    const base = 'https://mempool.space' + (this.network === 'mainnet' ? '' : '/' + this.network) + '/api/tx/';
+    const read = path => this.fetchImpl(base + path, { redirect: 'error', signal: AbortSignal.timeout(10000) }).catch(() => null);
+    const own = await read(plan.commitTxid + '/status');
+    if (own?.status !== 404) return null;
+    for (const input of plan.inputs) {
+      const response = await read(`${input.txid}/outspend/${input.vout}`);
+      const spent = response?.ok ? await response.json().catch(() => null) : null;
+      if (spent?.spent && /^[0-9a-f]{64}$/.test(spent.txid ?? '') && spent.txid !== plan.commitTxid && spent.status?.confirmed === true)
+        return { input: `${input.txid}:${input.vout}`, spentBy: spent.txid };
+    }
+    return null;
   }
   // A retry without a wallet receipt is allowed only when Bitcoin shows that
   // this wallet sent nothing since the attempt: no unconfirmed transaction and
@@ -295,6 +311,14 @@ export class TapWalletMint {
       // A legacy-account plan whose reveal key lived only in a closed page was
       // never broadcast: build a fresh one.
       if (plan?.revealAfterCommitSignature && !plan.revealHex && typeof plan.signRevealFor !== 'function') plan = null;
+      // A saved, signed commit is dead when Bitcoin confirmed a different transaction spending one of its coins
+      // (for example another deploy from this wallet): it can never confirm, so nothing can be paid twice.
+      // Re-sending it failed with missingorspent forever; drop it and build a fresh one from current coins.
+      if (plan?.signedCommitPsbt && !plan.broadcast && await this.deadCommit(plan)) {
+        const next = { ...saved }; delete next[field]; await this.journal.put(key, next);
+        saved = next; plan = null;
+        this.notify('An earlier inscription for this request was never sent and its coin has since been spent. A new one is prepared from your current coins; confirm it in TAP Wallet.');
+      }
       if (!plan) {
         const coins = await cardinalCoins(this.provider, this.address, { fetchImpl: this.fetchImpl });
         const utxos = coins.map(c => ({ txid: c.txid, vout: c.vout, value: String(c.satoshi), script: c.scriptPk, confirmed: true, cardinal: true }));

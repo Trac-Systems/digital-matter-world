@@ -142,6 +142,38 @@ test('1.0.48 signing uses inputForSigns and refuses the unsigned Ledger controll
   }
 });
 
+test('a saved signed commit whose coin Bitcoin spent elsewhere is dropped and rebuilt from current coins', async () => {
+  const { p2tr, Transaction } = await import('@scure/btc-signer');
+  const { unhex } = await import('../lib/inscription-core.mjs');
+  const key = new Uint8Array(32).fill(4), f = fixture(true); await f.wallet.connect();
+  const script = hex(p2tr(unhex(await f.provider.getPublicKey()).slice(1)).script);
+  let coin = '45'.repeat(32), pushed = [], fail = true, spentElsewhere = null;
+  f.provider.getBitcoinUtxos = async () => [{ txid: coin, vout: 0, satoshi: 100000, scriptPk: script, height: 1, inscriptions: [], isSpent: false }];
+  f.provider.signPsbt = async psbt => { const tx = Transaction.fromPSBT(unhex(psbt)); tx.sign(key); tx.finalize(); return hex(tx.toPSBT(0)); };
+  f.provider.pushPsbt = async psbt => {
+    if (fail) throw Error('[ELECTRS API] sendrawtransaction RPC error -25: bad-txns-inputs-missingorspent');
+    const id = Transaction.fromPSBT(unhex(psbt)).id; pushed.push(id); return id;
+  };
+  f.provider.pushTx = async raw => Transaction.fromRaw(unhex(raw), { allowUnknownInputs: true }).id;
+  f.wallet.fetchImpl = async (url, init) => {
+    const outspend = /\/api\/tx\/([0-9a-f]{64})\/outspend\/(\d+)$/.exec(url), status = /\/api\/tx\/([0-9a-f]{64})\/status$/.exec(url);
+    if (status) return new Response('Transaction not found', { status: 404 });
+    if (outspend) return Response.json(spentElsewhere && outspend[1] === '45'.repeat(32) ? { spent: true, txid: '99'.repeat(32), vin: 0, status: { confirmed: true, block_height: 1 } } : { spent: false });
+    return walletFundsFetch(url, init);
+  };
+  const run = () => f.wallet.inscribeContent(f.id, 'fixture inscription', 'mint', { feeRate: 2, maxFeeSats: '10000', confirm: async () => true });
+  await assert.rejects(run(), /missingorspent/);
+  const first = [...f.records.values()].find(r => r.mint?.signedCommitPsbt).mint;
+  // Bitcoin does not show the coin spent yet: the saved bytes stay (nothing is paid twice).
+  await assert.rejects(run(), /missingorspent/);
+  assert.equal([...f.records.values()].find(r => r.mint).mint.commitTxid, first.commitTxid);
+  // Another transaction from this wallet confirmed with that coin: the dead commit is replaced from a fresh coin.
+  spentElsewhere = true; coin = '46'.repeat(32); fail = false;
+  const result = await run();
+  assert.equal(result.state, 'broadcast'); assert.notEqual(result.commitTxid, first.commitTxid); assert.deepEqual(pushed, [result.commitTxid]);
+  assert.match(f.notices.at(-1), /never sent and its coin has since been spent/);
+});
+
 test('account changes while refreshing after setup fail before the payment record is written', async () => {
   const f = fixture(true); await f.wallet.connect(); let reads = 0;
   f.wallet.readStatus = async () => { if (++reads === 2) f.state.locked = true; return f.status; };
