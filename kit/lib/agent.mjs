@@ -30,6 +30,9 @@ import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './a
 import { tnkBalance, prepareTnkTransfer, sendTnkTransfer, tnkTransferStatus } from './tnk.mjs';
 import { TakenCache, miningReadSettings } from './taken-cache.mjs';
 
+// A loss is recorded once the claim window is this many blocks behind the counted tip (public pages may trail a closure).
+const SETTLED_LOSS_BLOCKS = 6;
+
 export class Agent {
   tnkBalance() { return tnkBalance(this); }
   prepareTnkTransfer(args) { return prepareTnkTransfer(this, args); }
@@ -221,7 +224,7 @@ export class Agent {
     return { asset, ...amountView(await this.trac.balance(this.owner, asset), { currency: asset, denomination: 'unit', decimals: 0 }) };
   }
   async hunting(options) {
-    const head = await this.trac.head(), page = this.journal.hunting(options), items = [];
+    const head = await this.trac.head(), page = this.journal.hunting(options), items = [], closures = new Map();
     for (const row of page.items) {
       if (row.type === 'discovery') {
         items.push({ ...row, phase: row.revealState && row.revealState !== 'refused' ? 'check_reveal' : row.receiptTip === null ? 'receipt_unknown' : head.tip.height < row.revealFrom ? 'sealed' : head.tip.height > row.revealUntil ? 'expired' : 'reveal_window' });
@@ -243,8 +246,15 @@ export class Agent {
         const plots = [];
         try {
           if (row.ruleset === 'dmw-v2') {
-            // V3 draws are individual winner rows, not v1 aggregate rounds.
-            // Empty pages cannot prove a loss while deferred awards exist.
+            // V3 draws are individual winner rows, not v1 aggregate rounds. Until the window's accepted
+            // closure exists, an empty page cannot prove a loss (deferred awards), so no draws are read
+            // yet. The closure decides: read the draws once after it and keep the result in the journal.
+            if (!closures.has(row.window)) closures.set(row.window, (await this.service.readPage('/window-eligibility/' + row.window))?.draw ?? null);
+            const closure = closures.get(row.window);
+            if (!closure) {
+              items.push({ ...row, phase: 'check_settlement', next: { tool: 'window_eligibility', arguments: { window: row.window } } });
+              continue;
+            }
             const observedWins = [], winners = new Set(); let drawn = 0;
             for (const plot of tracked) {
               let cursor; const seen = new Set();
@@ -258,9 +268,15 @@ export class Agent {
                 cursor = nextCursor(page); check(!cursor || !seen.has(cursor), 'Repeated draw cursor'); seen.add(cursor);
               } while (cursor);
             }
-            items.push({ ...row, phase: observedWins.length ? 'won_pending_settlement' : 'check_settlement', observedWins, settlementComplete: false,
-              ...(drawn ? { competition: { agentsWon: winners.size, slotsWon: drawn, yours: observedWins.length, note: COMPETITION_NOTE } } : {}),
-              next: { tool: 'window_eligibility', arguments: { window: row.window } } });
+            const competition = drawn ? { competition: { agentsWon: winners.size, slotsWon: drawn, yours: observedWins.length, note: COMPETITION_NOTE } } : {};
+            // Public draw pages can trail a fresh closure for a moment: a loss is kept only once the window is
+            // a few blocks behind the counted tip; a win as soon as it is seen.
+            if (observedWins.length || closure.void || head.counted >= row.window + SETTLED_LOSS_BLOCKS) {
+              settlement = { window: row.window, phase: observedWins.length ? 'won' : 'lost', source: 'public_draws_v3', wins: observedWins, ...competition,
+                ...(closure.void ? { void: true, reason: closure.reason ?? null } : {}) };
+              this.journal.settle(row.id, settlement);
+              items.push({ ...row, phase: settlement.phase, settlement, ...competition });
+            } else items.push({ ...row, phase: 'check_settlement', ...competition, next: { tool: 'window_eligibility', arguments: { window: row.window } } });
             continue;
           }
           for (const plot of tracked) {

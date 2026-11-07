@@ -113,13 +113,33 @@ test('v2 journal hunting recognizes header-v2 and claim-v2 without treating them
   assert.equal(page.items[0].closesAt, 23); assert.equal(page.items[1].headerBlock, 20);
   assert.equal(page.items[0].settlesAt, null, 'V2 credit delivery can lag the deciding block');
   const { trac } = fakeTrac(history(), { tip: 30 });
-  const service = { network: trac.network, block: async block => ({ v: 3, draws: block === 10 ? [{ window: '21', block: '10', pattern: '0', winner: address, asset: 'p2:0', count: '1' }] : [], next: null }) };
+  let closed = new Set(), blockReads = 0;
+  const service = { network: trac.network,
+    readPage: async path => ({ v: 3, draw: closed.has(path.split('/').at(-1)) ? { window: path.split('/').at(-1) } : null }),
+    block: async block => { blockReads++; return { v: 3, draws: block === 10 ? [{ window: '21', block: '10', pattern: '0', winner: address, asset: 'p2:0', count: '1' }] : [], next: null }; } };
   const agent = new Agent({ wallet: testWallet(), network: trac.network, trac, service, journal });
-  const hunt = await agent.hunting();
-  assert.equal(hunt.items[0].phase, 'won_pending_settlement');
-  assert.equal(hunt.items[1].phase, 'check_settlement');
+  // Before the window's accepted closure no draw page can prove anything: none is read, nothing is kept.
+  let hunt = await agent.hunting();
+  assert.deepEqual(hunt.items.map(r => r.phase), ['check_settlement', 'check_settlement']);
   assert.equal(hunt.items[1].settlesAt, null);
   assert.equal(journal.evidence('claim/21').settlement, null, 'A partial projection must not freeze the final settlement');
+  // After it the draws are read once and the result is kept; later status reads need no draw requests.
+  closed = new Set(['20', '21']); hunt = await agent.hunting();
+  assert.deepEqual(hunt.items.map(r => r.phase), ['won', 'lost']);
+  assert.equal(journal.evidence('claim/21').settlement.phase, 'won');
+  assert.equal(journal.evidence('claim/21').settlement.wins.length, 1);
+  const reads = blockReads; hunt = await agent.hunting();
+  assert.deepEqual(hunt.items.map(r => r.phase), ['won', 'lost']); assert.equal(blockReads, reads);
+});
+
+test('v2 claim loss waits until the closed window is a few blocks behind the counted tip', async t => {
+  const journal = await Journal.open(await temp(t), 'v2-loss-margin'); cleanup(t, () => journal.close());
+  journal.reserve('claim/27', {}, { v: 2, t: 'claim-v2', p: { window: '27', plots: [{ block: '10', patterns: ['0'] }] } });
+  const { trac } = fakeTrac(history(), { tip: 30 });
+  const service = { network: trac.network, readPage: async () => ({ v: 3, draw: { window: '27' } }), block: async () => ({ v: 3, draws: [], next: null }) };
+  const agent = new Agent({ wallet: testWallet(), network: trac.network, trac, service, journal });
+  assert.equal((await agent.hunting()).items[0].phase, 'check_settlement');
+  assert.equal(journal.evidence('claim/27').settlement, null);
 });
 
 test('a mint rights read can name the chosen ticker by its deploy inscription', () => {
