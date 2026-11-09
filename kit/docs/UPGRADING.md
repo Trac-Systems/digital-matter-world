@@ -21,6 +21,8 @@ the network uses v2; installing the kit does not activate the network.
    for package in rules contract kit; do
      (cd "$package" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || exit
    done
+   node contract/node_modules/trac-msb/scripts/hypercore-stallfix/apply.mjs || exit
+   node contract/node_modules/trac-peer/scripts/hypercore-stallfix/apply.mjs || exit
    ```
 
    The version must print `0.2.0`. A network requiring a later version needs its

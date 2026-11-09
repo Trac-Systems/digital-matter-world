@@ -141,6 +141,8 @@ then create your local player:
 for package in rules contract kit; do
   (cd "$package" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || exit
 done
+node contract/node_modules/trac-msb/scripts/hypercore-stallfix/apply.mjs || exit
+node contract/node_modules/trac-peer/scripts/hypercore-stallfix/apply.mjs || exit
 cd kit
 node bin/dmw.mjs setup --network mainnet
 ```

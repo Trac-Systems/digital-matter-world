@@ -78,12 +78,17 @@ cd digital-matter-world
 for package in rules contract kit; do
   (cd "$package" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || exit
 done
+node contract/node_modules/trac-msb/scripts/hypercore-stallfix/apply.mjs || exit
+node contract/node_modules/trac-peer/scripts/hypercore-stallfix/apply.mjs || exit
 cd kit
 node bin/dmw.mjs setup --network mainnet
 ```
 
 All three packages are needed: the kit runs the pinned Trac client and contract
 read logic from `contract`, and uses the cryptographic dependencies in `rules`.
+`--ignore-scripts` skips install scripts, so the two `apply.mjs` lines run the Trac
+packages' one install step themselves: it applies their Hypercore replication stall
+fix and stops with an error if the installed Hypercore is not the expected version.
 Development tools and the operator packages are not needed for play.
 
 Setup prints your player address, absolute config path and next commands. Keep
@@ -229,6 +234,8 @@ modules, so install their dependencies too. From the repository root:
 for package in rules contract committee local kit service; do
   (cd "$package" && npm ci --ignore-scripts --no-audit --no-fund) || exit
 done
+node contract/node_modules/trac-msb/scripts/hypercore-stallfix/apply.mjs || exit
+node contract/node_modules/trac-peer/scripts/hypercore-stallfix/apply.mjs || exit
 node kit/bin/dmw.mjs setup --network mainnet --help
 ```
 
