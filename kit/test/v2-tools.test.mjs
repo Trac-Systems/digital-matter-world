@@ -9,6 +9,7 @@ import { presentRead, publicRoute, readQuery } from '../lib/reads.mjs';
 import { chooseClaims, chooseCompound, chooseMint } from '../strategies/default.mjs';
 import { temp, testWallet, fakeTrac, history, cleanup } from './helpers.mjs';
 import { encodeTracAddress } from '../../rules/src/trac-address.js';
+import { merkleRoot } from '../../rules/src/merkle.js';
 
 const recording = JSON.parse(await readFile(new URL('./fixtures/v2-live-reads.json', import.meta.url)));
 const recorded = path => structuredClone(recording.records.find(r => r.path === path).body);
@@ -115,14 +116,14 @@ test('v2 journal hunting recognizes header-v2 and claim-v2 without treating them
   const { trac } = fakeTrac(history(), { tip: 30 });
   let closed = new Set(), blockReads = 0;
   const service = { network: trac.network,
-    readPage: async path => ({ v: 3, draw: closed.has(path.split('/').at(-1)) ? { window: path.split('/').at(-1) } : null }),
-    block: async block => { blockReads++; return { v: 3, draws: block === 10 ? [{ window: '21', block: '10', pattern: '0', winner: address, asset: 'p2:0', count: '1' }] : [], next: null }; } };
+    readPage: async path => ({ v: 3, draw: closed.has(path.split('/').at(-1)) ? { window: path.split('/').at(-1), explicitRoot: merkleRoot([]), root: merkleRoot([]), senderCount: '0' } : null }),
+    block: async (block, { collection }) => { blockReads++; return { v: 3, [collection]: collection === 'draws' && closed.has('21') && block === 10 ? [{ window: '21', block: '10', pattern: '0', winner: address, asset: 'p2:0', count: '1' }] : [], next: null }; } };
   const agent = new Agent({ wallet: testWallet(), network: trac.network, trac, service, journal });
-  // Before the window's accepted closure no draw page can prove anything: none is read, nothing is kept.
+  // Positive observations are useful before closure, but their absence is not a loss.
   let hunt = await agent.hunting();
-  assert.deepEqual(hunt.items.map(r => r.phase), ['check_settlement', 'check_settlement']);
+  assert.deepEqual(hunt.items.map(r => r.phase), ['awaiting_booking', 'awaiting_booking']);
   assert.equal(hunt.items[1].settlesAt, null);
-  assert.equal(journal.evidence('claim/21').settlement, null, 'A partial projection must not freeze the final settlement');
+  assert.equal(journal.evidence('claim/21').settlement.bookingComplete, false, 'A partial projection must not freeze the final settlement');
   // After it the draws are read once and the result is kept; later status reads need no draw requests.
   closed = new Set(['20', '21']); hunt = await agent.hunting();
   assert.deepEqual(hunt.items.map(r => r.phase), ['won', 'lost']);
@@ -132,14 +133,14 @@ test('v2 journal hunting recognizes header-v2 and claim-v2 without treating them
   assert.deepEqual(hunt.items.map(r => r.phase), ['won', 'lost']); assert.equal(blockReads, reads);
 });
 
-test('v2 claim loss waits until the closed window is a few blocks behind the counted tip', async t => {
+test('v2 claim stays awaiting booking when a closure has no completion evidence', async t => {
   const journal = await Journal.open(await temp(t), 'v2-loss-margin'); cleanup(t, () => journal.close());
   journal.reserve('claim/27', {}, { v: 2, t: 'claim-v2', p: { window: '27', plots: [{ block: '10', patterns: ['0'] }] } });
   const { trac } = fakeTrac(history(), { tip: 30 });
   const service = { network: trac.network, readPage: async () => ({ v: 3, draw: { window: '27' } }), block: async () => ({ v: 3, draws: [], next: null }) };
   const agent = new Agent({ wallet: testWallet(), network: trac.network, trac, service, journal });
-  assert.equal((await agent.hunting()).items[0].phase, 'check_settlement');
-  assert.equal(journal.evidence('claim/27').settlement, null);
+  assert.equal((await agent.hunting()).items[0].phase, 'awaiting_booking');
+  assert.equal(journal.evidence('claim/27').settlement.bookingComplete, false);
 });
 
 test('a mint rights read can name the chosen ticker by its deploy inscription', () => {

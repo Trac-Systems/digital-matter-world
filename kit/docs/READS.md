@@ -82,6 +82,66 @@ bounds and cannot exclude implicit header awards. `hunting` reports observed
 wins while leaving final settlement incomplete; consult window evidence and
 accepted credit delivery before spending.
 
+## Own finds and booking
+
+`my_finds({cursor?,limit?:25,asset?,soonBlocks?:144})` / `agent.myFinds(...)`
+lists this player's unminted finds on blocks known to its journal. The default
+limit is 25, maximum 50. It reads saved claim/header blocks, won settlements and
+delivered discovery witnesses, then checks `/blocks/H/finds` with an owner or
+exact asset filter. It never scans `/finds?agent=` or the agent-wide finds page.
+Counts stay decimal strings. Each row has `block`, `pattern`, `asset`, `count`,
+`findHeight`, `finderUntil`, `blocksLeft`, `endsSoon`, `finderExpired` and
+`deadlineState` (`open`, `soon`, `expired`, `unknown`). Deadlines use the accepted
+counted height, not the Bitcoin tip. Missing deadline evidence stays unknown;
+the kit never invents a deadline from today's settings. `soonBlocks` accepts
+0–1008; the default 144 is a display threshold, not a game rule.
+
+```sh
+node bin/dmw.mjs read my_finds --config /absolute/player.json --limit 25
+node bin/dmw.mjs read my_finds --config /absolute/player.json --limit 25 --cursor TOKEN
+```
+
+The local block cursor survives new journal actions and finds on other blocks.
+Keep the asset filter fixed. Follow `next`/`nextCursor` even when `finds` is empty.
+Each call indexes at most 100 old actions and makes at most 16 block GETs. During
+initial indexing it returns `indexing:true` with a continuation. A stale cursor
+within one busy block restarts only that block and reports `block_cursor_restarted`;
+deduplicate recovered rows by asset/block. An unavailable block retains its
+local position and reports `finds_unavailable`, so it is not silently omitted.
+New blocks added during a traversal appear on the next fresh traversal.
+
+`coverage` explains that a reset/missing journal, or discovery matches never
+saved there, can leave finds outside this list. Restore the original player
+journal from backup to recover its block history. Otherwise inspect named-asset
+`finds`/`agent_profile` pages or `block({height:H,collection:"finds"})` for known
+blocks. The read lists unminted ledger finds; choosing a different ticker still
+requires that ticker's current `mint_rights`/candidate check.
+
+The existing dashboard `/api/claims` response includes the same `myFinds` page.
+Pass its `next` as `myFindsCursor`, independently of the existing claims `cursor`.
+Existing claim rows also expose the deadline fields. A stale legacy claims cursor
+returns a warning while preserving `myFinds`. Dashboard display is separate from
+this API data; neither this read nor a deadline indicator signs or mints.
+
+Hunting v2 records `won` from matching block draws or own finds, even before the
+closure projection appears. A closure fixes the draw, but booking may take many
+more blocks. `lost` requires the ordered booked explicit winner IDs to reproduce
+the closure's `explicitRoot`, with no deferred header award relevant to that
+claim. `void` and saved `rejected` reasons are distinct. Without that evidence,
+the phase is `awaiting_booking`; there is no safe elapsed-block cutoff in these
+public records. These are gateway observations, not an independent batch proof.
+
+Each hunting call shares a 64-GET budget and caches window/block pages. Block
+collections are read at most four pages of 50 rows at a time. The window's winner
+list is folded into the root up to 32 pages per call and the fold is kept in the
+journal (`settlement.booking`), so a window with thousands of winners reaches a
+final `lost` after a few calls. A stale cursor or changed order restarts the fold;
+absence and truncated pages never become loss.
+Up to four old v3 losses or unfinished observations are rechecked outside the
+displayed page on each call. `rechecked` reports those rows; saved packets and
+receipts keep their original identity. Later reads can add further wins while
+`settlement.bookingComplete` is false.
+
 ## Examples
 
 ```js

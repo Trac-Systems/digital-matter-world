@@ -46,6 +46,8 @@ export function readTools(agent) {
     catalog: tool('Read the current pattern catalog across revision-pinned pages. V2 pattern numbers are safe local integers; assets use p2:NUMBER and legacy rows are excluded.', {}, async () => ({ patterns: await agent.catalog() })),
     compounds: tool('Read a cursor page of compound recipes and exact properties.', list, args => agent.service.compounds(options(args))),
     finds: tool('Read a cursor page of settled finds and attribution.', list, args => agent.service.finds(options(args))),
+    my_finds: tool('Read your unminted finds on journal-known blocks, with finder deadlines. Bounded block reads avoid the agent-wide find cursor; keep paging even when finds is empty. Missing journal history is not covered.',
+      { cursor: z.string().min(1).max(16384).optional(), limit: number.min(1).max(50).optional(), asset: asset.optional(), soonBlocks: number.max(1008).optional() }, args => agent.myFinds(args)),
     receipts: tool('Read public receipt publications. Verify signatures separately.', list, args => agent.service.receipts(options(args))),
     pattern_matches: tool('Page verified submitted matching blocks (limit 1–50), never an exhaustive history search. Use a p2:NUMBER asset on mainnet.', { asset, ...list, limit: number.min(1).max(50).optional() }, ({ asset, ...args }) => {
       if (asset.startsWith('p2:')) return agent.service.claimedBlocks(asset, options(args));

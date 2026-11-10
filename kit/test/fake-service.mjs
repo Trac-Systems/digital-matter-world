@@ -4,6 +4,50 @@ import { checkMove, moveId, signReceipt, sealReceipts, processBlock, encodeBinar
   paymentDigest, feeFor, splitFee, verifyLinkInput } from '../../rules/src/index.js';
 import { check, sha256 } from '../lib/check.mjs';
 import { testWallet, witnesses } from './helpers.mjs';
+import { merkleRoot, stableJSON, findIdV2 } from '../../rules/src/index.js';
+
+// Public v3 evidence fixture: closure can precede booking by any number of
+// blocks. Rows have the shapes projected by the window and block routes.
+export class FakeHuntingService {
+  constructor() { this.calls = []; this.closures = new Map(); this.pending = new Map(); this.windows = new Map(); this.draws = []; this.finds = []; }
+  close(window, winners = [], { senderCount = '0' } = {}) {
+    const rows = winners.map(w => ({ source: 'claim', reason: 'won', ...w, id: findIdV2(String(w.block), String(w.pattern)) }));
+    const closure = { window: String(window), determinedAt: String(Number(window) + 2), senderCount,
+      explicitRoot: merkleRoot(rows.map(w => stableJSON(w.id))), root: merkleRoot(rows.map(stableJSON)), policy: { finderWindow: 1008 } };
+    this.closures.set(String(window), closure); this.pending.set(String(window), rows); return closure;
+  }
+  book(window, at, { indices, draws = true, finds = true, winners = true } = {}) {
+    const key = String(window), closure = this.closures.get(key);
+    for (const [i, w] of this.pending.get(key).entries()) {
+      if (indices && !indices.includes(i)) continue;
+      if (winners) {
+        const rows = this.windows.get(key) ?? [];
+        if (!rows.some(r => r.row.id === w.id)) rows.push({ id: `${closure.root}/0000000000000000/${String(i).padStart(16, '0')}`, row: w, root: closure.root, batch: String(at), audit: null });
+        this.windows.set(key, rows.sort((a, b) => a.id.localeCompare(b.id)));
+      }
+      if (draws && !this.draws.some(r => r.id === w.id)) this.draws.push({ ...w, window: key, provenance: { batch: String(at), root: closure.root } });
+      if (finds && !this.finds.some(r => r.id === w.id)) this.finds.push({ id: w.id, block: w.block, pattern: w.pattern, asset: w.asset,
+        count: w.count, finder: w.winner, window: key, source: w.source, findHeight: String(at), finderUntil: String(Number(at) + 1008), minted: false });
+    }
+  }
+  fetch = async (url, options = {}) => {
+    check((options.method ?? 'GET') === 'GET', 'Fixture permits only GET');
+    const u = new URL(url), path = u.pathname, query = Object.fromEntries(u.searchParams); this.calls.push({ path, query });
+    if (this.override) { const response = await this.override(path, query); if (response) return response; }
+    const closure = /^\/window-eligibility\/(\d+)$/.exec(path);
+    if (closure) return Response.json({ v: 3, draw: this.closures.get(closure[1]) ?? null });
+    const window = /^\/windows\/(\d+)\/winners$/.exec(path), block = /^\/blocks\/(\d+)\/(draws|finds)$/.exec(path);
+    if (!window && !block) return Response.json({ error: 'page_cursor_stale' }, { status: 409 });
+    const field = window ? 'rows' : block[2];
+    let rows = window ? this.windows.get(window[1]) ?? [] : this[field].filter(r => String(r.block) === block[1]);
+    if (query.owner) rows = rows.filter(r => r.finder === query.owner);
+    if (query.asset) rows = rows.filter(r => r.asset === query.asset);
+    if (query.window) rows = rows.filter(r => String(r.window) === query.window);
+    if (query.sort === 'asset') rows = [...rows].sort((a, b) => a.asset.localeCompare(b.asset));
+    const offset = Number(query.cursor ?? 0), limit = Math.min(Number(query.limit ?? 50), this.pageSize ?? 50), next = offset + limit < rows.length ? String(offset + limit) : null;
+    return Response.json({ v: 3, [field]: rows.slice(offset, offset + limit), nextCursor: next, total: null, revision: '1', limit });
+  };
+}
 
 // In-memory local HTTP transport. All signed payloads and audit/payment evidence
 // use the shared rules; only service storage and wallet settlement are simulated.

@@ -15,6 +15,9 @@ import { formatTnk } from './tnk-values.mjs';
 import { previewCraftNamed } from './craft-v2.mjs';
 import { BulkLinkWorker } from './bulk-link.mjs';
 import { linkBlocks } from './link-jobs.mjs';
+import { findDeadline } from './my-finds.mjs';
+
+const safeWarning = error => { const code = error?.code ?? error?.message; return typeof code === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(code) ? code : 'my_finds_unavailable'; };
 
 export function dashboardCheck(ok, code, status = 400) {
   if (!ok) throw Object.assign(Error(code), { code, status });
@@ -272,28 +275,38 @@ export class DashboardState {
       canMint: !minted && !reason && (!saved || resume) && !status,
       reason, role: this.role(c), eligibility: { finder: 'own find', bitmap: 'Bitmap holder', public: 'units' }[this.role(c)],
       balance: balance.amount, balanceCurrent: balance.current && c.balance !== null,
-      finderUntil: c.finderUntil ?? c.find.finderUntil ?? null,
-      findHeight: c.find.findHeight ?? null,
+      ...findDeadline({ ...c.find, finderUntil: c.finderUntil ?? c.find.finderUntil }, this.claimCounted),
       deploymentLink: !minted && !pending && !saved && reason === 'asset_unregistered'
         ? this.service.deploymentLink(canonicalAsset(row.asset), this.agent.address, this.agent.paymentOrigin) : null,
       paymentLink: requestId(id) ? this.service.paymentLink(id, this.agent.paymentOrigin) : null };
   }
   // asset: one pattern only, in the form the gateway lists it (see patterns()).
-  async claims({ cursor, limit = 25, asset, deployment } = {}) {
+  async claims({ cursor, myFindsCursor, limit = 25, asset, deployment } = {}) {
     dashboardCheck(Number.isSafeInteger(limit) && limit >= 1 && limit <= 50, 'invalid_page_limit');
     dashboardCheck(asset === undefined || assetId(asset), 'invalid_asset');
     dashboardCheck(!deployment || asset && /^[0-9a-f]{64}i(?:0|[1-9][0-9]*)$/.test(deployment), 'invalid_deployment');
     let position = claimCursor(cursor);
-    const claims = [], balances = new Map();
+    const claims = [], balances = new Map(), warnings = [];
+    // The claims table must not fail when the journal-based finds read cannot reach the gateway.
+    let myFinds = null;
+    try { myFinds = await this.agent.myFinds({ cursor: myFindsCursor, limit, ...(asset ? { asset } : {}) }); }
+    catch (error) { warnings.push({ source: 'myFinds', code: safeWarning(error), recovery: 'Retry later; the claims below are unaffected.' }); }
     this.bulkHeld = this.bulkHeldBlocks(); this.claimCounted = await this.countedHeight();
     // The sources are disjoint: own finder-week rows, then other allowed and
     // blocked eligible rows. Each gateway cursor retains its filters/order.
     while (position && claims.length < limit) {
       const { source } = position;
       const options = { limit: limit - claims.length, sort: 'block', order: 'desc', cursor: position.cursor, minted: false, ...(asset ? { asset } : {}), ...(deployment ? { deployment } : {}) };
-      const page = source === 'finds' && !deployment
-        ? await this.service.profile(this.agent.address, { ...options, collection: 'finds' })
-        : await this.service.mintRights(this.agent.address, { ...options, ...(source === 'finds' ? { whoMayMint: 'finder' } : { allowed: source === 'allowed' }) });
+      let page;
+      try {
+        page = source === 'finds' && !deployment
+          ? await this.service.profile(this.agent.address, { ...options, collection: 'finds' })
+          : await this.service.mintRights(this.agent.address, { ...options, ...(source === 'finds' ? { whoMayMint: 'finder' } : { allowed: source === 'allowed' }) });
+      } catch (error) {
+        if (!['page_cursor_stale', 'claimed_cursor_stale'].includes(error.code ?? error.message)) throw error;
+        warnings.push({ source, code: 'page_cursor_stale', recovery: 'Restart claims; myFinds has its own local continuation.' });
+        position = null; break;
+      }
       const entries = source === 'finds' && !deployment ? page.finds : page.mintRights;
       dashboardCheck(Array.isArray(entries), 'invalid_claim_page', 502);
       for (let i = 0; i < entries.length; i += 4) {
@@ -315,7 +328,7 @@ export class DashboardState {
       // gateway traversal inside one dashboard request.
       if (continuation) break;
     }
-    return { claims, next: encodeClaimCursor(position), total: null, order: 'finder_then_asset_block' };
+    return { claims, next: encodeClaimCursor(position), total: null, order: 'finder_then_asset_block', myFinds, warnings };
   }
   // Up to `pages` public pages of one agent collection.
   async collect(read, key, pages) {

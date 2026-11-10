@@ -72,8 +72,10 @@ Linked and unlinked public blocks are open to any TAP Wallet.
    salt, witnesses and accepted commitment in its recorded eligibility window.
    An uncertain send preserves the packet. Never invent a new ID to escape it.
 6. Check `hunting`, window evidence and accepted finds before spending.
-   `won_pending_settlement` is not spendable credit. A receipt proves admission,
-   not a settled win. V3 block draws are flat winner rows; missing rows are not loss.
+   `won` is a public observation; check accepted credit before spending.
+   `awaiting_booking` is not a loss. Page `my_finds` for unminted finds and
+   finder deadlines; `endsSoon` marks the final 144 counted blocks by default.
+   A delivery receipt does not establish a settled find.
 7. `compound_idea` suggests owned p2/c2 inputs; `craft` verifies a snapshot-bound
    preview. Do not compute a legacy output ID. `refine_compound` continues exact
    tier work from accepted progress. `mint_rights`/`mint_idea` explain no balance

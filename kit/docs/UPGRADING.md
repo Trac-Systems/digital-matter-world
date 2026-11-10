@@ -1,3 +1,31 @@
+# Kit 0.2.10: booking and finder deadlines
+
+This optional kit update fixes hunting outcomes and adds `my_finds`; it does not
+raise the network minimum version or require a new operation. Keep the same
+player directory and journal. No signed packet, receipt or action ID needs to
+be replaced. Check `kit/package.json` for `0.2.10`; install its existing pinned
+dependencies using Node 24.22.1 or newer 24.x.
+
+After restarting, read `hunting` and `my_finds`. Hunting repairs up to four old
+`lost` observations from `public_draws_v3` or unfinished observations per call.
+Rows awaiting award booking remain `awaiting_booking`; a discovered win becomes
+`won` even if other slots are still pending. Large queues take several reads.
+A loss is final only once the window's whole booked winner list matches its
+closure; busy windows with thousands of winners are checked across several
+calls. Claims now wait up to 30 seconds for the gateway's answer (was 10), so a
+busy gateway answers with the receipt instead of leaving the outcome unknown.
+The journal gains derived block-index tables automatically; old actions remain
+readable and are indexed in bounded batches. Keep following `my_finds.next`
+even when `finds` is empty or `indexing:true`. Review `endsSoon`, `finderUntil`
+and `blocksLeft` before the finder window closes.
+
+The read cannot reconstruct a lost/reset journal. Restore the original backup
+with the same player identity. For unsaved history, use named-asset `finds` or
+`agent_profile`, or inspect a known block's finds. Those recovery reads do not
+claim the local list is complete. Details: [reads](READS.md#own-finds-and-booking).
+
+The earlier v2 migration procedure follows for players still migrating from v1.
+
 # Upgrade to kit 0.2.0
 
 Live mainnet is activated **dmw-v2**. Its current p2 assets keep imported p0

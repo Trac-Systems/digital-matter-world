@@ -99,8 +99,8 @@ export async function serveDashboard(context, { port = 0, state = new DashboardS
       const keys = allowed => dashboardCheck([...url.searchParams.keys()].every(k => allowed.includes(k) && url.searchParams.getAll(k).length === 1), 'invalid_query');
       if (req.method === 'GET' && path === '/api/info') { keys([]); json(await state.info()); return; }
       if (req.method === 'GET' && path === '/api/claims') {
-        keys(['cursor', 'limit', 'asset', 'deployment']);
-        json(await state.claims({ cursor: url.searchParams.get('cursor') ?? undefined, limit: Number(url.searchParams.get('limit') ?? 25), asset: url.searchParams.get('asset') ?? undefined, deployment: url.searchParams.get('deployment') ?? undefined })); return;
+        keys(['cursor', 'myFindsCursor', 'limit', 'asset', 'deployment']);
+        json(await state.claims({ cursor: url.searchParams.get('cursor') ?? undefined, myFindsCursor: url.searchParams.get('myFindsCursor') ?? undefined, limit: Number(url.searchParams.get('limit') ?? 25), asset: url.searchParams.get('asset') ?? undefined, deployment: url.searchParams.get('deployment') ?? undefined })); return;
       }
       if (req.method === 'GET' && path === '/api/patterns') { keys([]); json(await state.patterns()); return; }
       if (req.method === 'GET' && path === '/api/requests') {

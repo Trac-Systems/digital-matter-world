@@ -30,8 +30,8 @@ import { readInteger, patternId, nextCursor, claimSelection, isAsset } from './a
 import { tnkBalance, prepareTnkTransfer, sendTnkTransfer, tnkTransferStatus } from './tnk.mjs';
 import { TakenCache, miningReadSettings } from './taken-cache.mjs';
 
-// A loss is recorded once the claim window is this many blocks behind the counted tip (public pages may trail a closure).
-const SETTLED_LOSS_BLOCKS = 6;
+import { claimRefusal, huntingReads, reconcileClaim, HUNT_REPAIR_LIMIT } from './claim-settlement.mjs';
+import { myFinds } from './my-finds.mjs';
 
 export class Agent {
   tnkBalance() { return tnkBalance(this); }
@@ -223,17 +223,25 @@ export class Agent {
     check(isAsset(asset), 'Invalid asset');
     return { asset, ...amountView(await this.trac.balance(this.owner, asset), { currency: asset, denomination: 'unit', decimals: 0 }) };
   }
+  myFinds(options) { return myFinds(this, options); }
   async hunting(options) {
-    const head = await this.trac.head(), page = this.journal.hunting(options), items = [], closures = new Map();
+    const head = await this.trac.head(), page = this.journal.hunting(options), items = [], reads = huntingReads(this), repaired = new Map();
+    for (const row of this.journal.huntingLosses(HUNT_REPAIR_LIMIT)) {
+      const refusal = claimRefusal(this.journal, row);
+      if (refusal) { this.journal.settle(row.id, refusal); repaired.set(row.id, { ...row, ...refusal }); }
+      else repaired.set(row.id, await reconcileClaim(this, row, reads));
+    }
     for (const row of page.items) {
       if (row.type === 'discovery') {
         items.push({ ...row, phase: row.revealState && row.revealState !== 'refused' ? 'check_reveal' : row.receiptTip === null ? 'receipt_unknown' : head.tip.height < row.revealFrom ? 'sealed' : head.tip.height > row.revealUntil ? 'expired' : 'reveal_window' });
         continue;
       }
+      const refusal = claimRefusal(this.journal, row);
+      if (refusal) { items.push({ ...row, ...refusal }); continue; }
+      if (repaired.has(row.id)) { items.push(repaired.get(row.id)); continue; }
       let settlement = this.journal.evidence(row.id).settlement;
       if (row.type === 'header') {
         try {
-          const block = settlement ?? await this.service.block(row.headerBlock);
           const window = row.headerBlock;
           check(integer(window), 'Header claim window unavailable');
           Object.assign(row, { window, closesAt: window + 2, drawAt: window + 2, settlesWhenCounted: window + 2, settlesAt: row.ruleset === 'dmw-v2' ? null : window + 2 });
@@ -242,50 +250,30 @@ export class Agent {
       const tracked = row.plots.map(p => ({ ...p }));
       if (row.headerBlock !== null && row.headerBlock !== undefined && !tracked.some(p => p.block === row.headerBlock)) tracked.push({ block: row.headerBlock, patterns: [] });
       let phase = head.tip.height < row.closesAt ? 'claim_window' : head.tip.height < row.drawAt ? 'awaiting_draw' : head.counted < row.settlesWhenCounted ? 'awaiting_counted_draw' : 'check_settlement';
+      if (row.ruleset === 'dmw-v2') {
+        const oldLoss = settlement?.source === 'public_draws_v3' && settlement.phase === 'lost';
+        if (oldLoss) items.push({ ...row, phase: 'awaiting_booking', reason: 'legacy_loss_recheck_pending' });
+        else if (settlement?.bookingComplete) items.push({ ...row, phase: settlement.phase, settlement, ...(settlement.competition ? { competition: settlement.competition } : {}) });
+        else if (phase === 'check_settlement' || settlement) items.push(await reconcileClaim(this, row, reads));
+        else items.push({ ...row, phase });
+        continue;
+      }
       if (!settlement && phase === 'check_settlement') {
         const plots = [];
         try {
-          if (row.ruleset === 'dmw-v2') {
-            // V3 draws are individual winner rows, not v1 aggregate rounds. Until the window's accepted
-            // closure exists, an empty page cannot prove a loss (deferred awards), so no draws are read
-            // yet. The closure decides: read the draws once after it and keep the result in the journal.
-            if (!closures.has(row.window)) closures.set(row.window, (await this.service.readPage('/window-eligibility/' + row.window))?.draw ?? null);
-            const closure = closures.get(row.window);
-            if (!closure) {
-              items.push({ ...row, phase: 'check_settlement', next: { tool: 'window_eligibility', arguments: { window: row.window } } });
-              continue;
-            }
-            const observedWins = [], winners = new Set(); let drawn = 0;
-            for (const plot of tracked) {
-              let cursor; const seen = new Set();
-              do {
-                const page = await this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 50, cursor });
-                check(page.v === 3 && Array.isArray(page.draws), 'Invalid v2 draw page');
-                for (const winner of page.draws) if (readInteger(winner.window) === row.window && readInteger(winner.block) === plot.block) {
-                  drawn++; winners.add(winner.winner);
-                  if (winner.winner === this.address && (plot.patterns.includes(readInteger(winner.pattern)) || winner.source === 'header' && row.headerBlock === plot.block)) observedWins.push(winner);
-                }
-                cursor = nextCursor(page); check(!cursor || !seen.has(cursor), 'Repeated draw cursor'); seen.add(cursor);
-              } while (cursor);
-            }
-            const competition = drawn ? { competition: { agentsWon: winners.size, slotsWon: drawn, yours: observedWins.length, note: COMPETITION_NOTE } } : {};
-            // Public draw pages can trail a fresh closure for a moment: a loss is kept only once the window is
-            // a few blocks behind the counted tip; a win as soon as it is seen.
-            if (observedWins.length || closure.void || head.counted >= row.window + SETTLED_LOSS_BLOCKS) {
-              settlement = { window: row.window, phase: observedWins.length ? 'won' : 'lost', source: 'public_draws_v3', wins: observedWins, ...competition,
-                ...(closure.void ? { void: true, reason: closure.reason ?? null } : {}) };
-              this.journal.settle(row.id, settlement);
-              items.push({ ...row, phase: settlement.phase, settlement, ...competition });
-            } else items.push({ ...row, phase: 'check_settlement', ...competition, next: { tool: 'window_eligibility', arguments: { window: row.window } } });
-            continue;
-          }
           for (const plot of tracked) {
-            const page = await this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 200 });
+            const page = await reads.get(`legacy/${row.window}/${plot.block}`, () => this.service.block(plot.block, { collection: 'draws', window: row.window, limit: 200 }));
             const draw = page.draws.find(d => readInteger(d.window) === row.window && d.settledAt != null && integer(readInteger(d.settledAt)));
             if (!draw) break;
             const winners = [...draw.winners];
             let cursor = draw.pages?.winners?.next;
-            while (cursor) { const more = await this.service.readPage(draw.pages.winners.route, { cursor, limit: 200 }); winners.push(...more.items); cursor = more.next; }
+            const seen = new Set();
+            for (let n = 0; cursor && n < 4; n++) {
+              check(!seen.has(cursor), 'Repeated draw cursor'); seen.add(cursor);
+              const more = await reads.get('legacy/' + draw.pages.winners.route + '/' + cursor, () => this.service.readPage(draw.pages.winners.route, { cursor, limit: 200 }));
+              winners.push(...more.items); cursor = more.next;
+            }
+            if (cursor) break;
             const won = draw.void ? [] : winners.filter(w => readInteger(w.block) === plot.block && w.winner === this.address && (plot.patterns.includes(readInteger(w.pattern)) || w.source === 'header' && row.headerBlock === plot.block));
             plots.push({ block: plot.block, settledAt: draw.settledAt, void: !!draw.void, reason: draw.reason ?? null, wins: won.map(w => ({ asset: w.asset, pattern: w.pattern, count: w.count, source: w.source ?? 'claim' })), provenance: draw.provenance ?? null });
           }
@@ -297,8 +285,8 @@ export class Agent {
       }
       items.push({ ...row, phase: settlement?.phase ?? phase, ...(settlement ? { settlement } : {}) });
     }
-    return { ...page, items, owner: this.address, tip: head.tip.height, counted: head.counted, source: 'local-journal',
-      note: 'Won/lost uses public settled draws. Other phases estimate timing; check block and verify_claim for evidence. A reorg never reopens a closed claim window. ' + COMPETITION_NOTE };
+    return { ...page, items, rechecked: [...repaired.values()], reads: reads.count, owner: this.address, tip: head.tip.height, counted: head.counted, source: 'local-journal',
+      note: 'Wins use public booked draws or finds. V2 losses require complete explicit booking evidence and no deferred header award; awaiting_booking is not a loss. Other phases estimate timing; check block and verify_claim for evidence. A reorg never reopens a closed claim window. ' + COMPETITION_NOTE };
   }
   async catalog() {
     const rows = [], cursors = new Set(); let cursor, total, version, revision, pages = 0;

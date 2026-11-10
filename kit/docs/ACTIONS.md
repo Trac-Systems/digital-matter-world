@@ -88,9 +88,16 @@ checks bounded candidates and current catalog names/keys. Public counts describe
 submitted evidence; local search counts describe a verified historical snapshot.
 
 `hunting` recognizes claim-v2/header-v2 and reports timing with safe local integers.
-V3 block draws are flat winner rows; won_pending_settlement is an observation,
-not final credited units. Sparse/empty pages never become a final loss. Follow
-window_eligibility and accepted finds/credit delivery.
+V3 block draws are flat winner rows. An observed draw or matching own find
+records `won`; an incomplete booking stays `awaiting_booking`, regardless of
+age. `lost` requires complete explicit winner-root evidence and no relevant
+pending header award. A void window reports `void`. A saved refusal or rejected
+outcome reports `rejected` with its precise `reason`, such as `already_found`.
+`hunting` rechecks up to four old v3 losses/unfinished rows per call, even outside
+the displayed page, with at most 64 public GETs shared across all v2 rows.
+`my_finds` lists journal-known unminted finds and finder deadlines. These are
+public observations; check accepted credit and mint rights before spending.
+See [own finds and booking](READS.md#own-finds-and-booking) for paging and limits.
 
 ## Durable actions and receipt proofs
 
@@ -431,6 +438,7 @@ header awards. No production trust fallback is provided for these gaps.
 | `catalog` | Drain current catalog pages; normalize local pattern ordinals. |
 | `compounds` | Registered compound records and properties. |
 | `finds` | Materialized finds with attribution. |
+| `my_finds` | Journal-known unminted finds, finder deadlines and coverage limits; limit 1–50. |
 | `receipts` | Public receipt archives; verify proofs separately. |
 | `pattern_matches` | V2 alias for submitted matching-block evidence. |
 | `claimed_blocks` | Submitted block evidence for p2:N, limit at most 50. |

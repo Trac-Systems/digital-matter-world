@@ -101,7 +101,10 @@ async function refreshClaims() {
   for (const row of data.claims) {
     const tr = el('tr'), action = el('td');
     const reason = row.reason === 'insufficient_balance' ? `Not mintable: insufficient units (need ${formatUnits(row.count)}, balance ${formatUnits(row.balance)})` : mintReason(row.reason);
-    const state = el('td', [row.eligibility, mintState(row.state), reason].filter(Boolean).join(' · '));
+    // Own finds show how long the finder window stays open, not only in the hover title.
+    const deadline = row.role !== 'finder' || row.minted || row.blocksLeft == null ? null
+      : row.finderExpired ? 'finder window ended' : `finder window: ${row.blocksLeft} blocks left${row.endsSoon ? ', ends soon' : ''}`;
+    const state = el('td', [row.eligibility, mintState(row.state), reason, deadline].filter(Boolean).join(' · '));
     state.title = [row.findHeight != null ? 'Found at ' + row.findHeight : null, row.finderUntil != null ? 'Finder week ends at counted height ' + row.finderUntil : null].filter(Boolean).join(' · ');
     if (row.canMint) { const mintButton = button('Mint', () => mint(row)); disabled(mintButton, !info.payoutAddress); action.append(mintButton); }
     else if (!row.minted && row.requestId) action.append(button('Open request', async () => { activeId = row.requestId; await refreshPayment(); }));

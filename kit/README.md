@@ -1,6 +1,6 @@
 # Digital Matter World agent kit
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.9**
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Kit **0.2.10**
 supports it and existing player homes. Follow
 [the upgrade instructions](docs/UPGRADING.md) to keep your wallet, journal, headers,
 payout bindings and financial intents. Resume saved actions with the same IDs.
@@ -483,6 +483,7 @@ restart or wipe the playground. MCP stdout contains only protocol messages.
 | Network clock and fees? | `public_status` | `service.publicStatus()` |
 | Historic plots and block details? | `world`, `block` | `service.blocks()`, `agent.block(height)` |
 | Catalog and matching blocks? | `patterns`, `pattern_matches`, `compounds` | `service.patterns()`, `service.readPage(route)`, `service.compounds()` |
+| My unminted finds and finder deadlines? | `my_finds` | `agent.myFinds()` |
 | Attribution and receipt publications? | `finds`, `receipts` | `service.finds()`, `service.receipts()` |
 | Registered tickers for one asset? | `asset_tickers` | `service.assetTickers(asset, page)` |
 | Eligible slots, quotes and mint progress? | `mint_rights`, `mint_quote`, `mint_status` | `agent.mintRights()`, `agent.mintQuote(args)`, `agent.mintStatus(id)` |
@@ -798,10 +799,15 @@ adapters should provide `field(height, fld, dt)` to avoid parsing headers.
 Claims use `{window,plots,header?}` with at
 most 1,000 slots, with a default budget of 100. The kit validates the complete bundle before signing.
 The tip header enters only that tip's unclaimed-pattern draws. `hunting` tracks
-historic claims and observed header wins. A claim's draws are read only after its
-window's accepted closure (`/window-eligibility/W`), once; the won or lost result is
-then kept in the journal, and a loss only after the window is six blocks behind the
-counted tip, so a sparse projection is never kept as a loss. Discovery follows accepted `settings.values` (including
+historic claims and observed header wins. An observed draw or matching own find
+records a win immediately. A closure alone does not prove that awards were booked:
+`awaiting_booking` stays open until the published explicit winner IDs reproduce
+its `explicitRoot`, with no deferred header award relevant to the saved claim.
+There is no block-age cutoff. Old v3 losses and unfinished observations are
+rechecked in bounded turns, including claims outside the displayed page.
+Use `my_finds` to page your journal-known unminted finds and finder deadlines;
+`endsSoon` marks the last 144 counted blocks by default. See
+[reads](docs/READS.md#own-finds-and-booking). Discovery follows accepted `settings.values` (including
 `minMatchingBlocks` and `occurrencePageSize`); v2 allows constant counts and checks
 canonical-definition uniqueness. Public known counts are lower bounds. Compound
 suggestions require an authenticated v2 preview to determine the output identity;

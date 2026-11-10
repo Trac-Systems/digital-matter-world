@@ -424,3 +424,34 @@ test('a saved mint the gateway never took and that expired is retired and signed
   assert.deepEqual(open.map(r => r.requestId), [result.requestId]);
   assert.equal((await dashboard.state.mint(slot)).requestId, result.requestId);
 });
+
+test('claims API retains journal-based own finds and their deadlines when the agent-wide cursor is stale', async t => {
+  const f = await dashboardFixture(t), { call } = await start(t, f);
+  f.journal.reserve('claim/20', {}, { v: 2, t: 'claim-v2', p: { window: '20', plots: [{ block: '11', patterns: ['1'] }, { block: '12', patterns: ['1'] }] } });
+  f.clock.counted = '1000';
+  const profile = f.service.profile.bind(f.service), block = f.service.block.bind(f.service);
+  f.service.profile = (owner, options) => {
+    if (options.collection === 'finds') throw Object.assign(Error('page_cursor_stale'), { code: 'page_cursor_stale' });
+    return profile(owner, options);
+  };
+  const reads = [];
+  f.service.block = async (height, options) => {
+    if (options.collection !== 'finds') return block(height, options);
+    reads.push({ height, options });
+    return { v: 3, finds: f.claims.filter(row => row.block === String(height)).map(row => ({ ...row, minted: false })), next: null };
+  };
+  const first = await (await call('/api/claims?limit=1')).json();
+  assert.equal(first.myFinds.finds[0].block, '12'); assert.equal(first.myFinds.finds[0].blocksLeft, '27'); assert.equal(first.myFinds.finds[0].endsSoon, true);
+  assert.equal(first.warnings[0].code, 'page_cursor_stale'); assert.ok(first.myFinds.next); assert.equal(first.next, null);
+  const second = await (await call('/api/claims?limit=1&myFindsCursor=' + first.myFinds.next)).json();
+  assert.equal(second.myFinds.finds[0].block, '11'); assert.equal(second.myFinds.next, null);
+  assert.ok(reads.every(read => read.options.owner === f.agent.address)); assert.equal(f.packets.length, 0);
+});
+
+test('claims API still lists claims when the journal-based finds read fails', async t => {
+  const f = await dashboardFixture(t), { call } = await start(t, f);
+  f.agent.myFinds = async () => { throw Object.assign(Error('service_busy'), { code: 'service_busy' }); };
+  const page = await (await call('/api/claims?limit=2')).json();
+  assert.ok(page.claims.length > 0); assert.equal(page.myFinds, null);
+  assert.deepEqual(page.warnings.map(w => [w.source, w.code]), [['myFinds', 'service_busy']]);
+});

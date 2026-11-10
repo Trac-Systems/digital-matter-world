@@ -14,6 +14,8 @@ const BATCH_FULL = new Set(['next_batch_work_capacity', 'next_batch_byte_capacit
 const moveId = move => move.v === 2 ? moveIdV2(move) : legacyMoveId(move);
 const deploymentAsset = asset => typeof asset === 'string' && /^(?:[pc][0-9a-z]{1,23}|p2:(?:0|[1-9][0-9]*)|c2:[0-9a-f]{64})$/.test(asset);
 
+export const MOVE_TIMEOUT_MS = 30000;
+
 async function requestOnce(client, path, { value, body, limit, binary, query, retry, signal }) {
   signal?.throwIfAborted();
   check(typeof path === 'string' && /^\/[a-zA-Z0-9/_.:-]+$/.test(path) && !path.includes('..') && !path.includes('//'), 'Invalid service path');
@@ -21,11 +23,14 @@ async function requestOnce(client, path, { value, body, limit, binary, query, re
   const method = value === undefined ? 'GET' : 'POST';
   const mutation = method === 'POST' && (path === '/mint/quote' && !!value?.request || ['/mint/bulk/request', '/mint/bulk/payment', '/mint/bulk/finish', '/moves', '/link/request', '/payout-bindings/request', '/payout-bindings/complete', '/mint/payment', '/mint/deployment', '/mint/deployment-ticker', '/mint/deploy-ticker', '/mint/ticker-payment', '/link/payment'].includes(path));
   const failure = (code, reason, status, submission = false) => serviceError({ service: 'Gateway service', origin: client.origin, route: path, method, status, code, reason, submission });
+  // A busy gateway can hold a move while a batch is signed and its durable write queues behind the batch;
+  // give the answer time instead of leaving the outcome unknown after the read timeout.
+  const timeoutMs = method === 'POST' && path === '/moves' ? Math.max(client.timeoutMs, MOVE_TIMEOUT_MS) : client.timeoutMs;
   let response;
   for (let attempt = 0; ; attempt++) try {
     response = await client.fetchImpl(client.origin + path + (search ? '?' + search : ''), { method: value === undefined ? 'GET' : 'POST', redirect: 'error',
       headers: value === undefined ? { accept: binary ? 'application/octet-stream' : 'application/json' } : { 'content-type': 'application/json' },
-      ...(value === undefined ? {} : { body }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(client.timeoutMs)]) : AbortSignal.timeout(client.timeoutMs) });
+      ...(value === undefined ? {} : { body }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
     break;
   } catch (error) {
     const code = error.cause?.code ?? error.code ?? error.name;

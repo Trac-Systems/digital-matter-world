@@ -21,6 +21,7 @@ export class Journal {
     db.exec('CREATE TABLE IF NOT EXISTS action_outcomes (scope TEXT NOT NULL, id TEXT NOT NULL, outcome TEXT, settlement TEXT, PRIMARY KEY(scope,id));');
     db.exec('CREATE TABLE IF NOT EXISTS move_history (sequence INTEGER PRIMARY KEY, scope TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL, result TEXT);');
     db.exec('CREATE INDEX IF NOT EXISTS move_history_action ON move_history(scope,id,sequence);');
+    db.exec('CREATE TABLE IF NOT EXISTS find_blocks (scope TEXT NOT NULL, block INTEGER NOT NULL, PRIMARY KEY(scope,block)); CREATE TABLE IF NOT EXISTS find_block_progress (scope TEXT PRIMARY KEY, position INTEGER NOT NULL);');
     return new Journal(db, scope, { now, intervalMs, perTip, directory: dir });
   }
   constructor(db, scope, options) { this.db = db; this.scope = scope; Object.assign(this, options); }
@@ -36,6 +37,7 @@ export class Journal {
       if (old) { check(old.fingerprint === fingerprint, 'Conflicting action refused; use the saved intent'); this.db.exec('COMMIT'); return old; }
       // MSB content hashes use JSON property order; retain the exact packet.
       this.db.prepare('INSERT INTO actions(scope,id,fingerprint,body,state) VALUES(?,?,?,?,?)').run(this.scope, id, fingerprint, JSON.stringify(body), 'prepared');
+      this.trackFindBlocks(body);
       this.db.exec('COMMIT'); return this.get(id);
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
@@ -90,6 +92,7 @@ export class Journal {
       const row = this.get(id);
       if (row?.body.t) this.archiveMove({ ...row, state, result });
       this.db.prepare('UPDATE actions SET state=?,result=? WHERE scope=? AND id=?').run(state, result === null ? null : stableJSON(result), this.scope, id);
+      if (row && ['received', 'accepted'].includes(state)) this.trackFindBlocks(row.body, null, state);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
@@ -143,6 +146,50 @@ export class Journal {
   }
   settle(id, settlement) {
     this.db.prepare('INSERT INTO action_outcomes(scope,id,settlement) VALUES(?,?,?) ON CONFLICT(scope,id) DO UPDATE SET settlement=excluded.settlement').run(this.scope, id, stableJSON(settlement));
+    this.trackFindBlocks({}, settlement);
+  }
+  // Only block numbers enter this read index. Sealed proposals, salts and
+  // packets remain in the original journal and are never returned by a read.
+  trackFindBlocks(body, settlement, state) {
+    const blocks = [];
+    if (['claim', 'claim-v2'].includes(body.t)) {
+      blocks.push(...(body.p.plots ?? []).map(p => p.block));
+      if (body.p.header?.height != null) blocks.push(body.p.header.height);
+    }
+    if (['header', 'header-v2'].includes(body.t)) blocks.push(body.p.height);
+    if (body.t === 'discovery-reveal-v2' && ['received', 'accepted'].includes(state)) blocks.push(...(body.p.matches ?? []).map(m => m.height));
+    blocks.push(...(settlement?.wins ?? []).map(w => w.block), ...(settlement?.plots ?? []).filter(p => p.wins?.length).map(p => p.block));
+    const insert = this.db.prepare('INSERT OR IGNORE INTO find_blocks(scope,block) VALUES(?,?)');
+    for (const block of new Set(blocks)) {
+      let height;
+      try { height = readInteger(block); } catch { continue; }
+      insert.run(this.scope, height);
+    }
+  }
+  indexFindBlocks(limit = 100) {
+    const position = this.db.prepare('SELECT position FROM find_block_progress WHERE scope=?').get(this.scope)?.position ?? 0;
+    const rows = this.db.prepare(`SELECT a.rowid AS position,a.body,a.state,o.settlement FROM actions a
+      LEFT JOIN action_outcomes o ON o.scope=a.scope AND o.id=a.id
+      WHERE a.scope=? AND a.rowid>? ORDER BY a.rowid LIMIT ?`).all(this.scope, position, limit + 1);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows.slice(0, limit)) this.trackFindBlocks(JSON.parse(row.body), row.settlement && JSON.parse(row.settlement), row.state);
+      if (rows.length) this.db.prepare('INSERT INTO find_block_progress VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET position=excluded.position')
+        .run(this.scope, rows[Math.min(rows.length, limit) - 1].position);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return { complete: rows.length <= limit, examined: Math.min(rows.length, limit) };
+  }
+  findBlock(before = Number.MAX_SAFE_INTEGER) {
+    return this.db.prepare('SELECT rowid AS position,block FROM find_blocks WHERE scope=? AND rowid<? ORDER BY rowid DESC LIMIT 1').get(this.scope, before) ?? null;
+  }
+  huntingLosses(limit = 4) {
+    const rows = this.db.prepare(`SELECT a.rowid AS position,a.id,a.body,a.result,a.state FROM actions a
+      JOIN action_outcomes o ON o.scope=a.scope AND o.id=a.id
+      WHERE a.scope=? AND ((json_extract(o.settlement,'$.phase')='lost' AND json_extract(o.settlement,'$.source')='public_draws_v3')
+        OR (json_extract(o.settlement,'$.source')='public_booking_v3' AND json_extract(o.settlement,'$.bookingComplete')=0))
+      ORDER BY COALESCE(json_extract(o.settlement,'$.checkedAt'),0),a.rowid LIMIT ?`).all(this.scope, limit);
+    return rows.map(row => this.huntingRow(row)).filter(row => row.ruleset === 'dmw-v2');
   }
   bitcoinChanges() {
     // Output 1 is cardinal change in our two-output commit builder. Restrict
@@ -186,7 +233,12 @@ export class Journal {
       (a.id GLOB 'discovery/*/commit' AND NOT EXISTS
         (SELECT 1 FROM actions r WHERE r.scope=a.scope AND r.id=substr(a.id,1,length(a.id)-6)||'reveal' AND r.state IN ('received','accepted','rejected'))))`;
     const rows = this.db.prepare(`SELECT a.rowid AS position,a.id,a.body,a.result,a.state FROM actions a WHERE ${where} AND a.rowid<? ORDER BY a.rowid DESC LIMIT ?`).all(this.scope, before, limit + 1);
-    const selected = rows.slice(0, limit), items = selected.map(row => {
+    const selected = rows.slice(0, limit), items = selected.map(row => this.huntingRow(row));
+    const total = this.db.prepare(`SELECT count(*) AS n FROM actions a WHERE ${where}`).get(this.scope).n;
+    return { items, total, limit, next: rows.length > limit ? Buffer.from(JSON.stringify({ scope, before: selected.at(-1).position })).toString('base64url') : null,
+      sort: 'journal', order: 'desc', route: 'local:hunting' };
+  }
+  huntingRow(row) {
       const body = JSON.parse(row.body), receipt = row.result ? JSON.parse(row.result) : null;
       const receiptTip = receipt?.tip == null ? null : readInteger(receipt.tip), version = body.v === 2 ? { ruleset: 'dmw-v2' } : {};
       if (['header', 'header-v2'].includes(body.t)) return { ...version, type: 'header', id: row.id, state: row.state, headerBlock: readInteger(body.p.height), plots: [], receiptTip };
@@ -204,10 +256,6 @@ export class Journal {
         revealUntil: tip === null ? null : tip + (settings?.commitLifetime ?? DISCOVERY_LIMITS.lifetime),
         witnessRecorded: !!witnessed, revealState: reveal?.state ?? null, revealMove: reveal ? (reveal.body.v === 2 ? moveIdV2 : moveId)(reveal.body) : null,
         revealRefusal: reveal?.state === 'refused' ? reveal.result : null };
-    });
-    const total = this.db.prepare(`SELECT count(*) AS n FROM actions a WHERE ${where}`).get(this.scope).n;
-    return { items, total, limit, next: rows.length > limit ? Buffer.from(JSON.stringify({ scope, before: selected.at(-1).position })).toString('base64url') : null,
-      sort: 'journal', order: 'desc', route: 'local:hunting' };
   }
   close() { this.db.close(); }
 }

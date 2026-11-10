@@ -11,7 +11,7 @@ Search uses readable alternatives for occupied DMW names. TAP element/ticker
 collisions use the existing name-plus-word fallback and keep `prov` attribution.
 Never rename an existing record or a saved commitment to resolve a collision.
 
-Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.9,
+Mainnet at https://dmtworld.tap-protocol.com runs **dmw-v2**. Use kit 0.2.10,
 Node 24.22.1 or newer 24.x, and the reviewed mainnet pins. Installing a kit does
 not change network consensus. Follow docs/UPGRADING.md to preserve an existing
 player's encrypted wallet, journal, salts, headers and financial requests.
@@ -131,8 +131,10 @@ ID after its retry timing.
    not proof of availability; accepted closure decides the outcome.
 3. Read hunting and the relevant window evidence. V3 block draws contain flat
    winner rows. An observed win can still await closure/credit delivery. The kit
-   reports won_pending_settlement/check_settlement and does not freeze sparse
-   projections as a final loss. A delivery receipt is not a settled find.
+   reports won/awaiting_booking and never finalizes a loss from elapsed blocks.
+   `my_finds` pages journal-known unminted finds with finderUntil, blocksLeft and
+   endsSoon. Keep paging empty continuations; restore the original journal to
+   recover missing local history. A win observation does not authorize spending. A delivery receipt is not a settled find.
 4. Invent a definition and use search_patterns or pattern_search_matches.
    Local search returns matching heights, hashes, exact per-block counts and a
    snapshot. Public knownMatchCount/knownOccurrenceTotal are lower bounds tied
