@@ -26,8 +26,8 @@
     "util": "npm:bare-node-util@1.0.0",
     "pear-runtime": "1.3.1",
     "hyperdht": "6.29.6",
-    "trac-msb": "github:Trac-Systems/main_settlement_bus#7f98f44619e026571ea9dd7f69d1962abff78161",
-    "trac-peer": "github:Trac-Systems/trac-peer#b2a4b86dae8b998561472b2c23fe8584058200c8",
+    "trac-msb": "github:Trac-Systems/main_settlement_bus#a8226b4ddfd5fab4643aadd02dee9f09b5355509",
+    "trac-peer": "github:Trac-Systems/trac-peer#6602492ba0d9ed75dc87da5126042148e21ce8aa",
     "trac-wallet": "1.0.1"
   },
   "overrides": { "hyperdht": "$hyperdht", "trac-msb": "$trac-msb" }
